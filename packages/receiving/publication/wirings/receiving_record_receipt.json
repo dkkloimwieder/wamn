@@ -5,9 +5,9 @@
   "entry": "operation",
   "nodes": {
     "operation": {
-      "component": "receiving_record_receipt",
+      "component": "receiving",
       "interface-version": "0.1.0",
-      "operation": "run",
+      "operation": "wamn-receiving:receiving/record-receipt@1.0.0",
       "terminal": "respond"
     }
   }

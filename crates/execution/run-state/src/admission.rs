@@ -273,7 +273,7 @@ candidate_nodes AS MATERIALIZED ( \
        AND component.package_version = candidate.package_version \
        AND component.component = node.value ->> 'component' \
        AND component.interface_version = node.value ->> 'interface-version' \
-       AND component.operation = node.value ->> 'operation' \
+       AND component.operations ? (node.value ->> 'operation') \
 ), \
 node_summary AS MATERIALIZED ( \
     SELECT count(*) AS node_count, \

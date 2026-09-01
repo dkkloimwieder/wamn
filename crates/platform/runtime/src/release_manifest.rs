@@ -223,7 +223,8 @@ mod tests {
 
     use wamn_catalog::{
         ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate, ServingComponent,
-        ServingRelease, ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+        ServingComponentOperation, ServingRelease, ServingWiring,
+        UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
 
     use super::*;
@@ -246,7 +247,12 @@ mod tests {
                 component: "transform".into(),
                 interface_version: "0.1".into(),
                 digest: ArtifactHash::parse(COMPONENT).expect("fixture artifact hash is canonical"),
-                registered_operation: None,
+                operations: BTreeMap::from([(
+                    "map".into(),
+                    ServingComponentOperation {
+                        registered_operation: None,
+                    },
+                )]),
             }]),
             BTreeSet::from([ServingWiring {
                 package_id: "cat".into(),

@@ -90,30 +90,7 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "wamn-receiving-data-access",
         "components/data/receiving-data/src/lib.rs",
     ),
-    (
-        "receiving-purchase-order-get",
-        "components/application/receiving/purchase_order_get/src/lib.rs",
-    ),
-    (
-        "receiving-purchase-order-query",
-        "components/application/receiving/purchase_order_query/src/lib.rs",
-    ),
-    (
-        "receiving-purchase-order-update",
-        "components/application/receiving/purchase_order_update/src/lib.rs",
-    ),
-    (
-        "receiving-receipt-get",
-        "components/application/receiving/receipt_get/src/lib.rs",
-    ),
-    (
-        "receiving-receipt-query",
-        "components/application/receiving/receipt_query/src/lib.rs",
-    ),
-    (
-        "receiving-receiving-record-receipt",
-        "components/application/receiving/receiving_record_receipt/src/lib.rs",
-    ),
+    ("receiving", "components/application/receiving/src/lib.rs"),
     ("busyloop", "components/fixtures/busyloop/src/main.rs"),
     (
         "connection-http-standard",

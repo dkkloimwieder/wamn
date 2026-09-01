@@ -12,7 +12,7 @@ use wamn_run_state::AuthorityClass;
 
 use crate::wiring_lowering::{
     GatedActiveWiring, ScopedWiringOperationFacts, WiringScope, lower_active_wiring,
-    project_component_operation,
+    project_component_operations,
 };
 
 use super::{CandidateBindingWorld, WamnPostgres};
@@ -68,15 +68,11 @@ SELECT selected.version, \
                        ), \
                        'component', component.component, \
                        'interface-version', component.interface_version, \
-                       'operation', component.operation, \
-                       'registered-operation', component.registered_operation, \
+                       'operations', component.operations, \
                        'component-digest', component.component_digest, \
                        'imports', component.imports, \
                        'imports-fingerprint', component.imports_fingerprint, \
-                       'effects', component.effects, \
-                       'input-ports', component.input_ports, \
-                       'output-ports', component.output_ports, \
-                       'parameters', component.parameters \
+                       'effects', component.effects \
                    ) \
                ) ORDER BY member.node_id COLLATE \"C\" \
            ) FILTER (WHERE member.node_id IS NOT NULL), \
@@ -155,15 +151,11 @@ SELECT selected.version, selected.effective_release_id, \
                        ), \
                        'component', component.component, \
                        'interface-version', component.interface_version, \
-                       'operation', component.operation, \
-                       'registered-operation', component.registered_operation, \
+                       'operations', component.operations, \
                        'component-digest', component.component_digest, \
                        'imports', component.imports, \
                        'imports-fingerprint', component.imports_fingerprint, \
-                       'effects', component.effects, \
-                       'input-ports', component.input_ports, \
-                       'output-ports', component.output_ports, \
-                       'parameters', component.parameters \
+                       'effects', component.effects \
                    ) \
                ) ORDER BY member.node_id COLLATE \"C\" \
            ) FILTER (WHERE member.node_id IS NOT NULL), \
@@ -225,7 +217,7 @@ WITH release_scope AS MATERIALIZED ( \
        AND component.package_version = selected.package_version \
        AND component.component = node.value ->> 'component' \
        AND component.interface_version = node.value ->> 'interface-version' \
-       AND component.operation = node.value ->> 'operation' \
+       AND component.operations ? (node.value ->> 'operation') \
 ), node_summary AS MATERIALIZED ( \
     SELECT count(*) AS node_count, \
            count(*) FILTER (WHERE NOT component_admitted) AS invalid_node_count \
@@ -300,15 +292,11 @@ SELECT selected.version, selected.effective_release_id, \
                    ), \
                    'component', component.component, \
                    'interface-version', component.interface_version, \
-                   'operation', component.operation, \
-                   'registered-operation', component.registered_operation, \
+                   'operations', component.operations, \
                    'component-digest', component.component_digest, \
                    'imports', component.imports, \
                    'imports-fingerprint', component.imports_fingerprint, \
-                   'effects', component.effects, \
-                   'input-ports', component.input_ports, \
-                   'output-ports', component.output_ports, \
-                   'parameters', component.parameters \
+                   'effects', component.effects \
                ) ORDER BY component.component, component.interface_version \
            ) FILTER (WHERE component.component IS NOT NULL), \
            '[]'::jsonb \
@@ -326,7 +314,7 @@ SELECT selected.version, selected.effective_release_id, \
          FROM jsonb_each(selected.graph_json -> 'nodes') AS node(node_id, definition) \
         WHERE definition ->> 'component' = component.component \
           AND definition ->> 'interface-version' = component.interface_version \
-          AND definition ->> 'operation' = component.operation \
+          AND component.operations ? (definition ->> 'operation') \
    ) \
  GROUP BY selected.version, selected.effective_release_id, selected.package_version, \
           selected.graph_json, selected.wiring_hash, \
@@ -859,7 +847,7 @@ fn decode_active_wiring(
         let mut matches = components.iter().filter(|component| {
             node.component == component.component
                 && node.interface_version == component.interface_version
-                && node.operation == component.operation
+                && component.operations.contains_key(&node.operation)
         });
         let component = matches
             .next()
@@ -892,7 +880,7 @@ fn lower_resolved_wiring(
         anyhow::ensure!(
             node.component == component.component
                 && node.interface_version == component.interface_version
-                && node.operation == component.operation,
+                && component.operations.contains_key(&node.operation),
             "release-wiring-node-binding-mismatch"
         );
         let runtime_key = component.component_digest.clone();
@@ -901,10 +889,11 @@ fn lower_resolved_wiring(
             .get_mut(&node_id)
             .expect("the resolved node belongs to the cloned document")
             .component = runtime_key.clone();
-        let mut operation = project_component_operation(&component);
-        operation.component = runtime_key;
-        if !operations.contains(&operation) {
-            operations.push(operation);
+        for mut operation in project_component_operations(&component) {
+            operation.component = runtime_key.clone();
+            if !operations.contains(&operation) {
+                operations.push(operation);
+            }
         }
         if !components.contains(&component) {
             components.push(component.clone());
@@ -965,8 +954,8 @@ fn verify_served_effect_projections(components: &[AdmittedComponent]) -> anyhow:
 mod tests {
     use serde_json::json;
     use wamn_catalog::{
-        ComponentDeclaration, ComponentPackageScope, ComponentPortDeclaration,
-        normalize_component_fact,
+        AdmittedComponentOperation, ComponentDeclaration, ComponentOperationDeclaration,
+        ComponentPackageScope, ComponentPortDeclaration, normalize_component_fact,
     };
 
     use super::*;
@@ -981,14 +970,18 @@ mod tests {
                 },
                 component: name.to_owned(),
                 interface_version: "0.1.0".to_owned(),
-                operation: operation.to_owned(),
-                registered_operation: None,
-                input_ports: vec![ComponentPortDeclaration {
-                    name: "input".to_owned(),
-                    schema: json!({}),
-                }],
-                output_ports: Vec::new(),
-                parameters: Vec::new(),
+                operations: BTreeMap::from([(
+                    operation.to_owned(),
+                    ComponentOperationDeclaration {
+                        registered_operation: None,
+                        input_ports: vec![ComponentPortDeclaration {
+                            name: "input".to_owned(),
+                            schema: json!({}),
+                        }],
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                    },
+                )]),
                 connections: Vec::new(),
             },
             format!("sha256:{}", digest_byte.to_string().repeat(64)),
@@ -1010,12 +1003,12 @@ mod tests {
                 "base": {
                     "component": "entity",
                     "interface-version": "0.1.0",
-                    "operation": "create"
+                    "operation": "base:entity/create@1.0.0"
                 },
                 "overlay": {
                     "component": "entity",
                     "interface-version": "0.1.0",
-                    "operation": "create",
+                    "operation": "overlay:entity/create@2.0.0",
                     "terminal": "respond"
                 }
             },
@@ -1030,11 +1023,21 @@ mod tests {
         let mut base = component("entity", "create", 'a');
         base.scope.package_id = "base".to_owned();
         base.scope.package_version = "1.0.0".to_owned();
-        base.registered_operation = Some("base@1.0.0::entity.create".to_owned());
+        let mut base_operation = base.operations.remove("create").expect("base operation");
+        base_operation.registered_operation = Some("base:entity/create@1.0.0".to_owned());
+        base.operations
+            .insert("base:entity/create@1.0.0".to_owned(), base_operation);
         let mut overlay = component("entity", "create", 'b');
         overlay.scope.package_id = "overlay".to_owned();
         overlay.scope.package_version = "2.0.0".to_owned();
-        overlay.registered_operation = Some("overlay@2.0.0::entity.create".to_owned());
+        let mut overlay_operation = overlay
+            .operations
+            .remove("create")
+            .expect("overlay operation");
+        overlay_operation.registered_operation = Some("overlay:entity/create@2.0.0".to_owned());
+        overlay
+            .operations
+            .insert("overlay:entity/create@2.0.0".to_owned(), overlay_operation);
         let graph_hash = document.wiring_hash().as_str().to_owned();
 
         let resolved = lower_resolved_wiring(
@@ -1133,15 +1136,19 @@ mod tests {
             },
             component: "transform".to_owned(),
             interface_version: "0.1.0".to_owned(),
-            operation: "map".to_owned(),
-            registered_operation: None,
+            operations: BTreeMap::from([(
+                "map".to_owned(),
+                AdmittedComponentOperation {
+                    registered_operation: None,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
             component_digest: format!("sha256:{}", "a".repeat(64)),
             imports: imports.iter().map(|name| (*name).to_owned()).collect(),
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
             effects: Vec::new(),
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
         }
     }
 

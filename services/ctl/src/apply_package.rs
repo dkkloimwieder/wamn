@@ -1519,7 +1519,6 @@ mod tests {
         });
         document["components"] = serde_json::json!({
             "quality_create_inspection": {
-                "operations": ["quality.create_inspection"],
                 "connections": ["postgres"]
             }
         });

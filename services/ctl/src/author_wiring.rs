@@ -529,15 +529,19 @@ mod tests {
             scope: scope(),
             component: component.to_owned(),
             interface_version: "0.1".to_owned(),
-            operation: "call".to_owned(),
-            registered_operation: None,
+            operations: BTreeMap::from([(
+                "call".to_owned(),
+                wamn_catalog::AdmittedComponentOperation {
+                    registered_operation: None,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
             component_digest: format!("sha256:{}", "1".repeat(64)),
             imports: Vec::new(),
             imports_fingerprint: format!("sha256:{}", "6".repeat(64)),
             effects: Vec::new(),
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
         }
     }
 

@@ -404,53 +404,8 @@
     },
     {
       "workspace": "components",
-      "name": "receiving-purchase-order-get",
-      "manifest_path": "components/application/receiving/purchase_order_get/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "receiving",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
-      "name": "receiving-purchase-order-query",
-      "manifest_path": "components/application/receiving/purchase_order_query/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "receiving",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
-      "name": "receiving-purchase-order-update",
-      "manifest_path": "components/application/receiving/purchase_order_update/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "receiving",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
-      "name": "receiving-receipt-get",
-      "manifest_path": "components/application/receiving/receipt_get/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "receiving",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
-      "name": "receiving-receipt-query",
-      "manifest_path": "components/application/receiving/receipt_query/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "receiving",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
-      "name": "receiving-receiving-record-receipt",
-      "manifest_path": "components/application/receiving/receiving_record_receipt/Cargo.toml",
+      "name": "receiving",
+      "manifest_path": "components/application/receiving/Cargo.toml",
       "role": "component",
       "target_class": "guest",
       "bounded_context": "receiving",

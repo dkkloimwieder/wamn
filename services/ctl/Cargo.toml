@@ -71,5 +71,10 @@ wamn-runtime = { workspace = true }
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and its live gate share.
 wamn-run-state = { workspace = true }
+
+[dev-dependencies]
+wit-component = { version = "=0.252.0", features = ["dummy-module"] }
+wit-parser = "=0.252.0"
+
 [lints]
 workspace = true

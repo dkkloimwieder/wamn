@@ -1,1 +1,1 @@
-{"automatic_retry":false,"grant":"wamn_receiving@1.0.0::receipt.query","operation":"wamn_receiving@1.0.0::receipt.query","permission_token":"receipt.query","result":"page","sql_files":["generated/sql/receipt/query_created_at_ascending.sql"],"transaction":"implicit"}
+{"automatic_retry":false,"grant":"wamn-receiving:receipt/query@1.0.0","operation":"wamn-receiving:receipt/query@1.0.0","permission_token":"receipt.query","result":"page","sql_files":["generated/sql/receipt/query_created_at_ascending.sql"],"transaction":"implicit"}

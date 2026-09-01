@@ -28,6 +28,7 @@ mod tests {
     use wash_runtime::plugin::{HostPlugin, WitInterfaces};
     use wash_runtime::types::LocalResources;
     use wash_runtime::wasmtime::Store;
+    use wash_runtime::wasmtime::component::types::{ComponentInstance, ComponentItem, Type};
     use wash_runtime::wasmtime::component::{Component, Linker};
     use wasmtime_wasi_http::p2::WasiHttpView as _;
     use wasmtime_wasi_http::p2::bindings::Proxy;
@@ -39,14 +40,26 @@ mod tests {
     };
 
     const SENTINEL_KEY: &str = "WAMN_STD_VIRTUALIZATION_SENTINEL";
-    const RECEIVING_ARTIFACTS: [(&str, &str); 6] = [
-        ("purchase_order_get", "purchase_order_get.wasm"),
-        ("purchase_order_query", "purchase_order_query.wasm"),
-        ("purchase_order_update", "purchase_order_update.wasm"),
-        ("receipt_get", "receipt_get.wasm"),
-        ("receipt_query", "receipt_query.wasm"),
-        ("receiving_record_receipt", "receiving_record_receipt.wasm"),
+    const RECEIVING_EXPORTS: [&str; 6] = [
+        "wamn-receiving:purchase-order/get@1.0.0",
+        "wamn-receiving:purchase-order/query@1.0.0",
+        "wamn-receiving:purchase-order/update@1.0.0",
+        "wamn-receiving:receipt/get@1.0.0",
+        "wamn-receiving:receipt/query@1.0.0",
+        "wamn-receiving:receiving/record-receipt@1.0.0",
     ];
+    const HANDLER_RUN_SHAPE: &str = concat!(
+        "run(ctx:record{wiring-id:string,wiring-version:u32,node-id:string,",
+        "delivery-id:string,input-port:option<string>,occurrence:u32,",
+        "traceparent:option<string>,tracestate:option<string>,",
+        "deadline-ms:option<u64>,config:string},input:string)->(",
+        "result<record{payload:string,port:option<string>},",
+        "variant{retryable:record{message:string,code:option<string>},",
+        "rate-limited:record{detail:record{message:string,code:option<string>},",
+        "retry-after-ms:option<u64>},terminal:record{message:string,",
+        "code:option<string>},invalid-input:record{message:string,",
+        "code:option<string>},cancelled}>)"
+    );
 
     fn required(key: &str) -> anyhow::Result<String> {
         std::env::var(key)
@@ -66,6 +79,156 @@ mod tests {
             .map(wamn_component_policy::import_pkg)
             .map(str::to_owned)
             .collect())
+    }
+
+    fn type_shape(ty: &Type) -> String {
+        match ty {
+            Type::Bool => "bool".to_owned(),
+            Type::S8 => "s8".to_owned(),
+            Type::U8 => "u8".to_owned(),
+            Type::S16 => "s16".to_owned(),
+            Type::U16 => "u16".to_owned(),
+            Type::S32 => "s32".to_owned(),
+            Type::U32 => "u32".to_owned(),
+            Type::S64 => "s64".to_owned(),
+            Type::U64 => "u64".to_owned(),
+            Type::Float32 => "float32".to_owned(),
+            Type::Float64 => "float64".to_owned(),
+            Type::Char => "char".to_owned(),
+            Type::String => "string".to_owned(),
+            Type::List(list) => format!("list<{}>", type_shape(&list.ty())),
+            Type::Map(map) => format!(
+                "map<{},{}>",
+                type_shape(&map.key()),
+                type_shape(&map.value())
+            ),
+            Type::Record(record) => format!(
+                "record{{{}}}",
+                record
+                    .fields()
+                    .map(|field| format!("{}:{}", field.name, type_shape(&field.ty)))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Type::Tuple(tuple) => format!(
+                "tuple<{}>",
+                tuple
+                    .types()
+                    .map(|ty| type_shape(&ty))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Type::Variant(variant) => format!(
+                "variant{{{}}}",
+                variant
+                    .cases()
+                    .map(|case| match case.ty {
+                        Some(ty) => format!("{}:{}", case.name, type_shape(&ty)),
+                        None => case.name.to_owned(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Type::Enum(enumeration) => format!(
+                "enum{{{}}}",
+                enumeration.names().collect::<Vec<_>>().join(",")
+            ),
+            Type::Option(option) => format!("option<{}>", type_shape(&option.ty())),
+            Type::Result(result) => format!(
+                "result<{},{}>",
+                result
+                    .ok()
+                    .as_ref()
+                    .map_or_else(|| "_".to_owned(), type_shape),
+                result
+                    .err()
+                    .as_ref()
+                    .map_or_else(|| "_".to_owned(), type_shape)
+            ),
+            Type::Flags(flags) => {
+                format!("flags{{{}}}", flags.names().collect::<Vec<_>>().join(","))
+            }
+            Type::Own(_) => "own<resource>".to_owned(),
+            Type::Borrow(_) => "borrow<resource>".to_owned(),
+            Type::Future(future) => format!(
+                "future<{}>",
+                future
+                    .ty()
+                    .as_ref()
+                    .map_or_else(|| "_".to_owned(), type_shape)
+            ),
+            Type::Stream(stream) => format!(
+                "stream<{}>",
+                stream
+                    .ty()
+                    .as_ref()
+                    .map_or_else(|| "_".to_owned(), type_shape)
+            ),
+            Type::ErrorContext => "error-context".to_owned(),
+        }
+    }
+
+    fn run_shape(
+        engine: &wash_runtime::wasmtime::Engine,
+        instance: &ComponentInstance,
+        operation: &str,
+    ) -> anyhow::Result<String> {
+        let exports = instance.exports(engine).collect::<Vec<_>>();
+        let export_names = exports
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<BTreeSet<_>>();
+        ensure!(
+            export_names
+                == BTreeSet::from(["emission", "json", "node-context", "node-error", "run"]),
+            "Receiving operation {operation:?} exports {export_names:?}, not the pinned handler members"
+        );
+        let (_, item) = exports
+            .into_iter()
+            .find(|(name, _)| *name == "run")
+            .expect("the exact export-name check found run");
+        let ComponentItem::ComponentFunc(run) = &item.ty else {
+            anyhow::bail!("Receiving operation {operation:?} run is not a component function");
+        };
+        ensure!(
+            !run.async_(),
+            "Receiving operation {operation:?} run unexpectedly uses the async ABI"
+        );
+        let params = run
+            .params()
+            .map(|(name, ty)| format!("{name}:{}", type_shape(&ty)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let results = run
+            .results()
+            .map(|ty| type_shape(&ty))
+            .collect::<Vec<_>>()
+            .join(",");
+        Ok(format!("run({params})->({results})"))
+    }
+
+    fn operation_exports(
+        engine: &wash_runtime::engine::Engine,
+        component_bytes: &[u8],
+        label: &str,
+    ) -> anyhow::Result<BTreeSet<String>> {
+        let component = Component::new(engine.inner(), component_bytes)
+            .map_err(|error| anyhow::anyhow!("compile {label}: {error}"))?;
+        component
+            .component_type()
+            .exports(component.engine())
+            .map(|(name, item)| {
+                let ComponentItem::ComponentInstance(instance) = item.ty else {
+                    anyhow::bail!("{label} export {name:?} is not an interface instance");
+                };
+                let shape = run_shape(component.engine(), &instance, name)?;
+                ensure!(
+                    shape == HANDLER_RUN_SHAPE,
+                    "{label} export {name:?} has run shape {shape:?}, not the pinned handler shape {HANDLER_RUN_SHAPE:?}"
+                );
+                Ok(name.to_owned())
+            })
+            .collect()
     }
 
     async fn connection_origin() -> anyhow::Result<(String, tokio::task::JoinHandle<Vec<u8>>)> {
@@ -98,9 +261,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the built and virtualized std probe and six Receiving artifacts"]
-    fn virtualized_artifacts_have_exact_imports_and_distinct_receiving_digests()
-    -> anyhow::Result<()> {
+    #[ignore = "requires the built and virtualized std probe and Receiving package component"]
+    fn virtualized_artifacts_have_exact_imports_and_receiving_exports() -> anyhow::Result<()> {
         let probe = PathBuf::from(required("WAMN_STD_VIRTUALIZATION_COMPONENT_WASM")?);
         let receiving_directory =
             PathBuf::from(required("WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY")?);
@@ -126,26 +288,24 @@ mod tests {
             "wasi:clocks".to_owned(),
             "wasi:io".to_owned(),
         ]);
-        let mut digests = BTreeSet::new();
-        for (label, file_name) in RECEIVING_ARTIFACTS {
-            let path = receiving_directory.join(file_name);
-            let bytes = std::fs::read(&path)
-                .with_context(|| format!("read Receiving artifact {}", path.display()))?;
-            let packages = import_packages(&engine, &bytes, label)?;
-            ensure!(
-                packages == expected_receiving,
-                "virtualized Receiving artifact {label} imports {packages:?}, not its exact four-package profile"
-            );
-            let digest = wamn_runtime::component_admission::component_digest(&bytes);
-            ensure!(
-                digests.insert(digest.clone()),
-                "virtualized Receiving artifact {label} duplicates digest {digest}"
-            );
-        }
+        let path = receiving_directory.join("receiving.wasm");
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("read Receiving artifact {}", path.display()))?;
+        let packages = import_packages(&engine, &bytes, "receiving")?;
         ensure!(
-            digests.len() == RECEIVING_ARTIFACTS.len(),
-            "expected six distinct Receiving artifact digests, observed {}",
-            digests.len()
+            packages == expected_receiving,
+            "virtualized Receiving artifact imports {packages:?}, not its exact four-package profile"
+        );
+        let exports = operation_exports(&engine, &bytes, "receiving")?;
+        let expected_exports = RECEIVING_EXPORTS.map(str::to_owned).into_iter().collect();
+        ensure!(
+            exports == expected_exports,
+            "virtualized Receiving artifact exports {exports:?}, not {expected_exports:?}"
+        );
+        println!(
+            "receiving-component-bytes={} digest={}",
+            bytes.len(),
+            wamn_runtime::component_admission::component_digest(&bytes)
         );
         Ok(())
     }

@@ -345,12 +345,12 @@ DO $seed$ DECLARE tenant text; package text; release int; BEGIN
     VALUES (tenant, 'dev', release);
     INSERT INTO catalog.component_library
       (tenant_id, package_id, package_version, component, interface_version,
-       operation, component_digest, projection_hash, imports, imports_fingerprint,
-       effects, input_ports, output_ports, parameters)
+       operations, component_digest, projection_hash, imports, imports_fingerprint, effects)
     VALUES
-      (tenant, package, '1.0.0', 'worker', '0.1.0', 'run',
+      (tenant, package, '1.0.0', 'worker', '0.1.0',
+       '{{"run":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}',
        'sha256:' || repeat('b', 64), 'sha256:' || repeat('c', 64), '[]',
-       'sha256:' || repeat('d', 64), '[]', '[]', '[]', '[]');
+       'sha256:' || repeat('d', 64), '[]');
     INSERT INTO catalog.connection_requirements
       (tenant_id, component_digest, store_alias, requirement_json, requirement_hash)
     VALUES

@@ -45,8 +45,8 @@ pub struct WiringParameterFact {
 /// This is deliberately a consumer projection, not a persistence contract.
 /// `component_digest` becomes the router's instance-pool key; the logical name,
 /// interface version and operation select one admitted digest before the
-/// executable graph is built. The digest then identifies the uniform handler;
-/// operation is not carried into the router call.
+/// executable graph is built. The digest identifies the shared bytes and the
+/// operation selects the exact exported handler instance inside those bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WiringOperationFact {
     pub component: String,
@@ -73,37 +73,41 @@ pub struct ScopedWiringOperationFacts<'a> {
 /// wiring, not component admission. Typed schemas remain available on the
 /// source fact for the semantic gate and are erased only after that gate has
 /// established exact digest compatibility.
-pub fn project_component_operation(
+pub fn project_component_operations(
     component: &wamn_catalog::AdmittedComponent,
-) -> WiringOperationFact {
-    WiringOperationFact {
-        component: component.component.clone(),
-        interface_version: component.interface_version.clone(),
-        operation: component.operation.clone(),
-        component_digest: component.component_digest.clone(),
-        input_ports: component
-            .input_ports
-            .iter()
-            .map(|port| port.name.clone())
-            .collect(),
-        output_ports: component
-            .output_ports
-            .iter()
-            .map(|port| port.name.clone())
-            .collect(),
-        parameters: component
-            .parameters
-            .iter()
-            .map(|parameter| {
-                (
-                    parameter.name.clone(),
-                    WiringParameterFact {
-                        required: parameter.required,
-                    },
-                )
-            })
-            .collect(),
-    }
+) -> Vec<WiringOperationFact> {
+    component
+        .operations
+        .iter()
+        .map(|(operation_name, operation)| WiringOperationFact {
+            component: component.component.clone(),
+            interface_version: component.interface_version.clone(),
+            operation: operation_name.clone(),
+            component_digest: component.component_digest.clone(),
+            input_ports: operation
+                .input_ports
+                .iter()
+                .map(|port| port.name.clone())
+                .collect(),
+            output_ports: operation
+                .output_ports
+                .iter()
+                .map(|port| port.name.clone())
+                .collect(),
+            parameters: operation
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    (
+                        parameter.name.clone(),
+                        WiringParameterFact {
+                            required: parameter.required,
+                        },
+                    )
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// Stable classification for a refused catalog-to-router lowering.
@@ -194,6 +198,7 @@ pub fn lower_active_wiring(
         nodes.push(RouterNode {
             id: node_id.clone(),
             component: fact.component_digest.clone(),
+            operation: fact.operation.clone(),
             config: Value::Object(Map::from_iter(node.params.clone())),
             // Connection generations are host-injected authority. Neither the
             // wiring nor a component-library operation fact owns a binding.

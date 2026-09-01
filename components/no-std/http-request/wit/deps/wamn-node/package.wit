@@ -2,11 +2,9 @@ package wamn:node@0.1.0;
 
 /// The typed operation seam the host router invokes once per graph node.
 ///
-/// STATUS: LIVE 0.1.0 (wamn-0h0g.16.2; versioned by wamn-0h0g.16.10). This
-/// package SUPERSEDES the archived `wamn:node@0.1.0`
-/// (`docs/archive/contracts/wamn-node.wit`) WHOLESALE — it replaces that
-/// contract rather than evolving it, against the execution model of
-/// `docs/exe-model.md` rev 4. The two shapes differ: this revision drops the
+/// STATUS: LIVE 0.1.0 (wamn-0h0g.16.2; versioned by wamn-0h0g.16.10). This is
+/// the repository's sole definition of `wamn:node@0.1.0`, against the execution
+/// model of `docs/exe-model.md` rev 4. This revision drops the
 /// payload store, the run/flow/attempt identity, and the durable run context,
 /// and replaces `run-context` with `node-context`.
 ///
@@ -35,9 +33,9 @@ package wamn:node@0.1.0;
 /// and classify a `node-error` into retry, throttle, error edge, dead-letter, or
 /// non-failure cancellation.
 /// Effective-release admission maps each package-scoped logical operation in
-/// the exact release composition to one distinguishable digest before this
-/// boundary; the digest selects the component, while every component exports
-/// this same static `handler.run`.
+/// the exact release composition to one digest plus one exact exported handler
+/// instance. The router selects that operation-named instance and invokes its
+/// unchanged `run` function; several operations may therefore share bytes.
 interface types {
   /// JSON-encoded string. A string, not a structured value, so every guest
   /// language reaches it through its own stock codec; the router never inspects
@@ -151,18 +149,19 @@ interface types {
   }
 }
 
-/// The single required export. A node is a pure function of (ctx, input, granted
-/// host imports); that purity is what makes a pooled instance safely reusable
-/// across every wiring and tenant sharing the component's digest.
+/// The structural handler contract. Each admitted operation exports an
+/// operation-named interface with this exact `run` shape; the operation token
+/// selects that instance. A node is a pure function of (ctx, input, granted
+/// host imports), so a pooled instance remains safely reusable.
 interface handler {
   use types.{json, node-context, emission, node-error};
 
   run: func(ctx: node-context, input: json) -> result<emission, node-error>;
 }
 
-/// The only world: a node over inline JSON that imports nothing. Effect
-/// authority is granted per workload against bound connection generations, so it
-/// is composed onto a guest at build time rather than enumerated here.
+/// Reference world pinning the handler shape over inline JSON. Production
+/// components may export several operation-named interfaces with that shape.
+/// Effect authority is composed onto a guest rather than enumerated here.
 world node {
   export handler;
 }

@@ -67,15 +67,15 @@ A client overlay may contain several modules/domains and several component artif
 Canonical operation identity:
 
 ```text
-<package_id>@<package_version>::<local_operation>
+<package-id-kebab>:<module-kebab>/<action-kebab>@<package-version>
 ```
 
 Examples:
 
 ```text
-wamn_receiving@1.1.0::purchase_order.get
-wamn_receiving@1.1.0::receiving.record_receipt
-client_acme_receiving@3.0.0::receiving.record_receipt
+wamn-receiving:purchase-order/get@1.1.0
+wamn-receiving:receiving/record-receipt@1.1.0
+client-acme-receiving:receiving/record-receipt@3.0.0
 ```
 
 The platform and client may register the same local operation because the package coordinates are distinct. A route, wiring, generated client, or registered caller binds an exact package and operation identity.
@@ -372,7 +372,7 @@ Mutation of a platform-owned field requires an explicitly published platform ope
 Generated input contracts and SQL enforce this. A client operation such as:
 
 ```text
-client_acme_receiving@3.0.0::purchase_order.update
+client-acme-receiving:purchase-order/update@3.0.0
 ```
 
 may expose:
@@ -570,8 +570,8 @@ List and projection results have hard row and byte limits. Large import/export a
 A registered command is a coarse operation such as:
 
 ```text
-wamn_receiving@1.1.0::receiving.record_receipt
-client_acme_receiving@3.0.0::quality.approve_inspection
+wamn-receiving:receiving/record-receipt@1.1.0
+client-acme-receiving:quality/approve-inspection@3.0.0
 ```
 
 The registered adapter accepts an array and executes each input item independently. One `record_receipt` item owns one database transaction.
@@ -648,11 +648,11 @@ A client overlay that calls a base registered operation depends on it through an
 ```text
 effective_release_r17
   requirement: base_receiving::receiving.record_receipt
-  implementation: wamn_receiving@1.0.0::receiving.record_receipt
+  implementation: wamn-receiving:receiving/record-receipt@1.0.0
 
 effective_release_r18
   requirement: base_receiving::receiving.record_receipt
-  implementation: wamn_receiving@1.1.0::receiving.record_receipt
+  implementation: wamn-receiving:receiving/record-receipt@1.1.0
 ```
 
 No independent `@0.1` operation-version axis is introduced in the POC. If the candidate base no longer satisfies the stored contract requirement, the client overlay is incompatible and must publish a new version.
@@ -720,7 +720,7 @@ The platform package’s operation contracts do not silently acquire the field.
 The generated client mutation surface over the shared relation includes only client-owned fields. Platform-owned receipt behavior remains behind the platform command:
 
 ```text
-wamn_receiving@1.0.0::receiving.record_receipt
+wamn-receiving:receiving/record-receipt@1.0.0
 ```
 
 Client pre-processing may call that registered operation through a BFF. Client post-processing runs after commit through the existing event plane. Neither path rewrites the platform command.
@@ -920,7 +920,7 @@ A generated TypeScript/npm client provides the JavaScript equivalent of canonica
 Canonical operation:
 
 ```text
-wamn_receiving@1.1.0::purchase_order.get
+wamn-receiving:purchase-order/get@1.1.0
 ```
 
 Frontend use:

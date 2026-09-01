@@ -14,11 +14,11 @@ use clap::Args;
 use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentParameter, AdmittedComponentPort,
-    ArtifactHash, ComponentPackageScope, EffectiveReleaseId, ManifestDigest, PackageCoordinate,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
-    ServingRegistration, ServingRelease, ServingWiring, WiringDocument,
-    validate_resolved_wiring_compatibility,
+    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, ArtifactHash,
+    ComponentPackageScope, EffectiveReleaseId, ManifestDigest, PackageCoordinate,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
+    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRelease, ServingWiring,
+    WiringDocument, validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_schema_control::{
@@ -45,9 +45,8 @@ SELECT package_id, package_version \
  WHERE tenant_id = $1 AND effective_release_id = $2 \
  ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\" FOR SHARE";
 const SELECT_COMPONENT_FACTS_SQL: &str = "\
-SELECT component, interface_version, operation, registered_operation, component_digest, \
-       imports::text, imports_fingerprint, input_ports::text, output_ports::text, \
-       parameters::text, effects::text \
+SELECT component, interface_version, operations::text, component_digest, \
+       imports::text, imports_fingerprint, effects::text \
   FROM catalog.component_library \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
  ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\" FOR SHARE";
@@ -1050,28 +1049,16 @@ pub async fn load_component_facts(
                 scope: scope.clone(),
                 component: component.clone(),
                 interface_version: row.get(1),
-                operation: row.get(2),
-                registered_operation: row.get(3),
-                component_digest: row.get(4),
-                imports: decode_json(row.get(5), &component, "imports")?,
-                imports_fingerprint: row.get(6),
-                input_ports: decode_json::<Vec<AdmittedComponentPort>>(
-                    row.get(7),
+                operations: decode_json::<BTreeMap<String, AdmittedComponentOperation>>(
+                    row.get(2),
                     &component,
-                    "input-ports",
+                    "operations",
                 )?,
-                output_ports: decode_json::<Vec<AdmittedComponentPort>>(
-                    row.get(8),
-                    &component,
-                    "output-ports",
-                )?,
-                parameters: decode_json::<Vec<AdmittedComponentParameter>>(
-                    row.get(9),
-                    &component,
-                    "parameters",
-                )?,
+                component_digest: row.get(3),
+                imports: decode_json(row.get(4), &component, "imports")?,
+                imports_fingerprint: row.get(5),
                 effects: decode_json::<Vec<AdmittedComponentEffect>>(
-                    row.get(10),
+                    row.get(6),
                     &component,
                     "effects",
                 )?,
@@ -1161,14 +1148,27 @@ fn resolve_wiring_components(
                         ),
                     ));
                 }
+                let dependency_package = wamn_schema_generator::PackageIdentity {
+                    id: requirement.package.clone(),
+                    version: requirement.version.clone(),
+                    predecessor_version: None,
+                };
+                let registered_operation = wamn_schema_generator::canonical_operation_identity(
+                    &dependency_package,
+                    &dependency.operation,
+                )
+                .map_err(|error| {
+                    MintManifestError::with_source(
+                        MintManifestErrorKind::OperationDependency,
+                        format!("wiring node {node_id:?} dependency operation is not canonical"),
+                        error,
+                    )
+                })?;
                 (
                     requirement.package.as_str(),
                     requirement.version.as_str(),
                     Some(requirement.digest.as_str()),
-                    Some(format!(
-                        "{}@{}::{}",
-                        requirement.package, requirement.version, dependency.operation
-                    )),
+                    Some(registered_operation),
                 )
             }
         };
@@ -1185,11 +1185,12 @@ fn resolve_wiring_components(
         let mut matches = facts.iter().filter(|fact| {
             fact.component == node.component
                 && fact.interface_version == node.interface_version
-                && fact.operation == node.operation
                 && digest.is_none_or(|digest| fact.component_digest == digest)
-                && registered_operation
-                    .as_deref()
-                    .is_none_or(|operation| fact.registered_operation.as_deref() == Some(operation))
+                && fact.operation(&node.operation).is_some_and(|declared| {
+                    registered_operation.as_deref().is_none_or(|operation| {
+                        declared.registered_operation.as_deref() == Some(operation)
+                    })
+                })
         });
         let Some(component) = matches.next() else {
             let kind = if node.operation_dependency.is_some() {
@@ -1366,7 +1367,8 @@ async fn resolve_wiring(
     validate_anonymous_wiring_closure(request.attachments, target, &document, &resolved)?;
     let entry_operation = resolved
         .get(&document.entry)
-        .and_then(|component| component.registered_operation.clone());
+        .and_then(|component| component.operation(&document.nodes[&document.entry].operation))
+        .and_then(|operation| operation.registered_operation.clone());
     wirings.insert(ServingWiring {
         package_id: target.package_id.clone(),
         wiring_id: target.wiring_id.clone(),
@@ -1389,7 +1391,18 @@ async fn resolve_wiring(
             component: fact.component.clone(),
             interface_version: fact.interface_version.clone(),
             digest,
-            registered_operation: fact.registered_operation.clone(),
+            operations: fact
+                .operations
+                .iter()
+                .map(|(name, operation)| {
+                    (
+                        name.clone(),
+                        ServingComponentOperation {
+                            registered_operation: operation.registered_operation.clone(),
+                        },
+                    )
+                })
+                .collect(),
         });
         membership.insert(ReleaseComponentMembership {
             wiring_package_id: target.package_id.clone(),
@@ -1438,7 +1451,10 @@ fn validate_anonymous_wiring_closure(
             let fact = component_facts
                 .get(node_id)
                 .expect("wiring compatibility resolved every reachable node");
-            if let Some(operation) = fact.registered_operation.as_deref() {
+            let operation = fact
+                .operation(&document.nodes[node_id].operation)
+                .expect("wiring compatibility resolved every reachable operation");
+            if let Some(operation) = operation.registered_operation.as_deref() {
                 return Err(MintManifestError::new(
                     MintManifestErrorKind::UnauthenticatedRegisteredOperation,
                     format!(
@@ -1640,7 +1656,7 @@ mod tests {
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
             auth_policy: serde_json::json!({"mode": "pat"}),
-            registered_operation: Some("wamn_receiving@1.0.0::receipt.get".to_owned()),
+            registered_operation: Some("wamn-receiving:receipt/get@1.0.0".to_owned()),
         };
         let attachments = BTreeMap::from([("receiving-http".to_owned(), attachment.clone())]);
         validate_attachment_definition_hashes(&attachments)
@@ -1673,7 +1689,7 @@ mod tests {
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
             auth_policy: serde_json::json!({"mode": "pat"}),
-            registered_operation: Some("wamn_receiving@1.0.0::receipt.get".to_owned()),
+            registered_operation: Some("wamn-receiving:receipt/get@1.0.0".to_owned()),
         };
         let authored = BTreeMap::from([("receiving-http".to_owned(), attachment)]);
 
@@ -1762,6 +1778,7 @@ mod tests {
     }
 
     fn closure_component(component: &str, registered_operation: Option<&str>) -> AdmittedComponent {
+        let operation = registered_operation.unwrap_or("run");
         AdmittedComponent {
             scope: ComponentPackageScope {
                 tenant_id: "tenant-a".to_owned(),
@@ -1770,15 +1787,19 @@ mod tests {
             },
             component: component.to_owned(),
             interface_version: "0.1.0".to_owned(),
-            operation: "run".to_owned(),
-            registered_operation: registered_operation.map(str::to_owned),
+            operations: BTreeMap::from([(
+                operation.to_owned(),
+                AdmittedComponentOperation {
+                    registered_operation: registered_operation.map(str::to_owned),
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
             component_digest: DIGEST.to_owned(),
             imports: Vec::new(),
             imports_fingerprint: DIGEST.to_owned(),
             effects: Vec::new(),
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
         }
     }
 
@@ -1813,7 +1834,7 @@ mod tests {
                     wamn_catalog::WiringNode {
                         component: "registered-component".to_owned(),
                         interface_version: "0.1.0".to_owned(),
-                        operation: "run".to_owned(),
+                        operation: "base:purchase-order/get@1.0.0".to_owned(),
                         operation_dependency: None,
                         params: BTreeMap::new(),
                         terminal: None,
@@ -1884,8 +1905,7 @@ mod tests {
             }
         });
         document["components"] = serde_json::json!({
-            "quality_create_inspection": {
-                "operations": ["quality.create_inspection"],
+            "receiving": {
                 "connections": ["postgres"]
             }
         });
@@ -1896,7 +1916,7 @@ mod tests {
     fn serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring() {
         let manifest = handler_manifest();
         let manifests = BTreeMap::from([("client_acme_receiving".to_owned(), manifest)]);
-        let operation = "client_acme_receiving@3.0.0::quality.create_inspection".to_owned();
+        let operation = "client-acme-receiving:quality/create-inspection@3.0.0".to_owned();
         let target = ReleaseWiringTarget {
             package_id: "client_acme_receiving".to_owned(),
             package_version: "3.0.0".to_owned(),
@@ -1931,7 +1951,7 @@ mod tests {
                 wamn_catalog::WiringNode {
                     component: "registered-component".to_owned(),
                     interface_version: "0.1.0".to_owned(),
-                    operation: "run".to_owned(),
+                    operation: "base:receiving/record-receipt@1.0.0".to_owned(),
                     operation_dependency: Some(wamn_catalog::WiringOperationDependency {
                         alias: "base".to_owned(),
                         operation: "receiving.record_receipt".to_owned(),
@@ -1955,12 +1975,12 @@ mod tests {
         };
         let mut base = closure_component(
             "registered-component",
-            Some("base@1.0.0::receiving.record_receipt"),
+            Some("base:receiving/record-receipt@1.0.0"),
         );
         base.scope.package_id = "base".to_owned();
         let mut local_same_name = closure_component(
             "registered-component",
-            Some("wamn_receiving@1.0.0::receiving.record_receipt"),
+            Some("wamn-receiving:receiving/record-receipt@1.0.0"),
         );
         local_same_name.component_digest = format!("sha256:{}", "c".repeat(64));
         let facts = BTreeMap::from([
@@ -1992,7 +2012,7 @@ mod tests {
         };
         let mut base = closure_component(
             "registered-component",
-            Some("base@1.0.0::receiving.record_receipt"),
+            Some("base:receiving/record-receipt@1.0.0"),
         );
         base.scope.package_id = "base".to_owned();
         let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base])]);
@@ -2044,7 +2064,7 @@ mod tests {
                 "registered".to_owned(),
                 closure_component(
                     "registered-component",
-                    Some("base@1.0.0::purchase_order.get"),
+                    Some("base:purchase-order/get@1.0.0"),
                 ),
             ),
         ]);
@@ -2062,7 +2082,7 @@ mod tests {
         assert_eq!(
             error.detail(),
             "attachment \"receiving-http\" reaches registered operation \
-             \"base@1.0.0::purchase_order.get\" at node \"registered\"; set \
+             \"base:purchase-order/get@1.0.0\" at node \"registered\"; set \
              auth-policy mode = \"pat\""
         );
 

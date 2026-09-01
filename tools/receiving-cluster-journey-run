@@ -266,8 +266,7 @@ run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
 
 flow_http_wasm=$cargo_target_dir/wasm32-wasip2/debug/http_route.wasm
 component_directory=$cargo_target_dir/virtualized/std-empty-environment
-components=(purchase_order_get purchase_order_query purchase_order_update receipt_get \
-  receipt_query receiving_record_receipt)
+components=(receiving)
 for component in "${components[@]}"; do
   [[ -s "$component_directory/$component.wasm" ]] || {
     echo "missing virtualized Receiving component: $component" >&2

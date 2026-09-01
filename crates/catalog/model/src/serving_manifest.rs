@@ -18,8 +18,8 @@ use serde_json::Value;
 
 use crate::{
     ArtifactHash, AttachmentKind, CatalogIdentityError, DefinitionHash, EffectiveReleaseId,
-    HASH_PREFIX, ManifestDigest, PackageCoordinate, package::validate_canonical_operation,
-    validate_digest, validate_text,
+    HASH_PREFIX, ManifestDigest, PackageCoordinate,
+    package::validate_canonical_operation_for_package, validate_digest, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -73,9 +73,16 @@ pub struct ServingRelease {
 
 /// One immutable component artifact in the release closure.
 ///
-/// The full tuple is identity: one component/interface pair may legitimately
-/// need more than one digest when different admitted operations are packaged as
-/// distinct single-operation artifacts.
+/// One operation exported by a release component.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ServingComponentOperation {
+    /// Explicit application permission identity. Palette exports carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
+}
+
+/// One immutable component artifact in the release closure.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponent {
@@ -83,9 +90,7 @@ pub struct ServingComponent {
     pub component: String,
     pub interface_version: String,
     pub digest: ArtifactHash,
-    /// Registered application identity pinned with the admitted component.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<String>,
+    pub operations: BTreeMap<String, ServingComponentOperation>,
 }
 
 /// One immutable wiring definition in the release closure.
@@ -257,11 +262,27 @@ impl ServingManifest {
             validate_package_member(&package_versions, &component.package_id)?;
             validate_text(&component.component, "component")?;
             validate_text(&component.interface_version, "interface-version")?;
-            validate_registered_operation(
-                &package_versions,
-                &component.package_id,
-                component.registered_operation.as_deref(),
-            )?;
+            if component.operations.is_empty() {
+                return invalid("a serving component must export at least one operation");
+            }
+            for (export, operation) in &component.operations {
+                validate_text(export, "component-operation")?;
+                validate_registered_operation(
+                    &package_versions,
+                    &component.package_id,
+                    operation.registered_operation.as_deref(),
+                )?;
+                if operation
+                    .registered_operation
+                    .as_deref()
+                    .is_some_and(|registered| registered != export)
+                {
+                    return invalid(format!(
+                        "component export {export:?} and registered operation {:?} differ",
+                        operation.registered_operation
+                    ));
+                }
+            }
         }
 
         let mut targets = BTreeSet::new();
@@ -418,17 +439,10 @@ fn validate_registered_operation(
     let Some(operation) = operation else {
         return Ok(());
     };
-    validate_canonical_operation(operation)?;
     let package_version = package_versions
         .get(package_id)
         .expect("package membership was validated before operation identity");
-    let expected_prefix = format!("{package_id}@{package_version}::");
-    if !operation.starts_with(&expected_prefix) {
-        return invalid(format!(
-            "registered operation {operation:?} does not belong to selected package {package_id:?} version {package_version:?}"
-        ));
-    }
-    Ok(())
+    validate_canonical_operation_for_package(operation, package_id, package_version)
 }
 
 fn contains_retired_identity(value: &Value) -> bool {
@@ -507,14 +521,24 @@ mod tests {
                 component: "transform".into(),
                 interface_version: "0.1".into(),
                 digest: artifact_hash(COMPONENT_B),
-                registered_operation: None,
+                operations: BTreeMap::from([(
+                    "map".into(),
+                    ServingComponentOperation {
+                        registered_operation: None,
+                    },
+                )]),
             },
             ServingComponent {
                 package_id: "base".into(),
                 component: "http-request".into(),
                 interface_version: "0.1".into(),
                 digest: artifact_hash(COMPONENT_A),
-                registered_operation: Some("base@1.0.0::purchase_order.get".into()),
+                operations: BTreeMap::from([(
+                    "base:purchase-order/get@1.0.0".into(),
+                    ServingComponentOperation {
+                        registered_operation: Some("base:purchase-order/get@1.0.0".into()),
+                    },
+                )]),
             },
         ])
     }
@@ -549,7 +573,7 @@ mod tests {
                 "route": {"host": "*", "path": "/orders", "method": "POST"}
             }),
             auth_policy: serde_json::json!({"mode": "pat"}),
-            registered_operation: Some("base@1.0.0::purchase_order.get".into()),
+            registered_operation: Some("base:purchase-order/get@1.0.0".into()),
         }
     }
 
@@ -642,15 +666,15 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("<package-id>@<package-version>::<local-operation>")
+                .contains("<package-id>:<module>/<action>@<package-version>")
         );
     }
 
     #[test]
     fn registered_operations_match_the_containing_package_coordinate() {
         for operation in [
-            "overlay@3.0.0::purchase_order.get",
-            "base@2.0.0::purchase_order.get",
+            "overlay:purchase-order/get@3.0.0",
+            "base:purchase-order/get@2.0.0",
         ] {
             let mut mismatched = attachment();
             mismatched.registered_operation = Some(operation.into());
@@ -669,7 +693,12 @@ mod tests {
         let mut component = mismatched_components
             .pop_first()
             .expect("fixture has a component");
-        component.registered_operation = Some("overlay@3.0.0::purchase_order.get".into());
+        let component_operation = component
+            .operations
+            .values_mut()
+            .next()
+            .expect("fixture component has an operation");
+        component_operation.registered_operation = Some("overlay:purchase-order/get@3.0.0".into());
         mismatched_components.insert(component);
         let error = ServingManifest::new(
             release(),

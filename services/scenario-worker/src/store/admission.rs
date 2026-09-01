@@ -43,8 +43,8 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_authoring_model::GateRefusal;
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentParameter, AdmittedComponentPort,
-    ComponentPackageScope, WiringDocument, validate_wiring_compatibility,
+    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope,
+    WiringDocument, validate_wiring_compatibility,
 };
 use wamn_control_provision::{
     MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
@@ -86,9 +86,8 @@ const ADMISSION_SCOPE_SQL: &str =
 /// Read the same complete admitted component facts the compatibility validator
 /// receives on the CLI authoring path.
 const SELECT_COMPONENT_FACTS_SQL: &str = "\
-SELECT component, interface_version, operation, registered_operation, component_digest, \
-       imports::text, imports_fingerprint, input_ports::text, \
-       output_ports::text, parameters::text, effects::text \
+SELECT component, interface_version, operations::text, component_digest, \
+       imports::text, imports_fingerprint, effects::text \
   FROM catalog.component_library \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
  ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\"";
@@ -158,7 +157,7 @@ const SELECT_EFFECTFUL_COMPONENTS_SQL: &str = "WITH node AS ( \
        AND library.package_version = $3 \
        AND library.component = node.component \
        AND library.interface_version = node.interface_version \
-       AND library.operation = node.operation \
+       AND library.operations ? node.operation \
      WHERE jsonb_array_length(library.effects) > 0 \
      ORDER BY 1";
 
@@ -181,7 +180,7 @@ const SELECT_UNRESOLVED_STORE_ALIASES_SQL: &str = "WITH node AS ( \
            AND library.package_version = $3 \
            AND library.component = node.component \
            AND library.interface_version = node.interface_version \
-           AND library.operation = node.operation \
+           AND library.operations ? node.operation \
     ), release_scope AS ( \
         SELECT head.effective_release_id \
           FROM catalog.effective_release_heads AS head \
@@ -502,28 +501,14 @@ impl AdmissionSurface {
                     scope: scope.clone(),
                     component: component.clone(),
                     interface_version: row.get(1),
-                    operation: row.get(2),
-                    registered_operation: row.get(3),
-                    component_digest: row.get(4),
-                    imports: decode_component_json(row.get(5), &component, "imports")?,
-                    imports_fingerprint: row.get(6),
-                    input_ports: decode_component_json::<Vec<AdmittedComponentPort>>(
-                        row.get(7),
-                        &component,
-                        "input-ports",
-                    )?,
-                    output_ports: decode_component_json::<Vec<AdmittedComponentPort>>(
-                        row.get(8),
-                        &component,
-                        "output-ports",
-                    )?,
-                    parameters: decode_component_json::<Vec<AdmittedComponentParameter>>(
-                        row.get(9),
-                        &component,
-                        "parameters",
-                    )?,
+                    operations: decode_component_json::<
+                        std::collections::BTreeMap<String, AdmittedComponentOperation>,
+                    >(row.get(2), &component, "operations")?,
+                    component_digest: row.get(3),
+                    imports: decode_component_json(row.get(4), &component, "imports")?,
+                    imports_fingerprint: row.get(5),
                     effects: decode_component_json::<Vec<AdmittedComponentEffect>>(
-                        row.get(10),
+                        row.get(6),
                         &component,
                         "effects",
                     )?,
@@ -944,7 +929,7 @@ mod tests {
                AND library.package_version = $3 \
                AND library.component = node.component \
                AND library.interface_version = node.interface_version \
-               AND library.operation = node.operation \
+               AND library.operations ? node.operation \
              WHERE jsonb_array_length(library.effects) > 0 \
              ORDER BY 1"
         );
@@ -961,7 +946,7 @@ mod tests {
         for shared in [
             "library.component = node.component",
             "library.interface_version = node.interface_version",
-            "library.operation = node.operation",
+            "library.operations ? node.operation",
             "library.package_version = $3",
         ] {
             assert!(

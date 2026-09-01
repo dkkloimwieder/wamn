@@ -5,8 +5,9 @@ use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, GenerateErrorKind, GeneratedPackage, GenerationInput,
-    GenerationProvenance, OperationVisibility, PackageManifest, corpus_sha256, generate,
-    validate_operation_vocabulary, validate_parity_json,
+    GenerationProvenance, OperationVisibility, PackageManifest, canonical_operation_identity,
+    canonical_operation_prefix, corpus_sha256, generate, validate_operation_vocabulary,
+    validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
@@ -1095,14 +1096,16 @@ fn shared_operation_vocabulary_refuses_noncanonical_coordinates() {
         GenerateErrorKind::InvalidIdentity
     );
 
-    let mut version = manifest();
-    version["package"]["version"] = json!("1.0.0::shadow");
-    assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&version))
-            .expect_err("ambiguous package version was accepted")
-            .kind(),
-        GenerateErrorKind::InvalidIdentity
-    );
+    for ambiguous in ["1.0.0:shadow", "1.0.0/shadow", "1.0.0@shadow"] {
+        let mut version = manifest();
+        version["package"]["version"] = json!(ambiguous);
+        assert_eq!(
+            validate_operation_vocabulary(&parsed_manifest(&version))
+                .expect_err("ambiguous package version was accepted")
+                .kind(),
+            GenerateErrorKind::InvalidIdentity
+        );
+    }
 }
 
 #[test]
@@ -1135,6 +1138,16 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
 
 #[test]
 fn operation_identity_errors_and_constraint_names_are_closed() {
+    let package_manifest = parsed_manifest(&manifest());
+    assert_eq!(
+        canonical_operation_prefix(&package_manifest.package).unwrap(),
+        "wamn-receiving:"
+    );
+    assert_eq!(
+        canonical_operation_identity(&package_manifest.package, "receiving.record_receipt")
+            .unwrap(),
+        "wamn-receiving:receiving/record-receipt@1.0.0"
+    );
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
     let operation = artifact_json(
         &package,
@@ -1143,7 +1156,7 @@ fn operation_identity_errors_and_constraint_names_are_closed() {
     assert_eq!(operation["permission_token"], "purchase_order.update");
     assert_eq!(
         operation["grant"],
-        "wamn_receiving@1.0.0::purchase_order.update"
+        "wamn-receiving:purchase-order/update@1.0.0"
     );
     assert_eq!(operation["automatic_retry"], false);
 

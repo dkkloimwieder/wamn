@@ -292,7 +292,7 @@ fn profile_contract_matches_locked_metadata() {
     }
 
     assert_eq!(root_members.len(), 35);
-    assert_eq!(component_members.len(), 17);
+    assert_eq!(component_members.len(), 12);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -414,12 +414,7 @@ fn profile_contract_matches_locked_metadata() {
             "http-route",
             "http-request",
             "materializer",
-            "receiving-purchase-order-get",
-            "receiving-purchase-order-query",
-            "receiving-purchase-order-update",
-            "receiving-receipt-get",
-            "receiving-receipt-query",
-            "receiving-receiving-record-receipt",
+            "receiving",
             "transform",
         ],
     );
@@ -432,12 +427,7 @@ fn profile_contract_matches_locked_metadata() {
             "http-route",
             "http-request",
             "materializer",
-            "receiving-purchase-order-get",
-            "receiving-purchase-order-query",
-            "receiving-purchase-order-update",
-            "receiving-receipt-get",
-            "receiving-receipt-query",
-            "receiving-receiving-record-receipt",
+            "receiving",
             "sockprobe",
             "sqlx-command",
             "std-virtualization-probe",
@@ -447,8 +437,8 @@ fn profile_contract_matches_locked_metadata() {
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 10);
-    assert_eq!(component_proof.len(), 17);
+    assert_eq!(component_m1.len(), 5);
+    assert_eq!(component_proof.len(), 12);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(

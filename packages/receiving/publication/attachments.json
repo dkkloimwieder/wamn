@@ -26,7 +26,7 @@
       }
     },
     "auth-policy": {"mode": "pat"},
-    "registered-operation": "wamn_receiving@1.0.0::purchase_order.get"
+    "registered-operation": "wamn-receiving:purchase-order/get@1.0.0"
   },
   "purchase-order-query-http": {
     "kind": "http",
@@ -73,7 +73,7 @@
       }
     },
     "auth-policy": {"mode": "pat"},
-    "registered-operation": "wamn_receiving@1.0.0::purchase_order.query"
+    "registered-operation": "wamn-receiving:purchase-order/query@1.0.0"
   },
   "purchase-order-update-http": {
     "kind": "http",
@@ -110,7 +110,7 @@
       }
     },
     "auth-policy": {"mode": "pat"},
-    "registered-operation": "wamn_receiving@1.0.0::purchase_order.update"
+    "registered-operation": "wamn-receiving:purchase-order/update@1.0.0"
   },
   "receipt-get-http": {
     "kind": "http",
@@ -139,7 +139,7 @@
       }
     },
     "auth-policy": {"mode": "pat"},
-    "registered-operation": "wamn_receiving@1.0.0::receipt.get"
+    "registered-operation": "wamn-receiving:receipt/get@1.0.0"
   },
   "receipt-query-http": {
     "kind": "http",
@@ -169,7 +169,7 @@
       }
     },
     "auth-policy": {"mode": "pat"},
-    "registered-operation": "wamn_receiving@1.0.0::receipt.query"
+    "registered-operation": "wamn-receiving:receipt/query@1.0.0"
   },
   "receiving-record-receipt-http": {
     "kind": "http",
@@ -223,6 +223,6 @@
       }
     },
     "auth-policy": {"mode": "pat"},
-    "registered-operation": "wamn_receiving@1.0.0::receiving.record_receipt"
+    "registered-operation": "wamn-receiving:receiving/record-receipt@1.0.0"
   }
 }

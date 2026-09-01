@@ -1,0 +1,13 @@
+package wamn-receiving:receipt@1.0.0;
+
+interface get {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface query {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}

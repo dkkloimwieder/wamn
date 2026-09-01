@@ -11,7 +11,7 @@ Sequencing authority: this document.
 - **Naming law, ratified now:** singular `snake_case` wire identifiers;
   package = the ownership/version/compatibility boundary, module/domain
   = internal organization only; canonical operation identity
-  `<package_id>@<package_version>::<local_operation>`; closed CRUD set
+  `<package-id-kebab>:<module-kebab>/<action-kebab>@<package-version>`; closed CRUD set
   `get/query/create/update/delete`. The generator emits nothing until
   its output obeys this.
 - **Demand order, not spec order.** Each slice lands end-to-end with a

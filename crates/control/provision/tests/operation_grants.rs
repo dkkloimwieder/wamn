@@ -127,10 +127,10 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
            ('t1', 'sibling-role', false), \
            ('t2', 'route-caller', false); \
          INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-           ('t1', 'route-caller', 'wamn_receiving@1.0.0::purchase_order.get'), \
-           ('t1', 'route-caller', 'wamn_receiving@1.0.0::obsolete.operation'), \
-           ('t1', 'route-caller', 'wamn_receiving@1.1.0::purchase_order.get'), \
-           ('t1', 'route-caller', 'client_acme_receiving@3.0.0::receiving.submit_receipt'), \
+           ('t1', 'route-caller', 'wamn-receiving:purchase-order/get@1.0.0'), \
+           ('t1', 'route-caller', 'wamn-receiving:obsolete/operation@1.0.0'), \
+           ('t1', 'route-caller', 'wamn-receiving:purchase-order/get@1.1.0'), \
+           ('t1', 'route-caller', 'client-acme-receiving:receiving/submit-receipt@3.0.0'), \
            ('t1', 'sibling-role', 'residue.must.stay'), \
            ('t2', 'route-caller', 'residue.must.stay');",
     );
@@ -150,15 +150,16 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
             "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
                FROM app_system.permissions \
               WHERE tenant_id = 't1' AND role_name = 'route-caller' \
-                AND starts_with(permission, 'wamn_receiving@1.0.0::')"
+                AND starts_with(permission, 'wamn-receiving:') \
+                AND right(permission, length('@1.0.0')) = '@1.0.0'"
         ),
         [
-            "wamn_receiving@1.0.0::purchase_order.get",
-            "wamn_receiving@1.0.0::purchase_order.query",
-            "wamn_receiving@1.0.0::purchase_order.update",
-            "wamn_receiving@1.0.0::receipt.get",
-            "wamn_receiving@1.0.0::receipt.query",
-            "wamn_receiving@1.0.0::receiving.record_receipt",
+            "wamn-receiving:purchase-order/get@1.0.0",
+            "wamn-receiving:purchase-order/query@1.0.0",
+            "wamn-receiving:purchase-order/update@1.0.0",
+            "wamn-receiving:receipt/get@1.0.0",
+            "wamn-receiving:receipt/query@1.0.0",
+            "wamn-receiving:receiving/record-receipt@1.0.0",
         ]
         .join("\n"),
         "server did not retain exactly the manifest's six operation grants"
@@ -169,11 +170,12 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
             "SELECT string_agg(permission, E'\\n' ORDER BY permission) \
                FROM app_system.permissions \
               WHERE tenant_id = 't1' AND role_name = 'route-caller' \
-                AND NOT starts_with(permission, 'wamn_receiving@1.0.0::')"
+                AND NOT (starts_with(permission, 'wamn-receiving:') \
+                         AND right(permission, length('@1.0.0')) = '@1.0.0')"
         ),
         [
-            "client_acme_receiving@3.0.0::receiving.submit_receipt",
-            "wamn_receiving@1.1.0::purchase_order.get",
+            "client-acme-receiving:receiving/submit-receipt@3.0.0",
+            "wamn-receiving:purchase-order/get@1.1.0",
         ]
         .join("\n"),
         "package reconciliation changed another coordinate's operation grants"

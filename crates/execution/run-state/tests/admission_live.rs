@@ -350,11 +350,11 @@ fn surviving_authority_matrix_live() {
                (tenant_id,effective_release_id,package_id,package_version) \
              VALUES ('t1',1,'cat','1.0.0'); \
              INSERT INTO catalog.component_library \
-               (tenant_id,package_id,package_version,component,interface_version,operation, \
-                component_digest,projection_hash,imports,imports_fingerprint,effects,input_ports, \
-                output_ports,parameters) \
-             VALUES ('t1','cat','1.0.0','entity','0.1','create','{component_digest}', \
-                     '{projection_hash}','[]','{imports_fingerprint}','[]','[]','[]','[]'); \
+               (tenant_id,package_id,package_version,component,interface_version,operations, \
+                component_digest,projection_hash,imports,imports_fingerprint,effects) \
+             VALUES ('t1','cat','1.0.0','entity','0.1', \
+                     '{{\"create\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
+                     '{component_digest}','{projection_hash}','[]','{imports_fingerprint}','[]'); \
              INSERT INTO catalog.wirings \
                (tenant_id,package_id,package_version,wiring_id,version, \
                 graph_json,wiring_hash) VALUES \

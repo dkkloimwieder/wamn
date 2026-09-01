@@ -107,7 +107,6 @@ impl OverlayPackage {
             },
             "components": {
                 "quality_inspection_get": {
-                    "operations": ["quality_inspection.get"],
                     "connections": ["postgres"]
                 }
             }

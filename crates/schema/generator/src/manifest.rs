@@ -764,16 +764,22 @@ pub fn canonical_operation_identity(
     local_operation: &str,
 ) -> Result<String, GenerateError> {
     validate_operation_identity(local_operation)?;
+    let (module, operation) = local_operation
+        .split_once('.')
+        .expect("validated operation identity has one separator");
     Ok(format!(
-        "{}{local_operation}",
-        canonical_operation_prefix(package)?
+        "{}{}/{}@{}",
+        canonical_operation_prefix(package)?,
+        module.replace('_', "-"),
+        operation.replace('_', "-"),
+        package.version,
     ))
 }
 
-/// Construct the canonical namespace prefix owned by one exact package coordinate.
+/// Construct the native extern-name prefix owned by one package.
 pub fn canonical_operation_prefix(package: &PackageIdentity) -> Result<String, GenerateError> {
     validate_package_identity(package)?;
-    Ok(format!("{}@{}::", package.id, package.version))
+    Ok(format!("{}:", package.id.replace('_', "-")))
 }
 
 fn validate_package_identity(package: &PackageIdentity) -> Result<(), GenerateError> {
@@ -786,11 +792,12 @@ fn validate_package_coordinate(package: &str, version: &str) -> Result<(), Gener
         || version.trim() != version
         || version.as_bytes().contains(&0)
         || version.contains('@')
-        || version.contains("::")
+        || version.contains(':')
+        || version.contains('/')
     {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidIdentity,
-            "package version must be canonical text without operation-coordinate separators",
+            "package version must be canonical text without native operation-token separators",
         ));
     }
     Ok(())

@@ -287,6 +287,7 @@ mod tests {
             vec![WiringNode {
                 id: entry.to_string(),
                 component: "echo".to_string(),
+                operation: "echo".to_string(),
                 config: Value::Null,
                 connection: None,
                 terminal: None,

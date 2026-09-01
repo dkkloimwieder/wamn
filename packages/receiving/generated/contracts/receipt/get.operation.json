@@ -1,1 +1,1 @@
-{"automatic_retry":false,"grant":"wamn_receiving@1.0.0::receipt.get","operation":"wamn_receiving@1.0.0::receipt.get","permission_token":"receipt.get","result":"one","sql_files":["generated/sql/receipt/get.sql"],"transaction":"implicit"}
+{"automatic_retry":false,"grant":"wamn-receiving:receipt/get@1.0.0","operation":"wamn-receiving:receipt/get@1.0.0","permission_token":"receipt.get","result":"one","sql_files":["generated/sql/receipt/get.sql"],"transaction":"implicit"}

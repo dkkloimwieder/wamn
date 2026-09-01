@@ -1,13 +1,13 @@
 //! Pure component-library facts stored after byte admission.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
-use crate::package::validate_canonical_operation;
+use crate::package::validate_canonical_operation_for_package;
 use crate::{CatalogIdentityError, PackageCoordinate, validate_text};
 
 const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
@@ -107,23 +107,30 @@ pub struct ComponentConnection {
     pub requirement_type: ComponentConnectionType,
 }
 
+/// One operation exported by component bytes before admission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentOperationDeclaration {
+    /// Explicit application permission identity. Palette operations carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
+    pub input_ports: Vec<ComponentPortDeclaration>,
+    pub output_ports: Vec<ComponentPortDeclaration>,
+    pub parameters: Vec<ComponentParameterDeclaration>,
+}
+
 /// Component-owned facts presented with exact component bytes for admission.
 ///
-/// The operation is singular by construction. A digest therefore cannot hide
-/// several logical operations behind the uniform `wamn:node/handler.run` ABI.
+/// Each map key is the exact exported `wamn:node/handler` instance name. A
+/// package operation repeats that key in `registered-operation`; palette
+/// operations leave the authorization identity absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentDeclaration {
     pub scope: ComponentPackageScope,
     pub component: String,
     pub interface_version: String,
-    pub operation: String,
-    /// Registered application operation, distinct from the guest/WIT export.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<String>,
-    pub input_ports: Vec<ComponentPortDeclaration>,
-    pub output_ports: Vec<ComponentPortDeclaration>,
-    pub parameters: Vec<ComponentParameterDeclaration>,
+    pub operations: BTreeMap<String, ComponentOperationDeclaration>,
     pub connections: Vec<ComponentConnection>,
 }
 
@@ -164,6 +171,18 @@ pub struct AdmittedComponentEffect {
     pub interfaces: Vec<String>,
 }
 
+/// One normalized operation exported by an admitted component.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AdmittedComponentOperation {
+    /// Explicit application permission identity. Never inferred from the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registered_operation: Option<String>,
+    pub input_ports: Vec<AdmittedComponentPort>,
+    pub output_ports: Vec<AdmittedComponentPort>,
+    pub parameters: Vec<AdmittedComponentParameter>,
+}
+
 /// Complete package-owned fact persisted in `catalog.component_library`.
 ///
 /// Environment is deliberately absent: an environment selects a wiring, while
@@ -175,16 +194,18 @@ pub struct AdmittedComponent {
     pub scope: ComponentPackageScope,
     pub component: String,
     pub interface_version: String,
-    pub operation: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub registered_operation: Option<String>,
+    pub operations: BTreeMap<String, AdmittedComponentOperation>,
     pub component_digest: String,
     pub imports: Vec<String>,
     pub imports_fingerprint: String,
     pub effects: Vec<AdmittedComponentEffect>,
-    pub input_ports: Vec<AdmittedComponentPort>,
-    pub output_ports: Vec<AdmittedComponentPort>,
-    pub parameters: Vec<AdmittedComponentParameter>,
+}
+
+impl AdmittedComponent {
+    /// Resolve one exact operation export without inferring authorization.
+    pub fn operation(&self, operation: &str) -> Option<&AdmittedComponentOperation> {
+        self.operations.get(operation)
+    }
 }
 
 /// Everything one byte-verified component admission mints.
@@ -202,7 +223,9 @@ pub struct AdmittedComponentFacts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentFactErrorKind {
     EmptyIdentity,
+    EmptyOperationSet,
     NonCanonicalIdentity,
+    RegisteredOperationMismatch,
     InvalidComponentDigest,
     DuplicateInputPort,
     DuplicateOutputPort,
@@ -270,11 +293,12 @@ pub fn normalize_component_fact(
     })?;
     validate_identity(&declaration.component, "component")?;
     validate_identity(&declaration.interface_version, "interface-version")?;
-    validate_identity(&declaration.operation, "operation")?;
-    validate_registered_operation_scope(
-        &declaration.scope,
-        declaration.registered_operation.as_deref(),
-    )?;
+    if declaration.operations.is_empty() {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorKind::EmptyOperationSet,
+            "component operations must not be empty",
+        ));
+    }
     if !valid_digest(&component_digest) {
         return Err(ComponentFactError::new(
             ComponentFactErrorKind::InvalidComponentDigest,
@@ -282,17 +306,35 @@ pub fn normalize_component_fact(
         ));
     }
 
-    let input_ports = normalize_ports(
-        declaration.input_ports,
-        ComponentFactErrorKind::DuplicateInputPort,
-        "input-port",
-    )?;
-    let output_ports = normalize_ports(
-        declaration.output_ports,
-        ComponentFactErrorKind::DuplicateOutputPort,
-        "output-port",
-    )?;
-    let parameters = normalize_parameters(declaration.parameters)?;
+    let mut operations = BTreeMap::new();
+    for (export, operation) in declaration.operations {
+        validate_identity(&export, "operation export")?;
+        validate_registered_operation_scope(
+            &declaration.scope,
+            &export,
+            operation.registered_operation.as_deref(),
+        )?;
+        let input_ports = normalize_ports(
+            operation.input_ports,
+            ComponentFactErrorKind::DuplicateInputPort,
+            "input-port",
+        )?;
+        let output_ports = normalize_ports(
+            operation.output_ports,
+            ComponentFactErrorKind::DuplicateOutputPort,
+            "output-port",
+        )?;
+        let parameters = normalize_parameters(operation.parameters)?;
+        operations.insert(
+            export,
+            AdmittedComponentOperation {
+                registered_operation: operation.registered_operation,
+                input_ports,
+                output_ports,
+                parameters,
+            },
+        );
+    }
 
     let mut imports: Vec<_> = imports.into_iter().collect();
     imports.sort();
@@ -308,15 +350,11 @@ pub fn normalize_component_fact(
             scope: declaration.scope,
             component: declaration.component,
             interface_version: declaration.interface_version,
-            operation: declaration.operation,
-            registered_operation: declaration.registered_operation,
+            operations,
             component_digest,
             imports,
             imports_fingerprint,
             effects,
-            input_ports,
-            output_ports,
-            parameters,
         },
         connections,
     })
@@ -354,34 +392,42 @@ pub fn verify_stored_effect_projection(
             error.to_string(),
         )
     })?;
-    validate_registered_operation_scope(
-        &component.scope,
-        component.registered_operation.as_deref(),
-    )?;
+    if component.operations.is_empty() {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorKind::EmptyOperationSet,
+            "component operations must not be empty",
+        ));
+    }
+    for (export, operation) in &component.operations {
+        validate_identity(export, "operation export")?;
+        validate_registered_operation_scope(
+            &component.scope,
+            export,
+            operation.registered_operation.as_deref(),
+        )?;
+    }
     normalize_effects(component.effects.clone(), &component.imports).map(|_| ())
 }
 
 fn validate_registered_operation_scope(
     scope: &ComponentPackageScope,
+    export: &str,
     operation: Option<&str>,
 ) -> Result<(), ComponentFactError> {
     let Some(operation) = operation else {
         return Ok(());
     };
-    validate_canonical_operation(operation).map_err(|error| {
-        ComponentFactError::new(
-            ComponentFactErrorKind::NonCanonicalIdentity,
-            error.to_string(),
-        )
-    })?;
-    let expected_prefix = format!("{}@{}::", scope.package_id, scope.package_version);
-    if !operation.starts_with(&expected_prefix) {
+    validate_canonical_operation_for_package(operation, &scope.package_id, &scope.package_version)
+        .map_err(|error| {
+            ComponentFactError::new(
+                ComponentFactErrorKind::NonCanonicalIdentity,
+                error.to_string(),
+            )
+        })?;
+    if operation != export {
         return Err(ComponentFactError::new(
-            ComponentFactErrorKind::NonCanonicalIdentity,
-            format!(
-                "registered operation {operation:?} does not match component package {}@{}",
-                scope.package_id, scope.package_version
-            ),
+            ComponentFactErrorKind::RegisteredOperationMismatch,
+            format!("registered operation {operation:?} must equal exported operation {export:?}"),
         ));
     }
     Ok(())
@@ -633,28 +679,39 @@ mod tests {
             },
             component: "transform".to_string(),
             interface_version: "0.1.0".to_string(),
-            operation: "map".to_string(),
-            registered_operation: None,
-            input_ports: vec![ComponentPortDeclaration {
-                name: "input".to_string(),
-                schema: json!({
-                    "$schema": JSON_SCHEMA_2020_12,
-                    "type": "object",
-                    "required": ["id"],
-                    "properties": {"id": {"type": "string"}}
-                }),
-            }],
-            output_ports: vec![ComponentPortDeclaration {
-                name: "main".to_string(),
-                schema: json!({"type": "object"}),
-            }],
-            parameters: vec![ComponentParameterDeclaration {
-                name: "mapping".to_string(),
-                schema: json!({"type": "object"}),
-                required: true,
-            }],
+            operations: BTreeMap::from([(
+                "map".to_string(),
+                ComponentOperationDeclaration {
+                    registered_operation: None,
+                    input_ports: vec![ComponentPortDeclaration {
+                        name: "input".to_string(),
+                        schema: json!({
+                            "$schema": JSON_SCHEMA_2020_12,
+                            "type": "object",
+                            "required": ["id"],
+                            "properties": {"id": {"type": "string"}}
+                        }),
+                    }],
+                    output_ports: vec![ComponentPortDeclaration {
+                        name: "main".to_string(),
+                        schema: json!({"type": "object"}),
+                    }],
+                    parameters: vec![ComponentParameterDeclaration {
+                        name: "mapping".to_string(),
+                        schema: json!({"type": "object"}),
+                        required: true,
+                    }],
+                },
+            )]),
             connections: Vec::new(),
         }
+    }
+
+    fn operation_mut(declaration: &mut ComponentDeclaration) -> &mut ComponentOperationDeclaration {
+        declaration
+            .operations
+            .get_mut("map")
+            .expect("map operation")
     }
 
     fn postgres_effect() -> AdmittedComponentEffect {
@@ -679,11 +736,11 @@ mod tests {
         let fact = facts.component;
 
         assert_eq!(fact.scope.package_version, "1.2.0");
-        assert_eq!(fact.operation, "map");
-        assert_eq!(fact.registered_operation, None);
-        assert_eq!(fact.input_ports[0].name, "input");
-        assert_eq!(fact.output_ports[0].name, "main");
-        assert!(fact.parameters[0].required);
+        let operation = fact.operation("map").expect("map operation is admitted");
+        assert_eq!(operation.registered_operation, None);
+        assert_eq!(operation.input_ports[0].name, "input");
+        assert_eq!(operation.output_ports[0].name, "main");
+        assert!(operation.parameters[0].required);
         assert_eq!(fact.component_digest, format!("sha256:{}", "a".repeat(64)));
         assert_eq!(fact.imports.len(), 2);
         assert!(fact.imports_fingerprint.starts_with("sha256:"));
@@ -721,9 +778,14 @@ mod tests {
     }
 
     #[test]
-    fn registered_operation_is_explicit_validated_and_distinct_from_guest_export() {
+    fn registered_operation_is_explicit_and_equals_the_export_token() {
         let mut declared = declaration();
-        declared.registered_operation = Some("orders@1.2.0::purchase_order.get".to_string());
+        let registered = "orders:purchase-order/get@1.2.0";
+        let mut operation = declared.operations.remove("map").expect("map operation");
+        operation.registered_operation = Some(registered.to_string());
+        declared
+            .operations
+            .insert(registered.to_string(), operation);
         let facts = normalize_component_fact(
             declared,
             format!("sha256:{}", "a".repeat(64)),
@@ -731,14 +793,15 @@ mod tests {
             Vec::new(),
         )
         .expect("canonical registered operation is admitted");
-        assert_eq!(facts.component.operation, "map");
         assert_eq!(
-            facts.component.registered_operation.as_deref(),
-            Some("orders@1.2.0::purchase_order.get")
+            facts.component.operations[registered]
+                .registered_operation
+                .as_deref(),
+            Some(registered)
         );
 
         let mut malformed = declaration();
-        malformed.registered_operation = Some("purchase_order.get".to_string());
+        operation_mut(&mut malformed).registered_operation = Some("purchase_order.get".to_string());
         assert_eq!(
             normalize_component_fact(
                 malformed,
@@ -752,11 +815,11 @@ mod tests {
         );
 
         for operation in [
-            "other@1.2.0::purchase_order.get",
-            "orders@2.0.0::purchase_order.get",
+            "other:purchase-order/get@1.2.0",
+            "orders:purchase-order/get@2.0.0",
         ] {
             let mut mismatched = declaration();
-            mismatched.registered_operation = Some(operation.to_string());
+            operation_mut(&mut mismatched).registered_operation = Some(operation.to_string());
             assert_eq!(
                 normalize_component_fact(
                     mismatched,
@@ -770,8 +833,27 @@ mod tests {
             );
         }
 
+        let mut unequal = declaration();
+        operation_mut(&mut unequal).registered_operation =
+            Some("orders:purchase-order/get@1.2.0".to_string());
+        assert_eq!(
+            normalize_component_fact(
+                unequal,
+                format!("sha256:{}", "a".repeat(64)),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::RegisteredOperationMismatch
+        );
+
         let mut stored = migration_defaulted_fact(&[]);
-        stored.registered_operation = Some("other@1.2.0::purchase_order.get".into());
+        stored
+            .operations
+            .get_mut("map")
+            .expect("map operation")
+            .registered_operation = Some("other:purchase-order/get@1.2.0".into());
         assert_eq!(
             verify_stored_effect_projection(&stored).unwrap_err().kind(),
             ComponentFactErrorKind::NonCanonicalIdentity
@@ -790,15 +872,19 @@ mod tests {
             },
             component: "transform".to_string(),
             interface_version: "0.1.0".to_string(),
-            operation: "map".to_string(),
-            registered_operation: None,
+            operations: BTreeMap::from([(
+                "map".to_string(),
+                AdmittedComponentOperation {
+                    registered_operation: None,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
             component_digest: format!("sha256:{}", "a".repeat(64)),
             imports: imports.iter().map(|name| (*name).to_string()).collect(),
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
             effects: Vec::new(),
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
         }
     }
 
@@ -930,7 +1016,7 @@ mod tests {
     #[test]
     fn declaration_document_is_exact_kebab_case_json() {
         let document = serde_json::to_value(declaration()).expect("declaration serializes");
-        assert!(document.get("input-ports").is_some());
+        assert!(document["operations"]["map"].get("input-ports").is_some());
         assert!(document.get("interface-version").is_some());
         assert_eq!(document["scope"]["tenant-id"], "tenant-a");
         assert_eq!(
@@ -951,9 +1037,9 @@ mod tests {
     fn schema_identity_is_rfc_8785_and_compatibility_is_exact() {
         let mut left = declaration();
         let mut right = declaration();
-        left.input_ports[0].schema =
+        operation_mut(&mut left).input_ports[0].schema =
             json!({"type":"object","properties":{"b":{"type":"number"},"a":{"type":"string"}}});
-        right.input_ports[0].schema =
+        operation_mut(&mut right).input_ports[0].schema =
             json!({"properties":{"a":{"type":"string"},"b":{"type":"number"}},"type":"object"});
 
         let left = normalize_component_fact(
@@ -973,21 +1059,38 @@ mod tests {
         .unwrap()
         .component;
         assert!(schema_digests_match(
-            &left.input_ports[0].schema,
-            &right.input_ports[0].schema
+            &left.operations["map"].input_ports[0].schema,
+            &right.operations["map"].input_ports[0].schema
         ));
 
         let different = normalize_schema(json!({"type": "string"}), "input-port").unwrap();
         assert!(!schema_digests_match(
-            &left.input_ports[0].schema,
+            &left.operations["map"].input_ports[0].schema,
             &different
         ));
     }
 
     #[test]
     fn partial_or_ambiguous_component_facts_refuse() {
+        let mut empty = declaration();
+        empty.operations.clear();
+        assert_eq!(
+            normalize_component_fact(
+                empty,
+                format!("sha256:{}", "c".repeat(64)),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::EmptyOperationSet
+        );
+
         let mut duplicate = declaration();
-        duplicate.input_ports.push(duplicate.input_ports[0].clone());
+        let duplicate_port = duplicate.operations["map"].input_ports[0].clone();
+        operation_mut(&mut duplicate)
+            .input_ports
+            .push(duplicate_port);
         assert_eq!(
             normalize_component_fact(
                 duplicate,
@@ -1001,7 +1104,8 @@ mod tests {
         );
 
         let mut remote = declaration();
-        remote.parameters[0].schema = json!({"$ref": "https://example.invalid/schema"});
+        operation_mut(&mut remote).parameters[0].schema =
+            json!({"$ref": "https://example.invalid/schema"});
         assert_eq!(
             normalize_component_fact(
                 remote,

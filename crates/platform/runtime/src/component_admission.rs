@@ -9,6 +9,21 @@ use wamn_catalog::{
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
+use wash_runtime::wasmtime::component::types::ComponentItem;
+
+mod node_contract {
+    wash_runtime::wasmtime::component::bindgen!({
+        path: "../../execution/router/wit",
+        world: "node",
+        exports: { default: async },
+        wasmtime_crate: wash_runtime::wasmtime,
+    });
+}
+
+use node_contract::wamn::node::types as node_types;
+
+const HANDLER_SIGNATURE: &str =
+    "wamn:node/handler@0.1.0::run(node-context, string) -> result<emission, node-error>";
 
 /// Component declaration plus its exact admitted platform capabilities.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +37,8 @@ pub struct ComponentAdmissionRequest {
 pub enum ComponentAdmissionErrorKind {
     InvalidComponentBytes,
     ImportPolicyRefused,
+    OperationExportMismatch,
+    OperationSignatureMismatch,
     InvalidComponentFacts,
 }
 
@@ -90,6 +107,72 @@ pub fn validate_component_admission(
     })?;
     let raw = component.engine();
     let component_type = component.component_type();
+    let declared_exports: BTreeSet<_> = request.declaration.operations.keys().cloned().collect();
+    let byte_exports: BTreeSet<_> = component_type
+        .exports(raw)
+        .map(|(name, _)| name.to_owned())
+        .collect();
+    if declared_exports != byte_exports {
+        let missing: Vec<_> = declared_exports
+            .difference(&byte_exports)
+            .cloned()
+            .collect();
+        let extra: Vec<_> = byte_exports
+            .difference(&declared_exports)
+            .cloned()
+            .collect();
+        return Err(ComponentAdmissionError::new(
+            ComponentAdmissionErrorKind::OperationExportMismatch,
+            &component_name,
+            anyhow::anyhow!(
+                "declared handler exports differ from component bytes: missing={missing:?}, extra={extra:?}"
+            ),
+        ));
+    }
+    for export in &declared_exports {
+        let item = component_type
+            .get_export(raw, export)
+            .expect("equal declaration and byte export sets contain every operation");
+        let ComponentItem::ComponentInstance(instance) = item.ty else {
+            return Err(operation_signature_mismatch(
+                &component_name,
+                export,
+                "export is not an interface instance",
+            ));
+        };
+        let Some(run) = instance.get_export(raw, "run") else {
+            return Err(operation_signature_mismatch(
+                &component_name,
+                export,
+                "interface does not export run",
+            ));
+        };
+        let ComponentItem::ComponentFunc(run) = run.ty else {
+            return Err(operation_signature_mismatch(
+                &component_name,
+                export,
+                "interface member run is not a component function",
+            ));
+        };
+        if run.async_() {
+            return Err(operation_signature_mismatch(
+                &component_name,
+                export,
+                "run uses the async ABI",
+            ));
+        }
+        if let Err(error) = run.typecheck::<
+            (&node_types::NodeContext, &str),
+            (Result<node_types::Emission, node_types::NodeError>,),
+        >(&component_type.instance_type())
+        {
+            return Err(operation_signature_mismatch(
+                &component_name,
+                export,
+                error,
+            ));
+        }
+    }
     let imports = wamn_component_policy::ComponentImports::new(
         component_type
             .imports(raw)
@@ -122,6 +205,18 @@ pub fn validate_component_admission(
             source,
         )
     })
+}
+
+fn operation_signature_mismatch(
+    component: &str,
+    export: &str,
+    detail: impl fmt::Display,
+) -> ComponentAdmissionError {
+    ComponentAdmissionError::new(
+        ComponentAdmissionErrorKind::OperationSignatureMismatch,
+        component,
+        anyhow::anyhow!("operation export {export:?} does not match {HANDLER_SIGNATURE}: {detail}"),
+    )
 }
 
 /// Group the audited imports into the authority packages that leave the host.
@@ -165,10 +260,67 @@ pub fn component_digest(component_bytes: &[u8]) -> String {
 mod tests {
     use serde_json::json;
     use wamn_catalog::{
-        ComponentPackageScope, ComponentParameterDeclaration, ComponentPortDeclaration,
+        ComponentOperationDeclaration, ComponentPackageScope, ComponentParameterDeclaration,
+        ComponentPortDeclaration,
     };
+    use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
+    use wit_parser::{ManglingAndAbi, Resolve};
 
     use super::*;
+
+    const OPERATION: &str = "wamn:node/handler@0.1.0";
+
+    const DEPENDENCY_WITS: [(&str, &str); 4] = [
+        (
+            "wasi-clocks.wit",
+            "package wasi:clocks@0.2.3; interface monotonic-clock {}",
+        ),
+        (
+            "wasi-sockets.wit",
+            "package wasi:sockets@0.2.3; interface tcp {}",
+        ),
+        (
+            "wamn-connection.wit",
+            "package wamn:connection@0.1.0; interface http {}",
+        ),
+        (
+            "wamn-postgres.wit",
+            "package wamn:postgres@0.1.0; interface client {}",
+        ),
+    ];
+
+    fn component_bytes(imports: &str) -> Vec<u8> {
+        let mut resolve = Resolve::new();
+        resolve
+            .push_str(
+                "wamn-node.wit",
+                include_str!("../../../execution/router/wit/package.wit"),
+            )
+            .expect("the live node WIT parses");
+        for (name, wit) in DEPENDENCY_WITS {
+            resolve
+                .push_str(name, wit)
+                .expect("fixture dependency parses");
+        }
+        let fixture = format!(
+            "package test:component@1.0.0; world fixture {{ {imports} export wamn:node/handler@0.1.0; }}"
+        );
+        let package = resolve
+            .push_str("fixture.wit", &fixture)
+            .expect("fixture world parses");
+        let world = resolve
+            .select_world(&[package], Some("fixture"))
+            .expect("fixture world resolves");
+        let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+        embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
+            .expect("fixture component metadata embeds");
+        ComponentEncoder::default()
+            .module(&module)
+            .expect("fixture core module is accepted")
+            .validate(true)
+            .encode()
+            .expect("fixture component encodes")
+    }
 
     fn request() -> ComponentAdmissionRequest {
         ComponentAdmissionRequest {
@@ -180,21 +332,25 @@ mod tests {
                 },
                 component: "transform".to_string(),
                 interface_version: "0.1.0".to_string(),
-                operation: "map".to_string(),
-                registered_operation: None,
-                input_ports: vec![ComponentPortDeclaration {
-                    name: "input".to_string(),
-                    schema: json!({"type": "object"}),
-                }],
-                output_ports: vec![ComponentPortDeclaration {
-                    name: "main".to_string(),
-                    schema: json!({"type": "object"}),
-                }],
-                parameters: vec![ComponentParameterDeclaration {
-                    name: "mapping".to_string(),
-                    schema: json!({"type": "object"}),
-                    required: true,
-                }],
+                operations: BTreeMap::from([(
+                    OPERATION.to_string(),
+                    ComponentOperationDeclaration {
+                        registered_operation: None,
+                        input_ports: vec![ComponentPortDeclaration {
+                            name: "input".to_string(),
+                            schema: json!({"type": "object"}),
+                        }],
+                        output_ports: vec![ComponentPortDeclaration {
+                            name: "main".to_string(),
+                            schema: json!({"type": "object"}),
+                        }],
+                        parameters: vec![ComponentParameterDeclaration {
+                            name: "mapping".to_string(),
+                            schema: json!({"type": "object"}),
+                            required: true,
+                        }],
+                    },
+                )]),
                 connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
@@ -204,26 +360,77 @@ mod tests {
     #[test]
     fn exact_bytes_mint_digest_and_normalized_fact_without_io() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        let bytes = wat::parse_str("(component)").expect("fixture component encodes");
+        let bytes = component_bytes("");
 
         let admitted = validate_component_admission(&engine, &bytes, request())
             .expect("empty-import component admits")
             .component;
 
         assert_eq!(admitted.component_digest, component_digest(&bytes));
-        assert_eq!(admitted.operation, "map");
         assert!(admitted.imports.is_empty());
-        assert_eq!(admitted.input_ports[0].name, "input");
-        assert!(admitted.parameters[0].required);
+        let operation = admitted.operation(OPERATION).expect("operation admits");
+        assert_eq!(operation.input_ports[0].name, "input");
+        assert!(operation.parameters[0].required);
 
-        let projected = crate::wiring_lowering::project_component_operation(&admitted);
+        let projected = crate::wiring_lowering::project_component_operations(&admitted);
+        let projected = projected.first().expect("one operation projects");
         assert_eq!(projected.component, admitted.component);
         assert_eq!(projected.interface_version, admitted.interface_version);
-        assert_eq!(projected.operation, admitted.operation);
+        assert_eq!(projected.operation, OPERATION);
         assert_eq!(projected.component_digest, admitted.component_digest);
         assert_eq!(projected.input_ports, BTreeSet::from(["input".to_string()]));
         assert_eq!(projected.output_ports, BTreeSet::from(["main".to_string()]));
         assert!(projected.parameters["mapping"].required);
+    }
+
+    #[test]
+    fn declaration_and_byte_handler_export_sets_must_match_exactly() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let missing = wat::parse_str("(component)").expect("empty component encodes");
+        let error = validate_component_admission(&engine, &missing, request())
+            .expect_err("missing declared handler export refuses");
+        assert_eq!(
+            error.kind(),
+            ComponentAdmissionErrorKind::OperationExportMismatch
+        );
+        assert!(error.to_string().contains("missing="));
+
+        let extra = wat::parse_str(format!(
+            r#"(component
+                (instance $first)
+                (instance $second)
+                (export "{OPERATION}" (instance $first))
+                (export "orders:purchase-order/query@1.0.0" (instance $second))
+            )"#
+        ))
+        .expect("extra-export component encodes");
+        let error = validate_component_admission(&engine, &extra, request())
+            .expect_err("undeclared handler export refuses");
+        assert_eq!(
+            error.kind(),
+            ComponentAdmissionErrorKind::OperationExportMismatch
+        );
+        assert!(error.to_string().contains("extra="));
+    }
+
+    #[test]
+    fn operation_export_must_have_the_live_handler_signature() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let wrong = wat::parse_str(format!(
+            r#"(component
+                (instance $wrong)
+                (export "{OPERATION}" (instance $wrong))
+            )"#
+        ))
+        .expect("wrong-signature component encodes");
+        let error = validate_component_admission(&engine, &wrong, request())
+            .expect_err("an export without the live handler signature refuses");
+        assert_eq!(
+            error.kind(),
+            ComponentAdmissionErrorKind::OperationSignatureMismatch
+        );
+        assert!(error.to_string().contains(OPERATION));
+        assert!(error.to_string().contains(HANDLER_SIGNATURE));
     }
 
     #[test]
@@ -240,13 +447,7 @@ mod tests {
     #[test]
     fn actual_unadmitted_component_import_refuses() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        let bytes = wat::parse_str(
-            r#"(component
-                (type $socket (instance))
-                (import "wasi:sockets/tcp@0.2.3" (instance (type $socket)))
-            )"#,
-        )
-        .expect("fixture component encodes");
+        let bytes = component_bytes("import wasi:sockets/tcp@0.2.3;");
 
         let error = validate_component_admission(&engine, &bytes, request())
             .expect_err("socket import must refuse");
@@ -262,16 +463,12 @@ mod tests {
     #[test]
     fn effects_record_only_the_imports_that_leave_the_host() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        let bytes = wat::parse_str(
-            r#"(component
-                (type $empty (instance))
-                (import "wasi:clocks/monotonic-clock@0.2.3" (instance (type $empty)))
-                (import "wamn:node/types@0.1.0" (instance (type $empty)))
-                (import "wamn:postgres/client@0.1.0" (instance (type $empty)))
-                (import "wamn:connection/http@0.1.0" (instance (type $empty)))
-            )"#,
-        )
-        .expect("fixture component encodes");
+        let bytes = component_bytes(
+            "import wasi:clocks/monotonic-clock@0.2.3; \
+             import wamn:node/types@0.1.0; \
+             import wamn:postgres/client@0.1.0; \
+             import wamn:connection/http@0.1.0;",
+        );
         let mut request = request();
         request.admitted_platform_packages = BTreeSet::from([
             "wamn:node".to_string(),
@@ -309,13 +506,7 @@ mod tests {
     #[test]
     fn connection_authority_without_a_declared_alias_refuses() {
         let engine = crate::build_engine(&[]).expect("engine builds");
-        let bytes = wat::parse_str(
-            r#"(component
-                (type $empty (instance))
-                (import "wamn:connection/http@0.1.0" (instance (type $empty)))
-            )"#,
-        )
-        .expect("fixture component encodes");
+        let bytes = component_bytes("import wamn:connection/http@0.1.0;");
         let mut request = request();
         request.admitted_platform_packages = BTreeSet::from(["wamn:connection".to_string()]);
 

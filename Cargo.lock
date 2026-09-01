@@ -4802,6 +4802,8 @@ dependencies = [
  "wamn-schema-control",
  "wamn-schema-generator",
  "wamn-schema-introspection",
+ "wit-component 0.252.0",
+ "wit-parser 0.252.0",
 ]
 
 [[package]]
@@ -5155,6 +5157,8 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wat",
+ "wit-component 0.252.0",
+ "wit-parser 0.252.0",
 ]
 
 [[package]]
@@ -6440,6 +6444,7 @@ dependencies = [
  "wasm-encoder 0.252.0",
  "wasm-metadata 0.252.0",
  "wasmparser 0.252.0",
+ "wat",
  "wit-parser 0.252.0",
 ]
 

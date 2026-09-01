@@ -1,8 +1,8 @@
 [package]
-name = "receiving-purchase-order-get"
+name = "receiving"
 version.workspace = true
 edition.workspace = true
-description = "Receiving purchase order get operation component"
+description = "Package-grain Receiving operation component"
 license = "Apache-2.0"
 
 [dependencies]

@@ -8,7 +8,7 @@ use crate::EventRegistration;
 /// Insert or update one package-owned catalog registration only when facts differ.
 pub const UPSERT_CATALOG_REGISTRATION_SQL: &str = "INSERT INTO catalog.event_registrations AS current \
        (tenant_id, package_id, registration_id, entity_id, registration) \
-     VALUES ($1, $2, $3, $4, $5::jsonb) \
+     VALUES ($1, $2, $3, $4, $5::text::jsonb) \
      ON CONFLICT (tenant_id, package_id, registration_id) DO UPDATE \
        SET entity_id = EXCLUDED.entity_id, \
            registration = EXCLUDED.registration \

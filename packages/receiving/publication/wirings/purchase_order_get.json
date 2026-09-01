@@ -5,9 +5,9 @@
   "entry": "operation",
   "nodes": {
     "operation": {
-      "component": "purchase_order_get",
+      "component": "receiving",
       "interface-version": "0.1.0",
-      "operation": "run",
+      "operation": "wamn-receiving:purchase-order/get@1.0.0",
       "terminal": "respond"
     }
   }

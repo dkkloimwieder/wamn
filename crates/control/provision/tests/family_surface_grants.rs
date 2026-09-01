@@ -886,11 +886,11 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
              VALUES ('tenant-a', 1, 'orders', '1.0.0');\n\
              INSERT INTO catalog.component_library \
                (tenant_id, package_id, package_version, component, interface_version, \
-                operation, component_digest, projection_hash, imports, imports_fingerprint, effects, \
-                input_ports, output_ports, parameters, admitted_at) \
+                operations, component_digest, projection_hash, imports, imports_fingerprint, \
+                effects, admitted_at) \
              VALUES ('tenant-a', 'orders', '1.0.0', 'http-request', '0.1.0', \
-                     'run', '{digest}', '{digest}', '[]', '{digest}', \
-                     '[]', '[]', '[]', '[]', now());\n\
+                     '{{\"run\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
+                     '{digest}', '{digest}', '[]', '{digest}', '[]', now());\n\
              INSERT INTO catalog.wirings \
                (tenant_id, package_id, package_version, wiring_id, version, \
                 graph_json, wiring_hash, created_at) \
@@ -920,7 +920,7 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
              VALUES ('tenant-a', 'route-caller', true);\n\
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
              VALUES ('tenant-a', 'route-caller', \
-                     'wamn_receiving@1.0.0::purchase_order.get');\n\
+                     'wamn-receiving:purchase-order/get@1.0.0');\n\
              COMMIT;\n"
         ),
     );
@@ -954,7 +954,7 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
             &as_login,
             "SELECT count(*) FROM app_system.permissions \
               WHERE role_name = 'route-caller' \
-                AND permission = 'wamn_receiving@1.0.0::purchase_order.get'"
+                AND permission = 'wamn-receiving:purchase-order/get@1.0.0'"
         ),
         "1",
         "the callable-HTTP generation cannot read the exact operation grant"

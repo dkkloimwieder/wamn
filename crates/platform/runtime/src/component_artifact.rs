@@ -289,10 +289,12 @@ pub fn component_artifact_config_bytes(component: &AdmittedComponent) -> Vec<u8>
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
     use wamn_catalog::{
-        ComponentDeclaration, ComponentPackageScope, ComponentPortDeclaration,
-        normalize_component_fact,
+        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
+        ComponentPortDeclaration, normalize_component_fact,
     };
 
     use super::*;
@@ -307,14 +309,18 @@ mod tests {
                 },
                 component: "transform".to_owned(),
                 interface_version: "0.1.0".to_owned(),
-                operation: "map".to_owned(),
-                registered_operation: None,
-                input_ports: vec![ComponentPortDeclaration {
-                    name: "input".to_owned(),
-                    schema: json!({"type": "object"}),
-                }],
-                output_ports: Vec::new(),
-                parameters: Vec::new(),
+                operations: BTreeMap::from([(
+                    "map".to_owned(),
+                    ComponentOperationDeclaration {
+                        registered_operation: None,
+                        input_ports: vec![ComponentPortDeclaration {
+                            name: "input".to_owned(),
+                            schema: json!({"type": "object"}),
+                        }],
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                    },
+                )]),
                 connections: Vec::new(),
             },
             format!("sha256:{}", "a".repeat(64)),

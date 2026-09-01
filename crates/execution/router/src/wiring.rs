@@ -23,6 +23,8 @@ pub struct WiringNode {
     pub id: String,
     /// The component this node invokes — also the instance-pool key.
     pub component: String,
+    /// Exact exported handler instance selected inside the component bytes.
+    pub operation: String,
     /// Opaque per-node config. The router reads only the reserved `retry` object
     /// and `deadline-ms`; everything else belongs to the component.
     pub config: Value,

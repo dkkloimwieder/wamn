@@ -6,8 +6,8 @@ use std::fmt;
 use boon::{Compiler, Draft, Schemas};
 
 use crate::{
-    AdmittedComponent, AdmittedComponentPort, ComponentPackageScope, ComponentSchema,
-    WiringDocument, WiringNode, schema_digests_match,
+    AdmittedComponent, AdmittedComponentOperation, AdmittedComponentPort, ComponentPackageScope,
+    ComponentSchema, WiringDocument, WiringNode, schema_digests_match,
 };
 
 const PARAMETER_SCHEMA_URI: &str = "mem://wamn-wiring-parameter.json";
@@ -92,9 +92,9 @@ pub fn validate_wiring_compatibility(
 
     let mut resolved = BTreeMap::new();
     for (node_id, node) in &wiring.nodes {
-        let component = resolve_component(node_id, node, components)?;
-        validate_parameters(node_id, node, component)?;
-        resolved.insert(node_id.as_str(), component);
+        let operation = resolve_component_operation(node_id, node, components)?;
+        validate_parameters(node_id, node, operation.operation)?;
+        resolved.insert(node_id.as_str(), operation);
     }
 
     validate_resolved_edges(wiring, &resolved)
@@ -121,23 +121,29 @@ pub fn validate_resolved_wiring_compatibility(
         })?;
         if component.component != node.component
             || component.interface_version != node.interface_version
-            || component.operation != node.operation
         {
             return Err(WiringCompatibilityError::new(
                 WiringCompatibilityErrorKind::MissingOperation,
                 format!(
-                    "wiring node {node_id:?} tuple ({:?}, {:?}, {:?}) differs from resolved component tuple ({:?}, {:?}, {:?})",
+                    "wiring node {node_id:?} tuple ({:?}, {:?}) differs from resolved component tuple ({:?}, {:?})",
                     node.component,
                     node.interface_version,
-                    node.operation,
                     component.component,
                     component.interface_version,
-                    component.operation,
                 ),
             ));
         }
-        validate_parameters(node_id, node, component)?;
-        resolved.insert(node_id.as_str(), component);
+        let operation = component.operations.get(&node.operation).ok_or_else(|| {
+            WiringCompatibilityError::new(
+                WiringCompatibilityErrorKind::MissingOperation,
+                format!(
+                    "wiring node {node_id:?} component {:?} interface {:?} has no operation {:?}",
+                    node.component, node.interface_version, node.operation
+                ),
+            )
+        })?;
+        validate_parameters(node_id, node, operation)?;
+        resolved.insert(node_id.as_str(), ResolvedOperation { operation });
     }
     if components.len() != resolved.len() {
         return Err(WiringCompatibilityError::new(
@@ -151,7 +157,7 @@ pub fn validate_resolved_wiring_compatibility(
 
 fn validate_resolved_edges(
     wiring: &WiringDocument,
-    resolved: &BTreeMap<&str, &AdmittedComponent>,
+    resolved: &BTreeMap<&str, ResolvedOperation<'_>>,
 ) -> Result<(), WiringCompatibilityError> {
     for edge in &wiring.edges {
         let source = resolved
@@ -160,7 +166,12 @@ fn validate_resolved_edges(
         let target = resolved
             .get(edge.to.as_str())
             .expect("WiringDocument validation resolves every target node");
-        let target_port = resolve_input_port(&edge.to, edge.to_port.as_deref(), target)?;
+        let target_port = resolve_input_port(
+            &edge.to,
+            &wiring.nodes[&edge.to].operation,
+            edge.to_port.as_deref(),
+            target.operation,
+        )?;
 
         // `error` is router-owned failure data, not a successful component
         // output declaration. The target port still has to exist, but no
@@ -169,6 +180,7 @@ fn validate_resolved_edges(
             continue;
         }
         let Some(source_port) = source
+            .operation
             .output_ports
             .iter()
             .find(|port| port.name == edge.from_port)
@@ -177,7 +189,7 @@ fn validate_resolved_edges(
                 WiringCompatibilityErrorKind::UnknownOutputPort,
                 format!(
                     "wiring node {:?} operation {:?} does not declare output port {:?}",
-                    edge.from, source.operation, edge.from_port
+                    edge.from, wiring.nodes[&edge.from].operation, edge.from_port
                 ),
             ));
         };
@@ -199,11 +211,16 @@ fn validate_resolved_edges(
     Ok(())
 }
 
-fn resolve_component<'a>(
+#[derive(Clone, Copy)]
+struct ResolvedOperation<'a> {
+    operation: &'a AdmittedComponentOperation,
+}
+
+fn resolve_component_operation<'a>(
     node_id: &str,
     node: &WiringNode,
     components: &'a [AdmittedComponent],
-) -> Result<&'a AdmittedComponent, WiringCompatibilityError> {
+) -> Result<ResolvedOperation<'a>, WiringCompatibilityError> {
     let component_matches: Vec<_> = components
         .iter()
         .filter(|component| component.component == node.component)
@@ -230,9 +247,12 @@ fn resolve_component<'a>(
             ),
         ));
     }
-    let mut operation_matches = interface_matches
-        .into_iter()
-        .filter(|component| component.operation == node.operation);
+    let mut operation_matches = interface_matches.into_iter().filter_map(|component| {
+        component
+            .operations
+            .get(&node.operation)
+            .map(|operation| ResolvedOperation { operation })
+    });
     let Some(component) = operation_matches.next() else {
         return Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorKind::MissingOperation,
@@ -257,10 +277,10 @@ fn resolve_component<'a>(
 fn validate_parameters(
     node_id: &str,
     node: &WiringNode,
-    component: &AdmittedComponent,
+    operation: &AdmittedComponentOperation,
 ) -> Result<(), WiringCompatibilityError> {
     for (name, value) in &node.params {
-        let Some(parameter) = component
+        let Some(parameter) = operation
             .parameters
             .iter()
             .find(|parameter| parameter.name == *name)
@@ -272,7 +292,7 @@ fn validate_parameters(
         };
         validate_parameter_value(node_id, name, value, &parameter.schema)?;
     }
-    if let Some(parameter) = component
+    if let Some(parameter) = operation
         .parameters
         .iter()
         .find(|parameter| parameter.required && !node.params.contains_key(&parameter.name))
@@ -316,11 +336,12 @@ fn validate_parameter_value(
 
 fn resolve_input_port<'a>(
     node_id: &str,
+    operation_name: &str,
     authored_port: Option<&str>,
-    component: &'a AdmittedComponent,
+    operation: &'a AdmittedComponentOperation,
 ) -> Result<&'a AdmittedComponentPort, WiringCompatibilityError> {
     match authored_port {
-        Some(name) => component
+        Some(name) => operation
             .input_ports
             .iter()
             .find(|port| port.name == name)
@@ -329,24 +350,24 @@ fn resolve_input_port<'a>(
                     WiringCompatibilityErrorKind::UnknownInputPort,
                     format!(
                         "wiring target {node_id:?} operation {:?} does not declare input port {name:?}",
-                        component.operation
+                        operation_name
                     ),
                 )
             }),
-        None if component.input_ports.len() == 1 => Ok(&component.input_ports[0]),
-        None if component.input_ports.is_empty() => Err(WiringCompatibilityError::new(
+        None if operation.input_ports.len() == 1 => Ok(&operation.input_ports[0]),
+        None if operation.input_ports.is_empty() => Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorKind::MissingInputPort,
             format!(
                 "wiring target {node_id:?} operation {:?} declares no input port",
-                component.operation
+                operation_name
             ),
         )),
         None => Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorKind::AmbiguousInputPort,
             format!(
                 "wiring target {node_id:?} operation {:?} declares {} input ports; to-port is required",
-                component.operation,
-                component.input_ports.len()
+                operation_name,
+                operation.input_ports.len()
             ),
         )),
     }
@@ -354,14 +375,10 @@ fn resolve_input_port<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use serde_json::json;
 
     use super::*;
-    use crate::{
-        AdmittedComponentParameter, ComponentSchema, WiringEdge, WiringNode, WiringTerminal,
-    };
+    use crate::{AdmittedComponentParameter, WiringEdge, WiringTerminal};
 
     fn schema(value: serde_json::Value) -> ComponentSchema {
         ComponentSchema {
@@ -382,22 +399,36 @@ mod tests {
             scope: scope(),
             component: name.to_string(),
             interface_version: "0.1.0".to_string(),
-            operation: operation.to_string(),
-            registered_operation: None,
+            operations: BTreeMap::from([(
+                operation.to_string(),
+                AdmittedComponentOperation {
+                    registered_operation: None,
+                    input_ports: vec![AdmittedComponentPort {
+                        name: input_name.to_string(),
+                        schema: schema(input_schema),
+                    }],
+                    output_ports: vec![AdmittedComponentPort {
+                        name: output_name.to_string(),
+                        schema: schema(output_schema),
+                    }],
+                    parameters: Vec::new(),
+                },
+            )]),
             component_digest: format!("sha256:{}", "a".repeat(64)),
             imports: Vec::new(),
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
             effects: Vec::new(),
-            input_ports: vec![AdmittedComponentPort {
-                name: input_name.to_string(),
-                schema: schema(input_schema),
-            }],
-            output_ports: vec![AdmittedComponentPort {
-                name: output_name.to_string(),
-                schema: schema(output_schema),
-            }],
-            parameters: Vec::new(),
         }
+    }
+
+    fn operation_mut<'a>(
+        component: &'a mut AdmittedComponent,
+        operation: &str,
+    ) -> &'a mut AdmittedComponentOperation {
+        component
+            .operations
+            .get_mut(operation)
+            .expect("fixture operation exists")
     }
 
     fn scope() -> ComponentPackageScope {
@@ -458,9 +489,9 @@ mod tests {
             "record",
             record.clone(),
         );
-        source.input_ports.clear();
+        operation_mut(&mut source, "read").input_ports.clear();
         let mut target = component("target", "write", "record", record, "main", json!({}));
-        target.parameters = vec![AdmittedComponentParameter {
+        operation_mut(&mut target, "write").parameters = vec![AdmittedComponentParameter {
             name: "relation".to_string(),
             schema: schema(json!({"type": "string"})),
             required: true,
@@ -495,7 +526,8 @@ mod tests {
     #[test]
     fn either_endpoint_digest_or_port_drift_refuses() {
         let mut source_digest = components();
-        source_digest[0].output_ports[0].schema = schema(json!({"type": "string"}));
+        operation_mut(&mut source_digest[0], "read").output_ports[0].schema =
+            schema(json!({"type": "string"}));
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &scope(), &source_digest)
                 .unwrap_err()
@@ -504,7 +536,8 @@ mod tests {
         );
 
         let mut target_digest = components();
-        target_digest[1].input_ports[0].schema = schema(json!({"type": "array"}));
+        operation_mut(&mut target_digest[1], "write").input_ports[0].schema =
+            schema(json!({"type": "array"}));
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &scope(), &target_digest)
                 .unwrap_err()
@@ -556,7 +589,7 @@ mod tests {
     #[test]
     fn equality_has_no_structural_subtyping_fallback() {
         let mut structurally_wider = components();
-        structurally_wider[1].input_ports[0].schema = schema(json!({
+        operation_mut(&mut structurally_wider[1], "write").input_ports[0].schema = schema(json!({
             "type": "object",
             "required": ["id"],
             "additionalProperties": true

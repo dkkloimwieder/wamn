@@ -600,6 +600,7 @@ mod tests {
             vec![WiringNode {
                 id: entry.to_owned(),
                 component: "echo".to_owned(),
+                operation: "echo".to_owned(),
                 config: Value::Null,
                 connection: None,
                 terminal: None,

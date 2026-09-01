@@ -83,6 +83,8 @@ wamn-catalog = { workspace = true, features = ["test-util"] }
 # no-trap proof hermetic — no wasm32-wasip2 build, no fixture artifact. Same
 # exact pin the one existing precedent uses (crates/execution/host).
 wat = "=1.252.0"
+wit-component = { version = "=0.252.0", features = ["dummy-module"] }
+wit-parser = "=0.252.0"
 # wamn-0h0g.12.6: the outbound-injection proof needs a real span context, which
 # only a `tracing-opentelemetry` layer over an SDK tracer provider produces.
 opentelemetry_sdk = { workspace = true, features = ["logs", "testing"] }

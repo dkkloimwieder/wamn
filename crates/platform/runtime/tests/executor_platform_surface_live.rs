@@ -288,12 +288,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                (tenant_id,environment,effective_release_id) \
              VALUES ('{TENANT}','{ENVIRONMENT}',{EFFECTIVE_RELEASE_ID}); \
              INSERT INTO catalog.component_library \
-               (tenant_id,package_id,package_version,component,interface_version,operation, \
-                component_digest,projection_hash,imports,imports_fingerprint,effects,input_ports, \
-                output_ports,parameters) \
-             VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','entity','0.1','create', \
-                     '{component_digest}','{projection_hash}','[]','{imports_fingerprint}', \
-                     '[]','[]','[]','[]'); \
+               (tenant_id,package_id,package_version,component,interface_version,operations, \
+                component_digest,projection_hash,imports,imports_fingerprint,effects) \
+             VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','entity','0.1', \
+                     '{{\"create\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
+                     '{component_digest}','{projection_hash}','[]','{imports_fingerprint}','[]'); \
              INSERT INTO catalog.wirings \
                (tenant_id,package_id,package_version,wiring_id,version, \
                 graph_json,wiring_hash) VALUES \

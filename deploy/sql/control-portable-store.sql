@@ -263,23 +263,21 @@ CREATE TABLE catalog.component_library (
     package_version      text        NOT NULL CHECK (package_version <> ''),
     component            text        NOT NULL CHECK (component <> ''),
     interface_version    text        NOT NULL CHECK (interface_version <> ''),
-    operation            text        NOT NULL CHECK (operation <> ''),
-    registered_operation text,
+    operations           jsonb       NOT NULL CHECK (
+        jsonb_typeof(operations) = 'object' AND operations <> '{}'::jsonb
+    ),
     component_digest     text        NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     projection_hash      text        NOT NULL CHECK (projection_hash ~ '^sha256:[0-9a-f]{64}$'),
     imports              jsonb       NOT NULL CHECK (jsonb_typeof(imports) = 'array'),
     imports_fingerprint  text        NOT NULL CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     effects              jsonb       NOT NULL CHECK (jsonb_typeof(effects) = 'array'),
-    input_ports          jsonb       NOT NULL CHECK (jsonb_typeof(input_ports) = 'array'),
-    output_ports         jsonb       NOT NULL CHECK (jsonb_typeof(output_ports) = 'array'),
-    parameters           jsonb       NOT NULL CHECK (jsonb_typeof(parameters) = 'array'),
     admitted_at          timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT component_library_pkey
         PRIMARY KEY (tenant_id, package_id, package_version, component, interface_version),
     CONSTRAINT component_library_package_fkey
         FOREIGN KEY (tenant_id, package_id, package_version)
         REFERENCES catalog.packages (tenant_id, package_id, package_version),
-    CONSTRAINT component_library_one_operation_per_digest
+    CONSTRAINT component_library_digest_key
         UNIQUE (tenant_id, component_digest),
     CONSTRAINT component_library_package_digest_key
         UNIQUE (tenant_id, package_id, package_version, component_digest)

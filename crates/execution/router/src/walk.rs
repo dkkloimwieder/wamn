@@ -202,6 +202,8 @@ pub struct NodeCall {
     pub input_port: Option<String>,
     /// The component to acquire a pooled instance of.
     pub component: String,
+    /// Exact exported handler instance to invoke inside the component.
+    pub operation: String,
     pub config: Value,
     pub connection: Option<String>,
     pub credential: Option<String>,
@@ -406,6 +408,7 @@ impl Wiring {
             node: a.node.clone(),
             input_port: a.input_port.clone(),
             component: node.component.clone(),
+            operation: node.operation.clone(),
             config: node.config.clone(),
             connection: node.connection.clone(),
             credential: None,

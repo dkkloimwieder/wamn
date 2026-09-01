@@ -8,9 +8,7 @@ use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_introspection::ir::CatalogIr;
 
-use crate::{
-    CrudAction, GenerateError, GenerateErrorKind, PackageManifest, canonical_operation_prefix,
-};
+use crate::{CrudAction, GenerateError, GenerateErrorKind, PackageManifest};
 
 /// Package-relative canonical data-access evidence artifact.
 pub const DATA_ACCESS_OVERLAY_PATH: &str = "generated/platform-policy/data-access.json";
@@ -692,9 +690,7 @@ fn derive_data_access_overlay_for_manifest(
         .into_iter()
         .map(|((schema, table), desired)| desired.finish(schema, table))
         .collect::<Result<Vec<_>, _>>()?;
-    let coordinate = canonical_operation_prefix(&manifest.package)?
-        .trim_end_matches("::")
-        .to_owned();
+    let coordinate = format!("{}@{}", manifest.package.id, manifest.package.version);
     let overlay = DataAccessOverlay {
         package: coordinate,
         manifest_sha256: sha256(manifest_bytes),

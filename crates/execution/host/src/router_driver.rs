@@ -15,7 +15,7 @@ use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
     AdmittedComponent, ArtifactHash, AttachmentKind, DefinitionHash, ServingComponent,
-    ServingManifest, ServingWiring,
+    ServingComponentOperation, ServingManifest, ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_router::{
@@ -45,7 +45,7 @@ use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::Store;
-use wash_runtime::wasmtime::component::{Component, Linker};
+use wash_runtime::wasmtime::component::{Component, Instance, Linker, TypedFunc};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -402,6 +402,7 @@ fn component_invocation_span(
         wamn.wiring_version = wiring_version,
         wamn.component_digest = %component_digest,
         wamn.node_id = %call.node,
+        wamn.operation = %call.operation,
         wamn.caller_principal_id = tracing::field::Empty,
         wamn.input_port = tracing::field::Empty,
     );
@@ -825,9 +826,12 @@ impl RouterDriver {
                         .facts
                         .component(&call.component)
                         .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
+                    let operation = component
+                        .operation(&call.operation)
+                        .ok_or_else(|| anyhow::anyhow!("router-node-operation-fact-missing"))?;
                     authorize_registered_operation(
                         request.caller.as_ref(),
-                        component.registered_operation.as_deref(),
+                        operation.registered_operation.as_deref(),
                     )?;
                     let span = component_invocation_span(
                         &request,
@@ -1202,7 +1206,18 @@ impl RouterDriver {
             interface_version: component.interface_version.clone(),
             digest: ArtifactHash::parse(component.component_digest.clone())
                 .context("component fact carries a non-canonical artifact hash")?,
-            registered_operation: component.registered_operation.clone(),
+            operations: component
+                .operations
+                .iter()
+                .map(|(name, operation)| {
+                    (
+                        name.clone(),
+                        ServingComponentOperation {
+                            registered_operation: operation.registered_operation.clone(),
+                        },
+                    )
+                })
+                .collect(),
         };
         anyhow::ensure!(
             manifest.components.contains(&expected),
@@ -1317,7 +1332,7 @@ impl RouterDriver {
         // The instance is destroyed at the end of this invocation either way;
         // its `Drop` clears the identity it was bound to before it goes.
         instance
-            .run(&context, &input, deadline_ms)
+            .run(&call.operation, &context, &input, deadline_ms)
             .await
             .and_then(lower_node_outcome)
     }
@@ -1357,7 +1372,7 @@ struct NodeAcquisition {
 
 struct NodeInstance {
     store: Store<SharedCtx>,
-    node: bindings::Node,
+    node: Instance,
     postgres: Arc<WamnPostgres>,
     logging: Arc<WamnLogging>,
     connection_http: Arc<ConnectionHttp>,
@@ -1514,10 +1529,8 @@ impl NodeInstance {
         .instrument(tracing::info_span!("wamn.component.linker_setup"))
         .await?;
         let compiled = workload.component().clone();
-        let pre = tracing::info_span!("wamn.component.link").in_scope(|| {
-            let pre = workload.linker().instantiate_pre(&compiled)?;
-            bindings::NodePre::new(pre)
-        })?;
+        let pre = tracing::info_span!("wamn.component.link")
+            .in_scope(|| workload.linker().instantiate_pre(&compiled))?;
         let node = pre
             .instantiate_async(&mut store)
             .instrument(tracing::info_span!("wamn.component.instantiate"))
@@ -1535,16 +1548,36 @@ impl NodeInstance {
 
     async fn run(
         &mut self,
+        operation: &str,
         context: &node_types::NodeContext,
         input: &String,
         deadline_ms: u64,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
         self.store.set_epoch_deadline(deadline_ticks(deadline_ms));
-        self.node
-            .wamn_node_handler()
-            .call_run(&mut self.store, context, input)
+        let handler = self
+            .node
+            .get_export_index(&mut self.store, None, operation)
+            .ok_or_else(|| anyhow::anyhow!("component has no exported operation {operation:?}"))?;
+        let run = self
+            .node
+            .get_export_index(&mut self.store, Some(&handler), "run")
+            .ok_or_else(|| anyhow::anyhow!("operation {operation:?} has no handler.run export"))?;
+        let run: TypedFunc<
+            (&node_types::NodeContext, &str),
+            (Result<node_types::Emission, node_types::NodeError>,),
+        > = self
+            .node
+            .get_typed_func(&mut self.store, &run)
+            .map_err(|error| {
+                anyhow::anyhow!("operation {operation:?} handler.run has wrong type: {error}")
+            })?;
+        let (outcome,) = run
+            .call_async(&mut self.store, (context, input.as_str()))
             .await
-            .map_err(|error| anyhow::anyhow!("wamn:node handler.run trapped: {error}"))
+            .map_err(|error| {
+                anyhow::anyhow!("operation {operation:?} handler.run trapped: {error}")
+            })?;
+        Ok(outcome)
     }
 
     /// Bind EVERY identity-derived registry entry of this instance.
@@ -1722,6 +1755,7 @@ mod tests {
             node: "load-order".to_owned(),
             input_port: Some("request".to_owned()),
             component: "entity".to_owned(),
+            operation: "orders:purchase-order/get@1.0.0".to_owned(),
             config: serde_json::json!({}),
             connection: None,
             credential: None,
@@ -1787,7 +1821,7 @@ mod tests {
 
     #[test]
     fn every_registered_invocation_requires_the_exact_operation_grant() {
-        let operation = "orders@7.0.0::purchase_order.get";
+        let operation = "orders:purchase-order/get@7.0.0";
 
         assert!(authorize_registered_operation(None, None).is_ok());
         let denial = authorize_registered_operation(None, Some(operation))

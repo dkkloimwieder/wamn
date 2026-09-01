@@ -87,6 +87,7 @@ fn document(to_port: Option<&str>) -> WiringDocument {
                     component: "sink".to_owned(),
                     interface_version: "0.2.0".to_owned(),
                     operation: "write".to_owned(),
+                    operation_dependency: None,
                     params: BTreeMap::from([("relation".to_owned(), json!("order-audit"))]),
                     terminal: Some(WiringTerminal::emit("order-audit", Op::Insert)),
                 },
@@ -97,6 +98,7 @@ fn document(to_port: Option<&str>) -> WiringDocument {
                     component: "parser".to_owned(),
                     interface_version: "0.1.0".to_owned(),
                     operation: "parse".to_owned(),
+                    operation_dependency: None,
                     params: BTreeMap::from([("format".to_owned(), json!("csv"))]),
                     terminal: None,
                 },
@@ -107,6 +109,7 @@ fn document(to_port: Option<&str>) -> WiringDocument {
                     component: "sink".to_owned(),
                     interface_version: "0.2.0".to_owned(),
                     operation: "write".to_owned(),
+                    operation_dependency: None,
                     params: BTreeMap::from([("relation".to_owned(), json!("orders"))]),
                     terminal: Some(WiringTerminal::Respond),
                 },
@@ -307,6 +310,11 @@ fn lowers_names_to_digest_keyed_nodes_and_preserves_config_terminal_and_order() 
         first_routed_call(&wiring).input_port.as_deref(),
         Some("record"),
         "the inferred singleton input reaches the invocation boundary"
+    );
+    assert_eq!(
+        first_routed_call(&wiring).operation,
+        "write",
+        "the exact operation survives lowering into the host call"
     );
 }
 

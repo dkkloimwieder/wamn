@@ -46,7 +46,7 @@ The POC has one platform package and one client overlay package. `receiving`, `q
 Canonical operation identity:
 
 ```text
-<package_id>@<package_version>::<local_operation>
+<package-id-kebab>:<module-kebab>/<action-kebab>@<package-version>
 ```
 
 Local operation forms:
@@ -77,12 +77,12 @@ quality.load_purchase_order_detail
 Examples:
 
 ```text
-wamn_receiving@1.1.0::purchase_order.get
-wamn_receiving@1.1.0::purchase_order.update
-wamn_receiving@1.1.0::receiving.record_receipt
+wamn-receiving:purchase-order/get@1.1.0
+wamn-receiving:purchase-order/update@1.1.0
+wamn-receiving:receiving/record-receipt@1.1.0
 
-client_acme_receiving@3.0.0::receiving.record_receipt
-client_acme_receiving@3.0.0::quality.approve_inspection
+client-acme-receiving:receiving/record-receipt@3.0.0
+client-acme-receiving:quality/approve-inspection@3.0.0
 ```
 
 The platform and client may use the same local operation name because their package identities differ. A route, wiring, generated client, or registered caller binds an exact package coordinate; a client operation does not implicitly override a platform operation.
@@ -209,7 +209,7 @@ The platform and client contribute to one effective application while retaining 
 | Base migration stream | Client migration stream |
 | Base data model and field | Client field and data model |
 | Base CRUD and read contract | Client CRUD and projection |
-| `wamn_receiving@1.0.0::receiving.record_receipt` | Client command and BFF operation |
+| `wamn-receiving:receiving/record-receipt@1.0.0` | Client command and BFF operation |
 | Base permission and RLS requirement | Client operation permission |
 | Base component artifact, wiring, and route | Client component artifact, wiring, and route |
 | Optional default UI artifact | Client UI artifact |
@@ -266,7 +266,7 @@ proved without expanding authority to `create` or `delete`.
 demand-gated and is not a base POC operation; Phase 1 implements only
 `receiving.record_receipt` as its custom command.
 
-`wamn_receiving@1.0.0::receiving.record_receipt` owns the authoritative database transaction for each command item:
+`wamn-receiving:receiving/record-receipt@1.0.0` owns the authoritative database transaction for each command item:
 
 ```text
 authorize caller
@@ -375,18 +375,18 @@ The migration is accepted only because `receiving.purchase_order` is declared ex
 The client may expose a narrow generated data operation:
 
 ```text
-client_acme_receiving@3.0.0::purchase_order.get
-client_acme_receiving@3.0.0::purchase_order.update
+client-acme-receiving:purchase-order/get@3.0.0
+client-acme-receiving:purchase-order/update@3.0.0
 ```
 
 With HTTP bindings such as:
 
 ```text
 GET   /acme/purchase_order/:id/quality
-  → client_acme_receiving@3.0.0::purchase_order.get
+  → client-acme-receiving:purchase-order/get@3.0.0
 
 PATCH /acme/purchase_order/:id/quality
-  → client_acme_receiving@3.0.0::purchase_order.update
+  → client-acme-receiving:purchase-order/update@3.0.0
 ```
 
 The generated client mutation is restricted to the client-owned field surface. For example:
@@ -408,7 +408,7 @@ It does not expose platform-owned fields such as `supplier_id`, `status`, or rec
 Or it may create a combined projection:
 
 ```text
-client_acme_receiving@3.0.0::quality.load_purchase_order_detail
+client-acme-receiving:quality/load-purchase-order-detail@3.0.0
   platform field:
     purchase_order_number
     supplier_id
@@ -435,7 +435,7 @@ The base Receiving API and base command remain unchanged.
 Acme creates:
 
 ```text
-client_acme_receiving@3.0.0::receiving.record_receipt
+client-acme-receiving:receiving/record-receipt@3.0.0
 ```
 
 The BFF operation performs:
@@ -457,7 +457,7 @@ authorize receiving.record_receipt
 ```text
 effective_release_r17
   requirement: base_receiving::receiving.record_receipt
-  implementation: wamn_receiving@1.0.0::receiving.record_receipt
+  implementation: wamn-receiving:receiving/record-receipt@1.0.0
 ```
 
 This is appropriate for UI shaping, advisory checks, defaults, and non-atomic client rules.
@@ -465,8 +465,8 @@ This is appropriate for UI shaping, advisory checks, defaults, and non-atomic cl
 A client may instead register its own local `receiving.record_receipt`; package scope keeps it distinct:
 
 ```text
-wamn_receiving@1.0.0::receiving.record_receipt
-client_acme_receiving@3.0.0::receiving.record_receipt
+wamn-receiving:receiving/record-receipt@1.0.0
+client-acme-receiving:receiving/record-receipt@3.0.0
 ```
 
 The selected route binds one exact identity. The client implementation calls the declared base contract dependency; the effective release records the exact base package implementation.
@@ -478,10 +478,10 @@ This composition is **not** sufficient for a rule that must remain true at the e
 After the base command commits:
 
 ```text
-wamn_receiving@1.0.0::receiving.record_receipt
+wamn-receiving:receiving/record-receipt@1.0.0
 → committed receipt state observed through the existing CDC or event plane
 → client wiring
-→ client_acme_receiving@3.0.0::quality.create_inspection
+→ client-acme-receiving:quality/create-inspection@3.0.0
 ```
 
 `quality.create_inspection` is private to the installed application and is the
@@ -670,7 +670,7 @@ function
 Canonical WAMN identity:
 
 ```text
-wamn_receiving@1.1.0::purchase_order.get
+wamn-receiving:purchase-order/get@1.1.0
 ```
 
 Frontend use:

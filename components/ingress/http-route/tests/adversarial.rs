@@ -594,7 +594,7 @@ fn every_bridge_refusal_has_a_bounded_http_answer() {
 
 #[test]
 fn missing_exact_operation_is_the_only_discoverable_forbidden_refusal() {
-    const OPERATION: &str = "wamn_receiving@1.0.0::receipt.get";
+    const OPERATION: &str = "wamn-receiving:receipt/get@1.0.0";
     let mut backend = FakeBackend::new(route());
     backend.delivery = Err(DeliveryError::PermissionDenied {
         operation: OPERATION.to_string(),

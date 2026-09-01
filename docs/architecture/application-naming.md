@@ -1,6 +1,7 @@
 # Application naming law
 
-Status: RATIFIED for the Receiving base and client-overlay POC.
+Status: RATIFIED for the Receiving base and client-overlay POC · native
+operation/export token amended 2026-09-01.
 
 This document is the naming contract for generated application artifacts. The
 POC design remains in `docs/poc/`; generators cite this contract rather than
@@ -20,14 +21,17 @@ A package is the ownership, version, and compatibility boundary. A module or
 domain organizes implementation inside a package and has no independent public
 package identity.
 
-Canonical operation identity is:
+Canonical operation, component-export, and authorization identity is one token:
 
 ```text
-<package_id>@<package_version>::<local_operation>
+<package-id-kebab>:<module-kebab>/<action-kebab>@<package-version>
 ```
 
-The package version is the only operation-version coordinate. A local
-operation has one of two forms:
+For example, `wamn_receiving` operation `purchase_order.get` at `1.0.0`
+is `wamn-receiving:purchase-order/get@1.0.0`. Package and operation source
+identifiers remain singular `snake_case`; their native external spelling
+replaces each underscore with one hyphen. The package version is the only
+operation-version coordinate. A local operation has one of two forms:
 
 ```text
 <data_model>.<crud_action>
@@ -36,6 +40,14 @@ operation has one of two forms:
 
 The closed generated CRUD action set is `get`, `query`, `create`, `update`, and
 `delete`. Custom actions use singular `verb_noun` names.
+
+The exact token keys the component's operation fact, names its exported
+`wamn:node/handler` instance, selects dispatch, and is repeated explicitly in
+`registered-operation` for authorization. Admission refuses a package
+operation when that repeated field differs from its map key. This single
+native spelling prevents invalid Component Model extern names and prevents
+alias drift between dispatch and permission checks; there is no sanitized
+mapping or carrier field.
 
 ## Pagination order
 

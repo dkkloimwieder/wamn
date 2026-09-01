@@ -84,10 +84,6 @@ fn copy_receiving_package(root: &Path) {
             "ops": ["insert"]
         }
     });
-    manifest["components"]["quality_create_inspection"] = serde_json::json!({
-        "operations": ["quality.create_inspection"],
-        "connections": ["postgres"]
-    });
     std::fs::write(
         &manifest_path,
         serde_json::to_vec_pretty(&manifest).expect("serialize handler package manifest"),
@@ -193,15 +189,6 @@ fn copy_overlay_package(
         .as_object_mut()
         .expect("model operations are an object")
         .retain(|name, _| format!("{model_id}.{name}") == operation);
-    manifest["components"]
-        .as_object_mut()
-        .expect("components are an object")
-        .retain(|_, component| {
-            component["operations"]
-                .as_array()
-                .is_some_and(|operations| operations == &[serde_json::json!(operation)])
-        });
-
     std::fs::write(
         manifest_path,
         serde_json::to_vec_pretty(&manifest).expect("serialize overlay manifest"),
@@ -329,8 +316,8 @@ async fn prove_concurrent_package_grants_share_one_carrier(url: &str) {
             .query_one(
                 "SELECT count(*) FROM app_system.permissions \
                   WHERE tenant_id = $1 AND role_name = 'route-caller' \
-                    AND (permission LIKE 'race_alpha@1.0.0::%' \
-                         OR permission LIKE 'race_beta@1.0.0::%')",
+                    AND (permission LIKE 'race-alpha:%@1.0.0' \
+                         OR permission LIKE 'race-beta:%@1.0.0')",
                 &[&RACE_TENANT],
             )
             .await
@@ -393,8 +380,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             "INSERT INTO app_system.roles (tenant_id, name, is_system) \
                  VALUES ('{TENANT}', 'route-caller', false); \
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
-                 ('{TENANT}', 'route-caller', 'wamn_receiving@1.0.0::obsolete.operation'), \
-                 ('{TENANT}', 'route-caller', 'client_overlay@1.0.0::receipt.get');"
+                 ('{TENANT}', 'route-caller', 'wamn-receiving:obsolete/operation@1.0.0'), \
+                 ('{TENANT}', 'route-caller', 'client-overlay:receipt/get@1.0.0');"
         ))
         .await
         .expect("seed exact-coordinate grant residue and a sibling coordinate");
@@ -419,7 +406,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT count(*) FROM app_system.permissions \
                   WHERE tenant_id = $1 AND role_name = 'route-caller' \
-                    AND permission LIKE 'wamn_receiving@1.0.0::%'",
+                    AND permission LIKE 'wamn-receiving:%@1.0.0'",
                 &[&TENANT],
             )
             .await
@@ -432,7 +419,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT count(*) FROM app_system.permissions \
                   WHERE tenant_id = $1 AND role_name = 'route-caller' \
-                    AND permission = 'client_overlay@1.0.0::receipt.get'",
+                    AND permission = 'client-overlay:receipt/get@1.0.0'",
                 &[&TENANT],
             )
             .await
@@ -462,8 +449,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query_one(
-                "SELECT count(*) FROM catalog.package_migrations WHERE tenant_id = $1",
-                &[&TENANT],
+                "SELECT count(*) FROM catalog.package_migrations \
+                 WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3",
+                &[&TENANT, &"wamn_receiving", &"1.0.0"],
             )
             .await
             .unwrap()
@@ -812,8 +800,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_eq!(
         client
             .query_one(
-                "SELECT count(*) FROM catalog.package_migrations WHERE tenant_id = $1",
-                &[&TENANT],
+                "SELECT count(*) FROM catalog.package_migrations \
+                 WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3",
+                &[&TENANT, &"wamn_receiving", &"1.0.0"],
             )
             .await
             .unwrap()

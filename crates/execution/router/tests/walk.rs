@@ -31,6 +31,7 @@ fn node_cfg(id: &str, component: &str, config: Value) -> WiringNode {
     WiringNode {
         id: id.to_string(),
         component: component.to_string(),
+        operation: component.to_string(),
         config,
         connection: None,
         terminal: None,

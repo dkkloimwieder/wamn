@@ -475,11 +475,13 @@ fn verify_config_body(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use oci_client::errors::DigestError;
     use serde_json::json;
     use wamn_catalog::{
-        AdmittedComponent, ComponentDeclaration, ComponentPackageScope, ComponentPortDeclaration,
-        normalize_component_fact,
+        ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope,
+        ComponentPortDeclaration, normalize_component_fact,
     };
 
     use super::*;
@@ -494,14 +496,18 @@ mod tests {
                 },
                 component: "transform".to_owned(),
                 interface_version: "0.1.0".to_owned(),
-                operation: "run".to_owned(),
-                registered_operation: None,
-                input_ports: vec![ComponentPortDeclaration {
-                    name: "input".to_owned(),
-                    schema: json!({}),
-                }],
-                output_ports: Vec::new(),
-                parameters: Vec::new(),
+                operations: BTreeMap::from([(
+                    "run".to_owned(),
+                    ComponentOperationDeclaration {
+                        registered_operation: None,
+                        input_ports: vec![ComponentPortDeclaration {
+                            name: "input".to_owned(),
+                            schema: json!({}),
+                        }],
+                        output_ports: Vec::new(),
+                        parameters: Vec::new(),
+                    },
+                )]),
                 connections: Vec::new(),
             },
             component_digest(bytes),

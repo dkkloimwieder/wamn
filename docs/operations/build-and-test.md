@@ -452,11 +452,12 @@ Every substrate below is a **throwaway** Postgres — see the next section.
 
 ### `[STD-GUEST-VIRTUALIZATION]` — std guest imports and trap visibility
 
-This gate builds the six Receiving artifacts through the pinned virtualization
-stage, virtualizes the std probe with that same tool, then reads the resulting
-component bytes. It requires each artifact's exact four-package import set and
-six distinct Receiving digests before exercising sentinel isolation and
-panic-to-typed-refusal mapping through the production router/ingress path.
+This gate builds the Receiving package component through the pinned
+virtualization stage, virtualizes the std probe with that same tool, then reads
+the resulting component bytes. It requires the component's exact four-package
+import set and six exact operation-instance exports before exercising sentinel
+isolation and panic-to-typed-refusal mapping through the production
+router/ingress path.
 
 ```bash
 set -euo pipefail
@@ -472,7 +473,7 @@ cargo run -p wamn-component-virtualizer --locked --offline -- \
 WAMN_STD_VIRTUALIZATION_COMPONENT_WASM="$STD_VIRT_DIRECTORY/std_virtualization_probe.wasm" \
 WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY="$STD_VIRT_DIRECTORY" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
-  virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_distinct_receiving_digests \
+  virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports \
   -- --ignored --exact --nocapture
 
 WAMN_STD_VIRT_PROJECT="wamn-std-virt-$$"
@@ -850,7 +851,7 @@ created and reset. The frozen cluster is never a valid target.
 
 ### `[RECEIVING-ROUTE-JOURNEY]` — published Receiving routes and traces
 
-This gate builds the six virtualized Receiving components and shipped
+This gate builds the virtualized Receiving package component and shipped
 `flow-http`, then drives production apply, push, gate, author, mint, attest,
 load, authentication, routing, and PostgreSQL paths. Its PostgreSQL 18 server
 and authenticated plain-HTTP registry are disposable and loopback-only. The
@@ -876,6 +877,7 @@ RECEIVING_ROUTE_DOCKER_AUTH="$RECEIVING_ROUTE_SCRATCH/.dockerconfigjson"
 RECEIVING_ROUTE_CURL_AUTH="$RECEIVING_ROUTE_SCRATCH/curl.conf"
 RECEIVING_ROUTE_HOST=receiving.localhost
 RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$RECEIVING_ROUTE_SCRATCH/host-secrets"
+RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$RECEIVING_ROUTE_SCRATCH/route-caller-pat.json"
 RECEIVING_ROUTE_SECRET_NAMESPACE=wamn-receiving-route
 install -d -m 0700 "$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY"
 
@@ -893,10 +895,7 @@ CARGO_TARGET_DIR="$RECEIVING_ROUTE_SCRATCH/target" \
   "$RECEIVING_ROUTE_ROOT/tools/build-components" m1
 RECEIVING_ROUTE_COMPONENTS="$RECEIVING_ROUTE_SCRATCH/target/virtualized/std-empty-environment"
 RECEIVING_ROUTE_FLOW_HTTP="$RECEIVING_ROUTE_SCRATCH/target/wasm32-wasip2/debug/http_route.wasm"
-for component in purchase_order_get purchase_order_query purchase_order_update \
-  receipt_get receipt_query receiving_record_receipt; do
-  test -s "$RECEIVING_ROUTE_COMPONENTS/$component.wasm"
-done
+test -s "$RECEIVING_ROUTE_COMPONENTS/receiving.wasm"
 test -s "$RECEIVING_ROUTE_FLOW_HTTP"
 
 printf '%s\n' "$RECEIVING_ROUTE_PASSWORD" \
@@ -943,6 +942,7 @@ WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE="$RECEIVING_ROUTE_AUTHORITY/wamn/rele
 WAMN_RECEIVING_ROUTE_HOST="$RECEIVING_ROUTE_HOST" \
 WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE="$RECEIVING_ROUTE_DOCKER_AUTH" \
 WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY" \
+WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT" \
 WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE="$RECEIVING_ROUTE_SECRET_NAMESPACE" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   route_authentication_live::production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \

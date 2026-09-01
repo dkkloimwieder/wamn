@@ -8,12 +8,7 @@ resolver = "2"
 # guest-supplied `#[panic_handler]`. They live in the second workspace at
 # `no-std/`, whose manifest carries the full reason (wamn-0h0g.11.56).
 members = [
-    "application/receiving/purchase_order_get",
-    "application/receiving/purchase_order_query",
-    "application/receiving/purchase_order_update",
-    "application/receiving/receipt_get",
-    "application/receiving/receipt_query",
-    "application/receiving/receiving_record_receipt",
+    "application/receiving",
     "ingress/http-route",
     "execution/materializer",
     "data/postgres-sqlx",

@@ -491,19 +491,16 @@
       "guards": [
         "constraint:component_library_component_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component <> ''::text)",
         "constraint:component_library_component_digest_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
+        "constraint:component_library_digest_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, component_digest)",
         "constraint:component_library_effects_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(effects) = 'array'::text)",
         "constraint:component_library_imports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(imports) = 'array'::text)",
         "constraint:component_library_imports_fingerprint_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text)",
-        "constraint:component_library_input_ports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(input_ports) = 'array'::text)",
         "constraint:component_library_interface_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (interface_version <> ''::text)",
-        "constraint:component_library_one_operation_per_digest;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, component_digest)",
-        "constraint:component_library_operation_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (operation <> ''::text)",
-        "constraint:component_library_output_ports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(output_ports) = 'array'::text)",
+        "constraint:component_library_operations_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(operations) = 'object'::text AND operations <> '{}'::jsonb)",
         "constraint:component_library_package_digest_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, package_id, package_version, component_digest)",
         "constraint:component_library_package_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, package_id, package_version) REFERENCES catalog.packages(tenant_id, package_id, package_version)",
         "constraint:component_library_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_id <> ''::text)",
         "constraint:component_library_package_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_version <> ''::text)",
-        "constraint:component_library_parameters_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(parameters) = 'array'::text)",
         "constraint:component_library_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, package_id, package_version, component, interface_version)",
         "constraint:component_library_projection_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (projection_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:component_library_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -1123,19 +1120,16 @@
       "guards": [
         "constraint:component_library_component_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component <> ''::text)",
         "constraint:component_library_component_digest_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
+        "constraint:component_library_digest_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, component_digest)",
         "constraint:component_library_effects_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(effects) = 'array'::text)",
         "constraint:component_library_imports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(imports) = 'array'::text)",
         "constraint:component_library_imports_fingerprint_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text)",
-        "constraint:component_library_input_ports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(input_ports) = 'array'::text)",
         "constraint:component_library_interface_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (interface_version <> ''::text)",
-        "constraint:component_library_one_operation_per_digest;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, component_digest)",
-        "constraint:component_library_operation_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (operation <> ''::text)",
-        "constraint:component_library_output_ports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(output_ports) = 'array'::text)",
+        "constraint:component_library_operations_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(operations) = 'object'::text AND operations <> '{}'::jsonb)",
         "constraint:component_library_package_digest_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, package_id, package_version, component_digest)",
         "constraint:component_library_package_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, package_id, package_version) REFERENCES catalog.packages(tenant_id, package_id, package_version)",
         "constraint:component_library_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_id <> ''::text)",
         "constraint:component_library_package_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_version <> ''::text)",
-        "constraint:component_library_parameters_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(parameters) = 'array'::text)",
         "constraint:component_library_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, package_id, package_version, component, interface_version)",
         "constraint:component_library_projection_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (projection_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:component_library_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
@@ -1436,7 +1430,6 @@
       "author-reachable": "author SQL, RLS-bounded",
       "guards": [
         "constraint:event_registrations_entity_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (entity_id <> ''::text)",
-        "constraint:event_registrations_flow_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (flow_id <> ''::text)",
         "constraint:event_registrations_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_id <> ''::text)",
         "constraint:event_registrations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, package_id, registration_id)",
         "constraint:event_registrations_registration_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (registration_id <> ''::text)",
@@ -1444,6 +1437,44 @@
         "policy:event_registrations_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
         "policy:event_registrations_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
         "row-security:enabled=true;forced=true"
+      ]
+    },
+    {
+      "scope": "production-project-database",
+      "relation": "catalog.package_definition_owners",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "schema-control",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:package_definition_owners_definition_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (definition_kind = ANY (ARRAY['relation'::text, 'field'::text, 'constraint'::text]))",
+        "constraint:package_definition_owners_definition_name_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (definition_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'::text)",
+        "constraint:package_definition_owners_extensibility_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (definition_kind = 'relation'::text OR NOT client_field_extensible)",
+        "constraint:package_definition_owners_owner_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (owner_package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'::text)",
+        "constraint:package_definition_owners_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, schema_name, relation_name, definition_kind, definition_name)",
+        "constraint:package_definition_owners_relation_name_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (relation_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'::text)",
+        "constraint:package_definition_owners_relation_shape_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (definition_kind <> 'relation'::text OR definition_name = relation_name)",
+        "constraint:package_definition_owners_schema_name_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (schema_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'::text)",
+        "constraint:package_definition_owners_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:package_definition_owners_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
+        "policy:package_definition_owners_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
+        "row-security:enabled=true;forced=true",
+        "trigger:package_definition_owners_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER package_definition_owners_immutable BEFORE DELETE OR UPDATE ON catalog.package_definition_owners FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
       ]
     },
     {
@@ -1546,14 +1577,18 @@
       "guards": [
         "constraint:release_components_component_digest_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:release_components_component_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, package_id, package_version, component_digest) REFERENCES catalog.component_library(tenant_id, package_id, package_version, component_digest)",
+        "constraint:release_components_component_membership_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, effective_release_id, package_id, package_version) REFERENCES catalog.effective_release_packages(tenant_id, effective_release_id, package_id, package_version)",
         "constraint:release_components_effective_release_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (effective_release_id > 0)",
-        "constraint:release_components_membership_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, effective_release_id, package_id, package_version) REFERENCES catalog.effective_release_packages(tenant_id, effective_release_id, package_id, package_version)",
+        "constraint:release_components_node_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (node_id <> ''::text)",
         "constraint:release_components_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_id <> ''::text)",
         "constraint:release_components_package_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_version <> ''::text)",
-        "constraint:release_components_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, effective_release_id, package_id, package_version, wiring_id, wiring_version, component_digest)",
+        "constraint:release_components_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, effective_release_id, wiring_package_id, wiring_package_version, wiring_id, wiring_version, node_id)",
         "constraint:release_components_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "constraint:release_components_wiring_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, package_id, package_version, wiring_id, wiring_version) REFERENCES catalog.wirings(tenant_id, package_id, package_version, wiring_id, version)",
+        "constraint:release_components_wiring_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, wiring_package_id, wiring_package_version, wiring_id, wiring_version) REFERENCES catalog.wirings(tenant_id, package_id, package_version, wiring_id, version)",
         "constraint:release_components_wiring_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_id <> ''::text)",
+        "constraint:release_components_wiring_membership_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, effective_release_id, wiring_package_id, wiring_package_version) REFERENCES catalog.effective_release_packages(tenant_id, effective_release_id, package_id, package_version)",
+        "constraint:release_components_wiring_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_package_id <> ''::text)",
+        "constraint:release_components_wiring_package_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_package_version <> ''::text)",
         "constraint:release_components_wiring_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (wiring_version > 0)",
         "policy:release_components_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
         "policy:release_components_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",

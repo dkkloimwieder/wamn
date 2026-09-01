@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 use wamn_catalog::{
     ArtifactHash, AttachmentKind, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
-    ServingAttachment, ServingComponent, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingRelease, ServingWiring,
+    ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
+    ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
 };
 
 mod mint_vector {
@@ -46,14 +46,26 @@ fn components() -> BTreeSet<ServingComponent> {
             component: "transform".into(),
             interface_version: "0.1".into(),
             digest: artifact_hash(COMPONENT_B),
-            registered_operation: None,
+            operations: BTreeMap::from([(
+                "map".into(),
+                ServingComponentOperation {
+                    registered_operation: None,
+                },
+            )]),
         },
         ServingComponent {
             package_id: "client_acme_receiving".into(),
             component: "http-request".into(),
             interface_version: "0.1".into(),
             digest: artifact_hash(COMPONENT_A),
-            registered_operation: Some("client_acme_receiving@3.0.0::purchase_order.get".into()),
+            operations: BTreeMap::from([(
+                "client-acme-receiving:purchase-order/get@3.0.0".into(),
+                ServingComponentOperation {
+                    registered_operation: Some(
+                        "client-acme-receiving:purchase-order/get@3.0.0".into(),
+                    ),
+                },
+            )]),
         },
     ])
 }
@@ -94,9 +106,7 @@ fn manifest() -> ServingManifest {
                     "run-deadline-ms": 30000
                 }),
                 auth_policy: json!({"mode": "pat"}),
-                registered_operation: Some(
-                    "client_acme_receiving@3.0.0::purchase_order.get".into(),
-                ),
+                registered_operation: Some("client-acme-receiving:purchase-order/get@3.0.0".into()),
             },
         )]),
         BTreeMap::from([(
@@ -211,8 +221,8 @@ fn every_manifest_field_is_pinned() {
             "component",
             "digest",
             "interface-version",
+            "operations",
             "package-id",
-            "registered-operation"
         ]
     );
     assert_eq!(

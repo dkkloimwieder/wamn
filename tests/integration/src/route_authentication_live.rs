@@ -85,20 +85,33 @@ const OTHER_ENVIRONMENT: &str = "prod";
 const TENANT: &str = "receiving-route-auth";
 const ROUTE_CALLER_ROLE: &str = "route-caller";
 const ATTACHMENT_ID: &str = "receiving-purchase-order-get";
-const OPERATION: &str = "wamn_receiving@1.0.0::purchase_order.get";
-const RESIDUE: &str = "wamn_receiving@1.0.0::obsolete.operation";
+const OPERATION: &str = "wamn-receiving:purchase-order/get@1.0.0";
+const RESIDUE: &str = "wamn-receiving:obsolete/operation@1.0.0";
 const PACKAGE_ID: &str = "wamn_receiving";
 const PACKAGE_VERSION: &str = "1.0.0";
+const COMPONENT: &str = "receiving";
 const RELEASE_ID: u32 = 1;
 const RAW_BODY_LIMIT: usize = 1024 * 1024;
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
-const COMPONENTS: [(&str, &str); 6] = [
-    ("purchase_order_get", "purchase_order.get"),
-    ("purchase_order_query", "purchase_order.query"),
-    ("purchase_order_update", "purchase_order.update"),
-    ("receipt_get", "receipt.get"),
-    ("receipt_query", "receipt.query"),
-    ("receiving_record_receipt", "receiving.record_receipt"),
+const OPERATIONS: [(&str, &str); 6] = [
+    (
+        "purchase_order_get",
+        "wamn-receiving:purchase-order/get@1.0.0",
+    ),
+    (
+        "purchase_order_query",
+        "wamn-receiving:purchase-order/query@1.0.0",
+    ),
+    (
+        "purchase_order_update",
+        "wamn-receiving:purchase-order/update@1.0.0",
+    ),
+    ("receipt_get", "wamn-receiving:receipt/get@1.0.0"),
+    ("receipt_query", "wamn-receiving:receipt/query@1.0.0"),
+    (
+        "receiving_record_receipt",
+        "wamn-receiving:receiving/record-receipt@1.0.0",
+    ),
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -508,10 +521,12 @@ fn serving_weld() -> anyhow::Result<Arc<ReleaseManifestWeld>> {
         },
         "components": [{
             "package-id": "wamn_receiving",
-            "component": "purchase-order-get",
+            "component": COMPONENT,
             "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)),
-            "registered-operation": OPERATION
+            "operations": {
+                (OPERATION): {"registered-operation": OPERATION}
+            }
         }],
         "wirings": [{
             "package-id": "wamn_receiving",
@@ -1214,21 +1229,18 @@ async fn prepare_journey_credentials(
 fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
     let output = root.join("component-declarations");
     std::fs::create_dir_all(&output).context("create rendered declaration directory")?;
-    COMPONENTS
-        .iter()
-        .map(|(component, _)| {
-            let source = publication_root()
-                .join("components")
-                .join(format!("{component}.json.in"));
-            let rendered = std::fs::read_to_string(&source)
-                .with_context(|| format!("read {}", source.display()))?
-                .replace("__TENANT_ID__", TENANT);
-            let destination = output.join(format!("{component}.json"));
-            std::fs::write(&destination, rendered)
-                .with_context(|| format!("write {}", destination.display()))?;
-            Ok(((*component).to_owned(), destination))
-        })
-        .collect()
+    let source = publication_root()
+        .join("components")
+        .join("receiving.json.in");
+    let mut declaration: Value = serde_json::from_slice(
+        &std::fs::read(&source).with_context(|| format!("read {}", source.display()))?,
+    )
+    .with_context(|| format!("parse {}", source.display()))?;
+    declaration["scope"]["tenant-id"] = Value::String(TENANT.to_owned());
+    let destination = output.join("receiving.json");
+    std::fs::write(&destination, serde_json::to_vec(&declaration)?)
+        .with_context(|| format!("write {}", destination.display()))?;
+    Ok(vec![(COMPONENT.to_owned(), destination)])
 }
 
 async fn push_journey_components(
@@ -1258,45 +1270,56 @@ async fn push_journey_components(
 async fn verify_journey_components_are_effectful(project: &Client) -> anyhow::Result<()> {
     let rows = project
         .query(
-            "SELECT component, registered_operation, effects FROM catalog.component_library \
+            "SELECT component, operations, effects FROM catalog.component_library \
              WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
              ORDER BY component COLLATE \"C\"",
             &[&TENANT, &PACKAGE_ID, &PACKAGE_VERSION],
         )
         .await
-        .context("read the six admitted Receiving effect projections")?;
-    let expected = COMPONENTS
+        .context("read the admitted Receiving effect projection")?;
+    anyhow::ensure!(
+        rows.len() == 1,
+        "component publication projected {} Receiving rows instead of one",
+        rows.len()
+    );
+    let row = &rows[0];
+    let component: String = row.get(0);
+    anyhow::ensure!(
+        component == COMPONENT,
+        "component publication projected {component} instead of {COMPONENT}"
+    );
+    let operations: Value = row.get(1);
+    let operation_facts = operations
+        .as_object()
+        .context("Receiving operations fact is not an object")?;
+    let expected = OPERATIONS
         .iter()
-        .map(|(component, _)| (*component).to_owned())
+        .map(|(_, token)| *token)
         .collect::<BTreeSet<_>>();
-    let observed = rows
-        .iter()
-        .map(|row| row.get::<_, String>(0))
+    let observed = operation_facts
+        .keys()
+        .map(String::as_str)
         .collect::<BTreeSet<_>>();
     anyhow::ensure!(
         observed == expected,
-        "component publication projected the wrong Receiving set: {observed:?}"
+        "Receiving component projected the wrong operation set: {observed:?}"
     );
-    for row in rows {
-        let component: String = row.get(0);
-        let registered_operation: Option<String> = row.get(1);
-        let operation = COMPONENTS
-            .iter()
-            .find_map(|(candidate, operation)| (*candidate == component).then_some(*operation))
-            .with_context(|| format!("admission projected unknown component {component}"))?;
-        let expected_operation = format!("{PACKAGE_ID}@{PACKAGE_VERSION}::{operation}");
+    for token in expected {
+        let fact = operation_facts
+            .get(token)
+            .with_context(|| format!("Receiving operation fact missing for {token}"))?;
         anyhow::ensure!(
-            registered_operation.as_deref() == Some(expected_operation.as_str()),
-            "Receiving component {component} projected the wrong operation: {registered_operation:?}"
-        );
-        let effects: Value = row.get(2);
-        anyhow::ensure!(
-            effects
-                .as_array()
-                .is_some_and(|effects| !effects.is_empty()),
-            "Receiving component {component} is not effectful: {effects}"
+            fact["registered-operation"].as_str() == Some(token),
+            "Receiving operation {token} projected a different authorization identity"
         );
     }
+    let effects: Value = row.get(2);
+    anyhow::ensure!(
+        effects
+            .as_array()
+            .is_some_and(|effects| !effects.is_empty()),
+        "Receiving component is not effectful: {effects}"
+    );
     Ok(())
 }
 
@@ -1321,11 +1344,11 @@ fn gate_document(command_id: &str, document: Value) -> Value {
 
 async fn gate_journey_wirings(bind: &str, bearer: &str) -> anyhow::Result<Vec<String>> {
     let client = reqwest::Client::new();
-    let mut reports = Vec::with_capacity(COMPONENTS.len());
-    for (component, _) in COMPONENTS {
+    let mut reports = Vec::with_capacity(OPERATIONS.len());
+    for (wiring, _) in OPERATIONS {
         let path = publication_root()
             .join("wirings")
-            .join(format!("{component}.json"));
+            .join(format!("{wiring}.json"));
         let document: Value = serde_json::from_slice(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )
@@ -1333,23 +1356,23 @@ async fn gate_journey_wirings(bind: &str, bearer: &str) -> anyhow::Result<Vec<St
         let response = client
             .post(format!("http://{bind}/authoring"))
             .bearer_auth(bearer)
-            .json(&gate_document(&format!("gate-{component}"), document))
+            .json(&gate_document(&format!("gate-{wiring}"), document))
             .send()
             .await
-            .with_context(|| format!("submit {component} to the production Gate"))?;
+            .with_context(|| format!("submit {wiring} to the production Gate"))?;
         let status = response.status();
         let body: Value = response
             .json()
             .await
-            .with_context(|| format!("decode {component} Gate response"))?;
+            .with_context(|| format!("decode {wiring} Gate response"))?;
         anyhow::ensure!(
             status == reqwest::StatusCode::OK && body["body"]["outcome"]["status"] == "completed",
-            "production Gate refused {component}: status={status} body={body}"
+            "production Gate refused {wiring}: status={status} body={body}"
         );
         reports.push(
             body["body"]["outcome"]["value"]["result"]["report-id"]
                 .as_str()
-                .with_context(|| format!("production Gate returned no report id for {component}"))?
+                .with_context(|| format!("production Gate returned no report id for {wiring}"))?
                 .to_owned(),
         );
     }
@@ -1361,10 +1384,10 @@ async fn verify_zero_case_gate_reports(
     report_ids: &[String],
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
-        report_ids.len() == COMPONENTS.len(),
+        report_ids.len() == OPERATIONS.len(),
         "production Gate returned {} reports for {} wirings",
         report_ids.len(),
-        COMPONENTS.len()
+        OPERATIONS.len()
     );
     for report_id in report_ids {
         let row = control
@@ -1386,7 +1409,7 @@ async fn verify_zero_case_gate_reports(
 }
 
 async fn author_journey_wirings(project_url: &str, system_url: &str) -> anyhow::Result<()> {
-    for (component, _) in COMPONENTS {
+    for (wiring, _) in OPERATIONS {
         author_wiring::run(AuthorWiringArgs {
             database_url: project_url.to_owned(),
             control_database_url: system_url.to_owned(),
@@ -1395,10 +1418,10 @@ async fn author_journey_wirings(project_url: &str, system_url: &str) -> anyhow::
             package_version: PACKAGE_VERSION.to_owned(),
             wiring_document: publication_root()
                 .join("wirings")
-                .join(format!("{component}.json")),
+                .join(format!("{wiring}.json")),
         })
         .await
-        .with_context(|| format!("author gated wiring {component}"))?;
+        .with_context(|| format!("author gated wiring {wiring}"))?;
     }
     Ok(())
 }
@@ -1411,10 +1434,10 @@ async fn publish_journey_release(
     project: &Client,
     control: &Client,
 ) -> anyhow::Result<(String, Arc<ReleaseManifestWeld>)> {
-    let wirings = COMPONENTS
+    let wirings = OPERATIONS
         .iter()
-        .map(|(component, _)| {
-            format!("{PACKAGE_ID}@{PACKAGE_VERSION}::{component}=1")
+        .map(|(wiring, _)| {
+            format!("{PACKAGE_ID}@{PACKAGE_VERSION}::{wiring}=1")
                 .parse::<ReleaseWiringTarget>()
                 .map_err(anyhow::Error::msg)
         })
@@ -1543,10 +1566,7 @@ fn released_component_digests(
             )
         })
         .collect::<HashMap<_, _>>();
-    let expected = COMPONENTS
-        .iter()
-        .map(|(component, _)| *component)
-        .collect::<BTreeSet<_>>();
+    let expected = BTreeSet::from([COMPONENT]);
     let observed = digests.keys().map(String::as_str).collect::<BTreeSet<_>>();
     anyhow::ensure!(
         observed == expected,
@@ -2080,10 +2100,10 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
     );
 
     let spans = traces.spans();
+    let component_digest = component_digests
+        .get(COMPONENT)
+        .context("released Receiving component digest is missing")?;
     for (trace_id, wiring_id) in expected_traces {
-        let component_digest = component_digests
-            .get(wiring_id)
-            .with_context(|| format!("released component digest missing for {wiring_id}"))?;
         assert_route_trace(&spans, &trace_id, wiring_id, component_digest);
     }
     assert_no_component_trace(&spans, &unauthorized_trace);

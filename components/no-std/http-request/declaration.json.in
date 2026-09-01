@@ -6,41 +6,44 @@
   },
   "component": "http-request",
   "interface-version": "0.1.0",
-  "operation": "run",
-  "input-ports": [
-    { "name": "input", "schema": {} }
-  ],
-  "output-ports": [
-    { "name": "main", "schema": {} }
-  ],
-  "parameters": [
-    {
-      "name": "requirement",
-      "schema": { "type": "string", "minLength": 1 },
-      "required": true
-    },
-    {
-      "name": "method",
-      "schema": {
-        "type": "string",
-        "enum": ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
-      },
-      "required": true
-    },
-    {
-      "name": "path-and-query",
-      "schema": { "type": "string", "pattern": "^/" },
-      "required": true
-    },
-    {
-      "name": "headers",
-      "schema": {
-        "type": "object",
-        "additionalProperties": { "type": "string" }
-      },
-      "required": false
+  "operations": {
+    "wamn:node/handler@0.1.0": {
+      "input-ports": [
+        { "name": "input", "schema": {} }
+      ],
+      "output-ports": [
+        { "name": "main", "schema": {} }
+      ],
+      "parameters": [
+        {
+          "name": "requirement",
+          "schema": { "type": "string", "minLength": 1 },
+          "required": true
+        },
+        {
+          "name": "method",
+          "schema": {
+            "type": "string",
+            "enum": ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
+          },
+          "required": true
+        },
+        {
+          "name": "path-and-query",
+          "schema": { "type": "string", "pattern": "^/" },
+          "required": true
+        },
+        {
+          "name": "headers",
+          "schema": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "required": false
+        }
+      ]
     }
-  ],
+  },
   "connections": [
     { "store-alias": "upstream", "requirement-type": "http" }
   ]

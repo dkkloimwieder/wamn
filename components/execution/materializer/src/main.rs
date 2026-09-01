@@ -1025,7 +1025,7 @@ mod tests {
         }
         let permission_denied = Err(DeliveryError::PermissionDenied(
             delivery::PermissionDenial {
-                operation: "wamn_receiving@1.0.0::receipt.get".into(),
+                operation: "wamn-receiving:receipt/get@1.0.0".into(),
             },
         ));
         assert_eq!(

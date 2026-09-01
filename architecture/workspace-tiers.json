@@ -16,7 +16,7 @@
       {
         "workspace": "components",
         "manifest": "components/Cargo.toml",
-        "package_count": 15
+        "package_count": 10
       },
       {
         "workspace": "components-no-std",
@@ -70,12 +70,7 @@
         "http-request",
         "http-route",
         "materializer",
-        "receiving-purchase-order-get",
-        "receiving-purchase-order-query",
-        "receiving-purchase-order-update",
-        "receiving-receipt-get",
-        "receiving-receipt-query",
-        "receiving-receiving-record-receipt",
+        "receiving",
         "transform"
       ],
       "non_cargo_inputs": [],
@@ -140,12 +135,7 @@
         "http-request",
         "http-route",
         "materializer",
-        "receiving-purchase-order-get",
-        "receiving-purchase-order-query",
-        "receiving-purchase-order-update",
-        "receiving-receipt-get",
-        "receiving-receipt-query",
-        "receiving-receiving-record-receipt",
+        "receiving",
         "sockprobe",
         "sqlx-command",
         "std-virtualization-probe",
@@ -154,7 +144,7 @@
         "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 35 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 17 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 35 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 12 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -178,12 +168,7 @@
         "http-request",
         "http-route",
         "materializer",
-        "receiving-purchase-order-get",
-        "receiving-purchase-order-query",
-        "receiving-purchase-order-update",
-        "receiving-receipt-get",
-        "receiving-receipt-query",
-        "receiving-receiving-record-receipt",
+        "receiving",
         "sockprobe",
         "sqlx-command",
         "std-virtualization-probe",
@@ -209,12 +194,7 @@
         "http-request",
         "http-route",
         "materializer",
-        "receiving-purchase-order-get",
-        "receiving-purchase-order-query",
-        "receiving-purchase-order-update",
-        "receiving-receipt-get",
-        "receiving-receipt-query",
-        "receiving-receiving-record-receipt",
+        "receiving",
         "transform"
       ],
       "non_cargo_inputs": [],
@@ -261,8 +241,8 @@
       "m1_inventory_tier": "product_components",
       "proof_inventory_tier": "full_ci",
       "expected_package_counts": {
-        "m1": 10,
-        "proof": 17
+        "m1": 5,
+        "proof": 12
       }
     }
   },
@@ -284,7 +264,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "the 15 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
+      "selected_packages": "the 10 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     },
     {

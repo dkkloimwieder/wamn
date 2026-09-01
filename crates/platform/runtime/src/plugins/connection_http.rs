@@ -12,9 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::Instrument as _;
-use wamn_catalog::{
-    ArtifactHash, DefinitionHash, ServingComponent, ServingManifest, ServingWiring,
-};
+use wamn_catalog::{ArtifactHash, DefinitionHash, ServingManifest, ServingWiring};
 use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -398,23 +396,25 @@ fn authorize_release_closure(
     invocation: &ConnectionInvocation,
     snapshot: &ConnectionEffectSnapshot,
 ) -> Result<(), ConnectionError> {
-    let component = snapshot
+    let digest = ArtifactHash::parse(invocation.component_digest.clone())
+        .map_err(|_| ConnectionError::AttestationInvalid)?;
+    let Some(((component, interface_version), operation)) = snapshot
         .component
         .as_ref()
         .zip(snapshot.interface_version.as_ref())
-        .map(
-            |(component, interface_version)| -> Result<_, ConnectionError> {
-                Ok(ServingComponent {
-                    package_id: invocation.package_id.clone(),
-                    component: component.clone(),
-                    interface_version: interface_version.clone(),
-                    digest: ArtifactHash::parse(invocation.component_digest.clone())
-                        .map_err(|_| ConnectionError::AttestationInvalid)?,
-                    registered_operation: snapshot.registered_operation.clone(),
-                })
-            },
-        )
-        .transpose()?;
+        .zip(snapshot.operation.as_ref())
+    else {
+        return Err(ConnectionError::AttestationInvalid);
+    };
+    let component = manifest.components.iter().find(|candidate| {
+        candidate.package_id == invocation.package_id
+            && candidate.component == *component
+            && candidate.interface_version == *interface_version
+            && candidate.digest == digest
+    });
+    let operation_admitted = component
+        .and_then(|component| component.operations.get(operation))
+        .is_some_and(|operation| operation.registered_operation == snapshot.registered_operation);
     let wiring = ServingWiring {
         package_id: invocation.package_id.clone(),
         wiring_id: invocation.wiring_id.clone(),
@@ -422,9 +422,7 @@ fn authorize_release_closure(
         graph_hash: DefinitionHash::parse(snapshot.wiring_hash.clone())
             .map_err(|_| ConnectionError::AttestationInvalid)?,
     };
-    if component.is_none_or(|component| !manifest.components.contains(&component))
-        || !manifest.wirings.contains(&wiring)
-    {
+    if !operation_admitted || !manifest.wirings.contains(&wiring) {
         return Err(ConnectionError::AttestationInvalid);
     }
     Ok(())
@@ -773,11 +771,12 @@ impl http::Host for ActiveCtx<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet};
 
     use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
     use wamn_catalog::{
-        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingRelease,
+        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
+        ServingComponentOperation, ServingRelease,
     };
 
     use super::*;
@@ -852,7 +851,8 @@ mod tests {
             wiring_hash: digest('b'),
             component: Some("http-request".to_string()),
             interface_version: Some("0.1".to_string()),
-            registered_operation: Some("package_a@1.0.0::orders.notify".to_string()),
+            operation: Some("package-a:orders/notify@1.0.0".to_string()),
+            registered_operation: Some("package-a:orders/notify@1.0.0".to_string()),
             requirement_json: Some(serde_json::json!({
                 "component-digest": digest('a'),
                 "store-alias": "erp",
@@ -896,7 +896,12 @@ mod tests {
                 interface_version: snapshot.interface_version.expect("interface version"),
                 digest: ArtifactHash::parse(invocation.component_digest)
                     .expect("fixture artifact hash is canonical"),
-                registered_operation: snapshot.registered_operation,
+                operations: BTreeMap::from([(
+                    snapshot.operation.expect("operation"),
+                    ServingComponentOperation {
+                        registered_operation: snapshot.registered_operation,
+                    },
+                )]),
             }]),
             wirings: BTreeSet::from([ServingWiring {
                 package_id: invocation.package_id,

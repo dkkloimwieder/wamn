@@ -478,23 +478,23 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
                (tenant_id, environment, effective_release_id) \
              VALUES ('{TENANT}', '{ENVIRONMENT}', {CANDIDATE_EFFECTIVE_RELEASE_ID}); \
              INSERT INTO catalog.component_library \
-               (tenant_id, package_id, package_version, component, interface_version, operation, \
-                component_digest, projection_hash, imports, imports_fingerprint, effects, \
-                input_ports, output_ports, parameters) \
+               (tenant_id, package_id, package_version, component, interface_version, operations, \
+                component_digest, projection_hash, imports, imports_fingerprint, effects) \
              VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
-                     'entity', '0.1', 'create', \
+                     'entity', '0.1', \
+                     '{{\"create\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
                      '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PROJECTION_HASH}', '[]', \
-                     '{CANDIDATE_IMPORTS_FINGERPRINT}', '[]', '[]', '[]', '[]'); \
+                     '{CANDIDATE_IMPORTS_FINGERPRINT}', '[]'); \
              INSERT INTO catalog.component_library \
-               (tenant_id, package_id, package_version, component, interface_version, operation, \
-                component_digest, projection_hash, imports, imports_fingerprint, effects, \
-                input_ports, output_ports, parameters) \
+               (tenant_id, package_id, package_version, component, interface_version, operations, \
+                component_digest, projection_hash, imports, imports_fingerprint, effects) \
              VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
-                     '{EFFECTFUL_COMPONENT}', '0.1', 'charge', \
+                     '{EFFECTFUL_COMPONENT}', '0.1', \
+                     '{{\"charge\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
                      '{EFFECTFUL_COMPONENT_DIGEST}', '{EFFECTFUL_PROJECTION_HASH}', \
                      '[\"wamn:postgres/client@0.1.0\"]', '{EFFECTFUL_IMPORTS_FINGERPRINT}', \
                      '[{{\"package\":\"wamn:postgres\",\"interfaces\":\
-[\"wamn:postgres/client@0.1.0\"]}}]', '[]', '[]', '[]'); \
+[\"wamn:postgres/client@0.1.0\"]}}]'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"

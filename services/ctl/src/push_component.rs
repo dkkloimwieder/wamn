@@ -44,23 +44,19 @@ const SELECT_PACKAGE_SQL: &str = "SELECT manifest_sha256, predecessor_version FR
      WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3";
 
 const INSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
-         tenant_id, package_id, package_version, component, interface_version, operation, \
-         registered_operation, component_digest, projection_hash, imports, imports_fingerprint, effects, \
-         input_ports, output_ports, parameters\
+         tenant_id, package_id, package_version, component, interface_version, operations, \
+         component_digest, projection_hash, imports, imports_fingerprint, effects\
      ) VALUES (\
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb, $11, $12::text::jsonb, \
-         $13::text::jsonb, $14::text::jsonb, $15::text::jsonb\
+         $1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb\
      ) ON CONFLICT DO NOTHING RETURNING admitted_at";
 
 const EXACT_COMPONENT_SQL: &str = "SELECT EXISTS (\
          SELECT 1 FROM catalog.component_library \
           WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
-            AND component = $4 AND interface_version = $5 AND operation = $6 \
-            AND registered_operation IS NOT DISTINCT FROM $7 \
-            AND component_digest = $8 AND projection_hash = $9 \
-            AND imports = $10::text::jsonb AND imports_fingerprint = $11 \
-            AND effects = $12::text::jsonb AND input_ports = $13::text::jsonb \
-            AND output_ports = $14::text::jsonb AND parameters = $15::text::jsonb\
+            AND component = $4 AND interface_version = $5 AND operations = $6::text::jsonb \
+            AND component_digest = $7 AND projection_hash = $8 \
+            AND imports = $9::text::jsonb AND imports_fingerprint = $10 \
+            AND effects = $11::text::jsonb\
      )";
 const SELECT_COMPONENT_PROJECTION_HASH_SQL: &str = "SELECT projection_hash \
        FROM catalog.component_library \
@@ -955,28 +951,20 @@ async fn append_or_verify_admitted_component_count(
         serde_json::to_string(&component.imports).context("serialize admitted imports")?;
     let effects =
         serde_json::to_string(&component.effects).context("serialize admitted effects")?;
-    let input_ports =
-        serde_json::to_string(&component.input_ports).context("serialize admitted input ports")?;
-    let output_ports = serde_json::to_string(&component.output_ports)
-        .context("serialize admitted output ports")?;
-    let parameters =
-        serde_json::to_string(&component.parameters).context("serialize admitted parameters")?;
-    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 15] = [
+    let operations =
+        serde_json::to_string(&component.operations).context("serialize admitted operations")?;
+    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 11] = [
         &component.scope.tenant_id,
         &component.scope.package_id,
         &component.scope.package_version,
         &component.component,
         &component.interface_version,
-        &component.operation,
-        &component.registered_operation,
+        &operations,
         &component.component_digest,
         &projection_hash,
         &imports,
         &component.imports_fingerprint,
         &effects,
-        &input_ports,
-        &output_ports,
-        &parameters,
     ];
 
     let inserted = transaction
@@ -1026,7 +1014,9 @@ mod tests {
     use std::fs::OpenOptions;
     use std::path::Path;
 
-    use wamn_catalog::ComponentPackageScope;
+    use wamn_catalog::{
+        AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageScope,
+    };
 
     use super::*;
 
@@ -1039,15 +1029,21 @@ mod tests {
             },
             component: "receiving_data".to_owned(),
             interface_version: "0.1.0".to_owned(),
-            operation: "run".to_owned(),
-            registered_operation: Some("wamn_receiving@1.0.0::purchase_order.get".to_owned()),
+            operations: BTreeMap::from([(
+                "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
+                AdmittedComponentOperation {
+                    registered_operation: Some(
+                        "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
+                    ),
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
             component_digest: format!("sha256:{}", "a".repeat(64)),
             imports: Vec::new(),
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
             effects: Vec::new(),
-            input_ports: Vec::new(),
-            output_ports: Vec::new(),
-            parameters: Vec::new(),
         }
     }
 
@@ -1075,8 +1071,12 @@ mod tests {
         assert_eq!(forward, reversed);
 
         let mut changed = component;
-        changed.registered_operation =
-            Some("wamn_receiving@1.0.0::purchase_order.query".to_owned());
+        let operation = changed
+            .operations
+            .values_mut()
+            .next()
+            .expect("fixture has one operation");
+        operation.registered_operation = None;
         assert_ne!(
             forward,
             admitted_projection_hash(&changed, &requirements).expect("changed projection hashes")
@@ -1486,11 +1486,36 @@ mod tests {
             .expect("set WAMN_COMPONENT_ARTIFACT_BASE to a disposable HTTP registry/repository");
         let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
             .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
-        let component_bytes = b"\0asm\r\0\x01\0";
+        let operation = "wamn:node/handler@0.1.0";
+        let mut resolve = wit_parser::Resolve::new();
+        let package = resolve
+            .push_str(
+                "wamn-node.wit",
+                include_str!("../../../crates/execution/router/wit/package.wit"),
+            )
+            .expect("the live node WIT parses");
+        let world = resolve
+            .select_world(&[package], Some("node"))
+            .expect("the live node world resolves");
+        let mut module =
+            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
+        wit_component::embed_component_metadata(
+            &mut module,
+            &resolve,
+            world,
+            wit_component::StringEncoding::UTF8,
+        )
+        .expect("fixture component metadata embeds");
+        let component_bytes = wit_component::ComponentEncoder::default()
+            .module(&module)
+            .expect("fixture core module is accepted")
+            .validate(true)
+            .encode()
+            .expect("fixture component encodes");
         let engine = wamn_runtime::build_engine(&[]).expect("component admission engine builds");
         let component = validate_component_admission(
             &engine,
-            component_bytes,
+            &component_bytes,
             wamn_runtime::component_admission::ComponentAdmissionRequest {
                 declaration: ComponentDeclaration {
                     scope: ComponentPackageScope {
@@ -1500,11 +1525,15 @@ mod tests {
                     },
                     component: "round-trip".to_owned(),
                     interface_version: "0.1.0".to_owned(),
-                    operation: "run".to_owned(),
-                    registered_operation: None,
-                    input_ports: Vec::new(),
-                    output_ports: Vec::new(),
-                    parameters: Vec::new(),
+                    operations: BTreeMap::from([(
+                        operation.to_owned(),
+                        ComponentOperationDeclaration {
+                            registered_operation: None,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                        },
+                    )]),
                     connections: Vec::new(),
                 },
                 admitted_platform_packages: std::collections::BTreeSet::new(),
@@ -1530,7 +1559,7 @@ mod tests {
             &reference,
             &artifact_base,
             true,
-            component_bytes,
+            &component_bytes,
             &config_bytes,
             &component,
             &credentials,

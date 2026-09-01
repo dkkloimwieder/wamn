@@ -1,4 +1,4 @@
-//! Shared wire adapter for the six operation-owned Receiving components.
+//! Shared wire adapter for the six operations exported by the Receiving component.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};

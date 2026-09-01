@@ -707,52 +707,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "receiving-purchase-order-get"
-version = "0.1.0"
-dependencies = [
- "futures-executor",
- "wamn-receiving-data-access",
- "wit-bindgen",
-]
-
-[[package]]
-name = "receiving-purchase-order-query"
-version = "0.1.0"
-dependencies = [
- "futures-executor",
- "wamn-receiving-data-access",
- "wit-bindgen",
-]
-
-[[package]]
-name = "receiving-purchase-order-update"
-version = "0.1.0"
-dependencies = [
- "futures-executor",
- "wamn-receiving-data-access",
- "wit-bindgen",
-]
-
-[[package]]
-name = "receiving-receipt-get"
-version = "0.1.0"
-dependencies = [
- "futures-executor",
- "wamn-receiving-data-access",
- "wit-bindgen",
-]
-
-[[package]]
-name = "receiving-receipt-query"
-version = "0.1.0"
-dependencies = [
- "futures-executor",
- "wamn-receiving-data-access",
- "wit-bindgen",
-]
-
-[[package]]
-name = "receiving-receiving-record-receipt"
+name = "receiving"
 version = "0.1.0"
 dependencies = [
  "futures-executor",

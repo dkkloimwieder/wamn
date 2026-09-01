@@ -250,6 +250,7 @@ pub struct ConnectionEffectSnapshot {
     pub wiring_hash: String,
     pub component: Option<String>,
     pub interface_version: Option<String>,
+    pub operation: Option<String>,
     pub registered_operation: Option<String>,
     pub requirement_json: Option<serde_json::Value>,
     pub requirement_hash: Option<String>,
@@ -297,13 +298,14 @@ WITH member AS MATERIALIZED ( \
        AND wiring.graph_json ->> 'version' = $6::text \
 ) \
 SELECT wiring.wiring_hash, component.component, component.interface_version, \
-       component.registered_operation, \
+       node.value ->> 'operation', \
+       component.operations #>> ARRAY[node.value ->> 'operation', 'registered-operation'], \
        requirement.requirement_json::text, requirement.requirement_hash, \
        COALESCE( \
            node.value IS NOT NULL \
            AND node.value ->> 'component' = component.component \
            AND node.value ->> 'interface-version' = component.interface_version \
-           AND node.value ->> 'operation' = component.operation, \
+           AND component.operations ? (node.value ->> 'operation'), \
            false \
        ), \
        binding.binding_status = 'active', binding.validation_status = 'valid', \
@@ -1662,23 +1664,24 @@ impl WamnPostgres {
                 wiring_hash: row.try_get(0)?,
                 component: row.try_get(1)?,
                 interface_version: row.try_get(2)?,
-                registered_operation: row.try_get(3)?,
-                requirement_json: json(4)?,
-                requirement_hash: row.try_get(5)?,
-                node_permitted: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
-                binding_active: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
-                binding_valid: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
-                instance_id: row.try_get(9)?,
-                validation_hash: row.try_get(10)?,
-                requirement_type: row.try_get(11)?,
-                contract: row.try_get(12)?,
-                instance_enabled: row.try_get::<_, Option<bool>>(13)?.unwrap_or(false),
-                active_generation: row.try_get(14)?,
-                instance_revision: row.try_get(15)?,
-                generation: row.try_get(16)?,
-                definition: json(17)?,
-                definition_hash: row.try_get(18)?,
-                credential_handle: row.try_get(19)?,
+                operation: row.try_get(3)?,
+                registered_operation: row.try_get(4)?,
+                requirement_json: json(5)?,
+                requirement_hash: row.try_get(6)?,
+                node_permitted: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
+                binding_active: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
+                binding_valid: row.try_get::<_, Option<bool>>(9)?.unwrap_or(false),
+                instance_id: row.try_get(10)?,
+                validation_hash: row.try_get(11)?,
+                requirement_type: row.try_get(12)?,
+                contract: row.try_get(13)?,
+                instance_enabled: row.try_get::<_, Option<bool>>(14)?.unwrap_or(false),
+                active_generation: row.try_get(15)?,
+                instance_revision: row.try_get(16)?,
+                generation: row.try_get(17)?,
+                definition: json(18)?,
+                definition_hash: row.try_get(19)?,
+                credential_handle: row.try_get(20)?,
             };
             Ok(Some(snapshot))
         }
@@ -2525,7 +2528,7 @@ mod tests {
             "component.package_id = wiring.package_id",
             "component.package_version = wiring.package_version",
             "component.component_digest = $8",
-            "component.registered_operation",
+            "component.operations #>> ARRAY[node.value ->> 'operation', 'registered-operation']",
             "wiring.graph_json #> ARRAY['nodes', $7]",
             "requirement.component_digest = $8",
             "requirement.store_alias = $9",

@@ -71,7 +71,7 @@ pub const STORE_ALIAS: &str = "upstream";
 pub const PROJECT: &str = "default";
 pub const COMPONENT: &str = "http-request";
 pub const INTERFACE_VERSION: &str = "0.1.0";
-pub const OPERATION: &str = "run";
+pub const OPERATION: &str = "wamn:node/handler@0.1.0";
 pub const ATTACHMENT_ID: &str = "orders-http";
 pub const ROUTE_AUTHORITY: &str = "tap.example.test";
 pub const ROUTE_PATH: &str = "/deliver";
@@ -436,10 +436,8 @@ async fn seed_with_client(
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
     let imports = serde_json::to_string(&component.imports).context("serialize imports")?;
-    let input_ports = serde_json::to_string(&component.input_ports).context("serialize inputs")?;
-    let output_ports =
-        serde_json::to_string(&component.output_ports).context("serialize outputs")?;
-    let parameters = serde_json::to_string(&component.parameters).context("serialize params")?;
+    let operations =
+        serde_json::to_string(&component.operations).context("serialize operations")?;
     let effects = serde_json::to_string(&component.effects).context("serialize effects")?;
     // The whole portable record component admission mints, not just its
     // descriptor: `requirement_hash` is the SHA-256 of exactly these bytes.
@@ -530,27 +528,22 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.component_library (\
-                 tenant_id, package_id, package_version, component, interface_version, operation, \
-                 registered_operation, component_digest, projection_hash, imports, imports_fingerprint, effects, \
-                 input_ports, output_ports, parameters\
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb, $11, \
-                 $12::text::jsonb, $13::text::jsonb, $14::text::jsonb, $15::text::jsonb)",
+                 tenant_id, package_id, package_version, component, interface_version, operations, \
+                 component_digest, projection_hash, imports, imports_fingerprint, effects\
+             ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, \
+                 $11::text::jsonb)",
             &[
                 &TENANT,
                 &PACKAGE,
                 &PACKAGE_VERSION,
                 &component.component,
                 &component.interface_version,
-                &component.operation,
-                &component.registered_operation,
+                &operations,
                 &component.component_digest,
                 &projection_hash,
                 &imports,
                 &component.imports_fingerprint,
                 &effects,
-                &input_ports,
-                &output_ports,
-                &parameters,
             ],
         )
         .await

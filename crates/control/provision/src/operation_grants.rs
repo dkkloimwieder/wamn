@@ -129,6 +129,7 @@ pub struct OperationGrantReconcileResult {
 
 struct ManifestOperationGrants {
     coordinate_prefix: String,
+    coordinate_suffix: String,
     tokens: BTreeSet<String>,
 }
 
@@ -167,8 +168,9 @@ impl OperationGrantReconcileResult {
 ///
 /// Public component `operations` members are the package-local callable-operation
 /// vocabulary. Private custom operations remain callable only from declared
-/// internal wirings and never become route-caller grants. Prefixing each public
-/// member with the package coordinate yields the generated grant identity.
+/// internal wirings and never become route-caller grants. Rendering each public
+/// member with the package's native extern spelling yields the generated grant
+/// identity.
 pub fn operation_grant_tokens(
     manifest_bytes: &[u8],
 ) -> Result<BTreeSet<String>, OperationGrantError> {
@@ -205,6 +207,7 @@ fn manifest_operation_grants(
             source,
         )
     })?;
+    let coordinate_suffix = format!("@{}", manifest.package.version);
     let tokens = local_tokens
         .into_iter()
         .map(|token| canonical_operation_identity(&manifest.package, &token))
@@ -218,6 +221,7 @@ fn manifest_operation_grants(
         })?;
     Ok(ManifestOperationGrants {
         coordinate_prefix,
+        coordinate_suffix,
         tokens,
     })
 }
@@ -233,9 +237,9 @@ fn manifest_operation_grants(
 /// 3. inserts this manifest's missing package-qualified operation grants; and
 /// 4. returns `role_rows_changed`, `grants_added`, `grants_removed` as `bigint`.
 ///
-/// Canonical `<package_id>@<package_version>::` prefixes make cross-package
-/// collisions unconstructible, so reconciliation needs no mapping or collision
-/// machinery and preserves every other package coordinate.
+/// The canonical `<package-id-kebab>:` prefix and `@<package-version>` suffix
+/// select one exact package coordinate, so reconciliation preserves every
+/// other package and version without a token mapping.
 ///
 /// The caller owns the surrounding transaction: after target identity is
 /// verified, it begins, acquires the tenant-grain operation-grant lock, executes
@@ -264,6 +268,7 @@ pub fn reconcile_operation_grants_sql(
         .join(", ");
     let desired = format!("VALUES {desired}");
     let coordinate_prefix = quote_literal(&grants.coordinate_prefix);
+    let coordinate_suffix = quote_literal(&grants.coordinate_suffix);
     let tenant = quote_literal(tenant);
     let role = quote_literal(OPERATION_CALLER_ROLE);
 
@@ -288,6 +293,8 @@ pub fn reconcile_operation_grants_sql(
            WHERE stored.tenant_id = role_target.tenant_id \
               AND stored.role_name = role_target.name \
               AND pg_catalog.starts_with(stored.permission, {coordinate_prefix}) \
+              AND pg_catalog.right(stored.permission, pg_catalog.length({coordinate_suffix})) \
+                    = {coordinate_suffix} \
               AND NOT EXISTS (SELECT FROM desired \
                                WHERE desired.permission = stored.permission) \
            RETURNING stored.permission \
@@ -316,12 +323,12 @@ mod tests {
         assert_eq!(
             operation_grant_tokens(RECEIVING_MANIFEST).expect("parse strict Receiving manifest"),
             [
-                "wamn_receiving@1.0.0::purchase_order.get",
-                "wamn_receiving@1.0.0::purchase_order.query",
-                "wamn_receiving@1.0.0::purchase_order.update",
-                "wamn_receiving@1.0.0::receipt.get",
-                "wamn_receiving@1.0.0::receipt.query",
-                "wamn_receiving@1.0.0::receiving.record_receipt",
+                "wamn-receiving:purchase-order/get@1.0.0",
+                "wamn-receiving:purchase-order/query@1.0.0",
+                "wamn-receiving:purchase-order/update@1.0.0",
+                "wamn-receiving:receipt/get@1.0.0",
+                "wamn-receiving:receipt/query@1.0.0",
+                "wamn-receiving:receiving/record-receipt@1.0.0",
             ]
             .map(str::to_owned)
             .into_iter()
@@ -345,7 +352,7 @@ mod tests {
         assert!(
             !grants
                 .iter()
-                .any(|grant| grant.ends_with("::receiving.record_receipt"))
+                .any(|grant| grant == "wamn-receiving:receiving/record-receipt@1.0.0")
         );
         assert_eq!(grants.len(), 5);
     }
@@ -368,10 +375,8 @@ mod tests {
     fn semantic_operation_vocabulary_refusal_reaches_the_grant_boundary() {
         let mut manifest: serde_json::Value =
             serde_json::from_slice(RECEIVING_MANIFEST).expect("fixture is JSON");
-        manifest["components"]["receipt_get"]["operations"]
-            .as_array_mut()
-            .expect("operations array")
-            .push(serde_json::json!("receipt.delete"));
+        manifest["models"]["receipt"]["operations"]["get"]["component"] =
+            serde_json::json!("missing");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown operation was granted");
         assert_eq!(error.kind(), OperationGrantErrorKind::InvalidManifest);

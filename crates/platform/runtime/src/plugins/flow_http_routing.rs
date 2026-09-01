@@ -920,7 +920,8 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::{
         ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
-        RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingRelease, ServingWiring,
+        RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingComponentOperation, ServingRelease,
+        ServingWiring,
     };
 
     use super::*;
@@ -938,7 +939,12 @@ mod tests {
             component: "http-request".into(),
             interface_version: "0.1".into(),
             digest: ArtifactHash::parse(COMPONENT).expect("fixture artifact hash is canonical"),
-            registered_operation: None,
+            operations: BTreeMap::from([(
+                "request".into(),
+                ServingComponentOperation {
+                    registered_operation: None,
+                },
+            )]),
         }])
     }
 
@@ -1460,7 +1466,7 @@ mod tests {
             attachment_id: "receiving-http".into(),
             principal_id: "11111111-1111-4111-8111-111111111111".into(),
             permissions: Arc::new(HashSet::from([
-                "wamn_receiving@1.0.0::receipt.get".to_string()
+                "wamn-receiving:receipt/get@1.0.0".to_string()
             ])),
         };
         assert_eq!(caller.attachment_id(), "receiving-http");
@@ -1468,8 +1474,8 @@ mod tests {
             caller.principal_id(),
             "11111111-1111-4111-8111-111111111111"
         );
-        assert!(caller.permits("wamn_receiving@1.0.0::receipt.get"));
-        assert!(!caller.permits("wamn_receiving@1.0.0::receipt.query"));
+        assert!(caller.permits("wamn-receiving:receipt/get@1.0.0"));
+        assert!(!caller.permits("wamn-receiving:receipt/query@1.0.0"));
         assert!(!caller.permits("receipt.get"));
     }
 

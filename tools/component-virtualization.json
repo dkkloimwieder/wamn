@@ -7,40 +7,10 @@
   },
   "artifacts": [
     {
-      "package": "receiving-purchase-order-get",
+      "package": "receiving",
       "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "receiving_purchase_order_get.wasm",
-      "output_file": "purchase_order_get.wasm"
-    },
-    {
-      "package": "receiving-purchase-order-query",
-      "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "receiving_purchase_order_query.wasm",
-      "output_file": "purchase_order_query.wasm"
-    },
-    {
-      "package": "receiving-purchase-order-update",
-      "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "receiving_purchase_order_update.wasm",
-      "output_file": "purchase_order_update.wasm"
-    },
-    {
-      "package": "receiving-receipt-get",
-      "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "receiving_receipt_get.wasm",
-      "output_file": "receipt_get.wasm"
-    },
-    {
-      "package": "receiving-receipt-query",
-      "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "receiving_receipt_query.wasm",
-      "output_file": "receipt_query.wasm"
-    },
-    {
-      "package": "receiving-receiving-record-receipt",
-      "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "receiving_receiving_record_receipt.wasm",
-      "output_file": "receiving_record_receipt.wasm"
+      "raw_file": "receiving.wasm",
+      "output_file": "receiving.wasm"
     }
   ]
 }

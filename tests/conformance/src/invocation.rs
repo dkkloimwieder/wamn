@@ -21,10 +21,10 @@ mod tests {
     ///
     /// The router owns it and both sides bind it:
     /// `crates/execution/host/src/router_driver.rs` generates the host bindings
-    /// from `../router/wit` (world `node`), and the library components export
-    /// `wamn:node/handler@0.1.0`. This constant and the `include_str!` above must
-    /// move together — [`node_abi_source_and_included_copy_agree`] fails if only
-    /// one of them does.
+    /// from `../router/wit` (world `node`), and admitted component exports must
+    /// structurally match its `handler.run` signature. This constant and the
+    /// `include_str!` above must move together —
+    /// [`node_abi_source_and_included_copy_agree`] fails if only one does.
     const NODE_ABI_SOURCE: &str = "crates/execution/router/wit/package.wit";
 
     /// Every vendored copy of the node ABI, repo-root-relative. The walk below
@@ -35,9 +35,8 @@ mod tests {
         "components/no-std/transform/wit/deps/wamn-node/package.wit",
     ];
 
-    /// Tiers holding executable, bindable WIT. `docs/` is deliberately excluded:
-    /// `docs/reference/contracts/wamn-node.wit` is the FROZEN 0.1.0 archive this
-    /// package was revived from, not a vendored copy of it.
+    /// Tiers holding executable, bindable WIT. Documentation is deliberately
+    /// excluded because it is not an ABI source or vendored executable copy.
     const CODE_TIERS: [&str; 5] = ["components", "crates", "services", "test-support", "tests"];
 
     fn repo_root() -> PathBuf {
@@ -96,21 +95,7 @@ mod tests {
         let code = code_lines(NODE_WIT).join("\n");
 
         assert!(NODE_WIT.contains("package wamn:node@0.1.0;"));
-        // @0.1.0, per the MVP version-identity rule (wamn-0h0g.16.10): this
-        // package supersedes the archived 0.1.0 wholesale rather than evolving
-        // it, so the archive's "breaking changes wait for 0.2" clause does not
-        // bind a package the archive has no live consumer for. The version
-        // literal therefore no longer separates the live shape from the archived
-        // one — the retired-vocabulary sweep at the end of this test is what
-        // does, and it must stay for that reason.
-        assert!(
-            NODE_WIT.contains("SUPERSEDES the archived `wamn:node@0.1.0`"),
-            "the package header must keep recording that it supersedes the \
-             archived 0.1.0 wholesale — without it, two different shapes sit \
-             under one version with nothing saying so"
-        );
-
-        // The single operation the router invokes per graph node.
+        // The structural operation shape the router invokes per graph node.
         assert!(code.contains(
             "run: func(ctx: node-context, input: json) -> result<emission, node-error>;"
         ));

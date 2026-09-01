@@ -70,8 +70,8 @@ use std::path::Path;
 
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
-    AdmittedComponent, ComponentPackageScope, DefinitionHash, WiringDocument, WiringNode,
-    WiringTerminal,
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, DefinitionHash,
+    WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
@@ -107,7 +107,7 @@ fn wiring(id: &str, version: u32) -> WiringDocument {
             WiringNode {
                 component: "receiving_data".to_string(),
                 interface_version: "0.1".to_string(),
-                operation: "run".to_string(),
+                operation: "wamn-receiving:purchase-order/get@1.0.0".to_string(),
                 operation_dependency: None,
                 params: BTreeMap::new(),
                 terminal: Some(WiringTerminal::Respond),
@@ -163,15 +163,19 @@ async fn provision_project(project: &Client, project_url: &str) {
         },
         component: "receiving_data".to_owned(),
         interface_version: "0.1".to_owned(),
-        operation: "run".to_owned(),
-        registered_operation: Some("wamn_receiving@1.0.0::purchase_order.get".to_owned()),
+        operations: BTreeMap::from([(
+            "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
+            AdmittedComponentOperation {
+                registered_operation: Some("wamn-receiving:purchase-order/get@1.0.0".to_owned()),
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                parameters: Vec::new(),
+            },
+        )]),
         component_digest: COMPONENT.to_owned(),
         imports: Vec::new(),
         imports_fingerprint: FACT_FINGERPRINT.to_owned(),
         effects: Vec::new(),
-        input_ports: Vec::new(),
-        output_ports: Vec::new(),
-        parameters: Vec::new(),
     };
     let projection_hash =
         admitted_projection_hash(&component, &[]).expect("hash admitted fixture projection");
@@ -179,11 +183,11 @@ async fn provision_project(project: &Client, project_url: &str) {
         .execute(
             "INSERT INTO catalog.component_library \
                    (tenant_id, package_id, package_version, component, interface_version, \
-                    operation, registered_operation, component_digest, projection_hash, imports, \
-                    imports_fingerprint, effects, input_ports, output_ports, parameters) \
-             VALUES ($1, $2, $3, 'receiving_data', '0.1', 'run', \
-                     'wamn_receiving@1.0.0::purchase_order.get', $4, $5, \
-                     '[]'::jsonb, $6, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '[]'::jsonb)",
+                    operations, component_digest, projection_hash, imports, \
+                    imports_fingerprint, effects) \
+             VALUES ($1, $2, $3, 'receiving_data', '0.1', \
+                     '{\"wamn-receiving:purchase-order/get@1.0.0\":{\"registered-operation\":\"wamn-receiving:purchase-order/get@1.0.0\",\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}'::jsonb, \
+                     $4, $5, '[]'::jsonb, $6, '[]'::jsonb)",
             &[
                 &TENANT,
                 &PACKAGE,
