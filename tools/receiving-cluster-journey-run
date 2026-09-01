@@ -1171,12 +1171,12 @@ jq -e '.status.succeeded == 1 and
   any(.status.conditions[]?; .type == "Complete" and .status == "True")' \
   >/dev/null "$evidence_dir/flow-http-probe-job.json"
 jq -e --arg image "$host_image" --arg image_id "$host_runtime_digest" '
-  (.items | length == 1) and .items[0] as $pod |
-  $pod.status.phase == "Succeeded" and
-  ($pod.spec.containers | length == 1) and $pod.spec.containers[0].image == $image and
-  ($pod.status.containerStatuses | length == 1) and
-  $pod.status.containerStatuses[0].ready == false and
-  (($pod.status.containerStatuses[0].imageID // "") | endswith($image_id))
+  (.items | length == 1) and (.items[0] as $pod |
+    $pod.status.phase == "Succeeded" and
+    ($pod.spec.containers | length == 1) and $pod.spec.containers[0].image == $image and
+    ($pod.status.containerStatuses | length == 1) and
+    $pod.status.containerStatuses[0].ready == false and
+    (($pod.status.containerStatuses[0].imageID // "") | endswith($image_id)))
 ' >/dev/null "$evidence_dir/flow-http-probe-pod.json"
 "${kube[@]}" -n "$namespace" logs job/flow-http-reachability \
   >"$evidence_dir/flow-http-probe.log"
