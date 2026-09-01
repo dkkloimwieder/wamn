@@ -14,7 +14,8 @@ use wamn_schema_control::{
 
 const SELECT_REGISTRATIONS_SQL: &str = "\
 SELECT registration::text FROM catalog.event_registrations \
- WHERE package_id = $1 ORDER BY tenant_id, registration_id";
+ WHERE registration ->> 'source-package-id' = $1 \
+ ORDER BY tenant_id, package_id, registration_id";
 
 #[derive(Debug, Args)]
 pub struct ReconcileReplicaIdentityArgs {
@@ -70,7 +71,7 @@ pub async fn reconcile(
         .into_iter()
         .collect::<Vec<_>>();
     let current = read_current_identities(client, &schemas).await?;
-    let plan = reconcile_replica_identity(models, &registrations, &current);
+    let plan = reconcile_replica_identity(package_id, models, &registrations, &current);
     if apply {
         for flip in &plan.flips {
             client

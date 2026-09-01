@@ -64,6 +64,11 @@ pub struct WamnPostgres {
     /// `SET LOCAL app.runner` so a runner replica reads its owner identity to
     /// claim/renew queue rows under.
     runners: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → the one host-owned workload authority admitted on the
+    /// guest-visible WIT surface. Absence preserves ordinary `GuestSql`.
+    /// Values enter only from the workload binding config; the guest cannot
+    /// select or mutate this discriminator.
+    workload_authorities: std::sync::RwLock<HashMap<String, AuthorityClass>>,
     /// component id → the caller's `app.role` claim (a `roles.name`). Absent
     /// (the default) binds the empty role, which is the deny floor every
     /// compiled role gate coalesces to. When set, a per-role RLS policy using
@@ -662,6 +667,7 @@ impl WamnPostgres {
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
             runners: std::sync::RwLock::new(HashMap::new()),
+            workload_authorities: std::sync::RwLock::new(HashMap::new()),
             roles: std::sync::RwLock::new(HashMap::new()),
             users: std::sync::RwLock::new(HashMap::new()),
             release_identities: std::sync::RwLock::new(HashMap::new()),
@@ -1034,6 +1040,35 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Bind the sole elevated authority admitted by the closed workload-config
+    /// vocabulary. Ordinary components never call this and remain `GuestSql`.
+    pub(super) fn bind_workload_authority(
+        &self,
+        component_id: &str,
+        value: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            value == super::EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE,
+            "invalid {} value {value:?}: the sole admitted explicit value is {:?}",
+            super::AUTHORITY_CONFIG_KEY,
+            super::EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE,
+        );
+        self.workload_authorities
+            .write()
+            .expect("workload authorities lock poisoned")
+            .insert(component_id.to_string(), AuthorityClass::EventMaterializer);
+        Ok(())
+    }
+
+    pub(super) fn workload_authority_for(&self, component_id: &str) -> AuthorityClass {
+        self.workload_authorities
+            .read()
+            .expect("workload authorities lock poisoned")
+            .get(component_id)
+            .copied()
+            .unwrap_or(AuthorityClass::GuestSql)
+    }
+
     /// Register the caller's `app.role` claim for a component id (4.2). When
     /// set, every transaction the plugin opens for that component binds
     /// `app.role`, so a compiled per-role RLS policy gates on the caller's role
@@ -1324,7 +1359,8 @@ impl WamnPostgres {
             .remove(component_id);
     }
 
-    /// Reap EVERY per-component-id claim registry this plugin keeps for a workload
+    /// Reap EVERY per-component-id claim and workload-authority registry this
+    /// plugin keeps for a workload
     /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
     /// the caller's role / user id, the carried release identity, and the
     /// causation run context — all set at
@@ -1354,6 +1390,10 @@ impl WamnPostgres {
         self.runners
             .write()
             .expect("runners lock poisoned")
+            .retain(|c, _| retain(c));
+        self.workload_authorities
+            .write()
+            .expect("workload authorities lock poisoned")
             .retain(|c, _| retain(c));
         self.roles
             .write()
@@ -1782,6 +1822,26 @@ impl WamnPostgres {
             .await
     }
 
+    /// Check out the credential selected by the host-owned workload binding.
+    /// Absence is exactly the existing guest path; only the closed
+    /// event-materializer binding selects a platform credential.
+    pub(super) async fn checkout_workload(
+        &self,
+        component_id: &str,
+        project: &str,
+        tenant: &str,
+    ) -> Result<(Object, Arc<ProjectPool>, AuthorityClass), PgError> {
+        let class = self.workload_authority_for(component_id);
+        let (connection, pool) = match class {
+            AuthorityClass::GuestSql => self.checkout_guest(project, tenant).await?,
+            AuthorityClass::EventMaterializer => self.checkout_platform(project, class).await?,
+            AuthorityClass::ExecutorPlatform | AuthorityClass::CallableHttp => {
+                unreachable!("the closed workload binding admits only EventMaterializer")
+            }
+        };
+        Ok((connection, pool, class))
+    }
+
     /// Check out a connection reserved for host-owned platform work.
     ///
     /// The class is REQUIRED because the platform lifecycle serves three
@@ -1931,11 +1991,13 @@ impl WamnPostgres {
         let role = self.role_for(component_id);
         let user_id = self.user_id_for(component_id);
         let run = self.current_run_for(component_id);
-        let (conn, pp) = self.checkout_guest(project, &tenant).await?;
+        let (conn, pp, authority) = self
+            .checkout_workload(component_id, project, &tenant)
+            .await?;
         if let Err(e) = self
             .begin_with_claims(
                 &conn,
-                AuthorityClass::GuestSql,
+                authority,
                 &tenant,
                 schema.as_deref(),
                 runner.as_deref(),
@@ -2551,8 +2613,8 @@ mod tests {
         assert!(pg.current_run_for("c1").is_none());
     }
 
-    // R31 — unbind reaps ALL SEVEN per-component claim registries for a workload
-    // (tenant/project/schema/runner/role/user/causation) while leaving another workload's
+    // R31 — unbind reaps every per-component claim registry plus the closed
+    // workload-authority discriminator while leaving another workload's
     // component untouched; the project-keyed `pools` map is never touched here.
     // Keyed by the workload-id prefix (the fork's builtin convention). An unknown
     // workload id is a no-op.
@@ -2566,6 +2628,7 @@ mod tests {
             pg.set_project(c, "proj").unwrap();
             pg.set_schema(c, "s_run").unwrap();
             pg.set_runner(c, "owner-1").unwrap();
+            pg.bind_workload_authority(c, "event-materializer").unwrap();
             pg.set_role(c, "inspector").unwrap();
             pg.set_user_id(c, "6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
                 .unwrap();
@@ -2591,6 +2654,10 @@ mod tests {
         assert_eq!(pg.project_for("wl-a-component-0"), DEFAULT_PROJECT);
         assert_eq!(pg.schema_for("wl-a-component-0"), None);
         assert_eq!(pg.runner_for("wl-a-component-0"), None);
+        assert_eq!(
+            pg.workload_authority_for("wl-a-component-0"),
+            AuthorityClass::GuestSql
+        );
         assert_eq!(pg.role_for("wl-a-component-0"), None);
         assert_eq!(pg.user_id_for("wl-a-component-0"), None);
         assert!(pg.current_run_for("wl-a-component-0").is_none());
@@ -2602,6 +2669,10 @@ mod tests {
         assert_eq!(
             pg.runner_for("wl-b-component-0").as_deref(),
             Some("owner-1")
+        );
+        assert_eq!(
+            pg.workload_authority_for("wl-b-component-0"),
+            AuthorityClass::EventMaterializer
         );
         assert_eq!(
             pg.role_for("wl-b-component-0").as_deref(),
@@ -3340,6 +3411,33 @@ mod tests {
     #[derive(Default)]
     struct RecordingProvider {
         asked: std::sync::Mutex<Vec<AuthorityClass>>,
+    }
+
+    #[tokio::test]
+    async fn workload_binding_selects_only_the_materializer_authority() {
+        let provider = Arc::new(RecordingProvider::default());
+        let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
+        pg.bind_workload_authority("materializer", "event-materializer")
+            .expect("the closed materializer value is admitted");
+        pg.bind_workload_authority("invalid", "executor-platform")
+            .expect_err("no other explicit authority is admitted");
+
+        pg.checkout_workload("materializer", DEFAULT_PROJECT, "tenant-a")
+            .await
+            .expect_err("the recording provider deliberately names no credential");
+        pg.checkout_workload("ordinary-guest", DEFAULT_PROJECT, "tenant-a")
+            .await
+            .expect_err("the recording provider deliberately names no credential");
+
+        let asked = provider
+            .asked
+            .lock()
+            .expect("recording provider lock poisoned")
+            .clone();
+        assert_eq!(
+            asked,
+            vec![AuthorityClass::EventMaterializer, AuthorityClass::GuestSql]
+        );
     }
 
     impl CredentialProvider for RecordingProvider {

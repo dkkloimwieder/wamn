@@ -486,6 +486,7 @@ fn registration_json(resources: &GateResources) -> String {
         schema_version: wamn_event_reg::SCHEMA_VERSION.into(),
         registration_id: resources.registration_id.clone(),
         package_id: resources.package_id.clone(),
+        source_package_id: resources.package_id.clone(),
         flow_id: resources.flow_id.clone(),
         entity: resources.entity_id.clone(),
         ops: vec![Op::Insert, Op::Delete],
@@ -1838,7 +1839,7 @@ async fn run_tenant_isolation(
         "foreign event Nats-Msg-Id/LSN identity drifted"
     );
     ensure!(
-        foreign.entity.as_deref() == Some(resources.entity_id.as_str()),
+        foreign.entity == resources.entity_id,
         "foreign event entity drifted"
     );
     ensure!(
@@ -1879,7 +1880,7 @@ async fn run_tenant_isolation(
         "unscopable event Nats-Msg-Id/LSN identity drifted"
     );
     ensure!(
-        unscopable.entity.as_deref() == Some(resources.entity_id.as_str()),
+        unscopable.entity == resources.entity_id,
         "unscopable event entity drifted"
     );
     ensure!(
@@ -3179,7 +3180,7 @@ async fn run_forward(
         "source-event LSN was not independently distinguished from stream sequence"
     );
     ensure!(
-        envelope.entity.as_deref() == Some(resources.entity_id.as_str()),
+        envelope.entity == resources.entity_id,
         "CDC entity identity drifted"
     );
     ensure!(
@@ -3324,6 +3325,7 @@ mod tests {
             serde_json::from_str(&registration_json(&resources)).unwrap();
         assert_eq!(registration["registration-id"], resources.registration_id);
         assert_eq!(registration["package-id"], resources.package_id);
+        assert_eq!(registration["source-package-id"], resources.package_id);
         assert_eq!(registration["flow-id"], resources.flow_id);
         assert_eq!(registration["entity"], resources.entity_id);
         assert_eq!(registration["ops"], serde_json::json!(["insert", "delete"]));

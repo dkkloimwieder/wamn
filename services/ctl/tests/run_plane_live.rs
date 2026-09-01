@@ -3779,7 +3779,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
            (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
          VALUES ('t1', 'cat', 'r1', 'f', 'e', \
                  $1::text::jsonb)",
-        &[&r#"{"registration-id":"r1","partition-key":"serial","retained":"yes","state":"shadow"}"#],
+        &[&r#"{"registration-id":"r1","package-id":"cat","source-package-id":"cat","partition-key":"serial","retained":"yes","state":"shadow"}"#],
     )
     .await
     .expect("seed a retired-key registration");
@@ -4026,7 +4026,12 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .get(0);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&registration).expect("parse registration"),
-        serde_json::json!({"registration-id": "r1", "retained": "yes"})
+        serde_json::json!({
+            "registration-id": "r1",
+            "package-id": "cat",
+            "source-package-id": "cat",
+            "retained": "yes"
+        })
     );
 
     // Idempotence: a second reconcile plans nothing.

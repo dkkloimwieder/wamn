@@ -16,10 +16,16 @@
 
 mod model;
 mod oldref;
+mod reconcile;
 mod validate;
 
 pub use model::{EventRegistration, RegistrationInput, SCHEMA_VERSION};
 pub use oldref::{condition_references_old, references_old};
+pub use reconcile::{
+    CatalogRegistrationProjection, CatalogRegistrationRow, DELETE_STALE_CATALOG_REGISTRATIONS_SQL,
+    RegistrationProjectionError, RegistrationProjectionErrorKind, UPSERT_CATALOG_REGISTRATION_SQL,
+    project_catalog_registrations,
+};
 pub use validate::{RegistrationIssue, validate};
 
 // Re-exported so a consumer names the op set through this one crate; it is the

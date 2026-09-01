@@ -34,10 +34,11 @@ fn error(
     }
 }
 
-/// Validate `reg` against an exact package id and its manifest model keys.
+/// Validate `reg` against its exact owner, source, and source-manifest model keys.
 pub fn validate(
     reg: &EventRegistration,
     package_id: &str,
+    source_package_id: &str,
     model_keys: &BTreeSet<String>,
 ) -> Result<(), Vec<RegistrationIssue>> {
     let mut issues = Vec::new();
@@ -60,6 +61,30 @@ pub fn validate(
                 "registration targets package {:?} but was validated against {:?}",
                 reg.package_id, package_id
             ),
+        ));
+    }
+    if reg.package_id.trim().is_empty() {
+        issues.push(error(
+            "empty-package-id",
+            "package-id",
+            "registration has no owner package",
+        ));
+    }
+    if reg.source_package_id != source_package_id {
+        issues.push(error(
+            "source-package-id-mismatch",
+            "source-package-id",
+            format!(
+                "registration consumes package {:?} but was validated against {:?}",
+                reg.source_package_id, source_package_id
+            ),
+        ));
+    }
+    if reg.source_package_id.trim().is_empty() {
+        issues.push(error(
+            "empty-source-package-id",
+            "source-package-id",
+            "registration has no emitter package",
         ));
     }
     if reg.registration_id.trim().is_empty() {

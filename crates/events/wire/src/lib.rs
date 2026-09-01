@@ -1,4 +1,4 @@
-//! The D19 v3 event-plane **wire contract** (docs/archive/events/event-plane-jetstream.md §4):
+//! The D19 v3 event-plane wire contract:
 //! the envelope a CDC reader publishes per row event, the subject it lands on,
 //! and the `Nats-Msg-Id` the whole plane keys dedupe on.
 //!
@@ -72,8 +72,7 @@ pub struct DerivedEvent {
     pub tenant: String,
     pub project: String,
     pub environment: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub package_id: Option<String>,
+    pub package_id: String,
     pub entity: String,
     pub op: Op,
     pub payload: serde_json::Value,
@@ -103,7 +102,7 @@ impl DerivedEvent {
             tenant: tenant.into(),
             project: project.into(),
             environment: environment.into(),
-            package_id: Some(package_id.into()),
+            package_id: package_id.into(),
             entity: entity.into(),
             op,
             payload,
@@ -125,6 +124,7 @@ impl DerivedEvent {
             ("tenant", event.tenant.as_str()),
             ("project", event.project.as_str()),
             ("environment", event.environment.as_str()),
+            ("package-id", event.package_id.as_str()),
             ("entity", event.entity.as_str()),
             ("causation.run", event.causation.run.as_str()),
             ("causation.root", event.causation.root.as_str()),
@@ -135,15 +135,6 @@ impl DerivedEvent {
                 )));
             }
         }
-        if event.package_id.as_deref().is_some_and(|package_id| {
-            package_id.is_empty()
-                || package_id.trim() != package_id
-                || package_id.as_bytes().contains(&0)
-        }) {
-            return Err(<serde_json::Error as serde::de::Error>::custom(
-                "derived-event package-id is empty or noncanonical",
-            ));
-        }
         if event.dedup_id.is_empty() {
             return Err(<serde_json::Error as serde::de::Error>::custom(
                 "derived-event dedup-id is empty",
@@ -153,13 +144,11 @@ impl DerivedEvent {
     }
 }
 
-/// One row event on the wire: `{op, old, new, package_id?, entity?, table, lsn,
+/// One row event on the wire: `{op, old, new, package_id, entity, table, lsn,
 /// txid, commit_ts, causation?}` (v3 §4). `package_id` and `entity` are the
-/// package owner and package-local model key from `wamn.json`; both are ABSENT
-/// when the table is not package-mapped (hand-created, or a platform
-/// table the schema-scoped publication auto-includes) — absence IS the
-/// unmapped marker, unambiguous even when an entity id equals a table name.
-/// `table` always carries the physical table name at decode time.
+/// package owner and package-local model key from `wamn.json`. Both are required:
+/// an unmapped relation is refused before publication and cannot enter the
+/// stream. `table` always carries the physical table name at decode time.
 ///
 /// `old`/`new` are column→value maps in pgoutput **text** representation
 /// (values are JSON strings or `null`). An **unchanged TOAST column is ABSENT
@@ -174,8 +163,8 @@ pub struct Envelope {
     pub op: Op,
     pub old: Option<serde_json::Map<String, serde_json::Value>>,
     pub new: Option<serde_json::Map<String, serde_json::Value>>,
-    pub package_id: Option<String>,
-    pub entity: Option<String>,
+    pub package_id: String,
+    pub entity: String,
     pub table: String,
     pub lsn: u64,
     pub txid: u32,
@@ -183,22 +172,15 @@ pub struct Envelope {
     pub causation: Option<Causation>,
 }
 
-const ENVELOPE_IDENTITY_CLOSURE: &str =
-    "event envelope package_id and entity must be both present or both absent";
-
 impl Serialize for Envelope {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        if self.package_id.is_some() != self.entity.is_some() {
-            return Err(serde::ser::Error::custom(ENVELOPE_IDENTITY_CLOSURE));
-        }
         let field_count = 5
             + self.old.is_some() as usize
             + self.new.is_some() as usize
-            + self.package_id.is_some() as usize
-            + self.entity.is_some() as usize
+            + 2
             + self.causation.is_some() as usize;
         let mut state = serializer.serialize_struct("Envelope", field_count)?;
         state.serialize_field("op", &self.op)?;
@@ -208,12 +190,8 @@ impl Serialize for Envelope {
         if let Some(new) = &self.new {
             state.serialize_field("new", new)?;
         }
-        if let Some(package_id) = &self.package_id {
-            state.serialize_field("package_id", package_id)?;
-        }
-        if let Some(entity) = &self.entity {
-            state.serialize_field("entity", entity)?;
-        }
+        state.serialize_field("package_id", &self.package_id)?;
+        state.serialize_field("entity", &self.entity)?;
         state.serialize_field("table", &self.table)?;
         state.serialize_field("lsn", &self.lsn)?;
         state.serialize_field("txid", &self.txid)?;
@@ -233,10 +211,8 @@ struct EnvelopeWire {
     old: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     new: Option<serde_json::Map<String, serde_json::Value>>,
-    #[serde(default)]
-    package_id: Option<String>,
-    #[serde(default)]
-    entity: Option<String>,
+    package_id: String,
+    entity: String,
     table: String,
     lsn: u64,
     txid: u32,
@@ -251,8 +227,15 @@ impl<'de> Deserialize<'de> for Envelope {
         D: Deserializer<'de>,
     {
         let wire = EnvelopeWire::deserialize(deserializer)?;
-        if wire.package_id.is_some() != wire.entity.is_some() {
-            return Err(serde::de::Error::custom(ENVELOPE_IDENTITY_CLOSURE));
+        for (field, value) in [
+            ("package_id", wire.package_id.as_str()),
+            ("entity", wire.entity.as_str()),
+        ] {
+            if value.is_empty() || value.trim() != value || value.as_bytes().contains(&0) {
+                return Err(serde::de::Error::custom(format!(
+                    "event envelope {field} is empty or noncanonical"
+                )));
+            }
         }
         Ok(Self {
             op: wire.op,
@@ -318,10 +301,9 @@ impl DeadLetter {
 }
 
 impl Envelope {
-    /// The subject's `<entity>` segment: the stable entity id when mapped, the
-    /// physical table name otherwise (the FD fallback — delayed, never lost).
+    /// The subject's `<entity>` segment: the required stable package-local id.
     pub fn entity_segment(&self) -> &str {
-        self.entity.as_deref().unwrap_or(&self.table)
+        &self.entity
     }
 }
 
@@ -435,7 +417,7 @@ pub fn dead_letter_message_id(
 /// Make a raw name safe as ONE subject token: NATS reserves `.` (separator),
 /// `*`/`>` (wildcards), and whitespace/control break parsing — each becomes
 /// `_`. Catalog-managed tables are already clean idents; this is the backstop
-/// for hand-created tables the schema-scoped publication auto-includes.
+/// for defensive derived-event inputs.
 ///
 /// Bare sanitization collides: `a.b` and `a_b` both become `a_b`. So when
 /// sanitization CHANGED the string, a short stable hash of the RAW name is
@@ -665,8 +647,8 @@ mod tests {
             op: Op::Update,
             old: None,
             new: Some(new),
-            package_id: Some("orders".into()),
-            entity: Some("sales_orders".into()),
+            package_id: "orders".into(),
+            entity: "sales_orders".into(),
             table: "orders2".into(),
             lsn: 42,
             txid: 731,
@@ -688,36 +670,7 @@ mod tests {
     }
 
     #[test]
-    fn unmapped_envelope_omits_entity_and_falls_back_to_the_table() {
-        // The FD marker: an unmapped table publishes WITHOUT `entity` —
-        // absence is the marker (unambiguous even when an entity id equals a
-        // table name); the subject segment falls back to the table name.
-        let env = Envelope {
-            op: Op::Insert,
-            old: None,
-            new: Some(serde_json::Map::new()),
-            package_id: None,
-            entity: None,
-            table: "receipts".into(),
-            lsn: 7,
-            txid: 3,
-            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-18T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            causation: None,
-        };
-        assert_eq!(
-            serde_json::to_string(&env).unwrap(),
-            r#"{"op":"insert","new":{},"table":"receipts","lsn":7,"txid":3,"commit_ts":"2026-07-18T12:00:00Z"}"#
-        );
-        assert_eq!(env.entity_segment(), "receipts");
-        let back: Envelope = serde_json::from_str(&serde_json::to_string(&env).unwrap()).unwrap();
-        assert!(back.package_id.is_none());
-        assert!(back.entity.is_none());
-    }
-
-    #[test]
-    fn envelope_decode_refuses_half_a_package_entity_identity() {
+    fn envelope_decode_requires_both_package_and_entity_identity() {
         let mapped = serde_json::json!({
             "op": "insert",
             "new": {"id": "7"},
@@ -731,43 +684,9 @@ mod tests {
         for missing in ["package_id", "entity"] {
             let mut half = mapped.clone();
             half.as_object_mut().unwrap().remove(missing);
-            let error = serde_json::from_value::<Envelope>(half)
-                .expect_err("a half package/entity identity must be refused");
             assert!(
-                error.to_string().contains(ENVELOPE_IDENTITY_CLOSURE),
-                "the refusal must name the closed identity pair: {error}"
-            );
-        }
-    }
-
-    #[test]
-    fn envelope_encode_refuses_half_a_package_entity_identity() {
-        let complete = Envelope {
-            op: Op::Insert,
-            old: None,
-            new: Some(serde_json::Map::new()),
-            package_id: Some("orders".into()),
-            entity: Some("sales_orders".into()),
-            table: "orders".into(),
-            lsn: 7,
-            txid: 3,
-            commit_ts: chrono::DateTime::parse_from_rfc3339("2026-07-18T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-            causation: None,
-        };
-        for missing in ["package_id", "entity"] {
-            let mut half = complete.clone();
-            if missing == "package_id" {
-                half.package_id = None;
-            } else {
-                half.entity = None;
-            }
-            let error = serde_json::to_string(&half)
-                .expect_err("a half package/entity identity must not reach the wire");
-            assert!(
-                error.to_string().contains(ENVELOPE_IDENTITY_CLOSURE),
-                "the refusal must name the closed identity pair: {error}"
+                serde_json::from_value::<Envelope>(half).is_err(),
+                "missing {missing} must refuse at decode"
             );
         }
     }
@@ -827,6 +746,7 @@ mod tests {
             "tenant": "acme",
             "project": "app",
             "environment": "dev",
+            "package-id": "orders",
             "entity": "orders",
             "op": "insert",
             "payload": null,
@@ -850,8 +770,8 @@ mod tests {
             op: Op::Update,
             old: Some(old),
             new: Some(new),
-            package_id: Some("orders".into()),
-            entity: Some("sales_orders".into()),
+            package_id: "orders".into(),
+            entity: "sales_orders".into(),
             table: "orders".into(),
             lsn: 42,
             txid: 731,

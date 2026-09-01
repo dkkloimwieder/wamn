@@ -178,6 +178,7 @@ fn registration_json(reg_id: &str, entity: &str) -> String {
         "schema-version": "0.1",
         "registration-id": reg_id,
         "package-id": PACKAGE_ID,
+        "source-package-id": PACKAGE_ID,
         "flow-id": "ccdc-flow",
         "entity": entity,
         "ops": ["delete"],

@@ -1975,6 +1975,7 @@ fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
         // exists to catch.
         WorkloadRoleFamily::ExecutorPlatform => Some(StableGrantSet::ExecutorPlatform),
         WorkloadRoleFamily::HttpAdmitter => Some(StableGrantSet::HttpAdmitter),
+        WorkloadRoleFamily::EventMaterializer => Some(StableGrantSet::EventMaterializer),
         _ => None,
     }
 }
@@ -1990,6 +1991,7 @@ enum StableGrantSet {
     DispatchReader,
     ExecutorPlatform,
     HttpAdmitter,
+    EventMaterializer,
 }
 
 impl StableGrantSet {
@@ -2039,6 +2041,12 @@ impl StableGrantSet {
                 inventory,
             ),
             Self::HttpAdmitter => verify_http_admitter_acl_role_inventory(
+                role,
+                database,
+                required_database,
+                inventory,
+            ),
+            Self::EventMaterializer => verify_event_materializer_acl_role_inventory(
                 role,
                 database,
                 required_database,
@@ -2652,6 +2660,42 @@ fn verify_http_admitter_acl_role_inventory(
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact callable-HTTP admission grant set"
+    );
+    Ok(())
+}
+
+/// Exact two-table catalog read surface of the event materializer.
+fn verify_event_materializer_acl_role_inventory(
+    role: &str,
+    database: &str,
+    required_database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if inventory.is_empty() {
+        anyhow::ensure!(
+            database != required_database,
+            "stable role {role:?} has no event-materializer ACL in required database {database:?}"
+        );
+        return Ok(());
+    }
+    let actual = acl_tuples(inventory);
+    let mut expected = BTreeSet::from([(
+        "schema".to_string(),
+        "catalog".to_string(),
+        "catalog".to_string(),
+        "USAGE".to_string(),
+    )]);
+    for relation in sql::EVENT_MATERIALIZER_CATALOG_RELATIONS {
+        expected.insert((
+            "relation".to_string(),
+            "catalog".to_string(),
+            relation.to_string(),
+            "SELECT".to_string(),
+        ));
+    }
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact event-materializer grant set"
     );
     Ok(())
 }
@@ -4360,6 +4404,7 @@ mod tests {
                 // surfaces derive, so both acquire a denial matrix with them.
                 WorkloadRoleFamily::ExecutorPlatform,
                 WorkloadRoleFamily::HttpAdmitter,
+                WorkloadRoleFamily::EventMaterializer,
                 WorkloadRoleFamily::RegistryReader,
                 WorkloadRoleFamily::IdentityReader
             ],
@@ -4377,6 +4422,7 @@ mod tests {
             // there is nothing converged yet to assert against.
             WorkloadRoleFamily::ExecutorPlatform,
             WorkloadRoleFamily::HttpAdmitter,
+            WorkloadRoleFamily::EventMaterializer,
             WorkloadRoleFamily::RegistryReader,
             WorkloadRoleFamily::IdentityReader,
         ] {
@@ -4389,20 +4435,18 @@ mod tests {
                     | WorkloadRoleFamily::ManagementAdmitter
                     | WorkloadRoleFamily::ExecutorPlatform
                     | WorkloadRoleFamily::HttpAdmitter
+                    | WorkloadRoleFamily::EventMaterializer
                     | WorkloadRoleFamily::RegistryReader
                     | WorkloadRoleFamily::IdentityReader
             ) {
                 assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
             }
         }
-        // THE EVENT MATERIALIZER IS DELIBERATELY STILL `None`
-        // (`wamn-0h0g.22.37`). Its production surface was MEASURED EMPTY — no
-        // production consumer selects `AuthorityClass::EventMaterializer` — and
-        // the owner's determination is that an empty surface is served by not
-        // existing. Named here rather than left to the loop above so minting a
-        // builder for it has to move a named assertion.
-        assert!(sql::stable_surface_sql(WorkloadRoleFamily::EventMaterializer).is_none());
-        assert!(stable_grant_set(WorkloadRoleFamily::EventMaterializer).is_none());
+        assert!(sql::stable_surface_sql(WorkloadRoleFamily::EventMaterializer).is_some());
+        assert_eq!(
+            stable_grant_set(WorkloadRoleFamily::EventMaterializer),
+            Some(StableGrantSet::EventMaterializer)
+        );
     }
 
     /// THE DISJOINTNESS MATRIX, exercised from both sides
@@ -4562,6 +4606,44 @@ mod tests {
             privilege: privilege.to_string(),
             grantable: false,
         }
+    }
+
+    #[test]
+    fn materializer_acl_inventory_is_exactly_the_two_production_reads() {
+        let mut exact = vec![role_acl("schema", "catalog", "catalog", "USAGE")];
+        for relation in sql::EVENT_MATERIALIZER_CATALOG_RELATIONS {
+            exact.push(role_acl("relation", "catalog", relation, "SELECT"));
+        }
+        assert!(
+            verify_event_materializer_acl_role_inventory(
+                "wamn_event_materializer",
+                "wamn",
+                "wamn",
+                &exact,
+            )
+            .is_ok()
+        );
+
+        let mut widened = exact.clone();
+        widened.push(role_acl("relation", "catalog", "packages", "INSERT"));
+        assert!(
+            verify_event_materializer_acl_role_inventory(
+                "wamn_event_materializer",
+                "wamn",
+                "wamn",
+                &widened,
+            )
+            .is_err()
+        );
+        assert!(
+            verify_event_materializer_acl_role_inventory(
+                "wamn_event_materializer",
+                "wamn",
+                "wamn",
+                &[],
+            )
+            .is_err()
+        );
     }
 
     #[test]

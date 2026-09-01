@@ -11,8 +11,9 @@
 # here would silently discard the base profile's replicas, listener, mounts,
 # CA, and resource limits.
 #
-# The identity-reader, ExecutorPlatform, and CallableHttp Secrets are production
-# outputs of `wamn-ctl provision-project-env`. All three references are
+# The identity-reader, ExecutorPlatform, CallableHttp, and EventMaterializer
+# Secrets are production outputs of `wamn-ctl provision-project-env`. All four
+# references are
 # explicitly mandatory; an absent Secret leaves the host Pod unstartable. The
 # ExecutorPlatform carrier is required when a serving host resolves an exact
 # released wiring on demand. The route-caller bearer Secret is
@@ -71,6 +72,12 @@ runtime:
           valueFrom:
             secretKeyRef:
               name: wamn-http-admitter-acme--receiving--dev
+              key: url
+              optional: false
+        - name: WAMN_EVENT_MATERIALIZER_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-materializer-acme--receiving--dev
               key: url
               optional: false
       volumes:

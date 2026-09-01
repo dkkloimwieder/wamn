@@ -599,6 +599,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         "WAMN_SYSTEM_URL",
         "WAMN_EXECUTOR_PLATFORM_PG_URL",
         "WAMN_HTTP_ADMITTER_PG_URL",
+        "WAMN_EVENT_MATERIALIZER_PG_URL",
     ] {
         assert!(
             environment_entry(base_container, name).is_none(),
@@ -637,6 +638,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         "WAMN_SYSTEM_URL",
         "WAMN_EXECUTOR_PLATFORM_PG_URL",
         "WAMN_HTTP_ADMITTER_PG_URL",
+        "WAMN_EVENT_MATERIALIZER_PG_URL",
     ];
     let base_env = base_container["env"]
         .as_array()
@@ -662,7 +664,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
             .expect("rendered Receiving host carries env")
             .len(),
         base_env.len() + receiving_names.len(),
-        "Receiving overlay must add exactly its six scoped environment entries"
+        "Receiving overlay must add exactly its seven scoped environment entries"
     );
 
     for (name, expected) in [
@@ -688,6 +690,10 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         (
             "WAMN_HTTP_ADMITTER_PG_URL",
             "wamn-http-admitter-acme--receiving--dev",
+        ),
+        (
+            "WAMN_EVENT_MATERIALIZER_PG_URL",
+            "wamn-event-materializer-acme--receiving--dev",
         ),
     ] {
         let selector = &environment_entry(receiving_container, name)

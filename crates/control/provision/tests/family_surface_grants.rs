@@ -1,4 +1,5 @@
-//! Live proof that the executor-platform and callable-HTTP admitter families
+//! Live proof that the executor-platform, event-materializer, and callable-HTTP
+//! admitter families
 //! hold EXACTLY their measured production surfaces (`wamn-0h0g.22.37`).
 //!
 //! The proof is the SERVER'S OWN ANSWER — `aclexplode` over `pg_class.relacl`,
@@ -55,7 +56,7 @@ const PROJECT: &str = "billing";
 const ENV: &str = "dev";
 const GENERATION_PW: &str = "wamn_family_surface_pw";
 
-/// Both gates rebuild the SAME schemas and the SAME cluster-global roles, so
+/// All gates rebuild the SAME schemas and the SAME cluster-global roles, so
 /// they must not interleave. Tests inside one binary run in parallel threads by
 /// default; this makes each one's reset a reset rather than a race.
 static SCHEMA: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -169,8 +170,10 @@ fn role_url(admin_url: &str, role: &str, password: &str) -> String {
 fn reset(admin_url: &str, database: &str) {
     let mut roles = vec![
         generation(WorkloadRoleFamily::ExecutorPlatform, database),
+        generation(WorkloadRoleFamily::EventMaterializer, database),
         generation(WorkloadRoleFamily::HttpAdmitter, database),
         WorkloadRoleFamily::ExecutorPlatform.acl_role().to_owned(),
+        WorkloadRoleFamily::EventMaterializer.acl_role().to_owned(),
         WorkloadRoleFamily::HttpAdmitter.acl_role().to_owned(),
     ];
     // The roles the two artifacts GRANT to or CREATE. A `GRANT … TO` a missing
@@ -216,6 +219,116 @@ fn reset(admin_url: &str, database: &str) {
     for artifact in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
         run_admin(admin_url, "apply a run-plane artifact", artifact);
     }
+}
+
+#[test]
+fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
+    let Ok(admin) = std::env::var("WAMN_FAMILY_SURFACE_PG_URL") else {
+        eprintln!(
+            "skipping the_event_materializer_role_holds_exactly_its_two_catalog_reads \
+             (set WAMN_FAMILY_SURFACE_PG_URL to run)"
+        );
+        return;
+    };
+    let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    let database = query(&admin, "SELECT current_database()");
+    reset(&admin, &database);
+
+    let stable = WorkloadRoleFamily::EventMaterializer.acl_role();
+    let login = generation(WorkloadRoleFamily::EventMaterializer, &database);
+    let surface = sql::grant_event_materializer_surface_sql("wamn_run");
+    run_admin(&admin, "converge the event-materializer surface", &surface);
+    run_admin(&admin, "replay the convergent surface", &surface);
+    run_admin(
+        &admin,
+        "prepare the event-materializer generation",
+        &sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::EventMaterializer,
+            &database,
+            &login,
+            GENERATION_PW,
+            "2099-01-01T00:00:00Z",
+        ),
+    );
+
+    let expected = vec![
+        "relation|catalog|event_registrations|SELECT".to_owned(),
+        "relation|catalog|packages|SELECT".to_owned(),
+        "schema|catalog|catalog|USAGE".to_owned(),
+    ];
+    assert_eq!(inventory(&admin, stable), expected);
+    assert_eq!(
+        inventory(&admin, &login),
+        vec![format!("database||{database}|CONNECT")],
+        "the materializer generation carries a direct grant beyond CONNECT"
+    );
+
+    run_admin(
+        &admin,
+        "widen the materializer role out of band",
+        &format!(
+            "GRANT SELECT ON TABLE catalog.package_migrations TO {stable}; \
+             GRANT SELECT ON TABLE app_system.permissions TO {stable}; \
+             GRANT USAGE ON SCHEMA wamn_run TO {stable}; \
+             GRANT SELECT ON TABLE wamn_run.runs TO {stable};"
+        ),
+    );
+    run_admin(
+        &admin,
+        "re-converge the event-materializer surface",
+        &surface,
+    );
+    assert_eq!(
+        inventory(&admin, stable),
+        expected,
+        "an adjacent catalog or run-plane grant survived convergence"
+    );
+
+    run_admin(
+        &admin,
+        "seed materializer registration inputs",
+        "INSERT INTO catalog.packages \
+           (tenant_id, package_id, package_version, manifest_sha256) VALUES \
+           ('t1', 'receiving', '1.0.0', \
+            'sha256:0000000000000000000000000000000000000000000000000000000000000000'), \
+           ('t2', 'foreign', '1.0.0', \
+            'sha256:1111111111111111111111111111111111111111111111111111111111111111'); \
+         INSERT INTO catalog.event_registrations \
+           (tenant_id, package_id, registration_id, flow_id, entity_id, registration) VALUES \
+           ('t1', 'overlay', 'inspect', 'quality-create-inspection', 'receipt', '{}'), \
+           ('t2', 'foreign', 'foreign', 'foreign', 'receipt', '{}');",
+    );
+    let as_materializer = role_url(&admin, &login, GENERATION_PW);
+    assert_eq!(
+        query(
+            &as_materializer,
+            "WITH claim AS (SELECT set_config('app.tenant', 't1', false)) \
+             SELECT string_agg(package_id || '@' || package_version, ',' ORDER BY package_id) \
+               FROM catalog.packages, claim \
+              WHERE tenant_id = current_setting('app.tenant', true)"
+        ),
+        "receiving@1.0.0"
+    );
+    assert_eq!(
+        query(
+            &as_materializer,
+            "WITH claim AS (SELECT set_config('app.tenant', 't1', false)) \
+             SELECT string_agg(package_id || '::' || registration_id, ',' ORDER BY package_id) \
+               FROM catalog.event_registrations, claim \
+              WHERE tenant_id = current_setting('app.tenant', true)"
+        ),
+        "overlay::inspect"
+    );
+    assert_eq!(
+        sqlstate(
+            &as_materializer,
+            "INSERT INTO catalog.event_registrations \
+               (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
+             VALUES ('t1', 'overlay', 'forged', 'forged', 'receipt', '{}');"
+        )
+        .as_deref(),
+        Some("42501")
+    );
 }
 
 /// The whole ACL the named role holds in this database, as the server reports

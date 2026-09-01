@@ -11,7 +11,6 @@ use deadpool_postgres::Object;
 use futures_util::TryStreamExt as _;
 use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
-use wamn_run_state::AuthorityClass;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::Resource;
 
@@ -274,11 +273,13 @@ async fn begin_transaction(
     let role = plugin.role_for(component_id);
     let user_id = plugin.user_id_for(component_id);
     let run = plugin.current_run_for(component_id);
-    let (conn, pp) = plugin.checkout_guest(project, &tenant).await?;
+    let (conn, pp, authority) = plugin
+        .checkout_workload(component_id, project, &tenant)
+        .await?;
     if let Err(e) = plugin
         .begin_with_claims(
             &conn,
-            AuthorityClass::GuestSql,
+            authority,
             &tenant,
             schema.as_deref(),
             runner.as_deref(),

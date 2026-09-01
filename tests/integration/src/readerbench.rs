@@ -44,16 +44,14 @@ pub struct ReaderBenchArgs {
     #[arg(long)]
     pub stream: Option<String>,
 
-    /// The gate table's physical name. UNMAPPED programs (no
-    /// `--expect-entity-id`) assert every envelope carries this `table` with
-    /// `entity` ABSENT — the wamn-l5i9.11 unmapped marker.
+    /// The gate table's physical name, retained beside the mandatory package
+    /// entity identity.
     #[arg(long, default_value = "receipts")]
     pub entity: String,
 
-    /// Expected stable catalog entity id (wamn-l5i9.11): assert EVERY event's
-    /// envelope `entity` equals it. Omit for an unmapped-table program.
+    /// Expected stable catalog entity id: assert EVERY event carries it.
     #[arg(long)]
-    pub expect_entity_id: Option<String>,
+    pub expect_entity_id: String,
 
     /// Column the expected-id program reads from `new` (the floor's managed
     /// `id` is a random uuid, so catalog-entity drills use their own column).
@@ -232,31 +230,18 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
         "delivery order == commit order (the exact id program)",
         got_ids == args.expect_ids,
     );
-    match &args.expect_entity_id {
-        // Every mapped envelope carries the stable catalog entity id. The
-        // physical tables observed are reported for the log.
-        Some(id) => {
-            let tables: std::collections::BTreeSet<&str> =
-                delivered.iter().map(|(_, _, e)| e.table.as_str()).collect();
-            check(
-                &mut pass,
-                &format!(
-                    "every event is an insert with stable entity id {id:?} (tables seen: {tables:?})"
-                ),
-                delivered
-                    .iter()
-                    .all(|(_, _, e)| e.op == Op::Insert && e.entity.as_deref() == Some(id)),
-            );
-        }
-        // Unmapped program: `entity` ABSENT (the marker) + the table name.
-        None => check(
-            &mut pass,
-            "every event is an insert on the gate table, entity ABSENT (unmapped marker)",
-            delivered.iter().all(|(_, _, e)| {
-                e.op == Op::Insert && e.entity.is_none() && e.table == args.entity
-            }),
+    let tables: std::collections::BTreeSet<&str> =
+        delivered.iter().map(|(_, _, e)| e.table.as_str()).collect();
+    check(
+        &mut pass,
+        &format!(
+            "every event is an insert with stable entity id {:?} (tables seen: {tables:?})",
+            args.expect_entity_id
         ),
-    }
+        delivered
+            .iter()
+            .all(|(_, _, event)| event.op == Op::Insert && event.entity == args.expect_entity_id),
+    );
     check(
         &mut pass,
         "every subject is the v3 grammar (keyed by the entity segment)",

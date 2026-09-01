@@ -62,11 +62,10 @@
 //!   replica holds the session is deferred — run replicas=1).
 //! - **Entity keying** (wamn-l5i9.11): each relation resolves to its package id
 //!   and stable package-local entity id via the OID-keyed `wamn_entities` map
-//!   (maintained by package migration application). Positive mappings cache per
-//!   session and remain valid across `ALTER TABLE RENAME` because OIDs survive;
-//!   an unmapped OID is rechecked on its next event so a package applied during
-//!   a long-lived session becomes visible. Unmapped tables publish with the
-//!   table-name fallback and both identity fields absent.
+//!   (maintained by package migration application). Mappings cache per session
+//!   and remain valid across `ALTER TABLE RENAME` because OIDs survive. An
+//!   unmapped relation is a typed publication refusal and cannot enter the
+//!   stream without package identity.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -337,42 +336,31 @@ struct EntityMapping {
     entity_id: String,
 }
 
-fn envelope_identity(mapping: Option<&EntityMapping>) -> (Option<String>, Option<String>) {
-    mapping
-        .map(|mapping| {
-            (
-                Some(mapping.package_id.clone()),
-                Some(mapping.entity_id.clone()),
-            )
-        })
-        .unwrap_or_default()
-}
+/// Typed refusal emitted before an unmapped managed relation can reach NATS.
+pub const UNMAPPED_MANAGED_RELATION_REFUSAL: &str = "cdc-unmapped-managed-relation";
 
-fn remember_positive_entity_mapping(
+/// Operator remedy paired with [`UNMAPPED_MANAGED_RELATION_REFUSAL`].
+pub const UNMAPPED_MANAGED_RELATION_REMEDY: &str =
+    "reconcile the installed package entity map before resuming CDC publication";
+
+fn remember_entity_mapping(
     cache: &mut HashMap<u32, EntityMapping>,
     relation_oid: u32,
-    resolved: Option<EntityMapping>,
-) -> Option<EntityMapping> {
-    if let Some(mapping) = resolved {
-        cache.insert(relation_oid, mapping.clone());
-        Some(mapping)
-    } else {
-        None
-    }
+    resolved: EntityMapping,
+) -> EntityMapping {
+    cache.insert(relation_oid, resolved.clone());
+    resolved
 }
 
 /// Resolve one relation OID to its package-local entity identity over a
 /// short-lived SQL connection (the preflight-style credential — the CDC role's
-/// grants cover the map). `Ok(None)` = unmapped (no row, or the map table does
-/// not exist — an env from before wamn-l5i9.11): the event publishes with the
-/// table-name fallback and neither identity field. A connection/query failure
-/// is a transient session error — the re-open loop re-preflights and the fresh
-/// session re-resolves.
+/// grants cover the map). An absent row or map is a non-retryable typed refusal;
+/// connection/query failure remains transient and reopens the session.
 async fn resolve_entity_mapping(
     args: &EventReaderArgs,
     schema: &str,
     relation_oid: u32,
-) -> Result<Option<EntityMapping>, ReplicationError> {
+) -> Result<EntityMapping, ReplicationError> {
     let url = preflight_url(&args.cdc_url, &args.sslmode)
         .map_err(|e| ReplicationError::Config(e.to_string()))?;
     let (client, conn) = tokio_postgres::connect(&url, NoTls)
@@ -385,18 +373,17 @@ async fn resolve_entity_mapping(
         .query_opt(entity_lookup_sql(schema).as_str(), &[&relation_oid])
         .await
     {
-        Ok(row) => Ok(row.map(|r| EntityMapping {
-            package_id: r.get("package_id"),
-            entity_id: r.get("entity_id"),
-        })),
-        // 42P01 undefined_table: no map in this env — everything is unmapped,
-        // exactly the pre-.11 behavior.
-        Err(e) if e.code() == Some(&tokio_postgres::error::SqlState::UNDEFINED_TABLE) => {
-            tracing::warn!(
-                schema,
-                "no wamn_entities map in this env — publishing unmapped"
-            );
-            Ok(None)
+        Ok(Some(row)) => Ok(EntityMapping {
+            package_id: row.get("package_id"),
+            entity_id: row.get("entity_id"),
+        }),
+        Ok(None) => Err(ReplicationError::Config(format!(
+            "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema={schema:?} relation_oid={relation_oid}; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
+        ))),
+        Err(error) if error.code() == Some(&tokio_postgres::error::SqlState::UNDEFINED_TABLE) => {
+            Err(ReplicationError::Config(format!(
+                "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema={schema:?} has no wamn_entities map; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
+            )))
         }
         Err(e) => Err(ReplicationError::TransientConnection(format!(
             "entity-map lookup: {e}"
@@ -892,7 +879,7 @@ struct PendingRow {
     op: Op,
     old: Option<serde_json::Map<String, serde_json::Value>>,
     new: Option<serde_json::Map<String, serde_json::Value>>,
-    entity_mapping: Option<EntityMapping>,
+    entity_mapping: EntityMapping,
     table: String,
     lsn: u64,
 }
@@ -937,10 +924,8 @@ async fn drain(
         published: 0,
         deduped: 0,
     };
-    // The per-session OID → package/entity cache stores positive mappings only.
-    // OIDs survive renames, so a positive resolution stays correct; an absent
-    // row is rechecked on the relation's next event so package application can
-    // become visible without reopening the replication session.
+    // The per-session OID → package/entity cache stores resolved mappings.
+    // OIDs survive renames, so a resolution stays correct for the session.
     let mut entity_mappings: HashMap<u32, EntityMapping> = HashMap::new();
     loop {
         let ev = match stream.next_event().await {
@@ -994,13 +979,12 @@ async fn drain(
                 // after these rows.
                 let mut msgs = Vec::with_capacity(frame.rows.len());
                 for row in &frame.rows {
-                    let (package_id, entity) = envelope_identity(row.entity_mapping.as_ref());
                     let envelope = Envelope {
                         op: row.op,
                         old: row.old.clone(),
                         new: row.new.clone(),
-                        package_id,
-                        entity,
+                        package_id: row.entity_mapping.package_id.clone(),
+                        entity: row.entity_mapping.entity_id.clone(),
                         table: row.table.clone(),
                         lsn: row.lsn,
                         txid: frame.txid,
@@ -1142,27 +1126,22 @@ async fn drain(
                 continue;
             }
         };
-        // Resolve an uncached relation OID. Only a positive mapping is cached;
-        // absence remains eligible for the next-event recheck.
+        // Resolve an uncached relation OID before buffering anything publishable.
         let entity_mapping = if let Some(mapping) = entity_mappings.get(&relation_oid) {
-            Some(mapping.clone())
+            mapping.clone()
         } else {
             let resolved = match resolve_entity_mapping(args, &schema, relation_oid).await {
                 Ok(r) => r,
                 Err(e) => return DrainOutcome::Severed(e, summary),
             };
-            if let Some(mapping) = resolved.as_ref() {
-                tracing::info!(
-                    %table,
-                    relation_oid,
-                    package_id = mapping.package_id.as_str(),
-                    entity = mapping.entity_id.as_str(),
-                    "entity resolved"
-                );
-            } else {
-                tracing::debug!(%table, relation_oid, "entity remains unmapped");
-            }
-            remember_positive_entity_mapping(&mut entity_mappings, relation_oid, resolved)
+            tracing::info!(
+                %table,
+                relation_oid,
+                package_id = resolved.package_id.as_str(),
+                entity = resolved.entity_id.as_str(),
+                "entity resolved"
+            );
+            remember_entity_mapping(&mut entity_mappings, relation_oid, resolved)
         };
         // Buffer the row; it publishes at Commit, once the txn's causation
         // stamp (if any) is known.
@@ -1753,36 +1732,28 @@ mod tests {
     }
 
     #[test]
-    fn entity_mapping_projects_both_envelope_fields_or_neither() {
+    fn resolved_entity_mapping_is_cached_as_one_closed_identity() {
+        let mut cache = HashMap::new();
         let mapping = EntityMapping {
             package_id: "receiving".into(),
             entity_id: "receipt".into(),
         };
         assert_eq!(
-            envelope_identity(Some(&mapping)),
-            (Some("receiving".into()), Some("receipt".into()))
+            remember_entity_mapping(&mut cache, 42, mapping.clone()),
+            mapping
         );
-        assert_eq!(envelope_identity(None), (None, None));
+        assert_eq!(cache.get(&42), Some(&mapping));
     }
 
     #[test]
-    fn unmapped_oid_is_not_cached_and_can_resolve_later_in_the_session() {
-        let mut cache = HashMap::new();
-        assert_eq!(remember_positive_entity_mapping(&mut cache, 42, None), None);
-        assert!(
-            !cache.contains_key(&42),
-            "an absent mapping must remain eligible for a later lookup"
-        );
-
-        let mapping = EntityMapping {
-            package_id: "receiving".into(),
-            entity_id: "receipt".into(),
-        };
-        assert_eq!(
-            remember_positive_entity_mapping(&mut cache, 42, Some(mapping.clone())),
-            Some(mapping.clone())
-        );
-        assert_eq!(cache.get(&42), Some(&mapping));
+    fn unmapped_managed_relation_refusal_is_fatal_and_names_its_remedy() {
+        let error = ReplicationError::Config(format!(
+            "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema=\"receiving\" relation_oid=42; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
+        ));
+        assert_eq!(classify(&error), SessionFate::Fatal);
+        let message = error.to_string();
+        assert!(message.contains(UNMAPPED_MANAGED_RELATION_REFUSAL));
+        assert!(message.contains(UNMAPPED_MANAGED_RELATION_REMEDY));
     }
 
     #[test]
@@ -2323,8 +2294,8 @@ mod tests {
                     op: Op::Insert,
                     old: None,
                     new: None,
-                    package_id: Some("receiving".into()),
-                    entity: Some("orders".into()),
+                    package_id: "receiving".into(),
+                    entity: "orders".into(),
                     table: "orders".into(),
                     lsn,
                     txid: 1,

@@ -11,9 +11,9 @@
 //! runs into the global FIFO. This crate is ONLY the declaration surface; it
 //! does not decode, materialize, or enqueue.
 //!
-//! [`entity`](EventRegistration::entity) is the package-local stable model key
-//! from `wamn.json`, not a relation name. The manifest is the sole mapping from
-//! that key to a schema/table pair.
+//! [`entity`](EventRegistration::entity) is the source package's stable model
+//! key from `wamn.json`, not a relation name. The source manifest is the sole
+//! mapping from that key to a schema/table pair.
 //!
 //! **Impact analysis (11.8, wamn-wvb) covers registrations:** because the entity
 //! is referenced by id, "what breaks if I drop/rename entity X" enumerates the
@@ -64,9 +64,12 @@ pub struct EventRegistration {
     pub schema_version: String,
     /// Stable id, unique within its package (the storage row key).
     pub registration_id: String,
-    /// Package-local ownership. Package version is deliberately absent because
-    /// registrations remain hot-editable while releases select exact versions.
+    /// Package-local ownership and delivery target. Package version is absent
+    /// because the effective release selects the exact owner version.
     pub package_id: String,
+    /// Package whose emitted event identity this registration matches. It may
+    /// differ from the owner for a base-to-overlay post-commit invocation.
+    pub source_package_id: String,
     /// The subscribing flow (`Flow::id`) — the durable consumer the materializer
     /// opens, and the `run_id = <flow>:evt:<seq>` prefix (§5).
     pub flow_id: String,
@@ -91,6 +94,11 @@ pub struct EventRegistration {
 }
 
 impl EventRegistration {
+    /// Owner-qualified identity carried through the existing router bridge string.
+    pub fn qualified_id(&self) -> String {
+        format!("{}::{}", self.package_id, self.registration_id)
+    }
+
     /// Parse a registration from canonical JSON (import; also the jsonb stored
     /// per row in `catalog.event_registrations`).
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {

@@ -109,7 +109,7 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// The denial matrix is a claim about THESE objects: the run plane plus the
 /// catalog relations the platform families read. A family reaching one it does
 /// not own is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 20] = [
+const MATRIX_RELATIONS: [&str; 22] = [
     "app_system.permissions",
     "catalog.component_library",
     "catalog.connection_bindings",
@@ -118,6 +118,8 @@ const MATRIX_RELATIONS: [&str; 20] = [
     "catalog.connection_requirements",
     "catalog.effective_release_heads",
     "catalog.effective_release_packages",
+    "catalog.event_registrations",
+    "catalog.packages",
     "catalog.release_components",
     "catalog.release_manifest_v3_snapshots",
     "catalog.wiring_activation",
@@ -191,6 +193,8 @@ const MATRIX: [FamilyReach; 9] = [
             "catalog.connection_requirements|SELECT|table",
             "catalog.effective_release_heads|SELECT|table",
             "catalog.effective_release_packages|SELECT|table",
+            "catalog.event_registrations|SELECT|table",
+            "catalog.packages|SELECT|table",
             "catalog.release_components|SELECT|table",
             "catalog.release_manifest_v3_snapshots|SELECT|table",
             "catalog.wiring_activation|SELECT|table",
@@ -293,10 +297,7 @@ const MATRIX: [FamilyReach; 9] = [
         ],
         routines: &[],
     },
-    // The two families whose MEASURED surface is empty (`wamn-0h0g.22.37`).
-    // They are in the matrix precisely because they hold nothing: they are the
-    // sharpest subjects of the pairwise arms, and the day one of them acquires
-    // a grant the exactness arm reds instead of the widening shipping quietly.
+    // The remaining family whose measured production surface is empty.
     FamilyReach {
         family: WorkloadRoleFamily::ServiceReader,
         relations: &[],
@@ -304,7 +305,10 @@ const MATRIX: [FamilyReach; 9] = [
     },
     FamilyReach {
         family: WorkloadRoleFamily::EventMaterializer,
-        relations: &[],
+        relations: &[
+            "catalog.event_registrations|SELECT|table",
+            "catalog.packages|SELECT|table",
+        ],
         routines: &[],
     },
 ];
@@ -895,7 +899,7 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
         .collect();
     assert_eq!(
         empty,
-        vec!["service-reader".to_owned(), "event-materializer".to_owned()],
+        vec!["service-reader".to_owned()],
         "the set of families whose MEASURED surface is empty moved; every \
          ordered pair naming one of them as the OBJECT carries no denial by \
          construction"
@@ -938,9 +942,10 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 ///
 /// Not a defect — it is what the measured surfaces are — but it is the set of
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
-/// be counted. Pairs naming one of the two MEASURED-EMPTY families as the object
+/// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 4] = [
+const CONTAINED_PAIRS: [(&str, &str); 5] = [
+    ("app", "event-materializer"),
     ("app", "http-admitter"),
     ("app", "retention"),
     ("effect-writer", "dispatch-reader"),

@@ -204,6 +204,12 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 /// It is set by the platform (the workload instance id), never by the guest.
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
+/// Per-workload, host-owned credential discriminator. Absence preserves the
+/// ordinary guest credential; the closed explicit vocabulary admits only the
+/// event materializer.
+pub const AUTHORITY_CONFIG_KEY: &str = "wamn.postgres.authority";
+const EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE: &str = "event-materializer";
+
 /// The project id used when a component names none — the single database a
 /// [`WamnPostgresConfig`] URL points at.
 pub const DEFAULT_PROJECT: &str = "default";
@@ -211,6 +217,19 @@ pub const DEFAULT_PROJECT: &str = "default";
 // ---------------------------------------------------------------------------
 // Plugin configuration
 // ---------------------------------------------------------------------------
+
+impl WamnPostgres {
+    fn bind_configured_workload_authority(
+        &self,
+        component_id: &str,
+        config: &std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<()> {
+        if let Some(authority) = config.get(AUTHORITY_CONFIG_KEY) {
+            self.bind_workload_authority(component_id, authority)?;
+        }
+        Ok(())
+    }
+}
 
 #[async_trait::async_trait]
 impl HostPlugin for WamnPostgres {
@@ -240,6 +259,14 @@ impl HostPlugin for WamnPostgres {
     ) -> anyhow::Result<()> {
         if !interfaces.contains("wamn", "postgres", &["client"]) {
             return Ok(());
+        }
+        self.bind_configured_workload_authority(item.id(), &item.local_resources().config)?;
+        if let Some(authority) = item.local_resources().config.get(AUTHORITY_CONFIG_KEY) {
+            tracing::debug!(
+                component = item.id(),
+                authority,
+                "wamn:postgres workload authority registered"
+            );
         }
         if let Some(tenant) = item.local_resources().config.get(TENANT_CONFIG_KEY) {
             let tenant = tenant.clone();
@@ -337,7 +364,8 @@ impl HostPlugin for WamnPostgres {
 
     /// R31: on workload teardown, reap the per-component claim registries
     /// (`WamnPostgres::clear_component_claims`) so a stale tenant / project /
-    /// schema / runner / release-identity / causation claim cannot survive unbind
+    /// schema / runner / workload authority / release-identity / causation
+    /// claim cannot survive unbind
     /// or be inherited by
     /// a rebound component id. The project pools stay — they are project-keyed
     /// (shared, memoized), not per component.
@@ -384,6 +412,37 @@ mod tests {
         let interface = named_interface("alpha", "project/a");
         let error = NamedProject::from_interface(&interface).expect_err("invalid project");
         assert!(error.to_string().contains("invalid project"));
+    }
+
+    #[test]
+    fn binding_config_admits_only_the_exact_materializer_authority() {
+        let postgres = WamnPostgres::new(WamnPostgresConfig::from_env()).unwrap();
+        let explicit = std::collections::HashMap::from([(
+            AUTHORITY_CONFIG_KEY.to_owned(),
+            EVENT_MATERIALIZER_AUTHORITY_CONFIG_VALUE.to_owned(),
+        )]);
+        postgres
+            .bind_configured_workload_authority("materializer", &explicit)
+            .unwrap();
+        postgres
+            .bind_configured_workload_authority("ordinary-guest", &std::collections::HashMap::new())
+            .unwrap();
+        assert_eq!(
+            postgres.workload_authority_for("materializer"),
+            AuthorityClass::EventMaterializer
+        );
+        assert_eq!(
+            postgres.workload_authority_for("ordinary-guest"),
+            AuthorityClass::GuestSql
+        );
+
+        let invalid = std::collections::HashMap::from([(
+            AUTHORITY_CONFIG_KEY.to_owned(),
+            "executor-platform".to_owned(),
+        )]);
+        postgres
+            .bind_configured_workload_authority("invalid", &invalid)
+            .expect_err("the binding vocabulary is closed");
     }
 }
 

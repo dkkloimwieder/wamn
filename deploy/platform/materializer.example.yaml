@@ -1,6 +1,6 @@
 # wamn-l5i9.17 CDC materializer (D19 v3 §5) — EXAMPLE WorkloadDeployment for
 # ONE project-env × tenant. Per-env config (stream/org/project/env + the
-# tenant/schema claims) makes this an example the provisioning runbook
+# tenant claim) makes this an example the provisioning runbook
 # instantiates, not an apply-as-is manifest; the demo values below match the
 # matbench fixture triple.
 #
@@ -15,13 +15,13 @@
 # imports as plugins; `hostInterfaces` is the host-plugin ALLOWLIST
 # (bind_plugins binds only what is declared here).
 #
-# IDENTITY (host-injected, non-spoofable): `wamn.tenant` drives BOTH the
-# wamn:postgres RLS claim and the doorbell subject; `wamn.schema` is the
-# search_path its unqualified runs/run_queue reads resolve in; `wamn.project`
-# selects the per-project pool. The WAMN_MAT_* environment is guest-side
-# SUBSCRIPTION config only (stream name + subject segments + the tenant label
-# for the event tenant-guard compare) — RLS holds regardless of what the env
-# claims.
+# IDENTITY (host-injected, non-spoofable): `wamn.tenant` scopes the fully
+# qualified `catalog.packages` and `catalog.event_registrations` reads and also
+# drives the doorbell subject; `wamn.project` selects the per-project pool;
+# `wamn.postgres.authority` selects the closed event-materializer credential
+# class. The WAMN_MAT_* environment is guest-side SUBSCRIPTION config only
+# (stream name + subject segments + the tenant label for the event tenant-guard
+# compare) — RLS holds regardless of what the env claims.
 #
 # THE DOORBELL SEGMENT IS AN EXECUTION TARGET, NOT A TENANT —
 # `wamn.doorbell.<execution-target-id>` — and THIS WORKLOAD CARRIES NO KEY THAT
@@ -95,7 +95,7 @@ spec:
           config:
             wamn.tenant: t1
             wamn.project: default
-            wamn.schema: wamn_run
+            wamn.postgres.authority: event-materializer
           environment:
             config:
               WAMN_MAT_STREAM: EVT_morg_menv
@@ -106,6 +106,3 @@ spec:
               # Retry is bounded; the final failed attempt is published to the
               # host-derived per-registration DLQ before the source is termed.
               WAMN_MAT_MAX_DELIVER: "5"
-              # Defaults to wamn_run; set this to the schema claimed by the
-              # paired runner when a deployment uses a noncanonical schema.
-              WAMN_MAT_RUN_SCHEMA: wamn_run

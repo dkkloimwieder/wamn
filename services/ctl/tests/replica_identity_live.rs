@@ -8,6 +8,7 @@ use wamn_schema_control::ManagedModel;
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const PACKAGE_ID: &str = "ri_package";
+const OWNER_PACKAGE_ID: &str = "client_overlay";
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -34,7 +35,8 @@ fn registration() -> String {
     serde_json::json!({
         "schema-version": "0.1",
         "registration-id": "orders-delete",
-        "package-id": PACKAGE_ID,
+        "package-id": OWNER_PACKAGE_ID,
+        "source-package-id": PACKAGE_ID,
         "flow-id": "orders-flow",
         "entity": "orders",
         "ops": ["delete"],
@@ -106,10 +108,10 @@ async fn package_registration_union_flips_exact_tables_and_unreadable_state_refu
             "INSERT INTO catalog.event_registrations \
              (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
              VALUES ('t1', $1, 'orders-delete', 'orders-flow', 'orders', $2::text::jsonb)",
-            &[&PACKAGE_ID, &registration()],
+            &[&OWNER_PACKAGE_ID, &registration()],
         )
         .await
-        .expect("store package-owned registration");
+        .expect("store overlay-owned registration on a base package entity");
 
     reconcile(&client, PACKAGE_ID, &models(), true)
         .await
@@ -133,7 +135,8 @@ async fn package_registration_union_flips_exact_tables_and_unreadable_state_refu
 
     client
         .execute(
-            "DELETE FROM catalog.event_registrations WHERE package_id = $1",
+            "DELETE FROM catalog.event_registrations \
+             WHERE registration ->> 'source-package-id' = $1",
             &[&PACKAGE_ID],
         )
         .await

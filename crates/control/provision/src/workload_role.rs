@@ -212,11 +212,10 @@ impl WorkloadRoleFamily {
     ///
     /// Everything else — the seven families whose credentials reach a
     /// project-environment or tenant database, are not the guest, and are not
-    /// under that guard — is a member. That includes the families with no grant
-    /// set today (`ServiceReader`, `ExecutorPlatform`, `HttpAdmitter`,
-    /// `EventMaterializer`): an RLS arm with no table grant behind it admits
-    /// nothing, and the alternative is that the day one of them ACQUIRES a
-    /// grant it reads zero rows with no error and no failing test.
+    /// under that guard — is a member. `EventMaterializer` exercises that edge
+    /// through its two catalog reads. `ServiceReader` remains the empty-surface
+    /// case: an RLS arm with no table grant behind it admits nothing, while the
+    /// edge prevents a future first grant from silently reading zero rows.
     ///
     /// `Retention` is `Tenant`-scoped and is a member anyway. Its login names
     /// carry a tenant DIGEST, but `current_tenant_key` recovers a key only from

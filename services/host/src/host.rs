@@ -373,19 +373,27 @@ fn host_memory(args: &HostArgs) -> anyhow::Result<HostMemoryBudgets> {
 /// continues. Unnaming is not the same as leaving the shared entry in place —
 /// see [`ClassCredentials::without_class`].
 fn host_credentials(
-    database_url: String,
+    database_url: Option<String>,
     executor_platform_url: Option<String>,
     http_admitter_url: Option<String>,
+    event_materializer_url: Option<String>,
 ) -> ClassCredentials {
+    let credentials = database_url.map_or_else(ClassCredentials::default, |url| {
+        ClassCredentials::every_class(url)
+    });
     let credentials = match executor_platform_url {
-        Some(platform) => ClassCredentials::every_class(database_url)
-            .with_class(AuthorityClass::ExecutorPlatform, platform),
-        None => ClassCredentials::every_class(database_url)
-            .without_class(AuthorityClass::ExecutorPlatform),
+        Some(platform) => credentials.with_class(AuthorityClass::ExecutorPlatform, platform),
+        None => credentials.without_class(AuthorityClass::ExecutorPlatform),
     };
-    match http_admitter_url {
+    let credentials = match http_admitter_url {
         Some(admitter) => credentials.with_class(AuthorityClass::CallableHttp, admitter),
         None => credentials.without_class(AuthorityClass::CallableHttp),
+    };
+    match event_materializer_url {
+        Some(materializer) => {
+            credentials.with_class(AuthorityClass::EventMaterializer, materializer)
+        }
+        None => credentials.without_class(AuthorityClass::EventMaterializer),
     }
 }
 
@@ -551,24 +559,31 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // app_system.permissions read a PAT route requires. The manifest-derived
     // gate above makes the generation mandatory for that demand only; an
     // anonymous-only or release-less host retains the absent, fail-closed arm.
+    // EventMaterializer uses the same explicit-source rule: only the dedicated
+    // URL names that class, and absence removes the shared guest placeholder.
     let executor_platform_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
-    let http_admitter_url = demanded_http_admitter_url(pat_routes, http_admitter_url);
-    let postgres_credentials = match std::env::var("WAMN_PG_URL")
+    let event_materializer_url = std::env::var("WAMN_EVENT_MATERIALIZER_PG_URL")
         .ok()
-        .filter(|url| !url.is_empty())
+        .filter(|url| !url.is_empty());
+    let http_admitter_url = demanded_http_admitter_url(pat_routes, http_admitter_url);
+    let guest_url = std::env::var("WAMN_PG_URL")
+        .ok()
+        .filter(|url| !url.is_empty());
+    let postgres_credentials = if guest_url.is_some()
+        || executor_platform_url.is_some()
+        || http_admitter_url.is_some()
+        || event_materializer_url.is_some()
     {
-        Some(url) => Some(host_credentials(
-            url,
+        Some(host_credentials(
+            guest_url,
             executor_platform_url,
             http_admitter_url,
-        )),
-        None if pat_routes => Some(ClassCredentials::default().with_class(
-            AuthorityClass::CallableHttp,
-            http_admitter_url.expect("a PAT route required the callable-HTTP credential above"),
-        )),
-        None => None,
+            event_materializer_url,
+        ))
+    } else {
+        None
     };
     let postgres = Arc::new(
         WamnPostgres::from_env_for_project(&args.project, postgres_credentials)
@@ -798,6 +813,7 @@ mod tests {
     const GUEST: &str = "postgres://guest@h/db";
     const PLATFORM: &str = "postgres://platform@h/db";
     const ADMITTER: &str = "postgres://admitter@h/db";
+    const MATERIALIZER: &str = "postgres://materializer@h/db";
 
     /// THE GUEST URL IS NOT A CUT-OVER FAMILY'S CREDENTIAL (`wamn-0h0g.22.31`,
     /// `wamn-0h0g.22.11`).
@@ -810,14 +826,16 @@ mod tests {
     #[test]
     fn the_host_routes_each_url_to_its_own_class() {
         let credentials = host_credentials(
-            GUEST.to_owned(),
+            Some(GUEST.to_owned()),
             Some(PLATFORM.to_owned()),
             Some(ADMITTER.to_owned()),
+            Some(MATERIALIZER.to_owned()),
         );
         for class in AuthorityClass::ALL {
             let expected = match class {
                 AuthorityClass::ExecutorPlatform => PLATFORM,
                 AuthorityClass::CallableHttp => ADMITTER,
+                AuthorityClass::EventMaterializer => MATERIALIZER,
                 _ => GUEST,
             };
             assert_eq!(
@@ -838,7 +856,12 @@ mod tests {
     /// its own so a mutant that unnames both, or the wrong one, fails here.
     #[test]
     fn a_host_with_no_generation_for_a_family_refuses_rather_than_borrows() {
-        let no_admitter = host_credentials(GUEST.to_owned(), Some(PLATFORM.to_owned()), None);
+        let no_admitter = host_credentials(
+            Some(GUEST.to_owned()),
+            Some(PLATFORM.to_owned()),
+            None,
+            Some(MATERIALIZER.to_owned()),
+        );
         assert_eq!(
             no_admitter.url(AuthorityClass::CallableHttp),
             None,
@@ -851,7 +874,12 @@ mod tests {
             "unnaming callable-HTTP must not disturb another class"
         );
 
-        let no_platform = host_credentials(GUEST.to_owned(), None, Some(ADMITTER.to_owned()));
+        let no_platform = host_credentials(
+            Some(GUEST.to_owned()),
+            None,
+            Some(ADMITTER.to_owned()),
+            Some(MATERIALIZER.to_owned()),
+        );
         assert_eq!(
             no_platform.url(AuthorityClass::ExecutorPlatform),
             None,
@@ -864,14 +892,39 @@ mod tests {
             "unnaming executor-platform must not disturb another class"
         );
 
-        let neither = host_credentials(GUEST.to_owned(), None, None);
+        let no_materializer = host_credentials(
+            Some(GUEST.to_owned()),
+            Some(PLATFORM.to_owned()),
+            Some(ADMITTER.to_owned()),
+            None,
+        );
+        assert_eq!(
+            no_materializer.url(AuthorityClass::EventMaterializer),
+            None,
+            "an unprovisioned materializer must not borrow the guest credential"
+        );
+        assert_eq!(
+            no_materializer.url(AuthorityClass::CallableHttp),
+            Some(ADMITTER),
+            "unnaming the materializer must not disturb another class"
+        );
+
+        let neither = host_credentials(Some(GUEST.to_owned()), None, None, None);
         assert_eq!(neither.url(AuthorityClass::ExecutorPlatform), None);
         assert_eq!(neither.url(AuthorityClass::CallableHttp), None);
+        assert_eq!(neither.url(AuthorityClass::EventMaterializer), None);
         assert_eq!(
             neither.url(AuthorityClass::GuestSql),
             Some(GUEST),
             "the guest class keeps its own credential either way"
         );
+
+        let materializer_only = host_credentials(None, None, None, Some(MATERIALIZER.to_owned()));
+        assert_eq!(
+            materializer_only.url(AuthorityClass::EventMaterializer),
+            Some(MATERIALIZER)
+        );
+        assert_eq!(materializer_only.url(AuthorityClass::GuestSql), None);
     }
 
     #[test]

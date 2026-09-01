@@ -9,8 +9,8 @@
 
 use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
 use crate::workload_role::{
-    EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
-    WorkloadRoleFamily,
+    EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, MANAGEMENT_ADMITTER_ROLE,
+    PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
 };
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
@@ -895,6 +895,34 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
     sql
 }
 
+/// The materializer's complete production read surface: the installed package
+/// identities used for source validation and the tenant-scoped registration
+/// documents. It holds no catalog write, run-plane grant, or routine grant.
+pub const EVENT_MATERIALIZER_CATALOG_RELATIONS: [&str; 2] = ["event_registrations", "packages"];
+
+/// Converge the stable event-materializer role to its exact two-table catalog
+/// read surface. Revocation spans every authority-bearing project schema so an
+/// out-of-band widening is removed on replay.
+pub fn grant_event_materializer_surface_sql(schema: &str) -> String {
+    let role = quote_ident(EVENT_MATERIALIZER_ROLE);
+    let schema = quote_ident(schema);
+    let mut sql = format!(
+        "{ensure} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_authority, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_authority, {schema} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_authority, {schema} FROM {role}; \
+         GRANT USAGE ON SCHEMA catalog TO {role};",
+        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::EventMaterializer),
+    );
+    for relation in EVENT_MATERIALIZER_CATALOG_RELATIONS {
+        sql.push_str(&format!(
+            " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+            relation = quote_ident(relation),
+        ));
+    }
+    sql
+}
+
 // --- T1 control-database read surfaces (wamn-0h0g.12.116, wamn-0h0g.12.67) ---
 //
 // The T1 system database's two read-only consumers both authenticated as
@@ -1061,23 +1089,9 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
         WorkloadRoleFamily::HttpAdmitter => Some(grant_http_admitter_surface_sql("wamn_run")),
         WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
         WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
-        // THE MEASURED SURFACE IS EMPTY, and the owner's determination is that
-        // an empty surface is served by NOT EXISTING (`wamn-0h0g.22.37`).
-        //
-        // `AuthorityClass::EventMaterializer` maps to this family and nothing
-        // in production selects it: there is no materializer consumer, so there
-        // is no statement, so there is no relation to name. The family stays an
-        // enum variant so the closed vocabulary stays complete and an admitted
-        // consumer inherits the whole lifecycle without an edit here.
-        //
-        // A revoke-only builder was considered and REFUSED. Credentials, a
-        // Secret and rotation machinery for a role that can reach nothing is
-        // provisioning for no consumer, and "reaches exactly its measured
-        // surface" is already satisfied by holding no grant at all.
-        //
-        // THE TRIGGER FOR MINTING A REAL BUILDER IS THE FIRST PRODUCTION
-        // MATERIALIZER CONSUMER — not a plan for one, and not a test fixture.
-        WorkloadRoleFamily::EventMaterializer => None,
+        WorkloadRoleFamily::EventMaterializer => {
+            Some(grant_event_materializer_surface_sql("wamn_run"))
+        }
         _ => None,
     }
 }

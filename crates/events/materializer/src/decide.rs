@@ -38,7 +38,6 @@ pub fn verified_source_event_id(
 ///
 /// Scope equality is checked before identity derivation, so bytes claiming a
 /// foreign tenant/project/environment cannot borrow the local header identity.
-/// An absent package cannot have a package-scoped derived identity.
 pub fn verified_derived_source_event_id(
     tenant: &str,
     project: &str,
@@ -49,12 +48,11 @@ pub fn verified_derived_source_event_id(
     if event.tenant != tenant || event.project != project || event.environment != environment {
         return None;
     }
-    let package_id = event.package_id.as_deref()?;
     let expected = wamn_event_wire::derived_msg_id(
         tenant,
         project,
         environment,
-        package_id,
+        &event.package_id,
         &event.entity,
         event.op,
         &event.dedup_id,
@@ -68,7 +66,7 @@ pub fn verified_derived_source_event_id(
 /// Normal non-delivery outcomes owned by registration filtering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipReason {
-    PackageMismatch,
+    SourcePackageMismatch,
     EntityMismatch,
     OpMismatch,
     ForeignTenant,
@@ -78,8 +76,7 @@ pub enum SkipReason {
 /// Deterministic registration refusals that must remain operator-visible.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RefuseReason {
-    PackageIdentityAbsent,
-    PackageIdentityUnknown { package_id: String },
+    SourcePackageIdentityUnknown { source_package_id: String },
     DepthExceeded { parent: Causation },
     TenantUnscopable,
     OldImageAbsent,
@@ -121,19 +118,18 @@ pub fn decide(
     tenant: &str,
     max_depth: u32,
 ) -> Verdict {
-    match envelope.package_id.as_deref() {
-        None => return Verdict::Refuse(RefuseReason::PackageIdentityAbsent),
-        Some(package_id) if !known_packages.contains(package_id) => {
-            return Verdict::Refuse(RefuseReason::PackageIdentityUnknown {
-                package_id: package_id.to_owned(),
+    match envelope.package_id.as_str() {
+        package_id if !known_packages.contains(package_id) => {
+            return Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
+                source_package_id: package_id.to_owned(),
             });
         }
-        Some(package_id) if package_id != registration.package_id => {
-            return Verdict::Skip(SkipReason::PackageMismatch);
+        package_id if package_id != registration.source_package_id => {
+            return Verdict::Skip(SkipReason::SourcePackageMismatch);
         }
-        Some(_) => {}
+        _ => {}
     }
-    if envelope.entity.as_deref() != Some(registration.entity.as_str()) {
+    if envelope.entity != registration.entity {
         return Verdict::Skip(SkipReason::EntityMismatch);
     }
     if !registration.ops.contains(&envelope.op) {
@@ -180,17 +176,16 @@ pub fn decide_derived(
     tenant: &str,
     max_depth: u32,
 ) -> Verdict {
-    match event.package_id.as_deref() {
-        None => return Verdict::Refuse(RefuseReason::PackageIdentityAbsent),
-        Some(package_id) if !known_packages.contains(package_id) => {
-            return Verdict::Refuse(RefuseReason::PackageIdentityUnknown {
-                package_id: package_id.to_owned(),
+    match event.package_id.as_str() {
+        package_id if !known_packages.contains(package_id) => {
+            return Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
+                source_package_id: package_id.to_owned(),
             });
         }
-        Some(package_id) if package_id != registration.package_id => {
-            return Verdict::Skip(SkipReason::PackageMismatch);
+        package_id if package_id != registration.source_package_id => {
+            return Verdict::Skip(SkipReason::SourcePackageMismatch);
         }
-        Some(_) => {}
+        _ => {}
     }
     if event.entity != registration.entity.as_str() {
         return Verdict::Skip(SkipReason::EntityMismatch);
@@ -236,6 +231,7 @@ mod tests {
             schema_version: "0.1".into(),
             registration_id: "r1".into(),
             package_id: "cat".into(),
+            source_package_id: "cat".into(),
             flow_id: "legacy-flow".into(),
             entity: "receipts".into(),
             ops: vec![Op::Insert, Op::Update],
@@ -399,7 +395,7 @@ mod tests {
             "t1",
             "app",
             "dev",
-            event.package_id.as_deref().unwrap(),
+            &event.package_id,
             &event.entity,
             event.op,
             &event.dedup_id,
@@ -417,11 +413,6 @@ mod tests {
             verified_derived_source_event_id("t1", "app", "dev", &event, &[&expected, &expected])
                 .is_none()
         );
-        let mut absent = event;
-        absent.package_id = None;
-        assert!(
-            verified_derived_source_event_id("t1", "app", "dev", &absent, &[&expected]).is_none()
-        );
     }
 
     #[test]
@@ -432,7 +423,7 @@ mod tests {
             "t1",
             "app",
             "dev",
-            event.package_id.as_deref().unwrap(),
+            &event.package_id,
             &event.entity,
             event.op,
             &event.dedup_id,
@@ -454,31 +445,24 @@ mod tests {
     }
 
     #[test]
-    fn package_identity_has_exactly_match_skip_absent_and_unknown_paths() {
-        let registration = registration(None);
+    fn source_package_identity_has_match_known_skip_and_unknown_refusal_paths() {
+        let mut registration = registration(None);
+        registration.package_id = "overlay".into();
         let known = known_packages();
 
         let mut other = envelope();
-        other.package_id = Some("other".into());
+        other.package_id = "other".into();
         assert_eq!(
             decide(&registration, None, &other, &known, "t1", 16),
-            Verdict::Skip(SkipReason::PackageMismatch)
-        );
-
-        let mut absent = envelope();
-        absent.package_id = None;
-        absent.entity = None;
-        assert_eq!(
-            decide(&registration, None, &absent, &known, "t1", 16),
-            Verdict::Refuse(RefuseReason::PackageIdentityAbsent)
+            Verdict::Skip(SkipReason::SourcePackageMismatch)
         );
 
         let mut unknown = envelope();
-        unknown.package_id = Some("unknown".into());
+        unknown.package_id = "unknown".into();
         assert_eq!(
             decide(&registration, None, &unknown, &known, "t1", 16),
-            Verdict::Refuse(RefuseReason::PackageIdentityUnknown {
-                package_id: "unknown".into(),
+            Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
+                source_package_id: "unknown".into(),
             })
         );
 
@@ -486,12 +470,5 @@ mod tests {
             decide(&registration, None, &envelope(), &known, "t1", 16),
             Verdict::Deliver(_)
         ));
-
-        let mut derived_absent = derived(0);
-        derived_absent.package_id = None;
-        assert_eq!(
-            decide_derived(&registration, None, &derived_absent, &known, "t1", 16,),
-            Verdict::Refuse(RefuseReason::PackageIdentityAbsent)
-        );
     }
 }

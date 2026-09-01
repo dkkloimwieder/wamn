@@ -476,6 +476,12 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(&sql::ensure_entity_map_sql("app"))
         .await
         .expect("entity map");
+    sys.execute(
+        &sql::upsert_entity_map_sql("app"),
+        &[&"receiving", &"receipt", &"receipts"],
+    )
+    .await
+    .expect("receipt entity mapping");
     sys.batch_execute(&sql::grant_replication_access_sql(DB, &cdc_name, "app"))
         .await
         .expect("grants");
@@ -615,10 +621,8 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     for (subj, id, e) in &delivered {
         assert_eq!(subj, &subject(ORG, PROJECT, ENV, e.entity_segment(), e.op));
         assert_eq!(id, &msg_id(PROJECT, ENV, e.lsn));
-        // receipts is hand-created (no package entity mapping): the FD unmapped
-        // marker — `entity` ABSENT, `table` carries the physical name, the
-        // subject falls back to the table segment.
-        assert!(e.entity.is_none(), "unmapped table publishes entity-ABSENT");
+        assert_eq!(e.package_id, "receiving");
+        assert_eq!(e.entity, "receipt");
         assert_eq!(e.table, "receipts");
     }
     let ids: std::collections::BTreeSet<_> = delivered.iter().map(|(_, id, _)| id).collect();

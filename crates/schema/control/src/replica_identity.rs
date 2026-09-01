@@ -132,8 +132,11 @@ impl ReplicaIdentityPlan {
     }
 }
 
-/// Package model keys whose cross-tenant union of registrations requires FULL.
+/// Package model keys whose cross-tenant, cross-owner union of registrations
+/// requires FULL. Ownership does not select the relation: `source_package_id`
+/// names the package whose model emitted the event.
 pub fn entities_requiring_full<'a>(
+    source_package_id: &str,
     models: &'a [ManagedModel],
     registrations: &[EventRegistration],
 ) -> BTreeSet<&'a str> {
@@ -143,6 +146,7 @@ pub fn entities_requiring_full<'a>(
         .collect::<BTreeSet<_>>();
     registrations
         .iter()
+        .filter(|registration| registration.source_package_id == source_package_id)
         .filter(|registration| registration.requires_replica_identity_full())
         .filter_map(|registration| known.get(registration.entity.as_str()).copied())
         .collect()
@@ -153,11 +157,12 @@ pub fn entities_requiring_full<'a>(
 /// Missing relations are reported and never created here; package migrations
 /// own physical schema. Only a differing observed identity emits a flip.
 pub fn reconcile_replica_identity(
+    package_id: &str,
     models: &[ManagedModel],
     registrations: &[EventRegistration],
     current: &BTreeMap<(String, String), ReplicaIdentity>,
 ) -> ReplicaIdentityPlan {
-    let full = entities_requiring_full(models, registrations);
+    let full = entities_requiring_full(package_id, models, registrations);
     let mut plan = ReplicaIdentityPlan::default();
     for model in models {
         let desired = if full.contains(model.model_id.as_str()) {
@@ -238,6 +243,7 @@ mod tests {
             schema_version: SCHEMA_VERSION.into(),
             registration_id: id.into(),
             package_id: "shop".into(),
+            source_package_id: "shop".into(),
             flow_id: "notify".into(),
             entity: entity.into(),
             ops,
@@ -248,6 +254,15 @@ mod tests {
 
     #[test]
     fn old_condition_delete_and_cross_tenant_union_require_full_by_model_key() {
+        let mut overlay_owned = registration(
+            "tenant-b-old",
+            "orders",
+            vec![Op::Update],
+            Some("new.status != old.status"),
+        );
+        overlay_owned.package_id = "client_overlay".into();
+        let mut foreign_source = registration("foreign-delete", "notes", vec![Op::Delete], None);
+        foreign_source.source_package_id = "foreign".into();
         let registrations = vec![
             registration(
                 "tenant-a-new-only",
@@ -257,17 +272,13 @@ mod tests {
             ),
             // A second tenant's changed-to subscription controls the same
             // shared relation, so the complete union requires FULL.
-            registration(
-                "tenant-b-old",
-                "orders",
-                vec![Op::Update],
-                Some("new.status != old.status"),
-            ),
+            overlay_owned,
             registration("delete-lines", "lines", vec![Op::Delete], None),
             registration("unknown", "ghost", vec![Op::Delete], None),
+            foreign_source,
         ];
         let models = models();
-        let full = entities_requiring_full(&models, &registrations);
+        let full = entities_requiring_full("shop", &models, &registrations);
         assert_eq!(full, BTreeSet::from(["lines", "orders"]));
     }
 
@@ -282,7 +293,7 @@ mod tests {
             ),
             registration("insert-note", "notes", vec![Op::Insert], None),
         ];
-        assert!(entities_requiring_full(&models(), &registrations).is_empty());
+        assert!(entities_requiring_full("shop", &models(), &registrations).is_empty());
     }
 
     #[test]
@@ -293,7 +304,7 @@ mod tests {
             vec![Op::Delete],
             None,
         )];
-        assert!(entities_requiring_full(&models(), &registrations).contains("orders"));
+        assert!(entities_requiring_full("shop", &models(), &registrations).contains("orders"));
     }
 
     #[test]
@@ -304,7 +315,7 @@ mod tests {
             vec![Op::Delete],
             None,
         )];
-        assert!(entities_requiring_full(&models(), &registrations).is_empty());
+        assert!(entities_requiring_full("shop", &models(), &registrations).is_empty());
     }
 
     #[test]
@@ -325,7 +336,7 @@ mod tests {
                 ReplicaIdentity::Full,
             ),
         ]);
-        let plan = reconcile_replica_identity(&models(), &registrations, &current);
+        let plan = reconcile_replica_identity("shop", &models(), &registrations, &current);
         assert_eq!(plan.flips.len(), 2);
         assert_eq!(plan.pending_old_image_gap(), vec!["orders"]);
         assert_eq!(plan.skipped_absent, vec!["audit.notes"]);
@@ -361,7 +372,7 @@ mod tests {
             ("receiving".into(), "line_items".into()),
             ReplicaIdentity::Full,
         )]);
-        let plan = reconcile_replica_identity(&models(), &registrations, &current);
+        let plan = reconcile_replica_identity("shop", &models(), &registrations, &current);
         assert_eq!(plan.flips.len(), 1);
         assert_eq!(plan.flips[0].to, ReplicaIdentity::Default);
         assert!(plan.pending_old_image_gap().is_empty());
@@ -391,7 +402,7 @@ mod tests {
             vec![Op::Delete],
             None,
         )];
-        let again = reconcile_replica_identity(&models(), &registrations, &converged);
+        let again = reconcile_replica_identity("shop", &models(), &registrations, &converged);
         assert!(again.is_noop());
         assert_eq!(again.unchanged.len(), 3);
     }
