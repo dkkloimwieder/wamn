@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, Config, NoTls};
 
-use wamn_schema_introspection::ir::{ColumnGeneration, IdentityMode};
+use wamn_schema_introspection::ir::{ColumnDefault, ColumnGeneration, IdentityMode};
 use wamn_schema_introspection::migration_policy::validate_migration_file;
 use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};
 
@@ -342,7 +342,11 @@ ALTER TABLE receiving.purchase_order
     ADD COLUMN additive_json jsonb,
     ADD COLUMN additive_uuid uuid,
     ADD COLUMN additive_identity bigint GENERATED ALWAYS AS IDENTITY,
-    ADD COLUMN additive_status_key text GENERATED ALWAYS AS (lower(status)) STORED
+    ADD COLUMN additive_status_key text GENERATED ALWAYS AS (lower(status)) STORED,
+    ADD COLUMN acme_inspection_required boolean NOT NULL DEFAULT false,
+    ADD COLUMN acme_quality_status text NOT NULL DEFAULT 'not_required',
+    ADD CONSTRAINT purchase_order_acme_quality_status_check
+        CHECK (acme_quality_status IN ('not_required', 'pending', 'approved', 'rejected'))
 ",
     )
     .await;
@@ -418,6 +422,32 @@ async fn assert_additive_columns(client: &Client) {
         .iter()
         .find(|table| table.name() == "purchase_order")
         .expect("purchase_order remains in IR");
+    let inspection_required = table
+        .columns()
+        .iter()
+        .find(|column| column.name() == "acme_inspection_required")
+        .expect("client inspection field remains in IR");
+    assert_eq!(
+        inspection_required.default(),
+        Some(ColumnDefault::BooleanFalse)
+    );
+    let quality_status = table
+        .columns()
+        .iter()
+        .find(|column| column.name() == "acme_quality_status")
+        .expect("client quality field remains in IR");
+    assert_eq!(
+        quality_status.default(),
+        Some(ColumnDefault::TextNotRequired)
+    );
+    assert!(!quality_status.nullable());
+    assert!(
+        table
+            .constraints()
+            .iter()
+            .any(|constraint| { constraint.name() == "purchase_order_acme_quality_status_check" }),
+        "client quality check remains in IR"
+    );
     let ir_columns = table
         .columns()
         .iter()

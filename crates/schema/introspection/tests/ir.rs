@@ -235,6 +235,14 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
         ColumnDefault::TextOpen
     );
     assert_eq!(
+        postgres_default(ColumnType::Text, "'not_required'::text").unwrap(),
+        ColumnDefault::TextNotRequired
+    );
+    assert_eq!(
+        postgres_default(ColumnType::Boolean, "false").unwrap(),
+        ColumnDefault::BooleanFalse
+    );
+    assert_eq!(
         postgres_default(ColumnType::Int64, "1").unwrap(),
         ColumnDefault::Int64One
     );

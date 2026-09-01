@@ -669,7 +669,11 @@ fn derive_data_access_overlay_for_manifest(
             }
         }
     }
-    for command in manifest.commands.values() {
+    for command in manifest
+        .custom_operations
+        .values()
+        .filter_map(crate::CustomOperationDeclaration::command)
+    {
         for declared in &command.relations {
             let relation = desired_relation(&mut desired, &declared.schema, &declared.table)?;
             relation
@@ -708,12 +712,18 @@ fn application_schemas(manifest: &PackageManifest) -> Result<Vec<String>, Genera
         .models
         .values()
         .map(|model| model.schema.clone())
-        .chain(manifest.commands.values().flat_map(|command| {
-            command
-                .relations
-                .iter()
-                .map(|relation| relation.schema.clone())
-        }))
+        .chain(
+            manifest
+                .custom_operations
+                .values()
+                .filter_map(crate::CustomOperationDeclaration::command)
+                .flat_map(|command| {
+                    command
+                        .relations
+                        .iter()
+                        .map(|relation| relation.schema.clone())
+                }),
+        )
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();

@@ -6,11 +6,12 @@
 //! boundary frozen in `wamn:postgres@0.1.0`, where the host selects the schema
 //! and guests name relations unqualified.
 //!
-//! The validator intentionally admits only the DDL shape currently demanded by
-//! Receiving: schema-qualified ordinary `CREATE TABLE` statements. PostgreSQL
-//! remains responsible for parsing table bodies, while post-apply catalog
-//! introspection validates their resulting objects. This layer refuses
-//! statement operations that the final catalog state cannot prove.
+//! The validator intentionally admits only the DDL shapes currently demanded by
+//! Receiving: schema-qualified ordinary `CREATE TABLE`, one additive client
+//! column, or one named client check constraint. PostgreSQL remains responsible
+//! for parsing definitions, while post-apply catalog introspection validates
+//! their resulting objects. This layer refuses statement operations that the
+//! final catalog state cannot prove.
 
 use std::ffi::OsStr;
 use std::fmt;
@@ -170,6 +171,7 @@ pub fn validate_migration_bytes_for_schemas(
 enum Token<'a> {
     Word(&'a str),
     QuotedIdentifier(&'a str),
+    StringLiteral(&'a str),
     Opaque,
     Symbol(u8),
 }
@@ -229,12 +231,157 @@ fn validate_statement(
     if words(tokens, 0, &["create", "table"]) {
         return validate_create_table(tokens, configured_schemas, path, statement_index);
     }
+    if words(tokens, 0, &["alter", "table"]) {
+        return validate_alter_table(tokens, configured_schemas, path, statement_index);
+    }
     refuse_statement(
         MigrationPolicyErrorKind::UnsupportedStatement,
         path,
         statement_index,
-        "only schema-qualified CREATE TABLE is admitted",
+        "only demanded schema-qualified additive table DDL is admitted",
     )
+}
+
+fn validate_alter_table(
+    tokens: &[Token<'_>],
+    configured_schemas: &[&str],
+    path: &Path,
+    statement_index: usize,
+) -> Result<(), MigrationPolicyError> {
+    let (Some(Token::Word(schema_name)), Some(Token::Symbol(b'.')), Some(Token::Word(table_name))) = (
+        tokens.get(2).copied(),
+        tokens.get(3).copied(),
+        tokens.get(4).copied(),
+    ) else {
+        return refuse_statement(
+            MigrationPolicyErrorKind::CrossSchemaMutation,
+            path,
+            statement_index,
+            "ALTER TABLE must use an unquoted schema-qualified target",
+        );
+    };
+    if !configured_schemas.contains(&schema_name) {
+        return refuse_statement(
+            MigrationPolicyErrorKind::CrossSchemaMutation,
+            path,
+            statement_index,
+            format!(
+                "schema {schema_name:?} is outside configured application schemas {configured_schemas:?}"
+            ),
+        );
+    }
+
+    if words(tokens, 5, &["add", "column"]) {
+        return validate_add_column(tokens, table_name, path, statement_index);
+    }
+    if word(tokens, 5, "add")
+        && (word(tokens, 6, "check")
+            || word(tokens, 6, "unique")
+            || words(tokens, 6, &["primary", "key"])
+            || words(tokens, 6, &["foreign", "key"]))
+    {
+        return refuse_statement(
+            MigrationPolicyErrorKind::UnnamedConstraint,
+            path,
+            statement_index,
+            format!("table {table_name:?} has an unnamed additive constraint"),
+        );
+    }
+    if words(tokens, 5, &["add", "constraint"]) {
+        return validate_add_constraint(tokens, table_name, path, statement_index);
+    }
+    refuse_statement(
+        MigrationPolicyErrorKind::UnsupportedStatement,
+        path,
+        statement_index,
+        "ALTER TABLE admits only one ADD COLUMN or one ADD CONSTRAINT action",
+    )
+}
+
+fn validate_add_column(
+    tokens: &[Token<'_>],
+    table_name: &str,
+    path: &Path,
+    statement_index: usize,
+) -> Result<(), MigrationPolicyError> {
+    let Some(Token::Word(column_name)) = tokens.get(7).copied() else {
+        return refuse_statement(
+            MigrationPolicyErrorKind::UnsupportedStatement,
+            path,
+            statement_index,
+            "ADD COLUMN requires one unquoted column name",
+        );
+    };
+    let admitted = (word(tokens, 8, "boolean")
+        && words(tokens, 9, &["not", "null", "default", "false"])
+        && tokens.len() == 13)
+        || (word(tokens, 8, "text")
+            && words(tokens, 9, &["not", "null", "default"])
+            && matches!(tokens.get(12), Some(Token::StringLiteral("'not_required'")))
+            && tokens.len() == 13);
+    if admitted {
+        Ok(())
+    } else {
+        refuse_statement(
+            MigrationPolicyErrorKind::UnsupportedStatement,
+            path,
+            statement_index,
+            format!(
+                "table {table_name:?} column {column_name:?} must use a demanded non-null boolean or text default"
+            ),
+        )
+    }
+}
+
+fn validate_add_constraint(
+    tokens: &[Token<'_>],
+    table_name: &str,
+    path: &Path,
+    statement_index: usize,
+) -> Result<(), MigrationPolicyError> {
+    validate_segment_constraint_names(&tokens[5..], table_name, path, statement_index)?;
+    let Some(Token::Word(_constraint_name)) = tokens.get(7).copied() else {
+        return refuse_statement(
+            MigrationPolicyErrorKind::UnnamedConstraint,
+            path,
+            statement_index,
+            format!("table {table_name:?} requires an unquoted additive constraint name"),
+        );
+    };
+    if !word(tokens, 8, "check") || !matches!(tokens.get(9), Some(Token::Symbol(b'('))) {
+        return refuse_statement(
+            MigrationPolicyErrorKind::UnsupportedStatement,
+            path,
+            statement_index,
+            "ADD CONSTRAINT admits only the demanded named CHECK form",
+        );
+    }
+
+    let mut depth = 0_usize;
+    let mut body_end = None;
+    for (index, token) in tokens.iter().enumerate().skip(9) {
+        match token {
+            Token::Symbol(b'(') => depth += 1,
+            Token::Symbol(b')') => {
+                depth -= 1;
+                if depth == 0 {
+                    body_end = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if body_end == Some(tokens.len() - 1) && body_end != Some(10) {
+        Ok(())
+    } else {
+        refuse_statement(
+            MigrationPolicyErrorKind::UnsupportedStatement,
+            path,
+            statement_index,
+            "ADD CONSTRAINT must contain one complete CHECK expression",
+        )
+    }
 }
 
 fn validate_create_table(
@@ -642,10 +789,11 @@ fn lex_statements<'a>(
                 tokens.push(Token::Opaque);
             }
             b'\'' => {
+                let start = cursor;
                 cursor = scan_single_quote(bytes, cursor, false).ok_or_else(|| {
                     lexical_error(path, statements.len() + 1, "unterminated quoted string")
                 })?;
-                tokens.push(Token::Opaque);
+                tokens.push(Token::StringLiteral(&sql[start..cursor]));
             }
             b'"' => {
                 let start = cursor + 1;

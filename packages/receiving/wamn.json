@@ -12,6 +12,7 @@
       "schema": "receiving",
       "table": "purchase_order",
       "owner": "wamn_receiving",
+      "client_field_extensible": true,
       "server_owned_fields": [
         "id",
         "purchase_order_number",
@@ -243,8 +244,10 @@
       }
     }
   },
-  "commands": {
+  "custom_operations": {
     "receiving.record_receipt": {
+      "kind": "command",
+      "visibility": "public",
       "permission": "receiving.record_receipt",
       "connection": "postgres",
       "transaction": "explicit_per_input",

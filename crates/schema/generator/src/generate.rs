@@ -389,8 +389,12 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             table,
         )?;
     }
-    for (command_name, command) in &manifest.commands {
-        emit_command(&mut files, &manifest, command_name, command)?;
+    for (operation_name, operation) in &manifest.custom_operations {
+        if let Some(command) = operation.command() {
+            emit_command(&mut files, &manifest, operation_name, command)?;
+        } else {
+            emit_custom_operation_contract(&mut files, &manifest, operation_name, operation)?;
+        }
     }
     let data_access = crate::data_access::derive_data_access_overlay(
         input.catalog,
@@ -438,6 +442,32 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         .into_boxed_slice();
 
     Ok(GeneratedPackage { files, weld })
+}
+
+fn emit_custom_operation_contract(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    manifest: &PackageManifest,
+    operation_name: &str,
+    operation: &crate::manifest::CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    let (module, name) = operation_name
+        .split_once('.')
+        .expect("custom operation validation requires module.operation");
+    let operation_id = canonical_operation_identity(&manifest.package, operation_name)?;
+    let grant = (operation.visibility() == crate::manifest::OperationVisibility::Public)
+        .then(|| operation_id.clone());
+    insert_json(
+        files,
+        &format!("generated/contracts/{module}/{name}.operation.json"),
+        &json!({
+            "operation": operation_id,
+            "kind": operation.kind(),
+            "visibility": operation.visibility(),
+            "permission_token": operation.permission(),
+            "grant": grant,
+            "registration": operation.registration(),
+        }),
+    )
 }
 
 /// Hash sorted path/byte entries with unambiguous big-endian length framing.
@@ -490,16 +520,18 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
     }
 
     for (model_name, model) in &manifest.models {
-        validate_model(input.catalog, model_name, model)?;
+        validate_model(input.catalog, manifest, model_name, model)?;
     }
-    for (command_name, command) in &manifest.commands {
-        validate_command(
-            input.catalog,
-            input.authored_sql,
-            command_name,
-            command,
-            manifest,
-        )?;
+    for (operation_name, operation) in &manifest.custom_operations {
+        if let Some(command) = operation.command() {
+            validate_command(
+                input.catalog,
+                input.authored_sql,
+                operation_name,
+                command,
+                manifest,
+            )?;
+        }
     }
     validate_connections(manifest)?;
     validate_components(manifest)?;
@@ -509,6 +541,7 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
 
 fn validate_model(
     catalog: &CatalogIr,
+    manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
 ) -> Result<(), GenerateError> {
@@ -526,6 +559,41 @@ fn validate_model(
             format!("{}.{}", model.schema, model.table),
         )
     })?;
+    let admitted_owners = std::iter::once(manifest.package.id.as_str())
+        .chain(
+            manifest
+                .base_dependencies
+                .values()
+                .map(|dependency| dependency.package.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    validate_definition_owner(model_name, "relation", &model.owner, &admitted_owners)?;
+    if model.client_field_extensible && model.owner != manifest.package.id {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidModel,
+            format!(
+                "{model_name} may declare client field extensibility only for its own relation"
+            ),
+        ));
+    }
+    for (field, owner) in &model.field_owners {
+        validate_field(table, model_name, field)?;
+        validate_definition_owner(model_name, field, owner, &admitted_owners)?;
+    }
+    for (constraint, owner) in &model.constraint_owners {
+        if !table
+            .constraints()
+            .iter()
+            .any(|candidate| candidate.name() == constraint)
+        {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidModel,
+                format!("{model_name} owns unknown constraint {constraint}"),
+                format!("{}.{}.{}", model.schema, model.table, constraint),
+            ));
+        }
+        validate_definition_owner(model_name, constraint, owner, &admitted_owners)?;
+    }
     if model.operations.is_empty() {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidModel,
@@ -564,6 +632,23 @@ fn validate_model(
         validate_operation(model_name, model, table, *action, operation)?;
     }
     Ok(())
+}
+
+fn validate_definition_owner(
+    model: &str,
+    definition: &str,
+    owner: &str,
+    admitted: &BTreeSet<&str>,
+) -> Result<(), GenerateError> {
+    validate_identifier(owner, "definition owner")?;
+    if admitted.contains(owner) {
+        Ok(())
+    } else {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidModel,
+            format!("{model}.{definition} owner {owner} is not the package or a declared base"),
+        ))
+    }
 }
 
 fn validate_operation(
@@ -1440,12 +1525,18 @@ fn validate_authored_sources(
         .models
         .values()
         .map(|model| model.schema.as_str())
-        .chain(manifest.commands.values().flat_map(|command| {
-            command
-                .relations
-                .iter()
-                .map(|relation| relation.schema.as_str())
-        }))
+        .chain(
+            manifest
+                .custom_operations
+                .values()
+                .filter_map(|operation| operation.command())
+                .flat_map(|command| {
+                    command
+                        .relations
+                        .iter()
+                        .map(|relation| relation.schema.as_str())
+                }),
+        )
         .collect::<BTreeSet<_>>();
     for source in authored_sql {
         for schema in &schemas {
@@ -1479,8 +1570,9 @@ fn authored_paths(manifest: &PackageManifest) -> BTreeSet<&str> {
         .collect::<BTreeSet<_>>();
     paths.extend(
         manifest
-            .commands
+            .custom_operations
             .values()
+            .filter_map(|operation| operation.command())
             .flat_map(|command| command.statements.values())
             .map(|statement| statement.path.as_str()),
     );
@@ -1598,7 +1690,7 @@ fn emit_command(
         &format!("generated/source-map/{module_name}.json"),
         &json!({
             "command": command_name,
-            "manifest": format!("wamn.json#/commands/{command_name}"),
+            "manifest": format!("wamn.json#/custom_operations/{command_name}"),
             "relations": command.relations,
             "statements": command.statements,
             "native_rows": native_rows,
@@ -1620,6 +1712,8 @@ fn emit_command_contracts(
         .expect("command validation requires module.operation");
     let root = format!("generated/contracts/{module}/{operation}");
     let operation_id = canonical_operation_identity(&manifest.package, command_name)?;
+    let grant = (command.visibility == crate::manifest::OperationVisibility::Public)
+        .then(|| operation_id.clone());
     let sql_files = command
         .statements
         .values()
@@ -1630,8 +1724,10 @@ fn emit_command_contracts(
         &format!("{root}.operation.json"),
         &json!({
             "operation": operation_id,
+            "kind": "command",
+            "visibility": command.visibility,
             "permission_token": command.permission,
-            "grant": operation_id,
+            "grant": grant,
             "connection": command.connection,
             "result": command.result.class,
             "sql_files": sql_files,
@@ -3005,7 +3101,11 @@ fn required_schema_contract(
                 .map(|constraint| constraint.name().to_owned()),
         );
     }
-    for command in manifest.commands.values() {
+    for command in manifest
+        .custom_operations
+        .values()
+        .filter_map(|operation| operation.command())
+    {
         for relation in &command.relations {
             let table = catalog
                 .tables()

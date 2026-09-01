@@ -187,13 +187,15 @@ impl ColumnType {
     }
 }
 
-/// Closed defaults demanded by the Receiving base migration.
+/// Closed defaults demanded by the Receiving base and Acme overlay migrations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ColumnDefault {
     GenRandomUuid,
     CurrentTimestamp,
     TextOpen,
+    TextNotRequired,
+    BooleanFalse,
     Int64One,
     NumericZero,
 }
@@ -517,6 +519,10 @@ pub fn postgres_default(
         (ColumnType::Uuid, "gen_random_uuid()") => ColumnDefault::GenRandomUuid,
         (ColumnType::Timestamptz, "CURRENT_TIMESTAMP") => ColumnDefault::CurrentTimestamp,
         (ColumnType::Text, "'open'::text" | "'open'") => ColumnDefault::TextOpen,
+        (ColumnType::Text, "'not_required'::text" | "'not_required'") => {
+            ColumnDefault::TextNotRequired
+        }
+        (ColumnType::Boolean, "false" | "'false'::boolean") => ColumnDefault::BooleanFalse,
         (ColumnType::Int64, "1" | "'1'::bigint") => ColumnDefault::Int64One,
         (ColumnType::Numeric, "0" | "'0'::numeric" | "0::numeric") => ColumnDefault::NumericZero,
         _ => {

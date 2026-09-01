@@ -264,6 +264,16 @@ component artifact grouping
 screen exposure
 ```
 
+Non-CRUD declarations use one closed `custom_operations` map with kinds
+`projection`, `command`, and `event_handler`. Every declaration is explicitly
+`public` or `private`: a public operation carries its exact local permission,
+while a private operation carries no permission token. An event handler alone
+carries inline `source_package` and `entity` registration metadata.
+
+[Owner-ruling correction, 2026-09-01 — one custom-operation grammar replaces
+separate command/projection/handler grammars; private handlers are not public
+permission-bearing operations.]
+
 These declarations reference introspected relations and fields; they do not redefine column types, nullability, defaults, constraints, indexes, or relationships.
 
 `wamn.json` may be split into source fragments such as `exposure/`, `permission/`, or `screen/`, but those fragments resolve into one canonical application model. Generated files are disposable. Developers and agents edit only migrations, named SQL, metadata, command/BFF source, UI source, and tests.
@@ -608,9 +618,12 @@ A BFF shapes data for a UI or application API:
 
 ```text
 receiving.load_receipt_screen
-receiving.submit_receipt
+receiving.record_receipt
 quality.load_purchase_order_detail
 ```
+
+[Owner-ruling correction, 2026-09-01 — the client BFF local operation is
+`receiving.record_receipt`; the prior alternate spelling was a document defect.]
 
 It should prefer a compiled projection over many chatty primitive reads. A write BFF calls one already-atomic command, then loads a post-commit projection.
 
@@ -684,6 +697,10 @@ ALTER TABLE receiving.purchase_order
         'not_required', 'pending', 'approved', 'rejected'
     ));
 ```
+
+[Owner-ruling correction, 2026-09-01 — `acme_quality_status` is non-null text
+with the `not_required` sentinel; nullable and sentinel spellings of “none” are
+not both admitted.]
 
 The client separately selects where the field is exposed:
 

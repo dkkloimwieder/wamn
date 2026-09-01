@@ -128,8 +128,9 @@ fn load_authored_sql(package_root: &Path, manifest: &PackageManifest) -> Result<
         .collect::<BTreeSet<_>>();
     paths.extend(
         manifest
-            .commands
+            .custom_operations
             .values()
+            .filter_map(wamn_schema_generator::CustomOperationDeclaration::command)
             .flat_map(|command| command.statements.values())
             .map(|statement| statement.path.as_str()),
     );

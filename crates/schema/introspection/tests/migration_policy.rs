@@ -72,6 +72,83 @@ fn admits_every_manifest_schema_and_refuses_an_out_of_set_target() {
 }
 
 #[test]
+fn admits_only_the_demanded_overlay_additions() {
+    let artifact = TempArtifact::write(
+        "sql",
+        r#"
+ALTER TABLE receiving.purchase_order
+    ADD COLUMN acme_inspection_required boolean NOT NULL DEFAULT false;
+ALTER TABLE receiving.purchase_order
+    ADD COLUMN acme_quality_status text NOT NULL DEFAULT 'not_required';
+ALTER TABLE receiving.purchase_order
+    ADD CONSTRAINT purchase_order_acme_quality_status_check
+    CHECK (acme_quality_status IN ('not_required', 'pending', 'approved', 'rejected'));
+"#,
+    );
+
+    validate_migration_file(artifact.path(), "receiving")
+        .expect("the two client fields and named check are the admitted overlay DDL");
+}
+
+#[test]
+fn overlay_additions_require_an_unquoted_qualified_target() {
+    for sql in [
+        "ALTER TABLE purchase_order ADD COLUMN acme_flag boolean NOT NULL DEFAULT false;",
+        "ALTER TABLE public.purchase_order ADD COLUMN acme_flag boolean NOT NULL DEFAULT false;",
+        "ALTER TABLE \"receiving\".purchase_order ADD COLUMN acme_flag boolean NOT NULL DEFAULT false;",
+    ] {
+        let error = refusal(sql);
+        assert_eq!(
+            error.kind(),
+            MigrationPolicyErrorKind::CrossSchemaMutation,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn overlay_additions_refuse_broader_alter_table_authority() {
+    for sql in [
+        "ALTER TABLE receiving.purchase_order DROP COLUMN status;",
+        "ALTER TABLE receiving.purchase_order ALTER COLUMN status SET DEFAULT 'closed';",
+        "ALTER TABLE receiving.purchase_order ADD COLUMN IF NOT EXISTS acme_flag boolean NOT NULL DEFAULT false;",
+        "ALTER TABLE receiving.purchase_order ADD COLUMN acme_flag boolean;",
+        "ALTER TABLE receiving.purchase_order ADD COLUMN acme_count bigint NOT NULL DEFAULT 0;",
+        "ALTER TABLE receiving.purchase_order ADD COLUMN acme_status text NOT NULL DEFAULT 'open';",
+        "ALTER TABLE receiving.purchase_order ADD CONSTRAINT acme_unique UNIQUE (purchase_order_number);",
+        "ALTER TABLE receiving.purchase_order ADD CONSTRAINT acme_check CHECK (true) NOT VALID;",
+    ] {
+        let error = refusal(sql);
+        assert_eq!(
+            error.kind(),
+            MigrationPolicyErrorKind::UnsupportedStatement,
+            "{sql}"
+        );
+    }
+}
+
+#[test]
+fn overlay_constraints_require_one_explicit_short_name() {
+    let unnamed = refusal(
+        "ALTER TABLE receiving.purchase_order ADD CHECK (acme_quality_status <> 'unknown');",
+    );
+    assert_eq!(unnamed.kind(), MigrationPolicyErrorKind::UnnamedConstraint);
+
+    let quoted =
+        refusal("ALTER TABLE receiving.purchase_order ADD CONSTRAINT \"acme_check\" CHECK (true);");
+    assert_eq!(quoted.kind(), MigrationPolicyErrorKind::UnnamedConstraint);
+
+    let overlength = "a".repeat(64);
+    let error = refusal(&format!(
+        "ALTER TABLE receiving.purchase_order ADD CONSTRAINT {overlength} CHECK (true);"
+    ));
+    assert_eq!(
+        error.kind(),
+        MigrationPolicyErrorKind::ConstraintNameTooLong
+    );
+}
+
+#[test]
 fn reads_sql_artifacts_and_refuses_rust_sources() {
     let artifact = TempArtifact::write(
         "rs",
@@ -295,10 +372,10 @@ fn refuses_every_documented_ruled_object_class() {
 }
 
 #[test]
-fn refuses_every_statement_outside_the_narrow_create_table_grammar() {
+fn refuses_every_statement_outside_the_demanded_migration_grammar() {
     for sql in [
         "CREATE SCHEMA receiving;",
-        "ALTER TABLE receiving.item ADD COLUMN note text;",
+        "ALTER TABLE receiving.item DROP COLUMN note;",
         "INSERT INTO receiving.item (item_number) VALUES ('x');",
         "CREATE TEMP TABLE receiving.temporary_item (id uuid);",
         "CREATE TABLE receiving.copy (LIKE receiving.item INCLUDING ALL);",

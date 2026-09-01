@@ -5,7 +5,8 @@ use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, GenerateErrorKind, GeneratedPackage, GenerationInput, GenerationProvenance,
-    PackageManifest, corpus_sha256, generate, validate_operation_vocabulary, validate_parity_json,
+    OperationVisibility, PackageManifest, corpus_sha256, generate, validate_operation_vocabulary,
+    validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
@@ -672,6 +673,229 @@ fn strict_manifest_and_ir_references_fail_loudly() {
     );
 }
 
+fn overlay_manifest() -> Value {
+    let mut overlay = manifest();
+    overlay["package"] = json!({"id": "client_acme_receiving", "version": "3.0.0"});
+    overlay["base_dependencies"] = json!({
+        "base_receiving": {
+            "package": "wamn_receiving",
+            "version": "1.0.0",
+            "digest": format!("sha256:{}", "a".repeat(64)),
+            "operations": ["receiving.record_receipt"]
+        }
+    });
+    overlay["models"]["purchase_order"]["owner"] = json!("wamn_receiving");
+    overlay["models"]["purchase_order"]["field_owners"] = json!({
+        "supplier_id": "client_acme_receiving"
+    });
+    overlay["models"]["purchase_order"]["constraint_owners"] = json!({
+        "purchase_order_status_check": "wamn_receiving"
+    });
+    overlay["custom_operations"] = json!({
+        "quality.load_purchase_order_detail": {
+            "kind": "projection",
+            "visibility": "public",
+            "permission": "quality.load_purchase_order_detail"
+        },
+        "quality.create_inspection": {
+            "kind": "event_handler",
+            "visibility": "private",
+            "registration": {
+                "source_package": "wamn_receiving",
+                "entity": "receipt"
+            }
+        }
+    });
+    overlay["components"]["quality_load_purchase_order_detail"] = json!({
+        "operations": ["quality.load_purchase_order_detail"],
+        "connections": ["postgres"]
+    });
+    overlay["components"]["quality_create_inspection"] = json!({
+        "operations": ["quality.create_inspection"],
+        "connections": ["postgres"]
+    });
+    overlay
+}
+
+#[test]
+fn overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain() {
+    let mut base = manifest();
+    base["models"]["purchase_order"]["client_field_extensible"] = json!(true);
+    let base = parsed_manifest(&base);
+    assert!(base.models["purchase_order"].client_field_extensible);
+
+    let overlay = overlay_manifest();
+    let parsed = parsed_manifest(&overlay);
+    let dependency = &parsed.base_dependencies["base_receiving"];
+    assert_eq!(dependency.package, "wamn_receiving");
+    assert_eq!(dependency.version, "1.0.0");
+    assert_eq!(
+        dependency.operations,
+        vec!["receiving.record_receipt".to_owned()]
+    );
+    let model = &parsed.models["purchase_order"];
+    assert_eq!(model.owner, "wamn_receiving");
+    assert_eq!(model.field_owner("supplier_id"), "client_acme_receiving");
+    assert_eq!(model.field_owner("status"), "wamn_receiving");
+    assert_eq!(
+        model.constraint_owner("purchase_order_status_check"),
+        "wamn_receiving"
+    );
+    let projection = &parsed.custom_operations["quality.load_purchase_order_detail"];
+    assert_eq!(projection.visibility(), OperationVisibility::Public);
+    assert_eq!(
+        projection.permission(),
+        Some("quality.load_purchase_order_detail")
+    );
+    let handler = &parsed.custom_operations["quality.create_inspection"];
+    assert_eq!(handler.visibility(), OperationVisibility::Private);
+    assert_eq!(handler.permission(), None);
+    let registration = handler.registration().expect("event registration");
+    assert_eq!(registration.source_package, "wamn_receiving");
+    assert_eq!(registration.entity, "receipt");
+    let generated = run(&catalog(false), &overlay, &QUERY_SOURCES)
+        .expect("the exact overlay vocabulary must validate against its effective catalog");
+    let projection = artifact_json(
+        &generated,
+        "generated/contracts/quality/load_purchase_order_detail.operation.json",
+    );
+    assert_eq!(projection["kind"], "projection");
+    assert_eq!(projection["visibility"], "public");
+    let handler = artifact_json(
+        &generated,
+        "generated/contracts/quality/create_inspection.operation.json",
+    );
+    assert_eq!(handler["kind"], "event_handler");
+    assert_eq!(handler["visibility"], "private");
+    assert_eq!(handler["permission_token"], Value::Null);
+    assert_eq!(handler["registration"]["source_package"], "wamn_receiving");
+}
+
+#[test]
+fn overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions() {
+    let mut range = overlay_manifest();
+    range["base_dependencies"]["base_receiving"]["version"] = json!("^1.0");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&range))
+            .expect_err("a base version range was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidIdentity
+    );
+
+    let mut digest = overlay_manifest();
+    digest["base_dependencies"]["base_receiving"]["digest"] = json!("latest");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&digest))
+            .expect_err("an opaque base artifact identity was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidIdentity
+    );
+
+    let mut field = overlay_manifest();
+    field["models"]["purchase_order"]["field_owners"] = json!({
+        "unknown_field": "client_acme_receiving"
+    });
+    assert_eq!(
+        run(&catalog(false), &field, &QUERY_SOURCES)
+            .expect_err("ownership of an unknown field was accepted")
+            .kind(),
+        GenerateErrorKind::UnknownColumn
+    );
+
+    let mut constraint = overlay_manifest();
+    constraint["models"]["purchase_order"]["constraint_owners"] = json!({
+        "unknown_constraint": "client_acme_receiving"
+    });
+    assert_eq!(
+        run(&catalog(false), &constraint, &QUERY_SOURCES)
+            .expect_err("ownership of an unknown constraint was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidModel
+    );
+
+    let mut owner = overlay_manifest();
+    owner["models"]["purchase_order"]["field_owners"] = json!({
+        "supplier_id": "undeclared_package"
+    });
+    assert_eq!(
+        run(&catalog(false), &owner, &QUERY_SOURCES)
+            .expect_err("an undeclared definition owner was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidModel
+    );
+
+    let mut restated_extensibility = overlay_manifest();
+    restated_extensibility["models"]["purchase_order"]["client_field_extensible"] = json!(true);
+    assert_eq!(
+        run(&catalog(false), &restated_extensibility, &QUERY_SOURCES)
+            .expect_err("an overlay restated base extensibility")
+            .kind(),
+        GenerateErrorKind::InvalidModel
+    );
+}
+
+#[test]
+fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
+    let mut private_permission = overlay_manifest();
+    private_permission["custom_operations"]["quality.create_inspection"]["permission"] =
+        json!("quality.create_inspection");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&private_permission))
+            .expect_err("a private operation permission was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut public_permission = overlay_manifest();
+    public_permission["custom_operations"]["quality.load_purchase_order_detail"]["permission"] =
+        json!("quality.other_projection");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&public_permission))
+            .expect_err("an inexact public operation permission was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut missing_registration = overlay_manifest();
+    missing_registration["custom_operations"]["quality.create_inspection"]
+        .as_object_mut()
+        .expect("event handler object")
+        .remove("registration");
+    assert!(
+        PackageManifest::from_slice(
+            &serde_json::to_vec(&missing_registration).expect("serialize manifest")
+        )
+        .is_err()
+    );
+
+    let mut projection_registration = overlay_manifest();
+    projection_registration["custom_operations"]["quality.load_purchase_order_detail"]["registration"] =
+        json!({"source_package": "wamn_receiving", "entity": "receipt"});
+    assert!(
+        PackageManifest::from_slice(
+            &serde_json::to_vec(&projection_registration).expect("serialize manifest")
+        )
+        .is_err()
+    );
+
+    let mut unknown_kind = overlay_manifest();
+    unknown_kind["custom_operations"]["quality.load_purchase_order_detail"]["kind"] =
+        json!("workflow");
+    assert!(
+        PackageManifest::from_slice(
+            &serde_json::to_vec(&unknown_kind).expect("serialize manifest")
+        )
+        .is_err()
+    );
+
+    let mut old_grammar = overlay_manifest();
+    old_grammar["commands"] = json!({});
+    assert!(
+        PackageManifest::from_slice(&serde_json::to_vec(&old_grammar).expect("serialize manifest"))
+            .is_err()
+    );
+}
+
 fn parsed_manifest(value: &Value) -> PackageManifest {
     PackageManifest::from_slice(&serde_json::to_vec(value).expect("serialize manifest"))
         .expect("parse strict manifest")
@@ -738,7 +962,7 @@ fn operation_error_details_are_required_closed_and_exact() {
     );
 
     let mut command_detail = shipped_manifest();
-    command_detail["commands"]["receiving.record_receipt"]["error_details"]["receipt_reference_conflict"]
+    command_detail["custom_operations"]["receiving.record_receipt"]["error_details"]["receipt_reference_conflict"]
         ["required"] = json!(["field"]);
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&command_detail))
@@ -1447,21 +1671,23 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
 fn command_privilege_declarations_match_sql_effects_and_row_locks() {
     let catalog = receiving_catalog();
     let mut wrong_verb = shipped_manifest();
-    wrong_verb["commands"]["receiving.record_receipt"]["relations"][0]["select_fields"] = json!([]);
-    wrong_verb["commands"]["receiving.record_receipt"]["relations"][0]["update_fields"] =
+    wrong_verb["custom_operations"]["receiving.record_receipt"]["relations"][0]["select_fields"] =
+        json!([]);
+    wrong_verb["custom_operations"]["receiving.record_receipt"]["relations"][0]["update_fields"] =
         json!(["id"]);
     let error = shipped_generation(&catalog, &wrong_verb).unwrap_err();
     assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
     assert_eq!(error.object(), Some("receiving.location"));
 
     let mut undeclared_lock = shipped_manifest();
-    undeclared_lock["commands"]["receiving.record_receipt"]["relations"][0]["lock"] = json!(false);
+    undeclared_lock["custom_operations"]["receiving.record_receipt"]["relations"][0]["lock"] =
+        json!(false);
     let error = shipped_generation(&catalog, &undeclared_lock).unwrap_err();
     assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
     assert_eq!(error.object(), Some("receiving.location"));
 
     let mut unused_lock = shipped_manifest();
-    let receipt = unused_lock["commands"]["receiving.record_receipt"]["relations"]
+    let receipt = unused_lock["custom_operations"]["receiving.record_receipt"]["relations"]
         .as_array_mut()
         .unwrap()
         .iter_mut()
@@ -1508,11 +1734,11 @@ fn shipped_command_source_map_parity_and_bind_fixtures_align_structurally() {
     assert_eq!(source_map["command"], "receiving.record_receipt");
     assert_eq!(
         source_map["manifest"],
-        "wamn.json#/commands/receiving.record_receipt"
+        "wamn.json#/custom_operations/receiving.record_receipt"
     );
     assert_eq!(
         source_map["relations"],
-        manifest["commands"]["receiving.record_receipt"]["relations"]
+        manifest["custom_operations"]["receiving.record_receipt"]["relations"]
     );
 
     let statements = source_map["statements"].as_object().unwrap();
@@ -1606,42 +1832,42 @@ fn command_statement_vocabulary_refuses_signature_and_path_mutants() {
     let mutations = [
         (
             "path",
-            "/commands/receiving.record_receipt/statements/claim_command/path",
+            "/custom_operations/receiving.record_receipt/statements/claim_command/path",
             json!("command/record_receipt/find_replay.sql"),
         ),
         (
             "fetch",
-            "/commands/receiving.record_receipt/statements/claim_command/fetch",
+            "/custom_operations/receiving.record_receipt/statements/claim_command/fetch",
             json!("one"),
         ),
         (
             "parameter type",
-            "/commands/receiving.record_receipt/statements/claim_command/parameters/1/type",
+            "/custom_operations/receiving.record_receipt/statements/claim_command/parameters/1/type",
             json!("text"),
         ),
         (
             "parameter name",
-            "/commands/receiving.record_receipt/statements/claim_command/parameters/1/name",
+            "/custom_operations/receiving.record_receipt/statements/claim_command/parameters/1/name",
             json!("canonical_payload"),
         ),
         (
             "parameter nullability",
-            "/commands/receiving.record_receipt/statements/claim_command/parameters/1/nullable",
+            "/custom_operations/receiving.record_receipt/statements/claim_command/parameters/1/nullable",
             json!(true),
         ),
         (
             "row type",
-            "/commands/receiving.record_receipt/statements/claim_command/row/0/type",
+            "/custom_operations/receiving.record_receipt/statements/claim_command/row/0/type",
             json!("text"),
         ),
         (
             "row name",
-            "/commands/receiving.record_receipt/statements/claim_command/row/0/name",
+            "/custom_operations/receiving.record_receipt/statements/claim_command/row/0/name",
             json!("claimed_receipt_id"),
         ),
         (
             "row nullability",
-            "/commands/receiving.record_receipt/statements/claim_command/row/0/nullable",
+            "/custom_operations/receiving.record_receipt/statements/claim_command/row/0/nullable",
             json!(true),
         ),
     ];

@@ -354,7 +354,21 @@ Acme adds an inspection flag to the platform `purchase_order` table:
 ALTER TABLE receiving.purchase_order
     ADD COLUMN acme_inspection_required boolean
     NOT NULL DEFAULT false;
+
+ALTER TABLE receiving.purchase_order
+    ADD COLUMN acme_quality_status text
+    NOT NULL DEFAULT 'not_required';
+
+ALTER TABLE receiving.purchase_order
+    ADD CONSTRAINT purchase_order_acme_quality_status_check
+    CHECK (acme_quality_status IN (
+        'not_required', 'pending', 'approved', 'rejected'
+    ));
 ```
+
+[Owner-ruling correction, 2026-09-01 — `acme_quality_status` is non-null text
+with the `not_required` sentinel; the nullable TypeScript spelling was a
+document defect.]
 
 The migration is accepted only because `receiving.purchase_order` is declared extensible and the new column is recorded as client-owned.
 
@@ -384,7 +398,7 @@ export interface AcmePurchaseOrderUpdateInput {
   expected_row_version: Int64;
   change: {
     acme_inspection_required?: boolean;
-    acme_quality_status?: QualityStatus | null;
+    acme_quality_status?: QualityStatus;
   };
 }
 ```
@@ -421,19 +435,22 @@ The base Receiving API and base command remain unchanged.
 Acme creates:
 
 ```text
-client_acme_receiving@3.0.0::receiving.submit_receipt
+client_acme_receiving@3.0.0::receiving.record_receipt
 ```
 
 The BFF operation performs:
 
 ```text
-authorize receiving.submit_receipt
+authorize receiving.record_receipt
 → read client inspection state
 → apply client form and workflow rule
 → invoke base_receiving::receiving.record_receipt
 → enforce the callee permission for the same caller_identity
 → return a combined confirmation view
 ```
+
+[Owner-ruling correction, 2026-09-01 — the client BFF local operation is
+`receiving.record_receipt`; the prior alternate spelling was a document defect.]
 
 `base_receiving` is a source-level dependency alias. The client overlay stores contract requirement metadata for `receiving.record_receipt`; that metadata is what the immutable client artifact was compiled and tested against. It is not another canonical operation version. The effective release resolves the requirement to one exact implementation:
 
@@ -465,12 +482,19 @@ wamn_receiving@1.0.0::receiving.record_receipt
 → committed receipt state observed through the existing CDC or event plane
 → client wiring
 → client_acme_receiving@3.0.0::quality.create_inspection
-→ client_acme_receiving@3.0.0::integration.sync_receipt
 ```
 
-The client work is a separate retryable transaction or external effect. If ERP delivery fails, the receipt remains posted and the client integration retries independently.
+`quality.create_inspection` is private to the installed application and is the
+first genuine materializer consumer. Its inline registration names the source
+package and entity; it is not route-bindable and carries no public permission
+token. The originating caller identity remains preserved at invocation.
 
-This is the preferred model for ERP synchronization, notification, reporting projection, client audit state, and quality workflow creation.
+ERP synchronization is deferred because the POC has no ERP consumer. The same
+post-commit model remains the direction for a later real integration demand.
+
+[Owner-ruling correction, 2026-09-01 — private `quality.create_inspection` is
+the genuine first materializer consumer; `integration.sync_receipt` is
+deferred.]
 
 The existing CDC or event plane remains the post-commit integration mechanism. The POC does not add a second generic outbox architecture.
 
@@ -813,8 +837,7 @@ export interface AcmePurchaseOrderUpdateInput {
       | "not_required"
       | "pending"
       | "approved"
-      | "rejected"
-      | null;
+      | "rejected";
   };
 }
 ```
@@ -854,7 +877,7 @@ Usage:
 ```ts
 const output = await wamn_receiving.receiving.record_receipt([
   {
-    request_id: "submit_receipt",
+    request_id: "record_receipt",
     value: {
       idempotency_key: crypto.randomUUID(),
       purchase_order_id: "po_123",
@@ -944,10 +967,9 @@ wamn_receiving
 client_acme_receiving
   purchase_order.get
   purchase_order.update
-  receiving.submit_receipt
+  receiving.record_receipt
   quality.load_purchase_order_detail
   quality.approve_inspection
-  integration.sync_receipt
 ```
 
 **Owner-ruling correction, 2026-08-29:** the platform client surface includes

@@ -9,10 +9,12 @@ use crate::{GenerateError, GenerateErrorKind};
 #[serde(deny_unknown_fields)]
 pub struct PackageManifest {
     pub package: PackageIdentity,
+    #[serde(default)]
+    pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
     pub required_platform_policy_contract: PolicyContractRequirement,
     pub models: BTreeMap<String, ModelDeclaration>,
     #[serde(default)]
-    pub commands: BTreeMap<String, CommandDeclaration>,
+    pub custom_operations: BTreeMap<String, CustomOperationDeclaration>,
     pub connections: BTreeMap<String, ConnectionDeclaration>,
     pub components: BTreeMap<String, ComponentDeclaration>,
 }
@@ -21,7 +23,9 @@ pub struct PackageManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandDeclaration {
-    pub permission: String,
+    pub visibility: OperationVisibility,
+    #[serde(default)]
+    pub permission: Option<String>,
     pub connection: String,
     pub transaction: CommandTransaction,
     pub automatic_retry: bool,
@@ -34,6 +38,87 @@ pub struct CommandDeclaration {
     pub constraint_errors: BTreeMap<String, CommandErrorLiteral>,
     pub relations: Vec<CommandRelationDeclaration>,
     pub statements: BTreeMap<String, CommandStatementDeclaration>,
+}
+
+/// One strict non-CRUD operation declaration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CustomOperationDeclaration {
+    Projection(ProjectionDeclaration),
+    Command(CommandDeclaration),
+    EventHandler(EventHandlerDeclaration),
+}
+
+impl CustomOperationDeclaration {
+    /// Closed authored operation kind.
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Projection(_) => "projection",
+            Self::Command(_) => "command",
+            Self::EventHandler(_) => "event_handler",
+        }
+    }
+
+    /// Route visibility declared for this operation.
+    pub const fn visibility(&self) -> OperationVisibility {
+        match self {
+            Self::Projection(declaration) => declaration.visibility,
+            Self::Command(declaration) => declaration.visibility,
+            Self::EventHandler(declaration) => declaration.visibility,
+        }
+    }
+
+    /// Exact public permission, absent for a private operation.
+    pub fn permission(&self) -> Option<&str> {
+        match self {
+            Self::Projection(declaration) => declaration.permission.as_deref(),
+            Self::Command(declaration) => declaration.permission.as_deref(),
+            Self::EventHandler(declaration) => declaration.permission.as_deref(),
+        }
+    }
+
+    /// Detailed transaction command declaration, when this is a command.
+    pub const fn command(&self) -> Option<&CommandDeclaration> {
+        match self {
+            Self::Command(declaration) => Some(declaration),
+            Self::Projection(_) | Self::EventHandler(_) => None,
+        }
+    }
+
+    /// Inline source registration, present only for an event handler.
+    pub const fn registration(&self) -> Option<&EventRegistrationDeclaration> {
+        match self {
+            Self::EventHandler(declaration) => Some(&declaration.registration),
+            Self::Projection(_) | Self::Command(_) => None,
+        }
+    }
+}
+
+/// Public or private compiled projection metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectionDeclaration {
+    pub visibility: OperationVisibility,
+    #[serde(default)]
+    pub permission: Option<String>,
+}
+
+/// Public or private post-commit handler and its exact event source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventHandlerDeclaration {
+    pub visibility: OperationVisibility,
+    #[serde(default)]
+    pub permission: Option<String>,
+    pub registration: EventRegistrationDeclaration,
+}
+
+/// One package-emitted entity observed by an event handler.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventRegistrationDeclaration {
+    pub source_package: String,
+    pub entity: String,
 }
 
 /// Transaction boundary admitted for custom commands in the POC.
@@ -320,6 +405,7 @@ pub fn validate_operation_vocabulary(
     manifest: &PackageManifest,
 ) -> Result<BTreeSet<String>, GenerateError> {
     validate_package_identity(&manifest.package)?;
+    validate_base_dependencies(manifest)?;
 
     let mut declared = BTreeSet::new();
     for (model_name, model) in &manifest.models {
@@ -343,23 +429,18 @@ pub fn validate_operation_vocabulary(
             validate_access_error_details(&identity, *action, &operation.error_details)?;
         }
     }
-    for (command_name, command) in &manifest.commands {
-        validate_operation_identity(command_name)?;
-        if command.permission != command_name.as_str() {
+    for (operation_name, operation) in &manifest.custom_operations {
+        validate_operation_identity(operation_name)?;
+        validate_custom_operation(manifest, operation_name, operation)?;
+        if !declared.insert(operation_name.clone()) {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
-                format!(
-                    "{command_name} permission must equal its package-local operation identity"
-                ),
+                format!("manifest repeats declared operation {operation_name}"),
             ));
         }
-        if !declared.insert(command_name.clone()) {
-            return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
-                format!("manifest repeats declared operation {command_name}"),
-            ));
+        if let Some(command) = operation.command() {
+            validate_command_error_details(operation_name, &command.error_details)?;
         }
-        validate_command_error_details(command_name, &command.error_details)?;
     }
 
     if manifest.components.is_empty() {
@@ -392,6 +473,51 @@ pub fn validate_operation_vocabulary(
         ));
     }
     Ok(declared)
+}
+
+fn validate_custom_operation(
+    manifest: &PackageManifest,
+    operation_name: &str,
+    operation: &CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    match (operation.visibility(), operation.permission()) {
+        (OperationVisibility::Public, Some(permission)) if permission == operation_name => {}
+        (OperationVisibility::Public, _) => {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "public operation {operation_name} permission must equal its package-local identity"
+                ),
+            ));
+        }
+        (OperationVisibility::Private, None) => {}
+        (OperationVisibility::Private, Some(_)) => {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("private operation {operation_name} must not declare a permission"),
+            ));
+        }
+    }
+
+    if let Some(registration) = operation.registration() {
+        validate_identifier(&registration.source_package, "event source package")?;
+        validate_identifier(&registration.entity, "event entity")?;
+        let source_is_declared = registration.source_package == manifest.package.id
+            || manifest
+                .base_dependencies
+                .values()
+                .any(|dependency| dependency.package == registration.source_package);
+        if !source_is_declared {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "event handler {operation_name} source package {} is not installed by the manifest",
+                    registration.source_package
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_access_error_details(
@@ -544,17 +670,86 @@ pub fn canonical_operation_prefix(package: &PackageIdentity) -> Result<String, G
 }
 
 fn validate_package_identity(package: &PackageIdentity) -> Result<(), GenerateError> {
-    validate_identifier(&package.id, "package id")?;
-    if package.version.is_empty()
-        || package.version.trim() != package.version
-        || package.version.as_bytes().contains(&0)
-        || package.version.contains('@')
-        || package.version.contains("::")
+    validate_package_coordinate(&package.id, &package.version)
+}
+
+fn validate_package_coordinate(package: &str, version: &str) -> Result<(), GenerateError> {
+    validate_identifier(package, "package id")?;
+    if version.is_empty()
+        || version.trim() != version
+        || version.as_bytes().contains(&0)
+        || version.contains('@')
+        || version.contains("::")
     {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidIdentity,
             "package version must be canonical text without operation-coordinate separators",
         ));
+    }
+    Ok(())
+}
+
+fn validate_base_dependencies(manifest: &PackageManifest) -> Result<(), GenerateError> {
+    let mut packages = BTreeSet::new();
+    for (alias, requirement) in &manifest.base_dependencies {
+        validate_identifier(alias, "base dependency alias")?;
+        validate_package_coordinate(&requirement.package, &requirement.version)?;
+        if requirement.package == manifest.package.id {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidIdentity,
+                format!("base dependency {alias} must not name the owning package"),
+            ));
+        }
+        if !packages.insert(requirement.package.as_str()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidIdentity,
+                format!(
+                    "base package {} has more than one alias",
+                    requirement.package
+                ),
+            ));
+        }
+        if requirement.version.bytes().any(|byte| {
+            byte.is_ascii_whitespace()
+                || matches!(byte, b'*' | b'^' | b'~' | b'<' | b'>' | b'=' | b',' | b'|')
+        }) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidIdentity,
+                format!("base dependency {alias} version must be exact, not a range"),
+            ));
+        }
+        let Some(digest) = requirement.digest.strip_prefix("sha256:") else {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidIdentity,
+                format!("base dependency {alias} digest must be lowercase sha256"),
+            ));
+        };
+        if digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidIdentity,
+                format!("base dependency {alias} digest must be lowercase sha256"),
+            ));
+        }
+        if requirement.operations.is_empty() {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("base dependency {alias} must require at least one operation"),
+            ));
+        }
+        let mut operations = BTreeSet::new();
+        for operation in &requirement.operations {
+            validate_operation_identity(operation)?;
+            if !operations.insert(operation) {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!("base dependency {alias} repeats operation {operation}"),
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -601,6 +796,16 @@ pub struct PackageIdentity {
     pub predecessor_version: Option<String>,
 }
 
+/// Exact package artifact and local operation set bound to one source alias.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaseDependencyRequirement {
+    pub package: String,
+    pub version: String,
+    pub digest: String,
+    pub operations: Vec<String>,
+}
+
 /// Platform policy contract required before package promotion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -625,10 +830,32 @@ pub struct ModelDeclaration {
     pub table: String,
     pub owner: String,
     #[serde(default)]
+    pub client_field_extensible: bool,
+    #[serde(default)]
+    pub field_owners: BTreeMap<String, String>,
+    #[serde(default)]
+    pub constraint_owners: BTreeMap<String, String>,
+    #[serde(default)]
     pub server_owned_fields: Vec<String>,
     #[serde(default)]
     pub enum_fields: BTreeMap<String, Vec<String>>,
     pub operations: BTreeMap<CrudAction, OperationDeclaration>,
+}
+
+impl ModelDeclaration {
+    /// Definition owner for one field, inheriting the relation owner when omitted.
+    pub fn field_owner(&self, field: &str) -> &str {
+        self.field_owners
+            .get(field)
+            .map_or(self.owner.as_str(), String::as_str)
+    }
+
+    /// Definition owner for one constraint, inheriting the relation owner when omitted.
+    pub fn constraint_owner(&self, constraint: &str) -> &str {
+        self.constraint_owners
+            .get(constraint)
+            .map_or(self.owner.as_str(), String::as_str)
+    }
 }
 
 /// Closed generated CRUD action vocabulary.
@@ -676,6 +903,14 @@ pub struct OperationDeclaration {
     #[serde(default)]
     pub limit: Option<LimitDeclaration>,
     pub result: ResultClass,
+}
+
+/// Whether a registered operation may be bound to an external route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationVisibility {
+    Public,
+    Private,
 }
 
 /// Package-owned static SQL files for every declared query ordering.
