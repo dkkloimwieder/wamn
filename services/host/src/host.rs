@@ -5,7 +5,7 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use clap::Args;
@@ -397,6 +397,7 @@ fn demanded_http_admitter_url(pat_routes: bool, configured_url: Option<String>) 
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
+    let startup_started = Instant::now();
     wash_runtime::init_crypto();
 
     // Trust roots are a property of the host, not of any one pull, so they are
@@ -621,17 +622,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         }
         None => None,
     };
-    if let Some(driver) = &router_driver {
-        // The complete immutable release closure is resident before a workload
-        // or HTTP socket can become reachable. Direct delivery uses the
-        // cache-only resolution arm and refuses a later miss; it never turns a
-        // request into a PostgreSQL lookup.
-        driver
-            .preload_release_wirings()
-            .await
-            .context("preload release wirings")?;
-    }
-
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),
@@ -756,6 +746,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
         .await
         .context("failed to start cluster host")?;
+    tracing::info!(
+        elapsed_ms = %startup_started.elapsed().as_millis(),
+        "wamn-host runtime startup completed"
+    );
 
     // Kubernetes stops pods with SIGTERM; honor both it and Ctrl-C.
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;

@@ -81,7 +81,6 @@ interface delivery {
     source-not-found,
     invalid-request,
     invalid-payload,
-    wiring-not-preloaded,
     execution-failed,
     permission-denied(permission-denial),
   }

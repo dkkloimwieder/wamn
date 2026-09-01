@@ -516,8 +516,7 @@ fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> Deli
         Err(DeliveryError::PermissionDenied(_)) => {
             DeliveryDisposition::DeadLetter("router-permission-denied")
         }
-        Ok(DeliveryOutcome::Cancelled)
-        | Err(DeliveryError::WiringNotPreloaded | DeliveryError::ExecutionFailed) => {
+        Ok(DeliveryOutcome::Cancelled) | Err(DeliveryError::ExecutionFailed) => {
             DeliveryDisposition::Retry
         }
     }

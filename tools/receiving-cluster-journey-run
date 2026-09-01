@@ -5,12 +5,12 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: receiving-cluster-journey-run [--apply] [--measure-preload] --evidence-dir DIR
+usage: receiving-cluster-journey-run [--apply] [--measure-startup] --evidence-dir DIR
 
 Without --apply, print the immutable plan and exit.
 
   --apply              Build and run the journey, then tear down owned resources
-  --measure-preload    Measure one cold and one same-Pod warm host preload, then stop
+  --measure-startup    Measure cold/warm runtime startup and first request, then stop
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-receiving-journey. Every Kubernetes and Helm
@@ -20,12 +20,12 @@ EOF
 }
 
 apply=false
-measure_preload=false
+measure_startup=false
 evidence_dir=
 while (($#)); do
   case "$1" in
     --apply) apply=true; shift ;;
-    --measure-preload) measure_preload=true; shift ;;
+    --measure-startup) measure_startup=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
@@ -58,8 +58,8 @@ if [[ "$apply" != true ]]; then
   printf '  cluster/context: %s / %s\n' "$cluster" "$context"
   printf '  namespace: %s\n' "$namespace"
   printf '  route host: %s (setup overlay only)\n' "$route_host"
-  if [[ "$measure_preload" == true ]]; then
-    printf '  order: build -> production mint/attest -> operator 2.8.0 -> one cold host -> same-Pod warm restart -> exact teardown\n'
+  if [[ "$measure_startup" == true ]]; then
+    printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold startup/request -> same-Pod warm startup/request -> exact teardown\n'
   else
     printf '  order: build -> production mint/attest -> operator 2.8.0 -> host 2.8.0 -> schedule -> EndpointSlice -> HTTP -> cross-environment refusal -> exact teardown\n'
   fi
@@ -80,7 +80,7 @@ if [[ $(uname -m) != x86_64 ]]; then
 fi
 for required in awk bash cargo chmod cmp cp curl date docker find flock git grep head helm \
     install jq kind kubectl mkdir openssl psql rm sed seq sha256sum sleep sort tee \
-    timeout tr wash xargs; do
+    stat timeout tr wash xargs; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "required executable not found: $required" >&2
     exit 2
@@ -179,9 +179,9 @@ cleanup() {
   fi
 
   if [[ $status -eq 0 && "$run_complete" == true && "$cleanup_failed" == false ]]; then
-    if [[ "$measure_preload" == true ]]; then
-      printf 'RECEIVING PRELOAD MEASUREMENT PASS source=%s namespace=%s\n' \
-        "$head" "$namespace" >"$evidence_dir/preload-measurement.receipt"
+    if [[ "$measure_startup" == true ]]; then
+      printf 'RECEIVING STARTUP MEASUREMENT PASS source=%s namespace=%s\n' \
+        "$head" "$namespace" >"$evidence_dir/startup-measurement.receipt"
     else
       printf 'RECEIVING CLUSTER JOURNEY PASS source=%s namespace=%s host=%s\n' \
         "$head" "$namespace" "$route_host" >"$evidence_dir/journey.receipt"
@@ -416,6 +416,7 @@ component_artifact_base=$registry_authority/wamn/components
 release_artifact_base=$registry_authority/wamn/releases
 host_secret_directory=$work_dir/host-secrets
 install -d -m 0700 "$host_secret_directory"
+route_caller_secret=$work_dir/route-caller-pat.json
 record_command cargo test production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \
   '<disposable PostgreSQL and OCI inputs redacted>'
 WAMN_RECEIVING_ROUTE_PG18_URL="$system_url" \
@@ -427,12 +428,28 @@ WAMN_RECEIVING_ROUTE_HOST="$route_host" \
 WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE="$docker_config_directory/config.json" \
 WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$host_secret_directory" \
 WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE="$namespace" \
+WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$route_caller_secret" \
 CARGO_TARGET_DIR="$cargo_target_dir" \
 RUSTC_WRAPPER= \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   route_authentication_live::production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/production-route.log"
+
+if [[ $(stat -c '%a' "$route_caller_secret") != 600 ]]; then
+  echo "production journey emitted an unsafe route-caller Secret mode" >&2
+  exit 1
+fi
+jq -e '
+  .kind == "Secret" and .type == "Opaque" and
+  .metadata.annotations["wamn.io/credential-purpose"] == "route-caller" and
+  (.stringData.token | type == "string" and length > 0)
+' >/dev/null "$route_caller_secret"
+route_caller_kube_secret=$work_dir/route-caller-pat-kube.json
+jq --arg namespace "$namespace" '.metadata.namespace = $namespace' \
+  "$route_caller_secret" >"$route_caller_kube_secret"
+route_caller_secret_name=$(jq -er '.metadata.name' "$route_caller_kube_secret")
+run "${kube[@]}" apply -f "$route_caller_kube_secret"
 
 flow_http_push_ref=$registry_authority/wamn/flow-http:$host_tag
 record_command env WASH_REG_USER='<redacted>' WASH_REG_PASSWORD='<redacted>' wash push \
@@ -535,7 +552,7 @@ run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
   certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s
 
 host_replicas=3
-if [[ "$measure_preload" == true ]]; then
+if [[ "$measure_startup" == true ]]; then
   host_replicas=0
 fi
 host_base=$work_dir/host-base.yaml
@@ -588,114 +605,50 @@ run helm upgrade --install --kubeconfig "$kubeconfig" --kube-context "$context" 
   --namespace "$namespace" wamn-host "$chart" --version "$chart_version" \
   -f "$host_base" -f "$host_overlay" --wait --timeout 5m
 
-if [[ "$measure_preload" == true ]]; then
-  # Measurement-only scratch mutation: preserve the chart's readiness probe,
-  # remove only the 50-second liveness censor, and start one fresh Pod/emptyDir.
-  # Nothing from this patch is a deployable or a journey-proof exemption.
-  run "${kube[@]}" -n "$namespace" patch deployment hostgroup-default --type=json \
-    --patch='[{"op":"remove","path":"/spec/template/spec/containers/0/livenessProbe"},{"op":"replace","path":"/spec/replicas","value":1}]'
+measurement_pod=
+measurement_uid=
+cold_startup_ms=
+if [[ "$measure_startup" == true ]]; then
+  # Scale from zero without altering runtime-operator 2.8.0's native probes.
+  # Port 80 becomes reachable at runtime-up; released wirings resolve only when
+  # a routed request actually demands them.
+  run "${kube[@]}" -n "$namespace" scale deployment/hostgroup-default --replicas=1
   run "${kube[@]}" -n "$namespace" wait --for=condition=Available \
-    deployment/hostgroup-default --timeout=720s
+    deployment/hostgroup-default --timeout=120s
+  host_replicas=1
 
   "${kube[@]}" -n "$namespace" get deployment hostgroup-default -o json \
-    >"$work_dir/host-measurement-deployment.json"
-  preload_selector=$(jq -er '
+    >"$evidence_dir/host-measurement-deployment.json"
+  jq -e '
+    .spec.replicas == 1 and .status.availableReplicas == 1 and
+    (.spec.template.spec.containers | length == 1) and
+    .spec.template.spec.containers[0].name == "host" and
+    (.spec.template.spec.containers[0].livenessProbe.tcpSocket.port == "http" or
+     .spec.template.spec.containers[0].livenessProbe.tcpSocket.port == 80) and
+    (.spec.template.spec.containers[0].readinessProbe.tcpSocket.port == "http" or
+     .spec.template.spec.containers[0].readinessProbe.tcpSocket.port == 80) and
+    (.spec.template.spec.containers[0].startupProbe // null) == null
+  ' >/dev/null "$evidence_dir/host-measurement-deployment.json"
+  measurement_selector=$(jq -er '
     .spec.selector.matchLabels | to_entries |
     if length == 0 then error("empty host selector")
     else map("\(.key)=\(.value)") | join(",") end
-  ' "$work_dir/host-measurement-deployment.json")
-  "${kube[@]}" -n "$namespace" get pods -l "$preload_selector" -o json \
+  ' "$evidence_dir/host-measurement-deployment.json")
+  "${kube[@]}" -n "$namespace" get pods -l "$measurement_selector" -o json \
     >"$evidence_dir/host-cold.json"
   jq -e '
-    (.items | length == 1) and
-    all(.items[];
-      (.status.containerStatuses | length == 1) and
-      .status.containerStatuses[0].name == "host" and
-      .status.containerStatuses[0].ready == true and
-      .status.containerStatuses[0].restartCount == 0)
+    (.items | length == 1) and all(.items[];
+      any(.status.containerStatuses[]?;
+        .name == "host" and .ready == true and .restartCount == 0))
   ' >/dev/null "$evidence_dir/host-cold.json"
-  preload_pod=$(jq -er '.items[0].metadata.name' "$evidence_dir/host-cold.json")
-  preload_uid=$(jq -er '.items[0].metadata.uid' "$evidence_dir/host-cold.json")
-  "${kube[@]}" -n "$namespace" logs --timestamps "$preload_pod" -c host \
+  measurement_pod=$(jq -er '.items[0].metadata.name' "$evidence_dir/host-cold.json")
+  measurement_uid=$(jq -er '.items[0].metadata.uid' "$evidence_dir/host-cold.json")
+  "${kube[@]}" -n "$namespace" logs --timestamps "$measurement_pod" -c host \
     >"$evidence_dir/host-cold.log"
 
-  for expected in \
-    '6:release component pull completed' \
-    '6:release component compilation completed' \
-    '6:release component instantiation completed' \
-    '1:synchronous release preload completed'; do
-    count=${expected%%:*}
-    event=${expected#*:}
-    [[ $(grep -Fc -- "$event" "$evidence_dir/host-cold.log") -eq $count ]] || {
-      echo "cold host log omitted preload event: $event" >&2
-      exit 1
-    }
-  done
-  record_command "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
-      -printf '<inode> <mtime> <size> <path>\n'
-  "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
-      -printf '%i %T@ %s %p\n' \
-    | sort >"$evidence_dir/cache-cold.txt"
-  "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
-      -exec sha256sum '{}' + \
-    | sort >"$evidence_dir/cache-cold.sha256"
-  [[ $(awk 'END { print NR }' "$evidence_dir/cache-cold.txt") -ge 6 ]] || {
-    echo "cold host did not persist the six compiled components" >&2
-    exit 1
-  }
-
-  run "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    /bin/sh -c 'kill -TERM 1; exit 0'
-  run "${kube[@]}" -n "$namespace" wait \
-    --for=jsonpath='{.status.containerStatuses[0].restartCount}'=1 \
-    "pod/$preload_pod" --timeout=120s
-  run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
-    "pod/$preload_pod" --timeout=720s
-  "${kube[@]}" -n "$namespace" get "pod/$preload_pod" -o json \
-    >"$evidence_dir/host-warm.json"
-  jq -e --arg uid "$preload_uid" '
-    .metadata.uid == $uid and
-    (.status.containerStatuses | length == 1) and
-    .status.containerStatuses[0].name == "host" and
-    .status.containerStatuses[0].ready == true and
-    .status.containerStatuses[0].restartCount == 1
-  ' >/dev/null "$evidence_dir/host-warm.json"
-  "${kube[@]}" -n "$namespace" logs --timestamps "$preload_pod" -c host \
-    >"$evidence_dir/host-warm.log"
-  "${kube[@]}" -n "$namespace" logs --previous --timestamps "$preload_pod" -c host \
-    >"$evidence_dir/host-cold-previous.log"
-  for expected in \
-    '6:release component pull completed' \
-    '6:release component compilation completed' \
-    '6:release component instantiation completed' \
-    '1:synchronous release preload completed'; do
-    count=${expected%%:*}
-    event=${expected#*:}
-    [[ $(grep -Fc -- "$event" "$evidence_dir/host-warm.log") -eq $count ]] || {
-      echo "warm host log omitted preload event: $event" >&2
-      exit 1
-    }
-  done
-  record_command "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
-      -printf '<inode> <mtime> <size> <path>\n'
-  "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
-      -printf '%i %T@ %s %p\n' \
-    | sort >"$evidence_dir/cache-warm.txt"
-  "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
-      -exec sha256sum '{}' + \
-    | sort >"$evidence_dir/cache-warm.sha256"
-  cmp "$evidence_dir/cache-cold.txt" "$evidence_dir/cache-warm.txt"
-  cmp "$evidence_dir/cache-cold.sha256" "$evidence_dir/cache-warm.sha256"
-
-  preload_ms() {
+  runtime_startup_ms() {
     awk '
-      /synchronous release preload completed/ {
+      /wamn-host runtime startup completed/ {
         for (field = 1; field <= NF; field++) {
           if ($field ~ /^elapsed_ms=/) {
             value = $field
@@ -706,14 +659,7 @@ if [[ "$measure_preload" == true ]]; then
       END { if (value == "") exit 1; print value }
     ' "$1"
   }
-  cold_preload_ms=$(preload_ms "$evidence_dir/host-cold.log")
-  warm_preload_ms=$(preload_ms "$evidence_dir/host-warm.log")
-  printf 'verdict=pass pod_uid=%s cold_preload_ms=%s warm_preload_ms=%s cache_entries=%s\n' \
-    "$preload_uid" "$cold_preload_ms" "$warm_preload_ms" \
-    "$(awk 'END { print NR }' "$evidence_dir/cache-warm.txt")" \
-    >"$evidence_dir/startup-preload.receipt"
-  run_complete=true
-  exit 0
+  cold_startup_ms=$(runtime_startup_ms "$evidence_dir/host-cold.log")
 fi
 
 run "${kube[@]}" -n "$namespace" rollout status \
@@ -731,10 +677,10 @@ jq -e --arg namespace "$namespace" '
 ' >/dev/null "$evidence_dir/helm-releases.json"
 "${kube[@]}" -n "$namespace" get deployment hostgroup-default -o json \
   >"$evidence_dir/host-deployment.json"
-jq -e --arg image "$host_image" '
+jq -e --arg image "$host_image" --argjson replicas "$host_replicas" '
   .status.observedGeneration == .metadata.generation and
-  .spec.replicas == 3 and .status.updatedReplicas == 3 and
-  .status.readyReplicas == 3 and .status.availableReplicas == 3 and
+  .spec.replicas == $replicas and .status.updatedReplicas == $replicas and
+  .status.readyReplicas == $replicas and .status.availableReplicas == $replicas and
   any(.spec.template.spec.containers[]?; .image == $image)
 ' >/dev/null "$evidence_dir/host-deployment.json"
 host_selector=$(jq -er '
@@ -744,8 +690,9 @@ host_selector=$(jq -er '
 ' "$evidence_dir/host-deployment.json")
 "${kube[@]}" -n "$namespace" get pods -l "$host_selector" -o json \
   >"$evidence_dir/host-pods.json"
-jq -e --arg image "$host_image" --arg image_id "$host_runtime_digest" '
-  (.items | length == 3) and all(.items[];
+jq -e --arg image "$host_image" --arg image_id "$host_runtime_digest" \
+  --argjson replicas "$host_replicas" '
+  (.items | length == $replicas) and all(.items[];
     ([.spec.containers[]? | select(.image == $image) | .name] |
       if length == 1 then .[0] else null end) as $container |
     ($container != null and
@@ -757,9 +704,9 @@ jq -e --arg image "$host_image" --arg image_id "$host_runtime_digest" '
 for _ in $(seq 1 120); do
   if "${kube[@]}" -n "$system_namespace" get hosts -l hostgroup=default -o json \
       >"$work_dir/hosts.json" 2>/dev/null &&
-     jq -e --arg namespace "$namespace" '
-       (.items | length == 3) and
-       ([.items[].hostId] | unique | length == 3) and
+     jq -e --arg namespace "$namespace" --argjson replicas "$host_replicas" '
+       (.items | length == $replicas) and
+       ([.items[].hostId] | unique | length == $replicas) and
        all(.items[];
          .metadata.labels.hostgroup == "default" and .environment == $namespace and
          (.hostId | length > 0) and (.hostname | length > 0) and .httpPort == 80 and
@@ -770,9 +717,9 @@ for _ in $(seq 1 120); do
   sleep 2
 done
 cp "$work_dir/hosts.json" "$evidence_dir/hosts.json"
-jq -e --arg namespace "$namespace" '
-  (.items | length == 3) and
-  ([.items[].hostId] | unique | length == 3) and
+jq -e --arg namespace "$namespace" --argjson replicas "$host_replicas" '
+  (.items | length == $replicas) and
+  ([.items[].hostId] | unique | length == $replicas) and
   all(.items[];
     .metadata.labels.hostgroup == "default" and .environment == $namespace and
     (.hostId | length > 0) and (.hostname | length > 0) and .httpPort == 80 and
@@ -880,6 +827,172 @@ jq -e --slurpfile service "$evidence_dir/flow-http-service.json" \
    any($pods[0].items[];
      .metadata.name == $selected_hosts[0].hostname and .status.podIP == $address))
 ' >/dev/null "$evidence_dir/flow-http-endpointslices.json"
+
+if [[ "$measure_startup" == true ]]; then
+  run_startup_request() {
+    local phase=$1 request_id=$2 job="startup-request-$1"
+    local manifest=$work_dir/$job.yaml
+    cat >"$manifest" <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: $job
+  namespace: $namespace
+spec:
+  activeDeadlineSeconds: 90
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: probe
+          image: $host_image
+          imagePullPolicy: Never
+          env:
+            - name: ROUTE_CALLER_PAT
+              valueFrom:
+                secretKeyRef:
+                  name: $route_caller_secret_name
+                  key: token
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              metrics=\$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\
+                --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\
+                --header 'Host: $route_host' \\
+                --header 'Content-Type: application/json' \\
+                --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \\
+                --data '[{"request_id":"$request_id","id":"00000000-0000-0000-0000-000000000301"}]' \\
+                'http://flow-http.$namespace.svc.cluster.local/purchase_order/get')
+              set -- \$metrics
+              test "\$1" = 200
+              printf '%s\n' \\
+                "RECEIVING_STARTUP_REQUEST phase=$phase status=\$1 time_starttransfer_seconds=\$2 time_total_seconds=\$3"
+              printf 'RECEIVING_STARTUP_BODY '
+              tr -d '\n' </tmp/body
+              printf '\n'
+EOF
+    run "${kube[@]}" apply -f "$manifest"
+    run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
+      "job/$job" --timeout=90s
+    "${kube[@]}" -n "$namespace" logs "job/$job" \
+      >"$evidence_dir/first-request-$phase.log"
+    if [[ $(grep -Fc 'RECEIVING_STARTUP_REQUEST ' \
+        "$evidence_dir/first-request-$phase.log") -ne 1 ]]; then
+      echo "$phase request emitted no unique timing receipt" >&2
+      exit 1
+    fi
+    sed -n 's/^RECEIVING_STARTUP_BODY //p' \
+      "$evidence_dir/first-request-$phase.log" \
+      >"$evidence_dir/first-request-$phase-response.json"
+    jq -e --arg request_id "$request_id" '
+      type == "array" and length == 1 and
+      .[0].request_id == $request_id and
+      (.[0] | has("error") | not) and
+      .[0].value.id == "00000000-0000-0000-0000-000000000301"
+    ' >/dev/null "$evidence_dir/first-request-$phase-response.json"
+    awk -v phase="$phase" '
+      /^RECEIVING_STARTUP_REQUEST / {
+        for (field = 1; field <= NF; field++) {
+          split($field, pair, "=")
+          if (pair[1] == "status") status = pair[2]
+          if (pair[1] == "time_starttransfer_seconds") first = pair[2]
+          if (pair[1] == "time_total_seconds") total = pair[2]
+        }
+      }
+      END {
+        if (status != "200" || first !~ /^[0-9]+\.[0-9]+$/ ||
+            total !~ /^[0-9]+\.[0-9]+$/) exit 1
+        printf "verdict=pass phase=%s status=%s first_byte_ms=%.3f total_ms=%.3f\n",
+          phase, status, first * 1000, total * 1000
+      }
+    ' "$evidence_dir/first-request-$phase.log" \
+      >"$evidence_dir/first-request-$phase.receipt"
+  }
+
+  run_startup_request cold startup-cold
+  record_command "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -printf '<inode> <mtime> <size> <path>\n'
+  "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -printf '%i %T@ %s %p\n' \
+    | sort >"$evidence_dir/cache-cold.txt"
+  "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -exec sha256sum '{}' + \
+    | sort >"$evidence_dir/cache-cold.sha256"
+  [[ $(awk 'END { print NR }' "$evidence_dir/cache-cold.txt") -ge 1 ]] || {
+    echo "cold first request persisted no compiled artifact" >&2
+    exit 1
+  }
+
+  run "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
+    /bin/sh -c 'kill -TERM 1; exit 0'
+  run "${kube[@]}" -n "$namespace" wait \
+    --for=jsonpath='{.status.containerStatuses[0].restartCount}'=1 \
+    "pod/$measurement_pod" --timeout=120s
+  run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
+    "pod/$measurement_pod" --timeout=120s
+  "${kube[@]}" -n "$namespace" get "pod/$measurement_pod" -o json \
+    >"$evidence_dir/host-warm.json"
+  jq -e --arg uid "$measurement_uid" '
+    .metadata.uid == $uid and
+    any(.status.containerStatuses[]?;
+      .name == "host" and .ready == true and .restartCount == 1)
+  ' >/dev/null "$evidence_dir/host-warm.json"
+  "${kube[@]}" -n "$namespace" logs --timestamps "$measurement_pod" -c host \
+    >"$evidence_dir/host-warm.log"
+  "${kube[@]}" -n "$namespace" logs --previous --timestamps "$measurement_pod" -c host \
+    >"$evidence_dir/host-cold-previous.log"
+  warm_startup_ms=$(runtime_startup_ms "$evidence_dir/host-warm.log")
+
+  workload_name=$(jq -er '.metadata.name' "$evidence_dir/flow-http-workload.json")
+  for _ in $(seq 1 120); do
+    "${kube[@]}" -n "$namespace" get workload "$workload_name" -o json \
+      >"$work_dir/flow-http-workload-warm.json" 2>/dev/null || true
+    "${kube[@]}" -n "$namespace" get endpointslices \
+      -l 'kubernetes.io/service-name=flow-http,wasmcloud.dev/route-manager=true' -o json \
+      >"$work_dir/flow-http-endpointslices-warm.json"
+    if jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' \
+        >/dev/null "$work_dir/flow-http-workload-warm.json" 2>/dev/null &&
+       jq -e '(.items | length == 1) and (.items[0].endpoints | length == 1) and
+         .items[0].endpoints[0].conditions.ready == true and
+         .items[0].endpoints[0].conditions.serving == true' \
+         >/dev/null "$work_dir/flow-http-endpointslices-warm.json"; then
+      break
+    fi
+    sleep 2
+  done
+  cp "$work_dir/flow-http-workload-warm.json" \
+    "$evidence_dir/flow-http-workload-warm.json"
+  cp "$work_dir/flow-http-endpointslices-warm.json" \
+    "$evidence_dir/flow-http-endpointslices-warm.json"
+  jq -e 'any(.status.conditions[]?; .type == "Ready" and .status == "True")' \
+    >/dev/null "$evidence_dir/flow-http-workload-warm.json"
+  jq -e '(.items | length == 1) and (.items[0].endpoints | length == 1) and
+    .items[0].endpoints[0].conditions.ready == true and
+    .items[0].endpoints[0].conditions.serving == true' \
+    >/dev/null "$evidence_dir/flow-http-endpointslices-warm.json"
+
+  run_startup_request warm startup-warm
+  "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -printf '%i %T@ %s %p\n' \
+    | sort >"$evidence_dir/cache-warm.txt"
+  "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -exec sha256sum '{}' + \
+    | sort >"$evidence_dir/cache-warm.sha256"
+  cmp "$evidence_dir/cache-cold.txt" "$evidence_dir/cache-warm.txt"
+  cmp "$evidence_dir/cache-cold.sha256" "$evidence_dir/cache-warm.sha256"
+  printf 'verdict=pass pod_uid=%s cold_startup_ms=%s warm_startup_ms=%s cache_entries=%s\n' \
+    "$measurement_uid" "$cold_startup_ms" "$warm_startup_ms" \
+    "$(awk 'END { print NR }' "$evidence_dir/cache-warm.txt")" \
+    >"$evidence_dir/runtime-startup.receipt"
+  run_complete=true
+  exit 0
+fi
 
 probe_manifest=$work_dir/flow-http-reachability.yaml
 cat >"$probe_manifest" <<EOF

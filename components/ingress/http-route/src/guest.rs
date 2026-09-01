@@ -155,7 +155,6 @@ fn convert_delivery_error(error: wamn::router_delivery::delivery::DeliveryError)
         WireError::SourceNotFound => DeliveryError::SourceNotFound,
         WireError::InvalidRequest => DeliveryError::InvalidRequest,
         WireError::InvalidPayload => DeliveryError::InvalidPayload,
-        WireError::WiringNotPreloaded => DeliveryError::WiringNotPreloaded,
         WireError::ExecutionFailed => DeliveryError::ExecutionFailed,
         WireError::PermissionDenied(denial) => DeliveryError::PermissionDenied {
             operation: denial.operation,

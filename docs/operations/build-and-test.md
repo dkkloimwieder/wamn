@@ -975,15 +975,17 @@ tools/receiving-cluster-journey-run --apply \
   --evidence-dir /tmp/wamn-receiving-cluster-evidence
 ```
 
-`wamn-10yt.8` measures the same published release without letting the chart's
-50-second liveness probe censor the cold result. It starts one fresh Pod with
-readiness intact, records each pull/compile/instantiate phase, then restarts the
-container in that same Pod and proves the compiled cache remained byte- and
-inode-identical:
+`wamn-10yt.8` measures the same published release under runtime-operator
+2.8.0's unchanged TCP liveness and readiness probes. It records cold runtime
+startup plus the first authenticated routed request, restarts the container in
+that same Pod, records the warm startup and first-request timings, and proves
+the compiled cache remained byte- and inode-identical. Listener readiness is
+not evidence that the full release closure is resident; exact released wirings
+resolve on demand.
 
 ```bash
-tools/receiving-cluster-journey-run --apply --measure-preload \
-  --evidence-dir /tmp/wamn-receiving-preload-evidence
+tools/receiving-cluster-journey-run --apply --measure-startup \
+  --evidence-dir /tmp/wamn-receiving-startup-evidence
 ```
 
 The helper refuses a dirty source tree or a pre-existing scratch cluster. Every

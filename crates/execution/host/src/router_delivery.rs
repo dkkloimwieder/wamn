@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
-use wamn_catalog::{AttachmentKind, NO_AUTHENTICATION_MODE, ServingManifest};
+use wamn_catalog::{NO_AUTHENTICATION_MODE, ServingManifest};
 use wamn_event_wire::Causation;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 pub use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
@@ -21,7 +21,7 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::router_driver::{PermissionDenied, authorize_registered_operation};
-use crate::{PreloadedWiringMissing, RouterDriver, RouterDriverRequest, WiringResolution};
+use crate::{RouterDriver, RouterDriverRequest, WiringResolution};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -64,7 +64,6 @@ const DELIVERY_ERROR: &str = "wamn.delivery.error";
 // rather than respelled, so a dashboard and a run screen never disagree about
 // what happened to the same delivery — pinned by
 // `a_refusal_reads_the_same_to_a_dashboard_and_to_a_live_view`.
-const WIRING_NOT_PRELOADED: &str = "wiring-not-preloaded";
 const PERMISSION_DENIED: &str = "permission-denied";
 const EXECUTION_FAILED: &str = "execution-failed";
 
@@ -200,19 +199,6 @@ impl RouterDeliveryBridge {
                 self.publish_emit(&target.package_id, &delivery.outcome, causation)
                     .await?;
                 lower_outcome(delivery.outcome)
-            }
-            Err(error) if error.downcast_ref::<PreloadedWiringMissing>().is_some() => {
-                self.record(&attributes, DeliveryClass::WiringNotPreloaded);
-                self.tap(
-                    source,
-                    &delivery_id,
-                    &target.wiring_id,
-                    target.wiring_version,
-                    RouterTapPhase::Settled(WIRING_NOT_PRELOADED),
-                    &serde_json::Value::Null,
-                )
-                .await;
-                Err(DeliveryError::WiringNotPreloaded)
             }
             Err(error) if error.downcast_ref::<PermissionDenied>().is_some() => {
                 let denial = error
@@ -458,14 +444,7 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                             == Some(NO_AUTHENTICATION_MODE),
                     ),
                     registered_operation: attachment.registered_operation.clone(),
-                    resolution: if matches!(
-                        attachment.kind,
-                        AttachmentKind::Http | AttachmentKind::Internal | AttachmentKind::Studio
-                    ) {
-                        WiringResolution::Preloaded
-                    } else {
-                        WiringResolution::Frozen
-                    },
+                    resolution: WiringResolution::Frozen,
                 })
         }
         SourceRef::Registration(id) => {
@@ -531,7 +510,6 @@ pub(crate) fn authorize_attachment_for_test(
         DeliveryError::SourceNotFound => "source-not-found".into(),
         DeliveryError::InvalidRequest => "invalid-request".into(),
         DeliveryError::InvalidPayload => "invalid-payload".into(),
-        DeliveryError::WiringNotPreloaded => "wiring-not-preloaded".into(),
         DeliveryError::ExecutionFailed => "execution-failed".into(),
     })
 }
@@ -564,7 +542,6 @@ fn lower_permission_denied(denial: PermissionDenied) -> DeliveryError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeliveryClass {
     Delivered,
-    WiringNotPreloaded,
     PermissionDenied,
     ExecutionFailed,
 }
@@ -574,7 +551,6 @@ impl DeliveryClass {
     fn error(self) -> Option<&'static str> {
         match self {
             DeliveryClass::Delivered => None,
-            DeliveryClass::WiringNotPreloaded => Some(WIRING_NOT_PRELOADED),
             DeliveryClass::PermissionDenied => Some(PERMISSION_DENIED),
             DeliveryClass::ExecutionFailed => Some(EXECUTION_FAILED),
         }
@@ -768,7 +744,7 @@ mod tests {
                 caller_attached: true,
                 anonymous_caller_permitted: Some(true),
                 registered_operation: None,
-                resolution: WiringResolution::Preloaded,
+                resolution: WiringResolution::Frozen,
             })
         );
         assert_eq!(
@@ -1087,7 +1063,6 @@ mod tests {
         let attributes =
             delivery_attributes(SourceRef::Registration("orders-changed"), "shipping", 2);
 
-        metrics.record(&attributes, DeliveryClass::WiringNotPreloaded);
         metrics.record(&attributes, DeliveryClass::PermissionDenied);
         metrics.record(&attributes, DeliveryClass::ExecutionFailed);
 
@@ -1106,7 +1081,7 @@ mod tests {
         assert_eq!(
             harness.series(),
             vec![
-                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 3,),
+                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 2,),
                 (
                     "wamn.router.delivery.errors".to_owned(),
                     with_error("execution-failed"),
@@ -1115,11 +1090,6 @@ mod tests {
                 (
                     "wamn.router.delivery.errors".to_owned(),
                     with_error("permission-denied"),
-                    1,
-                ),
-                (
-                    "wamn.router.delivery.errors".to_owned(),
-                    with_error("wiring-not-preloaded"),
                     1,
                 ),
             ]

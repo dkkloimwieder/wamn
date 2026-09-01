@@ -131,7 +131,6 @@ pub enum DeliveryError {
     SourceNotFound,
     InvalidRequest,
     InvalidPayload,
-    WiringNotPreloaded,
     ExecutionFailed,
     PermissionDenied { operation: String },
 }
@@ -668,7 +667,6 @@ fn delivery_error_response(error: DeliveryError) -> HttpResponse {
         DeliveryError::SourceNotFound => (404, "attachment-not-found"),
         DeliveryError::InvalidRequest => (400, "delivery-invalid-request"),
         DeliveryError::InvalidPayload => (400, "delivery-invalid-payload"),
-        DeliveryError::WiringNotPreloaded => (503, "wiring-not-preloaded"),
         DeliveryError::ExecutionFailed => (503, "execution-failed"),
         DeliveryError::PermissionDenied { operation } => {
             return HttpResponse {

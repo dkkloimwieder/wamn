@@ -154,27 +154,11 @@ pub enum WiringResolution {
     /// A trusted attachment/registration resolved the current pointer. The DB
     /// rechecks that exact version is still active.
     Active,
-    /// Queue admission already froze this immutable version. Pointer flips do
-    /// not reinterpret it.
+    /// The released attachment or queue admission already froze this immutable
+    /// version. A miss resolves that exact release wiring; pointer flips never
+    /// reinterpret it.
     Frozen,
-    /// Direct ingress may use only an immutable release wiring loaded before
-    /// the serving socket became reachable. A miss is a typed refusal and
-    /// never falls through to PostgreSQL.
-    Preloaded,
 }
-
-/// A direct-ingress request named a release wiring absent from the startup
-/// preload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PreloadedWiringMissing;
-
-impl fmt::Display for PreloadedWiringMissing {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("release-wiring-not-preloaded")
-    }
-}
-
-impl std::error::Error for PreloadedWiringMissing {}
 
 /// Exact operation authority missing from the originating caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -584,15 +568,6 @@ impl RouterDriver {
         }
     }
 
-    /// Compatibility entry point for the host construction site.
-    ///
-    /// The actual policy is probe-owned by [`crate::RouterReadinessProbe`]. The
-    /// later probe-transport cutover replaces this startup call without changing
-    /// what gets prepared.
-    pub async fn preload_release_wirings(&self) -> anyhow::Result<()> {
-        self.prepare_synchronous_release().await.map(|_| ())
-    }
-
     /// Prepare the exact release closure reachable from synchronous request
     /// attachments.
     ///
@@ -969,25 +944,7 @@ impl RouterDriver {
         match request.resolution {
             WiringResolution::Active => self.resolve_active(request).await,
             WiringResolution::Frozen => self.resolve_frozen(request).await,
-            WiringResolution::Preloaded => self.resolve_preloaded(request),
         }
-    }
-
-    fn resolve_preloaded(
-        &self,
-        request: &RouterDriverRequest,
-    ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
-        let effective_release_id = self.release.manifest().release.effective_release_id.get();
-        self.cache
-            .get_version(
-                &request.tenant_id,
-                &request.package_id,
-                &request.environment,
-                effective_release_id,
-                &request.wiring_id,
-                request.wiring_version,
-            )
-            .ok_or_else(|| anyhow::Error::new(PreloadedWiringMissing))
     }
 
     async fn resolve_active(
@@ -1732,7 +1689,7 @@ mod tests {
             delivery_id: "delivery-9".to_owned(),
             payload: serde_json::json!({"id": 9}),
             caller_attached: true,
-            resolution: WiringResolution::Preloaded,
+            resolution: WiringResolution::Frozen,
             caller: None,
             traceparent: traceparent.map(str::to_owned),
             tracestate: traceparent.map(|_| "vendor=value".to_owned()),

@@ -570,11 +570,6 @@ fn every_bridge_refusal_has_a_bounded_http_answer() {
             400,
             "delivery-invalid-payload",
         ),
-        (
-            DeliveryError::WiringNotPreloaded,
-            503,
-            "wiring-not-preloaded",
-        ),
         (DeliveryError::ExecutionFailed, 503, "execution-failed"),
     ] {
         let mut backend = FakeBackend::new(route());

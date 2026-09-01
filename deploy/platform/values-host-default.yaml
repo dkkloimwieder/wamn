@@ -149,7 +149,7 @@ runtime:
         # wash-runtime reads DOCKER_CONFIG for WorkloadDeployment components,
         # and the digest-verifying wamn:node source reads the exact file named
         # by WAMN_REGISTRY_AUTH_FILE. Missing Secret => pod does not start;
-        # wrong/missing registry entry => serving startup refuses.
+        # wrong/missing registry entry => the demanding request refuses.
         - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
         - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
         - name: WAMN_COMPONENT_ARTIFACT_BASE

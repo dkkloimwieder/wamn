@@ -2,6 +2,8 @@
 //! fresh disposable PostgreSQL 18 server.
 
 use std::collections::{BTreeSet, HashMap};
+use std::fs::Permissions;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -891,6 +893,7 @@ struct JourneyInputs {
     registry_auth_file: PathBuf,
     host_secret_directory: PathBuf,
     host_secret_namespace: String,
+    route_caller_secret_output: PathBuf,
 }
 
 impl JourneyInputs {
@@ -908,6 +911,9 @@ impl JourneyInputs {
                 "WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY",
             )?,
             host_secret_namespace: required_journey("WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE")?,
+            route_caller_secret_output: required_journey_path(
+                "WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT",
+            )?,
         })
     }
 }
@@ -1585,10 +1591,6 @@ async fn build_journey_runtime(
             cache_capacity: WiringCacheCapacity::default(),
         },
     )?);
-    driver
-        .preload_release_wirings()
-        .await
-        .context("preload the six released Receiving wirings")?;
     let jetstream = Arc::new(
         WamnJetstream::new(WamnJetstreamConfig { nats_url: None })
             .with_release(Some(Arc::clone(&release))),
@@ -1794,6 +1796,24 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
     let management_secret = root.join("management-author-pat.json");
     let route =
         provision_route(&system_url, admin.as_ref(), root, Some(&management_secret)).await?;
+    let route_caller_secret = root.join("route-caller-pat.json");
+    std::fs::copy(&route_caller_secret, &inputs.route_caller_secret_output).with_context(|| {
+        format!(
+            "copy production-minted route-caller Secret from {} to {}",
+            route_caller_secret.display(),
+            inputs.route_caller_secret_output.display()
+        )
+    })?;
+    std::fs::set_permissions(
+        &inputs.route_caller_secret_output,
+        Permissions::from_mode(0o600),
+    )
+    .with_context(|| {
+        format!(
+            "set route-caller Secret mode on {}",
+            inputs.route_caller_secret_output.display()
+        )
+    })?;
     let (project, project_task) = connect(&route.database_url).await?;
     install_journey_project(project.as_ref(), &route.database_url).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;

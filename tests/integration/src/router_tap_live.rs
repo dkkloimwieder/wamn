@@ -287,12 +287,6 @@ mod tests {
         })
         .await
         .context("build the real released RouterDriver closure")?;
-        route
-            .driver
-            .preload_release_wirings()
-            .await
-            .context("preload the released wiring before ingress becomes reachable")?;
-
         let jetstream = Arc::new(
             WamnJetstream::new(WamnJetstreamConfig {
                 nats_url: Some(nats_url),

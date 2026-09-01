@@ -340,11 +340,6 @@ mod tests {
             String::from_utf8_lossy(&request_head)
         );
 
-        route
-            .driver
-            .preload_release_wirings()
-            .await
-            .context("preload the proof wiring")?;
         let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig { nats_url: None }));
         let bridge = Arc::new(
             RouterDeliveryBridge::new(
