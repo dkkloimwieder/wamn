@@ -632,12 +632,15 @@ if [[ "$measure_preload" == true ]]; then
     }
   done
   record_command "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f -printf '<inode> <mtime> <size> <path>\n'
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -printf '<inode> <mtime> <size> <path>\n'
   "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f -printf '%i %T@ %s %p\n' \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -printf '%i %T@ %s %p\n' \
     | sort >"$evidence_dir/cache-cold.txt"
   "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f -exec sha256sum '{}' + \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -exec sha256sum '{}' + \
     | sort >"$evidence_dir/cache-cold.sha256"
   [[ $(awk 'END { print NR }' "$evidence_dir/cache-cold.txt") -ge 6 ]] || {
     echo "cold host did not persist the six compiled components" >&2
@@ -677,12 +680,15 @@ if [[ "$measure_preload" == true ]]; then
     }
   done
   record_command "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f -printf '<inode> <mtime> <size> <path>\n'
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -printf '<inode> <mtime> <size> <path>\n'
   "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f -printf '%i %T@ %s %p\n' \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -printf '%i %T@ %s %p\n' \
     | sort >"$evidence_dir/cache-warm.txt"
   "${kube[@]}" -n "$namespace" exec "$preload_pod" -c host -- \
-    find /tmp/wamn-wasmtime-cache/modules -type f -exec sha256sum '{}' + \
+    find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
+      -exec sha256sum '{}' + \
     | sort >"$evidence_dir/cache-warm.sha256"
   cmp "$evidence_dir/cache-cold.txt" "$evidence_dir/cache-warm.txt"
   cmp "$evidence_dir/cache-cold.sha256" "$evidence_dir/cache-warm.sha256"
