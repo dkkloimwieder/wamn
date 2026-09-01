@@ -260,7 +260,9 @@ optimistic-concurrency revision field
 permitted filters, sorts, and projections
 registered commands and BFF operations
 connection requirements
-component artifact grouping
+package-grain component artifact grouping
+(`docs/architecture/component-artifact-boundary.md`, superseding
+`wamn-10yt.3.3`)
 screen exposure
 ```
 
