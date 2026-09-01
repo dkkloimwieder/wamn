@@ -195,6 +195,7 @@ pub enum ColumnDefault {
     CurrentTimestamp,
     TextOpen,
     TextNotRequired,
+    TextPending,
     BooleanFalse,
     Int64One,
     NumericZero,
@@ -522,6 +523,7 @@ pub fn postgres_default(
         (ColumnType::Text, "'not_required'::text" | "'not_required'") => {
             ColumnDefault::TextNotRequired
         }
+        (ColumnType::Text, "'pending'::text" | "'pending'") => ColumnDefault::TextPending,
         (ColumnType::Boolean, "false" | "'false'::boolean") => ColumnDefault::BooleanFalse,
         (ColumnType::Int64, "1" | "'1'::bigint") => ColumnDefault::Int64One,
         (ColumnType::Numeric, "0" | "'0'::numeric" | "0::numeric") => ColumnDefault::NumericZero,

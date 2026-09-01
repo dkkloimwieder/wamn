@@ -238,6 +238,12 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
         postgres_default(ColumnType::Text, "'not_required'::text").unwrap(),
         ColumnDefault::TextNotRequired
     );
+    for spelling in ["'pending'", "'pending'::text"] {
+        assert_eq!(
+            postgres_default(ColumnType::Text, spelling).unwrap(),
+            ColumnDefault::TextPending
+        );
+    }
     assert_eq!(
         postgres_default(ColumnType::Boolean, "false").unwrap(),
         ColumnDefault::BooleanFalse

@@ -346,14 +346,24 @@ ALTER TABLE receiving.purchase_order
     ADD COLUMN acme_inspection_required boolean NOT NULL DEFAULT false,
     ADD COLUMN acme_quality_status text NOT NULL DEFAULT 'not_required',
     ADD CONSTRAINT purchase_order_acme_quality_status_check
-        CHECK (acme_quality_status IN ('not_required', 'pending', 'approved', 'rejected'))
+        CHECK (acme_quality_status IN ('not_required', 'pending', 'approved'));
+CREATE TABLE receiving.quality_inspection (
+    receipt_id uuid
+        CONSTRAINT quality_inspection_receipt_id_pkey PRIMARY KEY
+        CONSTRAINT quality_inspection_receipt_id_fkey
+        REFERENCES receiving.receipt (id),
+    status text NOT NULL DEFAULT 'pending',
+    row_version int8 NOT NULL DEFAULT 1,
+    CONSTRAINT quality_inspection_status_check
+        CHECK (status IN ('pending', 'approved'))
+)
 ",
     )
     .await;
 }
 
 async fn assert_additive_columns(client: &Client) {
-    for (index, quality_status) in ["not_required", "pending", "approved", "rejected"]
+    for (index, quality_status) in ["not_required", "pending", "approved"]
         .into_iter()
         .enumerate()
     {
@@ -486,6 +496,20 @@ async fn assert_additive_columns(client: &Client) {
             .iter()
             .any(|constraint| { constraint.name() == "purchase_order_acme_quality_status_check" }),
         "client quality check remains in IR"
+    );
+    let inspection = ir
+        .tables()
+        .iter()
+        .find(|table| table.name() == "quality_inspection")
+        .expect("quality inspection remains in IR");
+    let inspection_status = inspection
+        .columns()
+        .iter()
+        .find(|column| column.name() == "status")
+        .expect("quality inspection status remains in IR");
+    assert_eq!(
+        inspection_status.default(),
+        Some(ColumnDefault::TextPending)
     );
     let ir_columns = table
         .columns()
