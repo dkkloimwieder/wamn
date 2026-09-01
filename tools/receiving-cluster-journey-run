@@ -806,7 +806,8 @@ jq -e --slurpfile service "$evidence_dir/flow-http-service.json" \
   --slurpfile hosts "$evidence_dir/hosts.json" \
   --slurpfile pods "$evidence_dir/host-pods.json" \
   --slurpfile workload "$evidence_dir/flow-http-workload.json" '
-  (.items | length == 1) and .items[0] as $slice |
+  (.items | length == 1) and
+  (.items[0] as $slice |
   $service[0] as $service |
   $workload[0].status.hostId as $host_id |
   ($hosts[0].items | map(select(.hostId == $host_id))) as $selected_hosts |
@@ -825,7 +826,7 @@ jq -e --slurpfile service "$evidence_dir/flow-http-service.json" \
   any($pods[0].items[]; .status.podIP == $address) and
   (($selected_hosts[0].hostname == $address) or
    any($pods[0].items[];
-     .metadata.name == $selected_hosts[0].hostname and .status.podIP == $address))
+     .metadata.name == $selected_hosts[0].hostname and .status.podIP == $address)))
 ' >/dev/null "$evidence_dir/flow-http-endpointslices.json"
 
 if [[ "$measure_startup" == true ]]; then
