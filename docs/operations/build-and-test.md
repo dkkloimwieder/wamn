@@ -967,8 +967,12 @@ pinned operator 2.8.0 release before the pinned host 2.8.0 release on its own
 three-node kind cluster. It proves three Ready default-group Hosts, native
 Workload scheduling, the operator-managed EndpointSlice, the exact typed
 `route-not-found` response through `receiving.localhost`, and the native
-`CrossEnvironmentSchedulingDenied` refusal. The 404 proves only HTTP routing
-and guest execution; the Kubernetes objects independently prove the other arms.
+`CrossEnvironmentSchedulingDenied` refusal. The runner applies the WAMN-owned
+per-environment modern-Event Role and RoleBinding, proves the operator's actual
+ServiceAccount has exactly `create,patch` on `events.k8s.io/events`, and records
+both the durable condition and matching native Warning Event. The 404 proves
+only HTTP routing and guest execution; the Kubernetes objects independently
+prove the other arms.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \

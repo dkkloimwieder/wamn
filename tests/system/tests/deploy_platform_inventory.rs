@@ -45,9 +45,9 @@ type BillOfMaterialsRow = (
 ///
 /// Namespaces are not in the table because they are invariant and asserted
 /// separately: every object is `wamn-system` except the per-environment
-/// certificate template, which carries a substitution placeholder.
+/// templates, which carry a substitution placeholder.
 #[rustfmt::skip]
-const BILL_OF_MATERIALS: [BillOfMaterialsRow; 18] = [
+const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
     // The dispatcher's projects Secret carries its database principal INSIDE
     // the file — the tier's only credential with no separate DB-URL Secret.
     ("dispatcher-projects.example.yaml",
@@ -117,6 +117,9 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 18] = [
     ("run-retention.example.yaml",
         &[("CronJob", "run-retention-poc-f1")],
         &["wamn-ctl:dev"]),
+    ("runtime-operator-events-rbac.example.yaml",
+        &[("Role", "wamn-runtime-operator-events"), ("RoleBinding", "wamn-runtime-operator-events")],
+        &[]),
     ("scenario-worker.yaml",
         &[("Deployment", "scenario-worker"), ("Service", "scenario-worker")],
         &["wamn-scenario-worker:dev"]),
@@ -406,9 +409,9 @@ fn the_platform_tier_holds_exactly_the_bill_of_materials() {
 
 /// EVERY OBJECT LANDS IN ONE NAMESPACE.
 ///
-/// The single exception is the per-environment certificate template, whose
-/// namespace is a substitution placeholder — an object applied as-is would
-/// otherwise land in the wrong environment.
+/// The exceptions are per-environment templates whose namespace is a
+/// substitution placeholder — an object applied as-is would otherwise land in
+/// the wrong environment.
 #[test]
 fn every_platform_object_is_namespaced_to_wamn_system_or_templated() {
     let root = repository_root();

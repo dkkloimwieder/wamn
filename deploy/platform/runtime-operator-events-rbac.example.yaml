@@ -1,0 +1,37 @@
+# The runtime-operator's modern Kubernetes Event permission for ONE environment
+# namespace. Instantiate this file by replacing `__ENVIRONMENT_NAMESPACE__`,
+# then apply it after the cluster-singleton operator Helm release and before any
+# Workload that must emit a scheduling-refusal Event:
+#
+#   sed 's/__ENVIRONMENT_NAMESPACE__/wamn-receiving/g' \
+#     deploy/platform/runtime-operator-events-rbac.example.yaml \
+#     | kubectl apply -f -
+#
+# Chart 2.8.0 grants the operator access to core-group Events, but its native
+# recorder writes `events.k8s.io/v1`. This WAMN-owned overlay supplies only that
+# missing write surface in each watched namespace. It binds the ServiceAccount
+# the fixed `wamn` Helm release creates in `wamn-system`; it does not mint a
+# second operator identity.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wamn-runtime-operator-events
+  namespace: __ENVIRONMENT_NAMESPACE__
+rules:
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wamn-runtime-operator-events
+  namespace: __ENVIRONMENT_NAMESPACE__
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: wamn-runtime-operator-events
+subjects:
+  - kind: ServiceAccount
+    name: wamn-runtime-operator
+    namespace: wamn-system

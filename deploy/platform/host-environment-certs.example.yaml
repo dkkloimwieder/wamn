@@ -51,11 +51,15 @@
 #      only, and that release has none, so an uncovered namespace leaves the
 #      operator without Pod RBAC or informer cache access there.
 #      tests/conformance/tests/chart_seam_governance.rs enforces the agreement.
-#   3. `deploy/platform/registry-credentials.example.yaml`, instantiated into
+#   3. `deploy/platform/runtime-operator-events-rbac.example.yaml`, instantiated
+#      into this namespace. Chart 2.8.0 grants only core-group Events while its
+#      native recorder writes `events.k8s.io/v1`; the overlay supplies that
+#      missing write grant to the existing operator ServiceAccount.
+#   4. `deploy/platform/registry-credentials.example.yaml`, instantiated into
 #      this namespace — the host group mounts `wamn-registry-pull` from it.
-#   4. THIS FILE, applied before the host release: the Pod mounts both Secrets
+#   5. THIS FILE, applied before the host release: the Pod mounts both Secrets
 #      with `optional` unset, so it stays Pending until cert-manager has issued.
-#   5. The host release itself, with `global.tls.enabled: true` kept and
+#   6. The host release itself, with `global.tls.enabled: true` kept and
 #      `global.certificates.generate: false` set. `generate: true` would render
 #      the chart's own copies of these two Secrets over cert-manager's.
 #

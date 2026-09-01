@@ -116,6 +116,33 @@ run_sensitive() {
   "$@"
 }
 
+assert_can_i() {
+  local expected=$1
+  local verb=$2
+  local resource=$3
+  local subject=$4
+  local receipt=$5
+  local output status
+
+  record_command "${kube[@]}" auth can-i "$verb" "$resource" \
+    --namespace "$namespace" --as "$subject"
+  if output=$("${kube[@]}" auth can-i "$verb" "$resource" \
+      --namespace "$namespace" --as "$subject"); then
+    status=0
+  else
+    status=$?
+  fi
+  case "$expected:$status:$output" in
+    yes:0:yes|no:1:no) ;;
+    *)
+      printf 'unexpected authorization answer: verb=%s resource=%s expected=%s status=%s output=%s\n' \
+        "$verb" "$resource" "$expected" "$status" "$output" >&2
+      return 1
+      ;;
+  esac
+  printf '%s=%s\n' "$verb" "$output" >>"$receipt"
+}
+
 work_dir=$(mktemp -d)
 kubeconfig=$work_dir/kubeconfig
 kind_config=$work_dir/kind-config.yaml
@@ -535,6 +562,56 @@ run helm upgrade --install --create-namespace --kubeconfig "$kubeconfig" \
   --kube-context "$context" --namespace "$system_namespace" wamn "$chart" \
   --version "$chart_version" -f "$repo_root/deploy/infra/values-wamn.yaml" \
   -f "$operator_values" --wait --timeout 5m
+
+record_command "${kube[@]}" -n "$system_namespace" get deployment \
+  runtime-operator -o json
+"${kube[@]}" -n "$system_namespace" get deployment runtime-operator -o json \
+  >"$evidence_dir/operator-deployment.json"
+jq -e --arg namespace "$system_namespace" '
+  .metadata.name == "runtime-operator" and
+  .metadata.namespace == $namespace and
+  .spec.template.spec.serviceAccountName == "wamn-runtime-operator"
+' >/dev/null "$evidence_dir/operator-deployment.json"
+operator_service_account=$(jq -er '.spec.template.spec.serviceAccountName' \
+  "$evidence_dir/operator-deployment.json")
+
+operator_events_rbac=$work_dir/runtime-operator-events-rbac.yaml
+sed "s/__ENVIRONMENT_NAMESPACE__/$namespace/g" \
+  "$repo_root/deploy/platform/runtime-operator-events-rbac.example.yaml" \
+  >"$operator_events_rbac"
+run "${kube[@]}" apply -f "$operator_events_rbac"
+record_command "${kube[@]}" -n "$namespace" get role \
+  wamn-runtime-operator-events -o json
+"${kube[@]}" -n "$namespace" get role wamn-runtime-operator-events -o json \
+  >"$evidence_dir/operator-events-role.json"
+jq -e --arg namespace "$namespace" '
+  .metadata.name == "wamn-runtime-operator-events" and
+  .metadata.namespace == $namespace and
+  (.rules | length == 1) and
+  .rules[0].apiGroups == ["events.k8s.io"] and
+  .rules[0].resources == ["events"] and
+  (.rules[0].verbs | sort) == ["create", "patch"]
+' >/dev/null "$evidence_dir/operator-events-role.json"
+record_command "${kube[@]}" -n "$namespace" get rolebinding \
+  wamn-runtime-operator-events -o json
+"${kube[@]}" -n "$namespace" get rolebinding \
+  wamn-runtime-operator-events -o json \
+  >"$evidence_dir/operator-events-rolebinding.json"
+jq -e --arg namespace "$namespace" --arg operator_namespace "$system_namespace" '
+  .metadata.name == "wamn-runtime-operator-events" and
+  .metadata.namespace == $namespace and
+  .roleRef == {
+    apiGroup:"rbac.authorization.k8s.io",
+    kind:"Role",
+    name:"wamn-runtime-operator-events"
+  } and
+  .subjects == [{
+    kind:"ServiceAccount",
+    name:"wamn-runtime-operator",
+    namespace:$operator_namespace
+  }]
+' >/dev/null "$evidence_dir/operator-events-rolebinding.json"
+operator_subject="system:serviceaccount:$system_namespace:$operator_service_account"
 
 if [[ "$measure_startup" == true ]]; then
   run "${kube[@]}" apply -f "$repo_root/deploy/infra/tempo.yaml"
@@ -1203,18 +1280,12 @@ jq --arg name flow-http-cross-environment --arg environment "${namespace}-denied
   del(.spec.hostId)
 ' "$evidence_dir/flow-http-workload.json" >"$negative_manifest"
 run "${kube[@]}" apply -f "$negative_manifest"
-for _ in $(seq 1 120); do
-  if "${kube[@]}" -n "$namespace" get workload flow-http-cross-environment -o json \
-      >"$work_dir/cross-environment-workload.json" 2>/dev/null &&
-     jq -e '
-       any(.status.conditions[]?; .type == "HostSelection" and .status == "False")
-     ' >/dev/null "$work_dir/cross-environment-workload.json"; then
-    break
-  fi
-  sleep 2
-done
-cp "$work_dir/cross-environment-workload.json" \
-  "$evidence_dir/cross-environment-workload.json"
+run "${kube[@]}" -n "$namespace" wait --for=condition=HostSelection=False \
+  workload/flow-http-cross-environment --timeout=240s
+record_command "${kube[@]}" -n "$namespace" get workload \
+  flow-http-cross-environment -o json
+"${kube[@]}" -n "$namespace" get workload flow-http-cross-environment -o json \
+  >"$evidence_dir/cross-environment-workload.json"
 negative_uid=$(jq -er '.metadata.uid' "$evidence_dir/cross-environment-workload.json")
 jq -e --arg expected "${namespace}-denied" '
   .spec.environment == $expected and
@@ -1224,21 +1295,54 @@ jq -e --arg expected "${namespace}-denied" '
     (.message | contains("allowSharedHosts"))) and
   ([.status.conditions[]? | select(.type == "Ready" and .status == "True")] | length == 0)
 ' >/dev/null "$evidence_dir/cross-environment-workload.json"
-for _ in $(seq 1 60); do
-  "${kube[@]}" -n "$namespace" get events -o json >"$work_dir/events.json"
-  if jq -e --arg uid "$negative_uid" '
-      [.items[] | select(.involvedObject.uid == $uid and .type == "Warning" and
-        .reason == "CrossEnvironmentSchedulingDenied" and .action == "Reject")] | length >= 1
-    ' >/dev/null "$work_dir/events.json"; then
-    break
-  fi
-  sleep 2
-done
-jq --arg uid "$negative_uid" '
-  [.items[] | select(.involvedObject.uid == $uid and .type == "Warning" and
-    .reason == "CrossEnvironmentSchedulingDenied" and .action == "Reject")]
-' "$work_dir/events.json" >"$evidence_dir/cross-environment-events.json"
-jq -e 'length >= 1' >/dev/null "$evidence_dir/cross-environment-events.json"
+record_command timeout 240s "${kube[@]}" -n "$namespace" get \
+  events.events.k8s.io --field-selector "regarding.uid=$negative_uid" \
+  --watch --output-watch-events -o json
+set +o pipefail
+if timeout 240s "${kube[@]}" -n "$namespace" get events.events.k8s.io \
+    --field-selector "regarding.uid=$negative_uid" \
+    --watch --output-watch-events -o json | \
+  jq -ce --unbuffered -n --arg uid "$negative_uid" --arg namespace "$namespace" \
+    --arg target "${namespace}-denied" '
+    first(inputs | select(
+      (.type == "ADDED" or .type == "MODIFIED") and
+      .object.apiVersion == "events.k8s.io/v1" and
+      .object.kind == "Event" and
+      .object.regarding.apiVersion == "runtime.wasmcloud.dev/v1alpha1" and
+      .object.regarding.kind == "Workload" and
+      .object.regarding.namespace == $namespace and
+      .object.regarding.name == "flow-http-cross-environment" and
+      .object.regarding.uid == $uid and
+      .object.type == "Warning" and
+      .object.reason == "CrossEnvironmentSchedulingDenied" and
+      .object.action == "Reject" and
+      .object.reportingController == "workload-controller" and
+      .object.note == ("Environment \"" + $target + "\" is outside \"" +
+        $namespace + "\" and operator has allowSharedHosts=false")
+    ) | .object)
+  ' >"$evidence_dir/cross-environment-event.json"; then
+  event_watch_status=0
+else
+  event_watch_status=$?
+fi
+set -o pipefail
+if ((event_watch_status != 0)); then
+  echo "native CrossEnvironmentSchedulingDenied Event did not arrive" >&2
+  exit "$event_watch_status"
+fi
+
+# The native Event proves the grant has propagated. Check the final server
+# authorization surface now so RBAC cache propagation cannot create a false red.
+events_rbac_receipt=$evidence_dir/operator-events-rbac.receipt
+: >"$events_rbac_receipt"
+assert_can_i yes create events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
+assert_can_i yes patch events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
+assert_can_i no get events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
+assert_can_i no list events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
+assert_can_i no watch events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
+assert_can_i no update events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
+assert_can_i no delete events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
+assert_can_i no deletecollection events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
 
 jq -n --arg source "$head" --arg namespace "$namespace" \
   --arg digest "$manifest_digest" --arg host "$route_host" '
