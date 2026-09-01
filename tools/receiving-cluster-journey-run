@@ -325,14 +325,6 @@ run docker run --detach --name "$registry_container" --network kind \
   --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
   --volume "$htpasswd_file:/auth/htpasswd:ro" registry:2
 
-for _ in $(seq 1 90); do
-  if docker exec "$postgres_container" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
-docker exec "$postgres_container" pg_isready -U postgres -d postgres >/dev/null
-
 postgres_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$postgres_container")
 registry_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
@@ -345,6 +337,28 @@ for address in "$postgres_ip" "$registry_ip"; do
 done
 if [[ "$postgres_ip" == "$registry_ip" ]]; then
   echo "owned PostgreSQL and registry containers share one address" >&2
+  exit 1
+fi
+
+# The PostgreSQL image opens a temporary server while applying init scripts,
+# then stops it and starts the final server. An early pg_isready can observe the
+# temporary process and race the restart. Require the second readiness marker
+# and prove the exact host-side address before handing it to production verbs.
+postgres_ready=false
+for _ in $(seq 1 90); do
+  readiness_markers=$(docker logs "$postgres_container" 2>&1 \
+    | grep -Fc 'database system is ready to accept connections' || true)
+  if [[ $readiness_markers -ge 2 ]] &&
+     PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres -d postgres \
+       -Atqc 'SELECT current_setting('\''server_version_num'\'')::int >= 180000' \
+       | grep -Fx t >/dev/null; then
+    postgres_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$postgres_ready" != true ]]; then
+  echo "owned PostgreSQL 18 did not reach final externally reachable readiness" >&2
   exit 1
 fi
 
