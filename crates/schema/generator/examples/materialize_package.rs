@@ -1,4 +1,4 @@
-//! Materializes Receiving generator output from an already-migrated database.
+//! Materializes package generator output from an already-migrated database.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -7,12 +7,12 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context as _, Result, bail, ensure};
 use tokio_postgres::NoTls;
 use wamn_schema_generator::{
-    AuthoredSql, GenerationInput, GenerationProvenance, PackageManifest, generate,
+    AuthoredSql, GenerationInput, GenerationProvenance, PackageManifest, data_access_schemas,
+    generate,
 };
 use wamn_schema_introspection::postgres::read_catalog;
 
 const DATABASE_URL_ENV: &str = "WAMN_SCHEMA_INTROSPECTION_PG_URL";
-const APPLICATION_SCHEMA: &str = "receiving";
 const GENERATOR_ID: &str = "wamn-schema-generator/0.1.0";
 const TOOLCHAIN_ID: &str = "rust-1.98.0";
 
@@ -36,6 +36,7 @@ impl Mode {
 struct Arguments {
     mode: Mode,
     source_commit: String,
+    package_root: PathBuf,
 }
 
 #[derive(Debug)]
@@ -47,12 +48,12 @@ struct SourceFile {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let arguments = arguments()?;
-    let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../packages/receiving");
+    let package_root = arguments.package_root;
     let manifest_path = package_root.join("wamn.json");
     let manifest_bytes =
         fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest =
-        PackageManifest::from_slice(&manifest_bytes).context("parse Receiving manifest")?;
+        PackageManifest::from_slice(&manifest_bytes).context("parse package manifest")?;
     let source_files = load_authored_sql(&package_root, &manifest)?;
     let authored_sql = source_files
         .iter()
@@ -65,13 +66,15 @@ async fn main() -> Result<()> {
         .await
         .context("connect to the already-migrated PostgreSQL database")?;
     let connection_task = tokio::spawn(connection);
-    let catalog_result = read_catalog(&client, &[APPLICATION_SCHEMA]).await;
+    let schemas = data_access_schemas(&manifest_bytes).context("resolve application schemas")?;
+    let schema_names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
+    let catalog_result = read_catalog(&client, &schema_names).await;
     drop(client);
     connection_task
         .await
         .context("join PostgreSQL connection task")?
         .context("drive PostgreSQL connection")?;
-    let catalog = catalog_result.context("introspect the Receiving schema")?;
+    let catalog = catalog_result.context("introspect package schemas")?;
 
     let package = generate(&GenerationInput::new(
         &catalog,
@@ -79,7 +82,7 @@ async fn main() -> Result<()> {
         &authored_sql,
         GenerationProvenance::new(&arguments.source_commit, GENERATOR_ID, TOOLCHAIN_ID),
     ))
-    .context("generate Receiving package artifacts")?;
+    .context("generate package artifacts")?;
     let output_root = package_root.join("generated");
     let expected = expected_files(&package)?;
 
@@ -93,13 +96,17 @@ fn arguments() -> Result<Arguments> {
     let mut values = std::env::args().skip(1);
     let mode = values
         .next()
-        .context("usage: materialize_receiving <write|check> <source-commit>")?;
+        .context("usage: materialize_package <write|check> <source-commit> <package-root>")?;
     let source_commit = values
         .next()
-        .context("usage: materialize_receiving <write|check> <source-commit>")?;
+        .context("usage: materialize_package <write|check> <source-commit> <package-root>")?;
+    let package_root = values
+        .next()
+        .map(PathBuf::from)
+        .context("usage: materialize_package <write|check> <source-commit> <package-root>")?;
     ensure!(
         values.next().is_none(),
-        "usage: materialize_receiving <write|check> <source-commit>"
+        "usage: materialize_package <write|check> <source-commit> <package-root>"
     );
     ensure!(
         !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
@@ -108,6 +115,7 @@ fn arguments() -> Result<Arguments> {
     Ok(Arguments {
         mode: Mode::parse(&mode)?,
         source_commit,
+        package_root,
     })
 }
 
@@ -130,8 +138,7 @@ fn load_authored_sql(package_root: &Path, manifest: &PackageManifest) -> Result<
         manifest
             .custom_operations
             .values()
-            .filter_map(wamn_schema_generator::CustomOperationDeclaration::command)
-            .flat_map(|command| command.statements.values())
+            .flat_map(|operation| operation.statements.values())
             .map(|statement| statement.path.as_str()),
     );
 

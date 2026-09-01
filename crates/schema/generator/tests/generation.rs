@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::Path;
 
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -400,6 +402,125 @@ fn shipped_manifest() -> Value {
     serde_json::from_slice(RECEIVING_MANIFEST).unwrap()
 }
 
+fn projection_operation() -> Value {
+    json!({
+        "kind": "projection",
+        "visibility": "public",
+        "permission": "quality.load_purchase_order_detail",
+        "connection": "postgres",
+        "input": {
+            "fields": [
+                {"path": "request_id", "type": "text", "nullable": false},
+                {"path": "purchase_order_id", "type": "uuid", "nullable": false}
+            ]
+        },
+        "result": {
+            "class": "one",
+            "fields": [{"path": "id", "type": "uuid", "nullable": false}]
+        },
+        "errors": [
+            "invalid_input", "not_found", "retry", "timeout", "permission_denied",
+            "internal_error"
+        ],
+        "error_details": {
+            "invalid_input": {"required": ["field"]},
+            "not_found": {"required": ["field", "id"]},
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {"required": ["operation"]},
+            "internal_error": {}
+        },
+        "relations": [{
+            "schema": "receiving",
+            "table": "purchase_order",
+            "select_fields": ["id"],
+            "insert_fields": [],
+            "update_fields": [],
+            "lock": false,
+            "constraints": []
+        }],
+        "statements": {
+            "load_purchase_order_detail": {
+                "path": "query/quality_purchase_order_detail.sql",
+                "fetch": "optional_one",
+                "parameters": [
+                    {"name": "purchase_order_id", "type": "uuid", "nullable": false}
+                ],
+                "row": [{"name": "id", "type": "uuid", "nullable": false}]
+            }
+        }
+    })
+}
+
+fn event_handler_operation() -> Value {
+    json!({
+        "kind": "event_handler",
+        "visibility": "private",
+        "connection": "postgres",
+        "input": {
+            "fields": [
+                {"path": "event", "type": "text", "nullable": false, "values": ["insert"]},
+                {"path": "new.id", "type": "uuid", "nullable": false}
+            ]
+        },
+        "errors": ["invalid_input", "retry", "timeout", "internal_error"],
+        "error_details": {
+            "invalid_input": {"required": ["field"]},
+            "retry": {},
+            "timeout": {},
+            "internal_error": {}
+        },
+        "relations": [{
+            "schema": "receiving",
+            "table": "location",
+            "select_fields": ["id"],
+            "insert_fields": [],
+            "update_fields": [],
+            "lock": false,
+            "constraints": []
+        }],
+        "statements": {
+            "load_location": {
+                "path": "command/create_inspection/load_location.sql",
+                "fetch": "optional_one",
+                "parameters": [{"name": "id", "type": "uuid", "nullable": false}],
+                "row": [{"name": "id", "type": "uuid", "nullable": false}]
+            }
+        },
+        "registration": {
+            "source_package": "wamn_receiving",
+            "entity": "receipt",
+            "ops": ["insert"]
+        }
+    })
+}
+
+fn generic_operation_sources() -> Vec<AuthoredSql<'static>> {
+    let mut sources = RECEIVING_SOURCES
+        .iter()
+        .copied()
+        .filter(|source| source.path().starts_with("query/open_purchase_order"))
+        .collect::<Vec<_>>();
+    sources.push(AuthoredSql::new(
+        "query/quality_purchase_order_detail.sql",
+        b"SELECT id FROM purchase_order WHERE id = $1;\n",
+    ));
+    sources.push(AuthoredSql::new(
+        "command/create_inspection/load_location.sql",
+        b"SELECT id FROM location WHERE id = $1;\n",
+    ));
+    sources
+}
+
+fn generic_custom_operation_manifest() -> Value {
+    let mut manifest = shipped_manifest();
+    manifest["custom_operations"] = json!({
+        "quality.load_purchase_order_detail": projection_operation(),
+        "quality.create_inspection": event_handler_operation(),
+    });
+    manifest
+}
+
 fn shipped_generation(
     catalog: &CatalogIr,
     manifest: &Value,
@@ -667,6 +788,21 @@ fn strict_manifest_and_ir_references_fail_loudly() {
 
 fn overlay_manifest() -> Value {
     let mut overlay = manifest();
+    let mut composition =
+        shipped_manifest()["custom_operations"]["receiving.record_receipt"].clone();
+    let composition_object = composition.as_object_mut().unwrap();
+    for field in [
+        "connection",
+        "relations",
+        "statements",
+        "transaction",
+        "automatic_retry",
+        "canonicalization",
+        "constraint_errors",
+    ] {
+        composition_object.remove(field);
+    }
+
     overlay["package"] = json!({"id": "client_acme_receiving", "version": "3.0.0"});
     overlay["base_dependencies"] = json!({
         "base_receiving": {
@@ -684,20 +820,9 @@ fn overlay_manifest() -> Value {
         "purchase_order_status_check": "wamn_receiving"
     });
     overlay["custom_operations"] = json!({
-        "quality.load_purchase_order_detail": {
-            "kind": "projection",
-            "visibility": "public",
-            "permission": "quality.load_purchase_order_detail"
-        },
-        "quality.create_inspection": {
-            "kind": "event_handler",
-            "visibility": "private",
-            "registration": {
-                "source_package": "wamn_receiving",
-                "entity": "receipt",
-                "ops": ["insert"]
-            }
-        }
+        "receiving.record_receipt": composition,
+        "quality.load_purchase_order_detail": projection_operation(),
+        "quality.create_inspection": event_handler_operation(),
     });
     overlay["components"] = json!({
         "client_acme_receiving": {
@@ -745,23 +870,65 @@ fn overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain() {
     assert_eq!(registration.source_package, "wamn_receiving");
     assert_eq!(registration.entity, "receipt");
     assert_eq!(registration.ops, [wamn_event_wire::Op::Insert]);
-    let generated = run(&catalog(false), &overlay, &QUERY_SOURCES)
-        .expect("the exact overlay vocabulary must validate against its effective catalog");
-    let projection = artifact_json(
+
+    let generated = run(&receiving_catalog(), &overlay, &generic_operation_sources())
+        .expect("generic overlay custom operations must generate from one strict declaration");
+    for suffix in ["operation", "input", "result", "errors"] {
+        generated
+            .file(&format!(
+                "generated/contracts/receiving/record_receipt.{suffix}.json"
+            ))
+            .unwrap();
+    }
+    for path in [
+        "generated/native-verifier/receiving_record_receipt.rs",
+        "generated/wamn/receiving_record_receipt.rs",
+        "generated/parity/receiving_record_receipt.json",
+    ] {
+        assert!(
+            generated.file(path).is_none(),
+            "composition-only command emitted a local SQL artifact: {path}"
+        );
+    }
+    let composition = artifact_json(
         &generated,
-        "generated/contracts/quality/load_purchase_order_detail.operation.json",
+        "generated/source-map/receiving_record_receipt.json",
     );
-    assert_eq!(projection["kind"], "projection");
-    assert_eq!(projection["visibility"], "public");
-    let handler = artifact_json(
-        &generated,
-        "generated/contracts/quality/create_inspection.operation.json",
+    assert_eq!(composition["composition"]["alias"], "base_receiving");
+    assert_eq!(composition["composition"]["package"], "wamn_receiving");
+    assert_eq!(composition["composition"]["version"], "1.0.0");
+    assert_eq!(
+        composition["composition"]["digest"],
+        format!("sha256:{}", "a".repeat(64))
     );
-    assert_eq!(handler["kind"], "event_handler");
-    assert_eq!(handler["visibility"], "private");
-    assert_eq!(handler["permission_token"], Value::Null);
-    assert_eq!(handler["registration"]["source_package"], "wamn_receiving");
-    assert_eq!(handler["registration"]["ops"], json!(["insert"]));
+    assert!(
+        generated
+            .file("generated/contracts/quality/create_inspection.result.json")
+            .is_none()
+    );
+
+    let mut unbacked_composition = overlay;
+    unbacked_composition["base_dependencies"] = json!({});
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&unbacked_composition))
+            .expect_err("an unbacked SQL-less command was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut ambiguous_composition = overlay_manifest();
+    ambiguous_composition["base_dependencies"]["second_base"] = json!({
+        "package": "other_receiving",
+        "version": "1.0.0",
+        "digest": format!("sha256:{}", "b".repeat(64)),
+        "operations": ["receiving.record_receipt"]
+    });
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&ambiguous_composition))
+            .expect_err("an ambiguous composition dependency was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
 }
 
 #[test]
@@ -860,26 +1027,36 @@ fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
         GenerateErrorKind::InvalidOperation
     );
 
+    let mut write_projection = overlay_manifest();
+    write_projection["custom_operations"]["quality.load_purchase_order_detail"]["relations"][0]["update_fields"] =
+        json!(["id"]);
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&write_projection))
+            .expect_err("a write-capable projection was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
     let mut missing_registration = overlay_manifest();
     missing_registration["custom_operations"]["quality.create_inspection"]
         .as_object_mut()
         .expect("event handler object")
         .remove("registration");
-    assert!(
-        PackageManifest::from_slice(
-            &serde_json::to_vec(&missing_registration).expect("serialize manifest")
-        )
-        .is_err()
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&missing_registration))
+            .expect_err("an event handler without a registration was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
     );
 
     let mut projection_registration = overlay_manifest();
     projection_registration["custom_operations"]["quality.load_purchase_order_detail"]["registration"] =
         json!({"source_package": "wamn_receiving", "entity": "receipt", "ops": ["insert"]});
-    assert!(
-        PackageManifest::from_slice(
-            &serde_json::to_vec(&projection_registration).expect("serialize manifest")
-        )
-        .is_err()
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&projection_registration))
+            .expect_err("a projection registration was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
     );
 
     for ops in [json!([]), json!(["insert", "insert"])] {
@@ -892,6 +1069,20 @@ fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
             GenerateErrorKind::InvalidOperation
         );
     }
+
+    let mut handler_permission_error = overlay_manifest();
+    handler_permission_error["custom_operations"]["quality.create_inspection"]["errors"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("permission_denied"));
+    handler_permission_error["custom_operations"]["quality.create_inspection"]["error_details"]["permission_denied"] =
+        json!({"required": ["operation"]});
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&handler_permission_error))
+            .expect_err("a private handler permission error was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
 
     let mut unknown_kind = overlay_manifest();
     unknown_kind["custom_operations"]["quality.load_purchase_order_detail"]["kind"] =
@@ -908,6 +1099,77 @@ fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
     assert!(
         PackageManifest::from_slice(&serde_json::to_vec(&old_grammar).expect("serialize manifest"))
             .is_err()
+    );
+
+    let mut model_collision = manifest();
+    let mut operation = projection_operation();
+    operation["permission"] = json!("purchase.order");
+    model_collision["custom_operations"]["purchase.order"] = operation;
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&model_collision))
+            .expect_err("a custom artifact collided with a model artifact")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut custom_collision = manifest();
+    for operation_name in ["a_b.c", "a.b_c"] {
+        let mut operation = projection_operation();
+        operation["permission"] = json!(operation_name);
+        custom_collision["custom_operations"][operation_name] = operation;
+    }
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&custom_collision))
+            .expect_err("two custom operations shared one flattened artifact identity")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+}
+
+#[test]
+fn custom_sql_generated_rust_symbols_are_unique_before_emission() {
+    let mut row_collision = manifest();
+    let mut operation = projection_operation();
+    let statement = operation["statements"]["load_purchase_order_detail"].clone();
+    operation["statements"] = json!({
+        "foo1": statement,
+        "foo_1": {
+            "path": "query/other_purchase_order_detail.sql",
+            "fetch": "optional_one",
+            "parameters": [{"name": "id", "type": "uuid", "nullable": false}],
+            "row": [{"name": "id", "type": "uuid", "nullable": false}]
+        }
+    });
+    row_collision["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&row_collision))
+            .expect_err("two statements collapsed to one Rust row symbol")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut fixture_collision = manifest();
+    let mut operation = projection_operation();
+    operation["statements"] = json!({
+        "foo": {
+            "path": "query/foo.sql",
+            "fetch": "optional_one",
+            "parameters": [{"name": "bar_baz", "type": "uuid", "nullable": false}],
+            "row": [{"name": "id", "type": "uuid", "nullable": false}]
+        },
+        "foo_bar": {
+            "path": "query/foo_bar.sql",
+            "fetch": "optional_one",
+            "parameters": [{"name": "baz", "type": "uuid", "nullable": false}],
+            "row": [{"name": "id", "type": "uuid", "nullable": false}]
+        }
+    });
+    fixture_collision["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&fixture_collision))
+            .expect_err("two statement parameters collapsed to one Rust fixture symbol")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
     );
 }
 
@@ -977,11 +1239,88 @@ fn operation_error_details_are_required_closed_and_exact() {
     );
 
     let mut command_detail = shipped_manifest();
-    command_detail["custom_operations"]["receiving.record_receipt"]["error_details"]["receipt_reference_conflict"]
-        ["required"] = json!(["field"]);
+    command_detail["custom_operations"]["receiving.record_receipt"]["error_details"]["purchase_order_not_open"]
+        ["required"] = json!(["id"]);
+    validate_operation_vocabulary(&parsed_manifest(&command_detail))
+        .expect("package-local error detail keys are authored contract facts");
+
+    command_detail["custom_operations"]["receiving.record_receipt"]["error_details"]["purchase_order_not_open"]
+        ["required"] = json!(["id", "id"]);
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&command_detail))
-            .expect_err("an incorrect command detail schema was accepted")
+            .expect_err("repeated package-local detail keys were accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut constraint_detail = shipped_manifest();
+    constraint_detail["custom_operations"]["receiving.record_receipt"]["error_details"]["receipt_reference_conflict"]
+        ["required"] = json!(["field"]);
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&constraint_detail))
+            .expect_err("a constraint error without constraint identity was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut repeated_constraint_target = shipped_manifest();
+    repeated_constraint_target["custom_operations"]["receiving.record_receipt"]["constraint_errors"]
+        ["receipt_idempotency_key_key"] = json!("receipt_reference_conflict");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&repeated_constraint_target))
+            .expect_err("multiple constraints silently collapsed to one error case")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut reserved_constraint_target = shipped_manifest();
+    reserved_constraint_target["custom_operations"]["receiving.record_receipt"]["constraint_errors"]
+        ["receipt_purchase_order_id_receipt_reference_key"] = json!("retry");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&reserved_constraint_target))
+            .expect_err("a constraint redefined a reserved error meaning")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut public_without_permission_refusal = shipped_manifest();
+    public_without_permission_refusal["custom_operations"]["receiving.record_receipt"]["errors"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|error| error.as_str() != Some("permission_denied"));
+    public_without_permission_refusal["custom_operations"]["receiving.record_receipt"]
+        ["error_details"]
+        .as_object_mut()
+        .unwrap()
+        .remove("permission_denied");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&public_without_permission_refusal))
+            .expect_err("a public operation omitted its permission refusal")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut transactionless_sql = shipped_manifest();
+    let command = transactionless_sql["custom_operations"]["receiving.record_receipt"]
+        .as_object_mut()
+        .unwrap();
+    command.remove("transaction");
+    command.remove("automatic_retry");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&transactionless_sql))
+            .expect_err("a local SQL command without an explicit transaction was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+
+    let mut missing_canonical_quantity = shipped_manifest();
+    missing_canonical_quantity["custom_operations"]["receiving.record_receipt"]["input"]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|field| field["path"].as_str() != Some("value.line[].quantity"));
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&missing_canonical_quantity))
+            .expect_err("canonical line semantics omitted their positive numeric quantity")
             .kind(),
         GenerateErrorKind::InvalidOperation
     );
@@ -1696,6 +2035,138 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
 }
 
 #[test]
+fn generic_custom_operation_path_preserves_shipped_receiving_bytes() {
+    let package = generate(&GenerationInput::new(
+        &receiving_catalog(),
+        RECEIVING_MANIFEST,
+        &RECEIVING_SOURCES,
+        GenerationProvenance::new(
+            "8f20e0eca55a121e2ec53681f466cc2118497a7b",
+            "wamn-schema-generator/0.1.0",
+            "rust-1.98.0",
+        ),
+    ))
+    .unwrap();
+    let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../packages/receiving");
+    let generated_root = package_root.join("generated");
+    for relative in [
+        "contracts/receiving/record_receipt.operation.json",
+        "contracts/receiving/record_receipt.input.json",
+        "contracts/receiving/record_receipt.result.json",
+        "contracts/receiving/record_receipt.errors.json",
+        "native-verifier/receiving_record_receipt.rs",
+        "wamn/receiving_record_receipt.rs",
+        "parity/receiving_record_receipt.json",
+        "source-map/receiving_record_receipt.json",
+    ] {
+        let file = package.file(&format!("generated/{relative}")).unwrap();
+        assert_eq!(
+            file.bytes(),
+            fs::read(generated_root.join(relative)).unwrap(),
+            "generated byte drift in {relative}"
+        );
+    }
+}
+
+#[test]
+fn generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings() {
+    let manifest = generic_custom_operation_manifest();
+    let package = run(
+        &receiving_catalog(),
+        &manifest,
+        &generic_operation_sources(),
+    )
+    .unwrap();
+
+    for (operation, module, kind) in [
+        (
+            "quality/load_purchase_order_detail",
+            "quality_load_purchase_order_detail",
+            "projection",
+        ),
+        (
+            "quality/create_inspection",
+            "quality_create_inspection",
+            "event_handler",
+        ),
+    ] {
+        let contract = artifact_json(
+            &package,
+            &format!("generated/contracts/{operation}.operation.json"),
+        );
+        assert_eq!(contract["kind"], kind);
+        package
+            .file(&format!("generated/contracts/{operation}.input.json"))
+            .unwrap();
+        package
+            .file(&format!("generated/contracts/{operation}.errors.json"))
+            .unwrap();
+        package
+            .file(&format!("generated/native-verifier/{module}.rs"))
+            .unwrap();
+        package
+            .file(&format!("generated/wamn/{module}.rs"))
+            .unwrap();
+        let parity_path = format!("generated/parity/{module}.json");
+        validate_parity_json(package.file(&parity_path).unwrap().bytes()).unwrap();
+        let source_map = artifact_json(&package, &format!("generated/source-map/{module}.json"));
+        assert_eq!(source_map["operation"], operation.replace('/', "."));
+        assert_eq!(source_map["kind"], kind);
+        assert_eq!(
+            source_map["statements"].as_object().unwrap().len(),
+            source_map["wamn_accessors"].as_array().unwrap().len()
+        );
+    }
+
+    assert!(
+        package
+            .file("generated/contracts/quality/create_inspection.result.json")
+            .is_none()
+    );
+    package
+        .file("generated/contracts/quality/load_purchase_order_detail.result.json")
+        .unwrap();
+    let handler = artifact_json(
+        &package,
+        "generated/contracts/quality/create_inspection.operation.json",
+    );
+    assert_eq!(handler["registration"]["source_package"], "wamn_receiving");
+    assert_eq!(handler["registration"]["ops"], json!(["insert"]));
+    let data_access = artifact_json(&package, "generated/platform-policy/data-access.json");
+    let location = data_access["relations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|relation| relation["table"] == "location")
+        .unwrap();
+    assert_eq!(location["select_fields"], json!(["id"]));
+}
+
+#[test]
+fn ownership_only_model_generates_without_fabricated_crud() {
+    let mut manifest = shipped_manifest();
+    manifest["models"]["location"] = json!({
+        "schema": "receiving",
+        "table": "location",
+        "owner": "wamn_receiving",
+        "server_owned_fields": ["id"],
+        "enum_fields": {},
+        "operations": {}
+    });
+    let package = shipped_generation(&receiving_catalog(), &manifest).unwrap();
+    package.file("generated/models/location.json").unwrap();
+    for operation in ["get", "query", "create", "update", "delete"] {
+        assert!(
+            package
+                .file(&format!(
+                    "generated/contracts/location/{operation}.operation.json"
+                ))
+                .is_none()
+        );
+    }
+}
+
+#[test]
 fn command_privilege_declarations_match_sql_effects_and_row_locks() {
     let catalog = receiving_catalog();
     let mut wrong_verb = shipped_manifest();
@@ -1855,61 +2326,63 @@ fn shipped_command_source_map_parity_and_bind_fixtures_align_structurally() {
 }
 
 #[test]
-fn command_statement_vocabulary_refuses_signature_and_path_mutants() {
+fn custom_statement_declarations_drive_both_siblings_without_domain_tables() {
     let catalog = receiving_catalog();
-    let mutations = [
-        (
-            "path",
-            "/custom_operations/receiving.record_receipt/statements/claim_command/path",
-            json!("command/record_receipt/find_replay.sql"),
-        ),
-        (
-            "fetch",
-            "/custom_operations/receiving.record_receipt/statements/claim_command/fetch",
-            json!("one"),
-        ),
-        (
-            "parameter type",
-            "/custom_operations/receiving.record_receipt/statements/claim_command/parameters/1/type",
-            json!("text"),
-        ),
-        (
-            "parameter name",
-            "/custom_operations/receiving.record_receipt/statements/claim_command/parameters/1/name",
-            json!("canonical_payload"),
-        ),
-        (
-            "parameter nullability",
-            "/custom_operations/receiving.record_receipt/statements/claim_command/parameters/1/nullable",
-            json!(true),
-        ),
-        (
-            "row type",
-            "/custom_operations/receiving.record_receipt/statements/claim_command/row/0/type",
-            json!("text"),
-        ),
-        (
-            "row name",
-            "/custom_operations/receiving.record_receipt/statements/claim_command/row/0/name",
-            json!("claimed_receipt_id"),
-        ),
-        (
-            "row nullability",
-            "/custom_operations/receiving.record_receipt/statements/claim_command/row/0/nullable",
-            json!(true),
-        ),
-    ];
+    let mut declaration = shipped_manifest();
+    declaration["custom_operations"]["receiving.record_receipt"]["statements"]["claim_command"]["parameters"]
+        [1] = json!({
+        "name": "canonical_payload",
+        "type": "text",
+        "nullable": true
+    });
+    declaration["custom_operations"]["receiving.record_receipt"]["statements"]["claim_command"]["row"]
+        [0] = json!({
+        "name": "claimed_receipt_id",
+        "type": "text",
+        "nullable": true
+    });
+    let package = shipped_generation(&catalog, &declaration).unwrap();
+    let source_map = artifact_json(
+        &package,
+        "generated/source-map/receiving_record_receipt.json",
+    );
+    let accessor = object_named(
+        source_map["wamn_accessors"].as_array().unwrap(),
+        "name",
+        "claim_command",
+    );
+    let bind = object_named(
+        accessor["binds"].as_array().unwrap(),
+        "parameter",
+        "canonical_payload",
+    );
+    assert_eq!(bind["postgres"], "text");
+    assert_eq!(bind["nullable"], true);
+    let row = object_named(
+        source_map["wamn_rows"].as_array().unwrap(),
+        "name",
+        "ClaimCommandRow",
+    );
+    let field = object_named(
+        row["fields"].as_array().unwrap(),
+        "name",
+        "claimed_receipt_id",
+    );
+    assert_eq!(field["type"], "Option<String>");
 
-    for (name, pointer, replacement) in mutations {
-        let mut manifest = shipped_manifest();
-        *manifest.pointer_mut(pointer).unwrap() = replacement;
-        let error = shipped_generation(&catalog, &manifest).expect_err(name);
-        assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation, "{name}");
-    }
+    let mut duplicate_path = shipped_manifest();
+    duplicate_path["custom_operations"]["receiving.record_receipt"]["statements"]["claim_command"]
+        ["path"] = json!("command/record_receipt/find_replay.sql");
+    assert_eq!(
+        shipped_generation(&catalog, &duplicate_path)
+            .expect_err("two statements consumed one authored SQL path")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
 }
 
 #[test]
-fn command_ir_references_refuse_missing_or_changed_fields_and_named_constraints() {
+fn custom_operation_ir_references_require_declared_fields_and_named_constraints() {
     let manifest = shipped_manifest();
     let catalog = receiving_catalog();
     let ledger = table(&catalog, "record_receipt_command");
@@ -1934,39 +2407,6 @@ fn command_ir_references_refuse_missing_or_changed_fields_and_named_constraints(
         GenerateErrorKind::UnknownColumn
     );
 
-    for (column_type, nullable) in [(ColumnType::Text, false), (ColumnType::Bytes, true)] {
-        let changed_field = replacing_table(
-            &catalog,
-            rebuilt_table(
-                ledger,
-                ledger
-                    .columns()
-                    .iter()
-                    .map(|column| {
-                        if column.name() == "canonical_command" {
-                            Column::new(
-                                column.name(),
-                                column_type,
-                                nullable,
-                                column.default(),
-                                column.generation().cloned(),
-                            )
-                        } else {
-                            column.clone()
-                        }
-                    })
-                    .collect(),
-                ledger.constraints().to_vec(),
-            ),
-        );
-        assert_eq!(
-            shipped_generation(&changed_field, &manifest)
-                .unwrap_err()
-                .kind(),
-            GenerateErrorKind::InvalidOperation
-        );
-    }
-
     let missing_ledger_constraint = replacing_table(
         &catalog,
         rebuilt_table(
@@ -1984,31 +2424,6 @@ fn command_ir_references_refuse_missing_or_changed_fields_and_named_constraints(
     );
     assert_eq!(
         shipped_generation(&missing_ledger_constraint, &manifest)
-            .unwrap_err()
-            .kind(),
-        GenerateErrorKind::InvalidOperation
-    );
-
-    let changed_ledger_constraint = replacing_table(
-        &catalog,
-        rebuilt_table(
-            ledger,
-            ledger.columns().to_vec(),
-            ledger
-                .constraints()
-                .iter()
-                .map(|constraint| {
-                    if constraint.name() == "record_receipt_command_idempotency_key_pkey" {
-                        Constraint::primary_key(constraint.name(), ["receipt_id"]).unwrap()
-                    } else {
-                        constraint.clone()
-                    }
-                })
-                .collect(),
-        ),
-    );
-    assert_eq!(
-        shipped_generation(&changed_ledger_constraint, &manifest)
             .unwrap_err()
             .kind(),
         GenerateErrorKind::InvalidOperation
@@ -2037,7 +2452,7 @@ fn command_ir_references_refuse_missing_or_changed_fields_and_named_constraints(
         GenerateErrorKind::InvalidOperation
     );
 
-    let changed_constraint = replacing_table(
+    let mapped_check_constraint = replacing_table(
         &catalog,
         rebuilt_table(
             receipt,
@@ -2047,7 +2462,7 @@ fn command_ir_references_refuse_missing_or_changed_fields_and_named_constraints(
                 .iter()
                 .map(|constraint| {
                     if constraint.name() == "receipt_purchase_order_id_receipt_reference_key" {
-                        Constraint::unique(constraint.name(), ["receipt_reference"]).unwrap()
+                        Constraint::check(constraint.name(), "receipt_reference <> ''").unwrap()
                     } else {
                         constraint.clone()
                     }
@@ -2055,12 +2470,18 @@ fn command_ir_references_refuse_missing_or_changed_fields_and_named_constraints(
                 .collect(),
         ),
     );
-    assert_eq!(
-        shipped_generation(&changed_constraint, &manifest)
-            .unwrap_err()
-            .kind(),
-        GenerateErrorKind::InvalidOperation
+    let package = shipped_generation(&mapped_check_constraint, &manifest).unwrap();
+    let errors = artifact_json(
+        &package,
+        "generated/contracts/receiving/record_receipt.errors.json",
     );
+    let mapped = errors["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["literal"] == "receipt_reference_conflict")
+        .unwrap();
+    assert_eq!(mapped["from"], "check_violation");
 }
 
 #[test]

@@ -10,11 +10,11 @@ use wamn_schema_introspection::ir::{
 };
 
 use crate::manifest::{
-    AccessOperationErrorLiteral, AuthoredSqlDeclaration, CommandDeclaration, CommandErrorLiteral,
-    CommandFetch, CommandTransaction, CommandValueDeclaration, ContractFieldDeclaration,
-    CrudAction, CursorDirection, ModelDeclaration, OperationDeclaration,
+    AccessOperationErrorLiteral, AuthoredSqlDeclaration, CrudAction, CursorDirection,
+    CustomOperationDeclaration, CustomOperationKind, ModelDeclaration, OperationDeclaration,
     OperationErrorDetailDeclaration, PackageManifest, PolicyContractRequirement,
-    PolicyContractState, ResultClass, SortDeclaration, canonical_operation_identity,
+    PolicyContractState, ResultClass, SortDeclaration, StaticSqlFetch,
+    canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
     validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
@@ -24,161 +24,6 @@ use crate::{GenerateError, GenerateErrorKind};
 const POSTGRES_INTERFACE: &str = "wamn:postgres@0.1.0";
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
-const COMMAND_LIMIT: u32 = 100;
-const RECORD_RECEIPT: &str = "receiving.record_receipt";
-
-#[derive(Debug, Clone, Copy)]
-struct ExpectedCommandValue {
-    name: &'static str,
-    ty: ColumnType,
-    nullable: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ExpectedCommandStatement {
-    name: &'static str,
-    fetch: CommandFetch,
-    parameters: &'static [ExpectedCommandValue],
-    row: &'static [ExpectedCommandValue],
-}
-
-const fn command_value(name: &'static str, ty: ColumnType, nullable: bool) -> ExpectedCommandValue {
-    ExpectedCommandValue { name, ty, nullable }
-}
-
-const RECORD_RECEIPT_STATEMENTS: &[ExpectedCommandStatement] = &[
-    ExpectedCommandStatement {
-        name: "claim_command",
-        fetch: CommandFetch::OptionalOne,
-        parameters: &[
-            command_value("idempotency_key", ColumnType::Text, false),
-            command_value("canonical_command", ColumnType::Bytes, false),
-            command_value("purchase_order_id", ColumnType::Uuid, false),
-        ],
-        row: &[command_value("receipt_id", ColumnType::Uuid, false)],
-    },
-    ExpectedCommandStatement {
-        name: "finalize_command",
-        fetch: CommandFetch::One,
-        parameters: &[
-            command_value("idempotency_key", ColumnType::Text, false),
-            command_value("canonical_command", ColumnType::Bytes, false),
-            command_value("receipt_id", ColumnType::Uuid, false),
-            command_value("purchase_order_status", ColumnType::Text, false),
-            command_value("row_version", ColumnType::Int64, false),
-        ],
-        row: &[
-            command_value("purchase_order_status", ColumnType::Text, true),
-            command_value("row_version", ColumnType::Int64, true),
-        ],
-    },
-    ExpectedCommandStatement {
-        name: "find_replay",
-        fetch: CommandFetch::OptionalOne,
-        parameters: &[command_value("idempotency_key", ColumnType::Text, false)],
-        row: &[
-            command_value("canonical_command", ColumnType::Bytes, false),
-            command_value("receipt_id", ColumnType::Uuid, false),
-            command_value("purchase_order_id", ColumnType::Uuid, false),
-            command_value("purchase_order_status", ColumnType::Text, true),
-            command_value("row_version", ColumnType::Int64, true),
-        ],
-    },
-    ExpectedCommandStatement {
-        name: "finish_purchase_order",
-        fetch: CommandFetch::One,
-        parameters: &[command_value("purchase_order_id", ColumnType::Uuid, false)],
-        row: &[
-            command_value("status", ColumnType::Text, false),
-            command_value("row_version", ColumnType::Int64, false),
-        ],
-    },
-    ExpectedCommandStatement {
-        name: "insert_receipt",
-        fetch: CommandFetch::One,
-        parameters: &[
-            command_value("receipt_id", ColumnType::Uuid, false),
-            command_value("idempotency_key", ColumnType::Text, false),
-            command_value("purchase_order_id", ColumnType::Uuid, false),
-            command_value("receipt_reference", ColumnType::Text, false),
-            command_value("occurred_at", ColumnType::Timestamptz, false),
-        ],
-        row: &[command_value("id", ColumnType::Uuid, false)],
-    },
-    ExpectedCommandStatement {
-        name: "insert_receipt_line",
-        fetch: CommandFetch::BoundedList,
-        parameters: &[
-            command_value("receipt_id", ColumnType::Uuid, false),
-            command_value("line", ColumnType::Json, false),
-        ],
-        row: &[command_value("id", ColumnType::Uuid, false)],
-    },
-    ExpectedCommandStatement {
-        name: "lock_purchase_order",
-        fetch: CommandFetch::OptionalOne,
-        parameters: &[command_value("purchase_order_id", ColumnType::Uuid, false)],
-        row: &[command_value("status", ColumnType::Text, false)],
-    },
-    ExpectedCommandStatement {
-        name: "update_purchase_order_line",
-        fetch: CommandFetch::BoundedList,
-        parameters: &[
-            command_value("purchase_order_id", ColumnType::Uuid, false),
-            command_value("line", ColumnType::Json, false),
-        ],
-        row: &[command_value("id", ColumnType::Uuid, false)],
-    },
-    ExpectedCommandStatement {
-        name: "validate_receipt_line",
-        fetch: CommandFetch::One,
-        parameters: &[
-            command_value("purchase_order_id", ColumnType::Uuid, false),
-            command_value("line", ColumnType::Json, false),
-        ],
-        row: &[
-            command_value("outcome", ColumnType::Text, true),
-            command_value("id", ColumnType::Uuid, true),
-        ],
-    },
-];
-
-const RECORD_RECEIPT_LOCATION_FIELDS: &[ExpectedCommandValue] =
-    &[command_value("id", ColumnType::Uuid, false)];
-const RECORD_RECEIPT_PURCHASE_ORDER_FIELDS: &[ExpectedCommandValue] = &[
-    command_value("id", ColumnType::Uuid, false),
-    command_value("status", ColumnType::Text, false),
-    command_value("row_version", ColumnType::Int64, false),
-    command_value("updated_at", ColumnType::Timestamptz, false),
-];
-const RECORD_RECEIPT_PURCHASE_ORDER_LINE_FIELDS: &[ExpectedCommandValue] = &[
-    command_value("id", ColumnType::Uuid, false),
-    command_value("purchase_order_id", ColumnType::Uuid, false),
-    command_value("ordered_quantity", ColumnType::Numeric, false),
-    command_value("received_quantity", ColumnType::Numeric, false),
-];
-const RECORD_RECEIPT_LEDGER_FIELDS: &[ExpectedCommandValue] = &[
-    command_value("idempotency_key", ColumnType::Text, false),
-    command_value("canonical_command", ColumnType::Bytes, false),
-    command_value("receipt_id", ColumnType::Uuid, false),
-    command_value("purchase_order_id", ColumnType::Uuid, false),
-    command_value("purchase_order_status", ColumnType::Text, true),
-    command_value("row_version", ColumnType::Int64, true),
-];
-const RECORD_RECEIPT_RECEIPT_FIELDS: &[ExpectedCommandValue] = &[
-    command_value("id", ColumnType::Uuid, false),
-    command_value("idempotency_key", ColumnType::Text, false),
-    command_value("purchase_order_id", ColumnType::Uuid, false),
-    command_value("receipt_reference", ColumnType::Text, false),
-    command_value("occurred_at", ColumnType::Timestamptz, false),
-];
-const RECORD_RECEIPT_RECEIPT_LINE_FIELDS: &[ExpectedCommandValue] = &[
-    command_value("id", ColumnType::Uuid, false),
-    command_value("receipt_id", ColumnType::Uuid, false),
-    command_value("purchase_order_line_id", ColumnType::Uuid, false),
-    command_value("quantity", ColumnType::Numeric, false),
-    command_value("location_id", ColumnType::Uuid, false),
-];
 
 /// One package-owned authored SQL source supplied without filesystem access.
 #[derive(Debug, Clone, Copy)]
@@ -390,18 +235,20 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         )?;
     }
     for (operation_name, operation) in &manifest.custom_operations {
-        if let Some(command) = operation.command() {
-            emit_command(&mut files, &manifest, operation_name, command)?;
-        } else {
-            emit_custom_operation_contract(&mut files, &manifest, operation_name, operation)?;
-        }
+        emit_custom_operation(
+            &mut files,
+            input.catalog,
+            &manifest,
+            operation_name,
+            operation,
+        )?;
     }
     let data_access = crate::data_access::derive_data_access_overlay(
         input.catalog,
         input.manifest_json,
         &manifest,
     )?;
-    insert_canonical_json(
+    insert_canonical_json_line(
         &mut files,
         crate::data_access::DATA_ACCESS_OVERLAY_PATH,
         &data_access,
@@ -442,32 +289,6 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         .into_boxed_slice();
 
     Ok(GeneratedPackage { files, weld })
-}
-
-fn emit_custom_operation_contract(
-    files: &mut BTreeMap<String, Vec<u8>>,
-    manifest: &PackageManifest,
-    operation_name: &str,
-    operation: &crate::manifest::CustomOperationDeclaration,
-) -> Result<(), GenerateError> {
-    let (module, name) = operation_name
-        .split_once('.')
-        .expect("custom operation validation requires module.operation");
-    let operation_id = canonical_operation_identity(&manifest.package, operation_name)?;
-    let grant = (operation.visibility() == crate::manifest::OperationVisibility::Public)
-        .then(|| operation_id.clone());
-    insert_json(
-        files,
-        &format!("generated/contracts/{module}/{name}.operation.json"),
-        &json!({
-            "operation": operation_id,
-            "kind": operation.kind(),
-            "visibility": operation.visibility(),
-            "permission_token": operation.permission(),
-            "grant": grant,
-            "registration": operation.registration(),
-        }),
-    )
 }
 
 /// Hash sorted path/byte entries with unambiguous big-endian length framing.
@@ -522,19 +343,16 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
     for (model_name, model) in &manifest.models {
         validate_model(input.catalog, manifest, model_name, model)?;
     }
-    for (operation_name, operation) in &manifest.custom_operations {
-        if let Some(command) = operation.command() {
-            validate_command(
-                input.catalog,
-                input.authored_sql,
-                operation_name,
-                command,
-                manifest,
-            )?;
-        }
-    }
     validate_connections(manifest)?;
     validate_authored_sources(manifest, input.authored_sql)?;
+    for (operation_name, operation) in &manifest.custom_operations {
+        validate_custom_operation_sql(
+            input.catalog,
+            input.authored_sql,
+            operation_name,
+            operation,
+        )?;
+    }
     Ok(())
 }
 
@@ -558,6 +376,17 @@ fn validate_model(
             format!("{}.{}", model.schema, model.table),
         )
     })?;
+    if let Some(column) = table
+        .columns()
+        .iter()
+        .find(|column| rust_identifier(column.name()).is_none())
+    {
+        return Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidIdentity,
+            "model column has no lossless Rust 2024 identifier spelling",
+            format!("{}.{}.{}", model.schema, model.table, column.name()),
+        ));
+    }
     let admitted_owners = std::iter::once(manifest.package.id.as_str())
         .chain(
             manifest
@@ -593,13 +422,6 @@ fn validate_model(
         }
         validate_definition_owner(model_name, constraint, owner, &admitted_owners)?;
     }
-    if model.operations.is_empty() {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidModel,
-            format!("{model_name} declares no operations"),
-        ));
-    }
-
     let mut seen = BTreeSet::new();
     for field in &model.server_owned_fields {
         validate_field(table, model_name, field)?;
@@ -919,187 +741,13 @@ fn validate_query(
     Ok(())
 }
 
-fn validate_command(
-    catalog: &CatalogIr,
-    authored_sql: &[AuthoredSql<'_>],
-    command_name: &str,
-    command: &CommandDeclaration,
-    manifest: &PackageManifest,
-) -> Result<(), GenerateError> {
-    if command_name != RECORD_RECEIPT {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "custom command `{command_name}` must be the package-local `{RECORD_RECEIPT}` operation"
-            ),
-        ));
-    }
-    if !manifest.connections.contains_key(&command.connection) {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "{command_name} references unknown connection {}",
-                command.connection
-            ),
-        ));
-    }
-    if command.transaction != CommandTransaction::ExplicitPerInput || command.automatic_retry {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{command_name} requires one explicit transaction per input and no retry"),
-        ));
-    }
-    if command.input.raw_body_maximum != 1_048_576
-        || command.input.envelope.minimum != 1
-        || command.input.envelope.maximum != COMMAND_LIMIT
-        || command.input.line.minimum != 1
-        || command.input.line.maximum != COMMAND_LIMIT
-    {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "{command_name} raw body must cap at 1 MiB and counts must accept exactly 1..=100"
-            ),
-        ));
-    }
-    require_contract_fields(
-        command_name,
-        &command.input.fields,
-        &[
-            ("request_id", ColumnType::Text, false, &[]),
-            ("value.idempotency_key", ColumnType::Text, false, &[]),
-            ("value.purchase_order_id", ColumnType::Uuid, false, &[]),
-            ("value.receipt_reference", ColumnType::Text, false, &[]),
-            ("value.occurred_at", ColumnType::Timestamptz, false, &[]),
-            (
-                "value.line[].purchase_order_line_id",
-                ColumnType::Uuid,
-                false,
-                &[],
-            ),
-            ("value.line[].quantity", ColumnType::Numeric, false, &[]),
-            ("value.line[].location_id", ColumnType::Uuid, false, &[]),
-        ],
-    )?;
-    if command.result.class != ResultClass::One {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{command_name} result must be one"),
-        ));
-    }
-    require_contract_fields(
-        command_name,
-        &command.result.fields,
-        &[
-            ("receipt_id", ColumnType::Uuid, false, &[]),
-            ("purchase_order_id", ColumnType::Uuid, false, &[]),
-            (
-                "purchase_order_status",
-                ColumnType::Text,
-                false,
-                &["open", "complete"],
-            ),
-            ("row_version", ColumnType::Int64, false, &[]),
-        ],
-    )?;
-    if command.canonicalization.excluded_fields
-        != ["request_id".to_owned(), "value.idempotency_key".to_owned()]
-    {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{command_name} canonical identity must exclude correlation and lookup keys"),
-        ));
-    }
-    let expected_errors = [
-        CommandErrorLiteral::InvalidInput,
-        CommandErrorLiteral::PurchaseOrderNotFound,
-        CommandErrorLiteral::PurchaseOrderNotOpen,
-        CommandErrorLiteral::PurchaseOrderLineNotFound,
-        CommandErrorLiteral::PurchaseOrderLineMismatch,
-        CommandErrorLiteral::LocationNotFound,
-        CommandErrorLiteral::QuantityExceedsRemaining,
-        CommandErrorLiteral::ReceiptReferenceConflict,
-        CommandErrorLiteral::IdempotencyConflict,
-        CommandErrorLiteral::Retry,
-        CommandErrorLiteral::Timeout,
-        CommandErrorLiteral::PermissionDenied,
-        CommandErrorLiteral::InternalError,
-    ];
-    if command.errors.as_slice() != expected_errors
-        || command.constraint_errors.len() != 1
-        || command
-            .constraint_errors
-            .get("receipt_purchase_order_id_receipt_reference_key")
-            != Some(&CommandErrorLiteral::ReceiptReferenceConflict)
-    {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{command_name} must declare the exact closed error and constraint mapping"),
-        ));
-    }
-    validate_command_relations(catalog, authored_sql, command_name, command)?;
-    validate_command_statements(command_name, command)
-}
-
-fn require_contract_fields(
-    operation: &str,
-    actual: &[ContractFieldDeclaration],
-    expected: &[(&str, ColumnType, bool, &[&str])],
-) -> Result<(), GenerateError> {
-    let matches = actual.len() == expected.len()
-        && actual.iter().zip(expected).all(|(field, expected)| {
-            field.path == expected.0
-                && field.ty == expected.1
-                && field.nullable == expected.2
-                && field
-                    .values
-                    .iter()
-                    .map(String::as_str)
-                    .eq(expected.3.iter().copied())
-        });
-    if matches {
-        Ok(())
-    } else {
-        Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{operation} fields do not match the closed command contract"),
-        ))
-    }
-}
-
-fn validate_command_relations(
+fn validate_custom_operation_sql(
     catalog: &CatalogIr,
     authored_sql: &[AuthoredSql<'_>],
     operation: &str,
-    command: &CommandDeclaration,
+    declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    let expected_tables = [
-        "location",
-        "purchase_order",
-        "purchase_order_line",
-        "record_receipt_command",
-        "receipt",
-        "receipt_line",
-    ];
-    if !command
-        .relations
-        .iter()
-        .map(|relation| relation.schema.as_str())
-        .all(|schema| schema == "receiving")
-        || !command
-            .relations
-            .iter()
-            .map(|relation| relation.table.as_str())
-            .eq(expected_tables)
-    {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{operation} must declare its exact six-relation dependency set"),
-        ));
-    }
-    for relation in &command.relations {
-        validate_identifier(&relation.schema, "command relation schema")?;
-        validate_identifier(&relation.table, "command relation table")?;
+    for relation in &declaration.relations {
         let table = catalog
             .tables()
             .iter()
@@ -1111,123 +759,37 @@ fn validate_command_relations(
                     format!("{}.{}", relation.schema, relation.table),
                 )
             })?;
-        let expected_fields = record_receipt_relation_fields(&relation.table)
-            .expect("the exact table list has a field contract");
         for fields in [
             &relation.select_fields,
             &relation.insert_fields,
             &relation.update_fields,
         ] {
-            validate_command_relation_fields(operation, relation, table, fields)?;
+            validate_static_sql_relation_fields(operation, relation, table, fields)?;
         }
-        let consumed = relation
-            .select_fields
-            .iter()
-            .chain(&relation.insert_fields)
-            .chain(&relation.update_fields)
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        let expected = expected_fields
-            .iter()
-            .map(|field| field.name)
-            .collect::<BTreeSet<_>>();
-        if consumed != expected {
-            return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidOperation,
-                format!("{operation} relation does not declare its exact consumed field set"),
-                format!("{}.{}", relation.schema, relation.table),
-            ));
-        }
-        for expected in expected_fields {
-            let actual = column(table, expected.name).ok_or_else(|| {
-                GenerateError::for_object(
-                    GenerateErrorKind::UnknownColumn,
-                    format!("{operation} requires consumed field {}", expected.name),
-                    format!("{}.{}.{}", relation.schema, relation.table, expected.name),
-                )
-            })?;
-            if actual.column_type() != expected.ty || actual.nullable() != expected.nullable {
-                return Err(GenerateError::for_object(
-                    GenerateErrorKind::InvalidOperation,
-                    format!(
-                        "{operation} consumed field {} has the wrong type or nullability",
-                        expected.name
-                    ),
-                    format!("{}.{}.{}", relation.schema, relation.table, expected.name),
-                ));
-            }
-        }
-        let expected_constraints = match relation.table.as_str() {
-            "record_receipt_command" => &["record_receipt_command_idempotency_key_pkey"][..],
-            "receipt" => &["receipt_purchase_order_id_receipt_reference_key"][..],
-            _ => &[],
-        };
-        if !relation
-            .constraints
-            .iter()
-            .map(String::as_str)
-            .eq(expected_constraints.iter().copied())
-        {
-            return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidOperation,
-                format!("{operation} relation does not declare its exact consumed constraints"),
-                format!("{}.{}", relation.schema, relation.table),
-            ));
-        }
-        for name in expected_constraints {
-            let constraint = table
+        for name in &relation.constraints {
+            if !table
                 .constraints()
                 .iter()
-                .find(|constraint| constraint.name() == *name)
-                .ok_or_else(|| {
-                    GenerateError::for_object(
-                        GenerateErrorKind::InvalidOperation,
-                        format!("{operation} requires named constraint {name}"),
-                        format!("{}.{}", relation.schema, relation.table),
-                    )
-                })?;
-            let definition_matches = match *name {
-                "record_receipt_command_idempotency_key_pkey" => matches!(
-                    constraint.kind(),
-                    ConstraintKind::PrimaryKey { columns }
-                        if columns.iter().map(AsRef::as_ref).eq(["idempotency_key"])
-                ),
-                "receipt_purchase_order_id_receipt_reference_key" => matches!(
-                    constraint.kind(),
-                    ConstraintKind::Unique { columns }
-                        if columns.iter().map(AsRef::as_ref).eq(["purchase_order_id", "receipt_reference"])
-                ),
-                _ => false,
-            };
-            if !definition_matches {
+                .any(|constraint| constraint.name() == name)
+            {
                 return Err(GenerateError::for_object(
                     GenerateErrorKind::InvalidOperation,
-                    format!("{operation} named constraint {name} has the wrong definition"),
+                    format!("{operation} requires named constraint {name}"),
                     format!("{}.{}", relation.schema, relation.table),
                 ));
             }
         }
     }
-    validate_command_relation_access(catalog, authored_sql, operation, command)
+    validate_constraint_error_mappings(catalog, operation, declaration)?;
+    validate_static_sql_relation_access(catalog, authored_sql, operation, declaration)
 }
 
-fn validate_command_relation_fields(
+fn validate_static_sql_relation_fields(
     operation: &str,
-    relation: &crate::manifest::CommandRelationDeclaration,
+    relation: &crate::manifest::StaticSqlRelationDeclaration,
     table: &Table,
     fields: &[String],
 ) -> Result<(), GenerateError> {
-    let declared = fields.iter().map(String::as_str).collect::<BTreeSet<_>>();
-    if declared.len() != fields.len() {
-        return Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidOperation,
-            format!(
-                "{operation} {}.{} privilege fields must be unique",
-                relation.schema, relation.table
-            ),
-            format!("{}.{}", relation.schema, relation.table),
-        ));
-    }
     if let Some(field) = fields
         .iter()
         .find(|field| !table.columns().iter().any(|column| column.name() == *field))
@@ -1241,13 +803,50 @@ fn validate_command_relation_fields(
     Ok(())
 }
 
-fn validate_command_relation_access(
+fn validate_constraint_error_mappings(
+    catalog: &CatalogIr,
+    operation: &str,
+    declaration: &CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    for (name, _) in &declaration.constraint_errors {
+        declaration
+            .relations
+            .iter()
+            .find_map(|relation| {
+                relation.constraints.contains(name).then(|| {
+                    catalog
+                        .tables()
+                        .iter()
+                        .find(|table| {
+                            table.schema() == relation.schema && table.name() == relation.table
+                        })
+                        .and_then(|table| {
+                            table
+                                .constraints()
+                                .iter()
+                                .find(|constraint| constraint.name() == name)
+                        })
+                })
+            })
+            .flatten()
+            .ok_or_else(|| {
+                GenerateError::for_object(
+                    GenerateErrorKind::InvalidOperation,
+                    format!("{operation} maps undeclared constraint {name}"),
+                    name.clone(),
+                )
+            })?;
+    }
+    Ok(())
+}
+
+fn validate_static_sql_relation_access(
     catalog: &CatalogIr,
     authored_sql: &[AuthoredSql<'_>],
     operation: &str,
-    command: &CommandDeclaration,
+    declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    let schemas = command
+    let schemas = declaration
         .relations
         .iter()
         .map(|relation| relation.schema.as_str())
@@ -1268,11 +867,11 @@ fn validate_command_relation_access(
         })
         .collect::<BTreeMap<_, _>>();
     let mut actual = BTreeMap::<String, crate::sql_lex::RelationAccess>::new();
-    for statement in command.statements.values() {
+    for statement in declaration.statements.values() {
         let source = authored_sql
             .iter()
             .find(|source| source.path == statement.path)
-            .expect("authored-source validation supplied every command statement");
+            .expect("authored-source validation supplied every custom-operation statement");
         let statement_access = crate::sql_lex::relation_access(source.bytes, &relation_fields)
             .map_err(|detail| {
                 GenerateError::for_path(
@@ -1292,7 +891,7 @@ fn validate_command_relation_access(
             aggregate.lock |= observed.lock;
         }
     }
-    for relation in &command.relations {
+    for relation in &declaration.relations {
         let observed = actual.remove(&relation.table).unwrap_or_default();
         let declared = crate::sql_lex::RelationAccess {
             select_fields: relation.select_fields.iter().cloned().collect(),
@@ -1319,71 +918,6 @@ fn validate_command_relation_access(
         ));
     }
     Ok(())
-}
-
-fn record_receipt_relation_fields(table: &str) -> Option<&'static [ExpectedCommandValue]> {
-    match table {
-        "location" => Some(RECORD_RECEIPT_LOCATION_FIELDS),
-        "purchase_order" => Some(RECORD_RECEIPT_PURCHASE_ORDER_FIELDS),
-        "purchase_order_line" => Some(RECORD_RECEIPT_PURCHASE_ORDER_LINE_FIELDS),
-        "record_receipt_command" => Some(RECORD_RECEIPT_LEDGER_FIELDS),
-        "receipt" => Some(RECORD_RECEIPT_RECEIPT_FIELDS),
-        "receipt_line" => Some(RECORD_RECEIPT_RECEIPT_LINE_FIELDS),
-        _ => None,
-    }
-}
-
-fn validate_command_statements(
-    operation: &str,
-    command: &CommandDeclaration,
-) -> Result<(), GenerateError> {
-    if !command
-        .statements
-        .keys()
-        .map(String::as_str)
-        .eq(RECORD_RECEIPT_STATEMENTS
-            .iter()
-            .map(|statement| statement.name))
-    {
-        return Err(GenerateError::new(
-            GenerateErrorKind::InvalidOperation,
-            format!("{operation} must declare the complete static command accessor set"),
-        ));
-    }
-    for expected in RECORD_RECEIPT_STATEMENTS {
-        let statement = command
-            .statements
-            .get(expected.name)
-            .expect("the exact key set contains every statement");
-        let expected_path = format!("command/record_receipt/{}.sql", expected.name);
-        if statement.path != expected_path
-            || statement.fetch != expected.fetch
-            || !command_values_match(&statement.parameters, expected.parameters)
-            || !command_values_match(&statement.row, expected.row)
-        {
-            return Err(GenerateError::for_path(
-                GenerateErrorKind::InvalidOperation,
-                format!(
-                    "{operation}.{} does not match its exact path, fetch, parameter, and row signature",
-                    expected.name
-                ),
-                statement.path.as_str(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn command_values_match(
-    actual: &[CommandValueDeclaration],
-    expected: &[ExpectedCommandValue],
-) -> bool {
-    actual.len() == expected.len()
-        && actual.iter().zip(expected).all(|(actual, expected)| {
-            actual.name == expected.name
-                && actual.ty == expected.ty
-                && actual.nullable == expected.nullable
-        })
 }
 
 fn validate_sort_field(
@@ -1504,18 +1038,12 @@ fn validate_authored_sources(
         .models
         .values()
         .map(|model| model.schema.as_str())
-        .chain(
-            manifest
-                .custom_operations
-                .values()
-                .filter_map(|operation| operation.command())
-                .flat_map(|command| {
-                    command
-                        .relations
-                        .iter()
-                        .map(|relation| relation.schema.as_str())
-                }),
-        )
+        .chain(manifest.custom_operations.values().flat_map(|operation| {
+            operation
+                .relations
+                .iter()
+                .map(|relation| relation.schema.as_str())
+        }))
         .collect::<BTreeSet<_>>();
     for source in authored_sql {
         for schema in &schemas {
@@ -1551,8 +1079,7 @@ fn authored_paths(manifest: &PackageManifest) -> BTreeSet<&str> {
         manifest
             .custom_operations
             .values()
-            .filter_map(|operation| operation.command())
-            .flat_map(|command| command.statements.values())
+            .flat_map(|operation| operation.statements.values())
             .map(|statement| statement.path.as_str()),
     );
     paths
@@ -1634,172 +1161,296 @@ fn emit_model(
     )
 }
 
-fn emit_command(
+fn emit_custom_operation(
     files: &mut BTreeMap<String, Vec<u8>>,
+    catalog: &CatalogIr,
     manifest: &PackageManifest,
-    command_name: &str,
-    command: &CommandDeclaration,
+    operation_name: &str,
+    operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    let module_name = command_name.replace('.', "_");
-    let native_rows = command_rows(command, Projection::Native);
-    let wamn_rows = command_rows(command, Projection::Wamn);
-    let accessors = command_accessors(command);
-    let bind_fixtures = command_native_bind_fixtures(&accessors);
+    emit_custom_operation_contracts(files, catalog, manifest, operation_name, operation)?;
+    if operation.statements.is_empty() {
+        let (alias, dependency) = manifest
+            .base_dependencies
+            .iter()
+            .find(|(_, dependency)| {
+                dependency
+                    .operations
+                    .iter()
+                    .any(|candidate| candidate == operation_name)
+            })
+            .expect("validated composition-only command has one exact dependency");
+        return insert_json(
+            files,
+            &format!(
+                "generated/source-map/{}.json",
+                custom_artifact_stem(operation_name)
+            ),
+            &json!({
+                "operation": operation_name,
+                "kind": operation.kind(),
+                "manifest": format!("wamn.json#/custom_operations/{operation_name}"),
+                "composition": {
+                    "alias": alias,
+                    "package": dependency.package,
+                    "version": dependency.version,
+                    "digest": dependency.digest,
+                    "operation": operation_name,
+                },
+            }),
+        );
+    }
 
-    emit_command_contracts(files, manifest, command_name, command)?;
-    emit_command_parity(files, &module_name, command, &accessors)?;
-    emit_command_projection(
+    let module_name = custom_artifact_stem(operation_name);
+    let native_rows = static_sql_rows(operation, Projection::Native);
+    let wamn_rows = static_sql_rows(operation, Projection::Wamn);
+    let accessors = static_sql_accessors(operation);
+    let bind_fixtures = static_sql_native_bind_fixtures(&accessors);
+
+    emit_static_sql_parity(files, &module_name, operation, &accessors)?;
+    emit_static_sql_projection(
         files,
         &module_name,
-        command,
+        operation,
         &native_rows,
         &bind_fixtures,
         Projection::Native,
     )?;
-    emit_command_projection(
+    emit_static_sql_projection(
         files,
         &module_name,
-        command,
+        operation,
         &wamn_rows,
         &[],
         Projection::Wamn,
     )?;
+    let mut source_map = serde_json::Map::from_iter([
+        (
+            "manifest".to_owned(),
+            json!(format!("wamn.json#/custom_operations/{operation_name}")),
+        ),
+        ("relations".to_owned(), json!(operation.relations)),
+        ("statements".to_owned(), json!(operation.statements)),
+        ("native_rows".to_owned(), json!(native_rows)),
+        ("native_bind_fixtures".to_owned(), json!(bind_fixtures)),
+        ("wamn_rows".to_owned(), json!(wamn_rows)),
+        ("wamn_accessors".to_owned(), json!(accessors)),
+    ]);
+    match operation.kind {
+        CustomOperationKind::Command => {
+            source_map.insert("command".to_owned(), json!(operation_name));
+        }
+        CustomOperationKind::Projection | CustomOperationKind::EventHandler => {
+            source_map.insert("operation".to_owned(), json!(operation_name));
+            source_map.insert("kind".to_owned(), json!(operation.kind()));
+            if let Some(registration) = &operation.registration {
+                source_map.insert("registration".to_owned(), json!(registration));
+            }
+        }
+    }
     insert_json(
         files,
         &format!("generated/source-map/{module_name}.json"),
-        &json!({
-            "command": command_name,
-            "manifest": format!("wamn.json#/custom_operations/{command_name}"),
-            "relations": command.relations,
-            "statements": command.statements,
-            "native_rows": native_rows,
-            "native_bind_fixtures": bind_fixtures,
-            "wamn_rows": wamn_rows,
-            "wamn_accessors": accessors,
-        }),
+        &Value::Object(source_map),
     )
 }
 
-fn emit_command_contracts(
+fn emit_custom_operation_contracts(
     files: &mut BTreeMap<String, Vec<u8>>,
+    catalog: &CatalogIr,
     manifest: &PackageManifest,
-    command_name: &str,
-    command: &CommandDeclaration,
+    operation_name: &str,
+    operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    let (module, operation) = command_name
+    let (module, local_name) = operation_name
         .split_once('.')
-        .expect("command validation requires module.operation");
-    let root = format!("generated/contracts/{module}/{operation}");
-    let operation_id = canonical_operation_identity(&manifest.package, command_name)?;
-    let grant = (command.visibility == crate::manifest::OperationVisibility::Public)
+        .expect("custom-operation validation requires module.operation");
+    let root = format!("generated/contracts/{module}/{local_name}");
+    let operation_id = canonical_operation_identity(&manifest.package, operation_name)?;
+    let grant = (operation.visibility == crate::manifest::OperationVisibility::Public)
         .then(|| operation_id.clone());
-    let sql_files = command
+    let sql_files = operation
         .statements
         .values()
         .map(|statement| statement.path.as_str())
         .collect::<Vec<_>>();
-    insert_json(
+    let mut operation_contract = serde_json::Map::from_iter([
+        ("operation".to_owned(), json!(operation_id)),
+        ("kind".to_owned(), json!(operation.kind())),
+        ("visibility".to_owned(), json!(operation.visibility)),
+        ("permission_token".to_owned(), json!(operation.permission)),
+        ("grant".to_owned(), json!(grant)),
+        ("sql_files".to_owned(), json!(sql_files)),
+    ]);
+    if let Some(connection) = &operation.connection {
+        operation_contract.insert("connection".to_owned(), json!(connection));
+    }
+    if let Some(result) = &operation.result {
+        operation_contract.insert("result".to_owned(), json!(result.class));
+    }
+    if let Some(transaction) = operation.transaction {
+        operation_contract.insert("transaction".to_owned(), json!(transaction));
+    }
+    if let Some(automatic_retry) = operation.automatic_retry {
+        operation_contract.insert("automatic_retry".to_owned(), json!(automatic_retry));
+    }
+    if let Some(registration) = &operation.registration {
+        operation_contract.insert("registration".to_owned(), json!(registration));
+    }
+    insert_json_line(
         files,
         &format!("{root}.operation.json"),
-        &json!({
-            "operation": operation_id,
-            "kind": "command",
-            "visibility": command.visibility,
-            "permission_token": command.permission,
-            "grant": grant,
-            "connection": command.connection,
-            "result": command.result.class,
-            "sql_files": sql_files,
-            "transaction": command.transaction,
-            "automatic_retry": command.automatic_retry,
-        }),
+        &Value::Object(operation_contract),
     )?;
+    let mut input_contract = serde_json::Map::new();
+    if let Some(raw_body_maximum) = operation.input.raw_body_maximum {
+        input_contract.insert(
+            "raw_body_bytes".to_owned(),
+            json!({
+                "maximum": raw_body_maximum,
+                "owner": "ingress_pre_parse",
+                "refusal": "http_413",
+            }),
+        );
+    }
+    if let Some(envelope) = &operation.input.envelope {
+        input_contract.insert("envelope".to_owned(), json!(envelope));
+    }
+    if let Some(item_semantics) = operation.input.item_semantics {
+        input_contract.insert("item_semantics".to_owned(), json!(item_semantics));
+    }
+    if let Some(line) = &operation.input.line {
+        input_contract.insert("line".to_owned(), json!(line));
+    }
+    input_contract.insert("fields".to_owned(), json!(operation.input.fields));
+    if let Some(canonicalization) = &operation.canonicalization {
+        input_contract.insert("canonicalization".to_owned(), json!(canonicalization));
+    }
     insert_json(
         files,
         &format!("{root}.input.json"),
-        &json!({
-            "raw_body_bytes": {
-                "maximum": command.input.raw_body_maximum,
-                "owner": "ingress_pre_parse",
-                "refusal": "http_413",
-            },
-            "envelope": command.input.envelope,
-            "item_semantics": command.input.item_semantics,
-            "line": command.input.line,
-            "fields": command.input.fields,
-            "canonicalization": command.canonicalization,
-        }),
+        &Value::Object(input_contract),
     )?;
-    insert_json(files, &format!("{root}.result.json"), &command.result)?;
+    if let Some(result) = &operation.result {
+        insert_json(files, &format!("{root}.result.json"), result)?;
+    }
     insert_json(
         files,
         &format!("{root}.errors.json"),
-        &command_error_contract(command),
+        &custom_operation_error_contract(catalog, operation),
     )
 }
 
-fn command_error_contract(command: &CommandDeclaration) -> Value {
-    let cases = command
+fn custom_operation_error_contract(
+    catalog: &CatalogIr,
+    operation: &CustomOperationDeclaration,
+) -> Value {
+    let cases = operation
         .errors
         .iter()
         .map(|literal| {
-            let mut case = match literal {
-                CommandErrorLiteral::InvalidInput => json!({
-                    "literal": literal.as_str(),
-                    "from": [
-                        "malformed_input",
-                        "envelope_count",
-                        "line_count",
-                        "duplicate_line",
-                        "nonpositive_quantity",
-                    ],
-                }),
-                CommandErrorLiteral::ReceiptReferenceConflict => json!({
-                    "literal": literal.as_str(),
-                    "from": "unique_violation",
-                    "constraint": "receipt_purchase_order_id_receipt_reference_key",
-                }),
-                CommandErrorLiteral::Retry => json!({
-                    "literal": literal.as_str(),
-                    "from": ["serialization_failure", "connection_unavailable"],
-                    "automatic": false,
-                }),
-                CommandErrorLiteral::Timeout => json!({
-                    "literal": literal.as_str(),
-                    "from": "statement_timeout",
-                }),
-                CommandErrorLiteral::PermissionDenied => json!({
-                    "literal": literal.as_str(),
-                    "from": "permission_denied",
-                }),
-                CommandErrorLiteral::InternalError => json!({
-                    "literal": literal.as_str(),
-                    "from": ["query_error", "row_limit_exceeded", "undeclared_constraint"],
-                }),
-                CommandErrorLiteral::IdempotencyConflict => json!({
-                    "literal": literal.as_str(),
-                    "from": "same_key_different_canonical_command",
-                }),
-                _ => json!({
-                "literal": literal.as_str(),
-                "from": "transaction_invariant",
-                }),
+            let constraint = operation
+                .constraint_errors
+                .iter()
+                .find_map(|(constraint, mapped)| (mapped == literal).then_some(constraint));
+            let mut case = if let Some(constraint) = constraint {
+                let constraint_kind = custom_operation_constraint(catalog, operation, constraint)
+                    .expect("custom constraint mapping was validated")
+                    .kind();
+                json!({
+                    "literal": literal,
+                    "from": constraint_error(constraint_kind),
+                    "constraint": constraint,
+                })
+            } else {
+                custom_operation_error_origin(operation, literal)
             };
             case.as_object_mut()
                 .expect("error contract case is an object")
                 .insert(
                     "detail".to_owned(),
                     error_detail_contract(
-                        command
+                        operation
                             .error_details
                             .get(literal)
-                            .expect("manifest validation closed command error details"),
+                            .expect("manifest validation closed custom-operation error details"),
                     ),
                 );
             case
         })
         .collect::<Vec<_>>();
     json!({"closed": true, "cases": cases})
+}
+
+fn custom_operation_constraint<'a>(
+    catalog: &'a CatalogIr,
+    operation: &CustomOperationDeclaration,
+    name: &str,
+) -> Option<&'a Constraint> {
+    for relation in &operation.relations {
+        if !relation
+            .constraints
+            .iter()
+            .any(|constraint| constraint == name)
+        {
+            continue;
+        }
+        let table = catalog
+            .tables()
+            .iter()
+            .find(|table| table.schema() == relation.schema && table.name() == relation.table)?;
+        return table
+            .constraints()
+            .iter()
+            .find(|constraint| constraint.name() == name);
+    }
+    None
+}
+
+fn custom_operation_error_origin(operation: &CustomOperationDeclaration, literal: &str) -> Value {
+    match literal {
+        "invalid_input" => {
+            let mut sources = vec!["malformed_input"];
+            if operation.input.envelope.is_some() {
+                sources.push("envelope_count");
+            }
+            if operation.input.line.is_some() {
+                sources.push("line_count");
+            }
+            if operation.canonicalization.is_some() {
+                sources.push("duplicate_line");
+            }
+            if operation.input.line.is_some() && operation.canonicalization.is_some() {
+                sources.push("nonpositive_quantity");
+            }
+            json!({"literal": literal, "from": sources})
+        }
+        "retry" => json!({
+            "literal": literal,
+            "from": ["serialization_failure", "connection_unavailable"],
+            "automatic": operation.automatic_retry.unwrap_or(false),
+        }),
+        "timeout" => json!({
+            "literal": literal,
+            "from": "statement_timeout",
+        }),
+        "permission_denied" => json!({
+            "literal": literal,
+            "from": "permission_denied",
+        }),
+        "internal_error" => json!({
+            "literal": literal,
+            "from": ["query_error", "row_limit_exceeded", "undeclared_constraint"],
+        }),
+        "idempotency_conflict" if operation.canonicalization.is_some() => json!({
+            "literal": literal,
+            "from": "same_key_different_canonical_command",
+        }),
+        _ => json!({
+        "literal": literal,
+        "from": "transaction_invariant",
+        }),
+    }
 }
 
 fn error_detail_contract(detail: &OperationErrorDetailDeclaration) -> Value {
@@ -1813,18 +1464,19 @@ fn error_detail_contract(detail: &OperationErrorDetailDeclaration) -> Value {
     Value::Object(contract)
 }
 
-fn command_rows(command: &CommandDeclaration, projection: Projection) -> Vec<RustRow> {
-    command
+fn static_sql_rows(operation: &CustomOperationDeclaration, projection: Projection) -> Vec<RustRow> {
+    operation
         .statements
         .iter()
         .map(|(name, statement)| RustRow {
-            name: format!("{}Row", pascal_case(name)),
+            name: format!("{}Row", rust_type_identifier(name)),
             visibility: RustVisibility::Crate,
             fields: statement
                 .row
                 .iter()
                 .map(|field| RustMember {
-                    name: rust_field(&field.name),
+                    name: rust_identifier(&field.name)
+                        .expect("static SQL value names were validated for Rust"),
                     rust_type: projected_rust_type(field.ty, projection, field.nullable),
                 })
                 .collect(),
@@ -1832,14 +1484,14 @@ fn command_rows(command: &CommandDeclaration, projection: Projection) -> Vec<Rus
         .collect()
 }
 
-fn command_accessors(command: &CommandDeclaration) -> Vec<CommandAccessor> {
-    command
+fn static_sql_accessors(operation: &CustomOperationDeclaration) -> Vec<StaticSqlAccessor> {
+    operation
         .statements
         .iter()
-        .map(|(name, statement)| CommandAccessor {
+        .map(|(name, statement)| StaticSqlAccessor {
             name: name.clone(),
             sql_constant: format!("{}_SQL", name.to_ascii_uppercase()),
-            row: format!("{}Row", pascal_case(name)),
+            row: format!("{}Row", rust_type_identifier(name)),
             fetch: statement.fetch,
             binds: statement
                 .parameters
@@ -1850,7 +1502,7 @@ fn command_accessors(command: &CommandDeclaration) -> Vec<CommandAccessor> {
         .collect()
 }
 
-fn command_native_bind_fixtures(accessors: &[CommandAccessor]) -> Vec<NativeBindFixture> {
+fn static_sql_native_bind_fixtures(accessors: &[StaticSqlAccessor]) -> Vec<NativeBindFixture> {
     accessors
         .iter()
         .flat_map(|accessor| {
@@ -1866,13 +1518,13 @@ fn command_native_bind_fixtures(accessors: &[CommandAccessor]) -> Vec<NativeBind
         .collect()
 }
 
-fn emit_command_parity(
+fn emit_static_sql_parity(
     files: &mut BTreeMap<String, Vec<u8>>,
     module_name: &str,
-    command: &CommandDeclaration,
-    accessors: &[CommandAccessor],
+    operation: &CustomOperationDeclaration,
+    accessors: &[StaticSqlAccessor],
 ) -> Result<(), GenerateError> {
-    let fields = command
+    let fields = operation
         .statements
         .iter()
         .flat_map(|(statement, declaration)| {
@@ -1915,10 +1567,10 @@ fn emit_command_parity(
     )
 }
 
-fn emit_command_projection(
+fn emit_static_sql_projection(
     files: &mut BTreeMap<String, Vec<u8>>,
     module_name: &str,
-    command: &CommandDeclaration,
+    operation: &CustomOperationDeclaration,
     rows: &[RustRow],
     bind_fixtures: &[NativeBindFixture],
     projection: Projection,
@@ -1932,7 +1584,7 @@ fn emit_command_projection(
     for row in rows {
         emit_rust_row(&mut source, row);
     }
-    for (name, statement) in &command.statements {
+    for (name, statement) in &operation.statements {
         writeln!(
             &mut source,
             "pub(crate) const {}_SQL: &str = include_str!(\"../../{}\");",
@@ -1949,8 +1601,8 @@ fn emit_command_projection(
         source.push('\n');
     }
     if matches!(projection, Projection::Wamn) {
-        for accessor in command_accessors(command) {
-            emit_command_wamn_accessor(&mut source, &accessor);
+        for accessor in static_sql_accessors(operation) {
+            emit_static_sql_wamn_accessor(&mut source, &accessor);
         }
     }
     while source.ends_with("\n\n") {
@@ -1967,18 +1619,21 @@ fn emit_command_projection(
     )
 }
 
-fn emit_command_wamn_accessor(source: &mut String, accessor: &CommandAccessor) {
-    writeln!(source, "pub(crate) async fn {}(", accessor.name)
-        .expect("writing to a String cannot fail");
+fn emit_static_sql_wamn_accessor(source: &mut String, accessor: &StaticSqlAccessor) {
+    let function = rust_identifier(&accessor.name)
+        .expect("static SQL statement names were validated for Rust");
+    writeln!(source, "pub(crate) async fn {function}(").expect("writing to a String cannot fail");
     source.push_str("    transaction: &mut Transaction<'_, WamnPostgres>,\n");
     for bind in &accessor.binds {
-        writeln!(source, "    {}: {},", bind.parameter, bind.wamn_rust)
+        let parameter = rust_identifier(&bind.parameter)
+            .expect("static SQL parameter names were validated for Rust");
+        writeln!(source, "    {parameter}: {},", bind.wamn_rust)
             .expect("writing to a String cannot fail");
     }
     writeln!(
         source,
         ") -> Result<{}, sqlx_core::error::Error> {{",
-        command_accessor_result_type(accessor),
+        static_sql_accessor_result_type(accessor),
     )
     .expect("writing to a String cannot fail");
     writeln!(
@@ -1988,26 +1643,27 @@ fn emit_command_wamn_accessor(source: &mut String, accessor: &CommandAccessor) {
     )
     .expect("writing to a String cannot fail");
     for bind in &accessor.binds {
-        writeln!(source, "        .bind({})", bind.parameter)
-            .expect("writing to a String cannot fail");
+        let parameter = rust_identifier(&bind.parameter)
+            .expect("static SQL parameter names were validated for Rust");
+        writeln!(source, "        .bind({parameter})").expect("writing to a String cannot fail");
     }
     writeln!(
         source,
         "        .{}(&mut **transaction)\n        .await\n}}\n",
         match accessor.fetch {
-            CommandFetch::OptionalOne => "fetch_optional",
-            CommandFetch::BoundedList => "fetch_all",
-            CommandFetch::One => "fetch_one",
+            StaticSqlFetch::OptionalOne => "fetch_optional",
+            StaticSqlFetch::BoundedList => "fetch_all",
+            StaticSqlFetch::One => "fetch_one",
         },
     )
     .expect("writing to a String cannot fail");
 }
 
-fn command_accessor_result_type(accessor: &CommandAccessor) -> String {
+fn static_sql_accessor_result_type(accessor: &StaticSqlAccessor) -> String {
     match accessor.fetch {
-        CommandFetch::OptionalOne => format!("Option<{}>", accessor.row),
-        CommandFetch::BoundedList => format!("Vec<{}>", accessor.row),
-        CommandFetch::One => accessor.row.clone(),
+        StaticSqlFetch::OptionalOne => format!("Option<{}>", accessor.row),
+        StaticSqlFetch::BoundedList => format!("Vec<{}>", accessor.row),
+        StaticSqlFetch::One => accessor.row.clone(),
     }
 }
 
@@ -2227,7 +1883,7 @@ fn emit_operation_contracts(
         &format!("{model_name}.{}", action.as_str()),
     )?;
     let root = format!("generated/contracts/{model_name}/{}", action.as_str());
-    insert_json(
+    insert_json_line(
         files,
         &format!("{root}.operation.json"),
         &json!({
@@ -2513,11 +2169,11 @@ struct WamnAccessor {
 }
 
 #[derive(Debug, Serialize)]
-struct CommandAccessor {
+struct StaticSqlAccessor {
     name: String,
     sql_constant: String,
     row: String,
-    fetch: CommandFetch,
+    fetch: StaticSqlFetch,
     binds: Vec<AccessorBind>,
 }
 
@@ -2563,7 +2219,7 @@ fn wamn_api(
     table: &Table,
     operation_sql: &BTreeMap<String, Vec<String>>,
 ) -> WamnApi {
-    let model_row = format!("{}Row", pascal_case(model_name));
+    let model_row = format!("{}Row", rust_type_identifier(model_name));
     let mut mutation_constraints = Vec::new();
     let mut operation_rows = Vec::new();
     let mut accessors = Vec::new();
@@ -2632,7 +2288,15 @@ fn wamn_api(
                 binds: operation
                     .writable_fields
                     .iter()
-                    .map(|field| bind_for_column(table, field, &rust_field(field), false))
+                    .map(|field| {
+                        bind_for_column(
+                            table,
+                            field,
+                            &rust_identifier(field)
+                                .expect("model field names were validated for Rust"),
+                            false,
+                        )
+                    })
                     .collect(),
             }),
             CrudAction::Update => {
@@ -2818,19 +2482,22 @@ fn operation_result_row(
             .as_deref()
             .expect("update validation requires a revision field");
         fields.push(RustMember {
-            name: format!("observed_{}", rust_field(revision)),
+            name: format!(
+                "observed_{}",
+                rust_identifier(revision).expect("model field names were validated for Rust")
+            ),
             rust_type: "Option<i64>".to_owned(),
         });
         fields.extend(table.columns().iter().map(|column| RustMember {
-            name: rust_field(column.name()),
+            name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
             rust_type: optional_rust_type(column, projection),
         }));
     }
     RustRow {
         name: format!(
             "{}{}Row",
-            pascal_case(model_name),
-            pascal_case(action.as_str())
+            rust_type_identifier(model_name),
+            rust_type_identifier(action.as_str())
         ),
         visibility: RustVisibility::Public,
         fields,
@@ -2887,13 +2554,13 @@ fn emit_projection(
         );
     }
     let model_row = RustRow {
-        name: format!("{}Row", pascal_case(model_name)),
+        name: format!("{}Row", rust_type_identifier(model_name)),
         visibility: RustVisibility::Public,
         fields: table
             .columns()
             .iter()
             .map(|column| RustMember {
-                name: rust_field(column.name()),
+                name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
                 rust_type: rust_type(column, projection),
             })
             .collect(),
@@ -3080,17 +2747,13 @@ fn required_schema_contract(
                 .map(|constraint| constraint.name().to_owned()),
         );
     }
-    for command in manifest
-        .custom_operations
-        .values()
-        .filter_map(|operation| operation.command())
-    {
-        for relation in &command.relations {
+    for operation in manifest.custom_operations.values() {
+        for relation in &operation.relations {
             let table = catalog
                 .tables()
                 .iter()
                 .find(|table| table.schema() == relation.schema && table.name() == relation.table)
-                .expect("command validation resolved relation");
+                .expect("custom-operation validation resolved relation");
             let entry = consumed
                 .entry((relation.schema.clone(), relation.table.clone()))
                 .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
@@ -3187,6 +2850,16 @@ fn insert_json(
     )
 }
 
+fn insert_json_line(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    path: &str,
+    value: &impl Serialize,
+) -> Result<(), GenerateError> {
+    let mut bytes = serde_json::to_vec(value).expect("generated JSON values always serialize");
+    bytes.push(b'\n');
+    insert_bytes(files, path, bytes)
+}
+
 fn insert_canonical_json(
     files: &mut BTreeMap<String, Vec<u8>>,
     path: &str,
@@ -3199,6 +2872,18 @@ fn insert_canonical_json(
             &serde_json::to_value(value).expect("generated JSON values always serialize"),
         ),
     )
+}
+
+fn insert_canonical_json_line(
+    files: &mut BTreeMap<String, Vec<u8>>,
+    path: &str,
+    value: &impl Serialize,
+) -> Result<(), GenerateError> {
+    let mut bytes = canonical_json_bytes(
+        &serde_json::to_value(value).expect("generated JSON values always serialize"),
+    );
+    bytes.push(b'\n');
+    insert_bytes(files, path, bytes)
 }
 
 fn insert_bytes(
@@ -3271,29 +2956,5 @@ fn projected_rust_type(ty: ColumnType, projection: Projection, optional: bool) -
         format!("Option<{base}>")
     } else {
         base.to_owned()
-    }
-}
-
-fn pascal_case(value: &str) -> String {
-    value
-        .split('_')
-        .map(|part| {
-            let mut characters = part.chars();
-            match characters.next() {
-                Some(first) => first.to_ascii_uppercase().to_string() + characters.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect()
-}
-
-fn rust_field(value: &str) -> String {
-    const KEYWORDS: [&str; 8] = [
-        "as", "crate", "enum", "match", "mod", "self", "struct", "type",
-    ];
-    if KEYWORDS.contains(&value) {
-        format!("r#{value}")
-    } else {
-        value.to_owned()
     }
 }
