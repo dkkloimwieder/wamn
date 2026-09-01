@@ -1,0 +1,800 @@
+{
+  "package": {
+    "id": "client_acme_receiving",
+    "version": "3.0.0"
+  },
+  "base_dependencies": {
+    "base_receiving": {
+      "package": "wamn_receiving",
+      "version": "1.0.0",
+      "digest": "sha256:c10453c58e992b45a82af3b25b8f843ec8263b5d846a19cab8964cad6e910b2d",
+      "operations": [
+        "receiving.record_receipt"
+      ]
+    }
+  },
+  "required_platform_policy_contract": {
+    "id": "receiving_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "purchase_order": {
+      "schema": "receiving",
+      "table": "purchase_order",
+      "owner": "wamn_receiving",
+      "field_owners": {
+        "acme_inspection_required": "client_acme_receiving",
+        "acme_quality_status": "client_acme_receiving"
+      },
+      "constraint_owners": {
+        "purchase_order_acme_quality_status_check": "client_acme_receiving"
+      },
+      "server_owned_fields": [
+        "id",
+        "purchase_order_number",
+        "supplier_id",
+        "status",
+        "row_version",
+        "created_at",
+        "updated_at"
+      ],
+      "enum_fields": {
+        "status": [
+          "open",
+          "complete",
+          "cancelled"
+        ],
+        "acme_quality_status": [
+          "not_required",
+          "pending",
+          "approved"
+        ]
+      },
+      "operations": {
+        "get": {
+          "permission": "purchase_order.get",
+          "error_details": {
+            "invalid_input": {
+              "required": [
+                "field"
+              ]
+            },
+            "not_found": {
+              "required": [
+                "field",
+                "id"
+              ]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": [
+                "operation"
+              ]
+            },
+            "internal_error": {}
+          },
+          "result": "one"
+        },
+        "update": {
+          "permission": "purchase_order.update",
+          "error_details": {
+            "invalid_input": {
+              "required": [
+                "field"
+              ]
+            },
+            "not_found": {
+              "required": [
+                "field",
+                "id"
+              ]
+            },
+            "concurrency_conflict": {
+              "required": [
+                "expected_row_version",
+                "observed_row_version"
+              ]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": [
+                "operation"
+              ]
+            },
+            "internal_error": {}
+          },
+          "writable_fields": [
+            "acme_inspection_required",
+            "acme_quality_status"
+          ],
+          "revision_field": "row_version",
+          "result": "one"
+        }
+      }
+    },
+    "quality_inspection": {
+      "schema": "receiving",
+      "table": "quality_inspection",
+      "owner": "client_acme_receiving",
+      "server_owned_fields": [
+        "receipt_id",
+        "status",
+        "row_version"
+      ],
+      "enum_fields": {
+        "status": [
+          "pending",
+          "approved"
+        ]
+      },
+      "operations": {}
+    }
+  },
+  "custom_operations": {
+    "receiving.record_receipt": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "receiving.record_receipt",
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "item_semantics": "per_input",
+        "line": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.idempotency_key",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "value.receipt_reference",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "value.occurred_at",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "path": "value.line[].purchase_order_line_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "value.line[].quantity",
+            "type": "numeric",
+            "nullable": false
+          },
+          {
+            "path": "value.line[].location_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "receipt_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "open",
+              "complete"
+            ]
+          },
+          {
+            "path": "row_version",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "acme_inspection_required",
+            "type": "boolean",
+            "nullable": false
+          },
+          {
+            "path": "acme_quality_status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "not_required",
+              "pending",
+              "approved"
+            ]
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "purchase_order_not_found",
+        "purchase_order_not_open",
+        "purchase_order_line_not_found",
+        "purchase_order_line_mismatch",
+        "location_not_found",
+        "quantity_exceeds_remaining",
+        "receipt_reference_conflict",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ],
+          "optional": [
+            "minimum",
+            "maximum",
+            "observed"
+          ]
+        },
+        "purchase_order_not_found": {
+          "required": [
+            "field"
+          ]
+        },
+        "purchase_order_not_open": {
+          "required": [
+            "field"
+          ]
+        },
+        "purchase_order_line_not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "purchase_order_line_mismatch": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "location_not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "quantity_exceeds_remaining": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "receipt_reference_conflict": {
+          "required": [
+            "constraint"
+          ]
+        },
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      }
+    },
+    "quality.load_purchase_order_detail": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "quality.load_purchase_order_detail",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_number",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "supplier_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "open",
+              "complete",
+              "cancelled"
+            ]
+          },
+          {
+            "path": "row_version",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "acme_inspection_required",
+            "type": "boolean",
+            "nullable": false
+          },
+          {
+            "path": "acme_quality_status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "not_required",
+              "pending",
+              "approved"
+            ]
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "not_found",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "purchase_order_number",
+            "supplier_id",
+            "status",
+            "row_version",
+            "acme_inspection_required",
+            "acme_quality_status"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "load_purchase_order_detail": {
+          "path": "query/quality_purchase_order_detail.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_number",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "supplier_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "acme_inspection_required",
+              "type": "boolean",
+              "nullable": false
+            },
+            {
+              "name": "acme_quality_status",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "quality.approve_inspection": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "quality.approve_inspection",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "receipt_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "expected_row_version",
+            "type": "int64",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "receipt_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "approved"
+            ]
+          },
+          {
+            "path": "row_version",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_row_version",
+            "type": "int64",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "not_found",
+        "concurrency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "concurrency_conflict": {
+          "required": [
+            "expected_row_version",
+            "observed_row_version"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "quality_inspection",
+          "select_fields": [
+            "receipt_id",
+            "status",
+            "row_version"
+          ],
+          "insert_fields": [],
+          "update_fields": [
+            "status",
+            "row_version"
+          ],
+          "lock": true,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "receipt",
+          "select_fields": [
+            "id",
+            "purchase_order_id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "row_version"
+          ],
+          "insert_fields": [],
+          "update_fields": [
+            "acme_quality_status",
+            "row_version"
+          ],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "approve_inspection": {
+          "path": "command/approve_inspection/approve_inspection.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "expected_row_version",
+              "type": "int64",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "outcome",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "observed_row_version",
+              "type": "int64",
+              "nullable": true
+            },
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "row_version",
+              "type": "int64",
+              "nullable": true
+            },
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "purchase_order_row_version",
+              "type": "int64",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "quality.create_inspection": {
+      "kind": "event_handler",
+      "visibility": "private",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "event",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "insert"
+            ]
+          },
+          {
+            "path": "new.id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "quality_inspection",
+          "select_fields": [
+            "receipt_id"
+          ],
+          "insert_fields": [
+            "receipt_id"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": [
+            "quality_inspection_receipt_id_pkey"
+          ]
+        }
+      ],
+      "statements": {
+        "insert_inspection": {
+          "path": "command/create_inspection/insert_inspection.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "load_inspection": {
+          "path": "command/create_inspection/load_inspection.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "receipt_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        }
+      },
+      "registration": {
+        "source_package": "wamn_receiving",
+        "entity": "receipt",
+        "ops": [
+          "insert"
+        ]
+      }
+    }
+  },
+  "connections": {
+    "postgres": {
+      "interface": "wamn:postgres@0.1.0"
+    }
+  },
+  "components": {
+    "client_acme_receiving": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}
