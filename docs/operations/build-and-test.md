@@ -204,11 +204,11 @@ WAMN_RECEIVING_PG_URL="$RECEIVING_DATABASE_URL" cargo test \
 
 # Two independent derivations must each equal the exact shipped path/byte set.
 WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
-  cargo run -p wamn-schema-generator --example materialize_receiving \
-  --locked --offline -- check "$RECEIVING_SOURCE_COMMIT"
+  cargo run -p wamn-schema-generator --example materialize_package \
+  --locked --offline -- check "$RECEIVING_SOURCE_COMMIT" packages/receiving
 WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
-  cargo run -p wamn-schema-generator --example materialize_receiving \
-  --locked --offline -- check "$RECEIVING_SOURCE_COMMIT"
+  cargo run -p wamn-schema-generator --example materialize_package \
+  --locked --offline -- check "$RECEIVING_SOURCE_COMMIT" packages/receiving
 
 # Normal builds consume the committed .sqlx evidence without a database.
 SQLX_OFFLINE=true cargo test -p wamn-proof-conformance \
