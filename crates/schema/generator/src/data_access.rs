@@ -52,6 +52,26 @@ pub struct DataAccessRelationInventory {
     fields: Vec<String>,
 }
 
+/// Installed-set GuestSql authority derived from package-owned contributions.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectiveDataAccess {
+    role: String,
+    schemas: Vec<String>,
+    relations: Vec<EffectiveDataAccessRelation>,
+}
+
+/// One live relation in the installed-set GuestSql authority union.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EffectiveDataAccessRelation {
+    schema: String,
+    table: String,
+    all_fields: Vec<String>,
+    select_fields: Vec<String>,
+    insert_fields: Vec<String>,
+    update_fields: Vec<String>,
+    lock_carrier_fields: Vec<String>,
+}
+
 impl DataAccessRelationInventory {
     /// Construct a normalized relation inventory from server catalog facts.
     pub fn new(
@@ -123,66 +143,6 @@ impl DataAccessOverlay {
     /// Complete application relation inventory ordered by schema and table.
     pub fn relations(&self) -> &[DataAccessRelation] {
         &self.relations
-    }
-
-    /// Render the exact direct-ACL reconciliation owned by this evidence.
-    pub fn reconcile_sql(&self) -> Result<String, GenerateError> {
-        self.validate()?;
-        let role = quote_identifier(&self.role);
-        let mut sql = String::new();
-        for schema in &self.schemas {
-            let schema = quote_identifier(schema);
-            writeln!(
-                sql,
-                "REVOKE ALL PRIVILEGES ON SCHEMA {schema} FROM PUBLIC, {role};"
-            )
-            .expect("writing SQL to a String cannot fail");
-            writeln!(sql, "GRANT USAGE ON SCHEMA {schema} TO {role};")
-                .expect("writing SQL to a String cannot fail");
-        }
-        for relation in &self.relations {
-            let target = format!(
-                "{}.{}",
-                quote_identifier(&relation.schema),
-                quote_identifier(&relation.table)
-            );
-            writeln!(
-                sql,
-                "REVOKE ALL PRIVILEGES ON TABLE {target} FROM PUBLIC, {role};"
-            )
-            .expect("writing SQL to a String cannot fail");
-            let all_fields = field_list(&relation.all_fields);
-            for privilege in ["SELECT", "INSERT", "UPDATE", "REFERENCES"] {
-                writeln!(
-                    sql,
-                    "REVOKE {privilege} ({all_fields}) ON TABLE {target} FROM PUBLIC, {role};"
-                )
-                .expect("writing SQL to a String cannot fail");
-            }
-            grant_columns(&mut sql, "SELECT", &relation.select_fields, &target, &role);
-            grant_columns(&mut sql, "INSERT", &relation.insert_fields, &target, &role);
-            let mut update_fields = relation.update_fields.clone();
-            if let Some(carrier) = &relation.lock_update_field
-                && !update_fields.contains(carrier)
-            {
-                writeln!(
-                    sql,
-                    "-- FOR KEY SHARE carrier on {target}: UPDATE ({}) is PostgreSQL lock mechanics, not declared DML update authority.",
-                    quote_identifier(carrier)
-                )
-                .expect("writing SQL to a String cannot fail");
-                update_fields.push(carrier.clone());
-                update_fields.sort_by_key(|field| {
-                    relation
-                        .all_fields
-                        .iter()
-                        .position(|candidate| candidate == field)
-                        .expect("validated lock carrier belongs to the relation")
-                });
-            }
-            grant_columns(&mut sql, "UPDATE", &update_fields, &target, &role);
-        }
-        Ok(sql)
     }
 
     fn validate(&self) -> Result<(), GenerateError> {
@@ -338,6 +298,270 @@ impl DataAccessRelation {
             .chain(self.lock_update_field.iter().map(String::as_str))
             .collect::<BTreeSet<_>>()
             .into_iter()
+    }
+}
+
+impl EffectiveDataAccess {
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub fn schemas(&self) -> &[String] {
+        &self.schemas
+    }
+
+    pub fn relations(&self) -> &[EffectiveDataAccessRelation] {
+        &self.relations
+    }
+}
+
+impl EffectiveDataAccessRelation {
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    pub fn table(&self) -> &str {
+        &self.table
+    }
+
+    pub fn all_fields(&self) -> &[String] {
+        &self.all_fields
+    }
+
+    pub fn select_fields(&self) -> &[String] {
+        &self.select_fields
+    }
+
+    pub fn insert_fields(&self) -> &[String] {
+        &self.insert_fields
+    }
+
+    pub fn update_fields(&self) -> &[String] {
+        &self.update_fields
+    }
+}
+
+/// Re-derive one generated contribution from its own welded relation inventory.
+pub fn validate_data_access_contribution(
+    overlay: &DataAccessOverlay,
+    manifest_bytes: &[u8],
+) -> Result<(), GenerateError> {
+    let inventory = overlay
+        .relations()
+        .iter()
+        .map(|relation| {
+            DataAccessRelationInventory::new(
+                relation.schema(),
+                relation.table(),
+                relation.all_fields().to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let expected = derive_data_access_overlay_from_inventory(&inventory, manifest_bytes)?;
+    if &expected == overlay {
+        Ok(())
+    } else {
+        Err(GenerateError::new(
+            GenerateErrorKind::InvalidManifest,
+            "generated data-access contribution does not match its welded package manifest",
+        ))
+    }
+}
+
+/// Derive the exact GuestSql authority union for one installed package set.
+pub fn derive_effective_data_access(
+    inventory: &[DataAccessRelationInventory],
+    overlays: &[DataAccessOverlay],
+) -> Result<EffectiveDataAccess, GenerateError> {
+    if overlays.is_empty() {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidManifest,
+            "installed data-access set must contain at least one package contribution",
+        ));
+    }
+
+    let mut packages = BTreeSet::new();
+    let mut schemas = BTreeSet::new();
+    for overlay in overlays {
+        overlay.validate()?;
+        if !packages.insert(overlay.package()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                "installed data-access set repeats a package coordinate",
+            ));
+        }
+        schemas.extend(overlay.schemas().iter().cloned());
+    }
+
+    let mut desired = BTreeMap::new();
+    for relation in inventory {
+        relation.validate()?;
+        if schemas.contains(&relation.schema)
+            && desired
+                .insert(
+                    (relation.schema.clone(), relation.table.clone()),
+                    EffectiveDesiredRelation::new(relation),
+                )
+                .is_some()
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                "live installed-set relation inventory repeats a relation",
+            ));
+        }
+    }
+    for schema in &schemas {
+        if !desired.keys().any(|(candidate, _)| candidate == schema) {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::UnknownRelation,
+                "installed data-access schema has no ordinary relation inventory",
+                schema.as_str(),
+            ));
+        }
+    }
+
+    for overlay in overlays {
+        for relation in overlay.relations() {
+            let key = (relation.schema().to_owned(), relation.table().to_owned());
+            let target = desired.get_mut(&key).ok_or_else(|| {
+                GenerateError::for_object(
+                    GenerateErrorKind::UnknownRelation,
+                    "generated data-access contribution references a relation absent from the installed set",
+                    format!("{}.{}", relation.schema(), relation.table()),
+                )
+            })?;
+            target.add(relation)?;
+        }
+    }
+
+    let relations = desired
+        .into_iter()
+        .map(|((schema, table), relation)| relation.finish(schema, table))
+        .collect();
+    Ok(EffectiveDataAccess {
+        role: DATA_ACCESS_ROLE.to_owned(),
+        schemas: schemas.into_iter().collect(),
+        relations,
+    })
+}
+
+/// Render one exact reconciliation for the complete installed package set.
+pub fn render_effective_data_access_sql(
+    effective: &EffectiveDataAccess,
+) -> Result<String, GenerateError> {
+    if effective.role != DATA_ACCESS_ROLE
+        || effective.schemas.is_empty()
+        || effective.relations.is_empty()
+    {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidManifest,
+            "effective data-access authority is empty or uses the wrong carrier",
+        ));
+    }
+    let role = quote_identifier(&effective.role);
+    let mut sql = String::new();
+    for schema in &effective.schemas {
+        let schema = quote_identifier(schema);
+        writeln!(
+            sql,
+            "REVOKE ALL PRIVILEGES ON SCHEMA {schema} FROM PUBLIC, {role};"
+        )
+        .expect("writing SQL to a String cannot fail");
+        writeln!(sql, "GRANT USAGE ON SCHEMA {schema} TO {role};")
+            .expect("writing SQL to a String cannot fail");
+    }
+    for relation in &effective.relations {
+        let target = format!(
+            "{}.{}",
+            quote_identifier(&relation.schema),
+            quote_identifier(&relation.table)
+        );
+        writeln!(
+            sql,
+            "REVOKE ALL PRIVILEGES ON TABLE {target} FROM PUBLIC, {role};"
+        )
+        .expect("writing SQL to a String cannot fail");
+        let all_fields = field_list(&relation.all_fields);
+        for privilege in ["SELECT", "INSERT", "UPDATE", "REFERENCES"] {
+            writeln!(
+                sql,
+                "REVOKE {privilege} ({all_fields}) ON TABLE {target} FROM PUBLIC, {role};"
+            )
+            .expect("writing SQL to a String cannot fail");
+        }
+        grant_columns(&mut sql, "SELECT", &relation.select_fields, &target, &role);
+        grant_columns(&mut sql, "INSERT", &relation.insert_fields, &target, &role);
+        for carrier in &relation.lock_carrier_fields {
+            writeln!(
+                sql,
+                "-- FOR KEY SHARE carrier on {target}: UPDATE ({}) is PostgreSQL lock mechanics, not declared DML update authority.",
+                quote_identifier(carrier)
+            )
+            .expect("writing SQL to a String cannot fail");
+        }
+        grant_columns(&mut sql, "UPDATE", &relation.update_fields, &target, &role);
+    }
+    Ok(sql)
+}
+
+struct EffectiveDesiredRelation {
+    all_fields: Vec<String>,
+    select: BTreeSet<String>,
+    insert: BTreeSet<String>,
+    update: BTreeSet<String>,
+    lock_carriers: BTreeSet<String>,
+}
+
+impl EffectiveDesiredRelation {
+    fn new(relation: &DataAccessRelationInventory) -> Self {
+        Self {
+            all_fields: relation.fields.clone(),
+            select: BTreeSet::new(),
+            insert: BTreeSet::new(),
+            update: BTreeSet::new(),
+            lock_carriers: BTreeSet::new(),
+        }
+    }
+
+    fn add(&mut self, relation: &DataAccessRelation) -> Result<(), GenerateError> {
+        if let Some(field) = relation
+            .all_fields()
+            .iter()
+            .find(|field| !self.all_fields.contains(*field))
+        {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::UnknownColumn,
+                "generated data-access contribution references a field absent from the installed set",
+                format!("{}.{}.{}", relation.schema(), relation.table(), field),
+            ));
+        }
+        self.select.extend(relation.select_fields().iter().cloned());
+        self.insert.extend(relation.insert_fields().iter().cloned());
+        self.update.extend(relation.update_fields().iter().cloned());
+        if let Some(carrier) = relation.lock_update_field() {
+            self.update.insert(carrier.to_owned());
+            self.lock_carriers.insert(carrier.to_owned());
+        }
+        Ok(())
+    }
+
+    fn finish(self, schema: String, table: String) -> EffectiveDataAccessRelation {
+        let ordered = |fields: &BTreeSet<String>| {
+            self.all_fields
+                .iter()
+                .filter(|field| fields.contains(field.as_str()))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        EffectiveDataAccessRelation {
+            schema,
+            table,
+            select_fields: ordered(&self.select),
+            insert_fields: ordered(&self.insert),
+            update_fields: ordered(&self.update),
+            lock_carrier_fields: ordered(&self.lock_carriers),
+            all_fields: self.all_fields,
+        }
     }
 }
 

@@ -279,7 +279,7 @@ cargo test -p wamn-schema-generator --test parity --locked --offline
 WAMN_CTL_PG_URL="$RECEIVING_DATABASE_URL" cargo test -p wamn-ctl \
   --test package_data_access_live --locked --offline -- \
   --ignored --exact \
-  generated_overlay_reconciles_a_real_app_generation_exactly_and_replays_noop \
+  installed_package_set_unions_a_real_app_generation_and_replays_noop \
   --test-threads=1
 
 receiving_gate_cleanup

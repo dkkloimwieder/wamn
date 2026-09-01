@@ -28,7 +28,9 @@ pub use cursor::{
 };
 pub use data_access::{
     DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelation,
-    DataAccessRelationInventory, data_access_schemas, derive_data_access_overlay_from_inventory,
+    DataAccessRelationInventory, EffectiveDataAccess, EffectiveDataAccessRelation,
+    data_access_schemas, derive_data_access_overlay_from_inventory, derive_effective_data_access,
+    render_effective_data_access_sql, validate_data_access_contribution,
 };
 pub use error::{GenerateError, GenerateErrorKind};
 pub use generate::{

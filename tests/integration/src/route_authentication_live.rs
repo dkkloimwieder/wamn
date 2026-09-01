@@ -1826,7 +1826,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
     )
     .await?;
     reconcile_package_data_access::run(ReconcilePackageDataAccessArgs {
-        package: package_root(),
+        packages: vec![package_root()],
         database_url: route.database_url.clone(),
         tenant: TENANT.to_owned(),
     })
