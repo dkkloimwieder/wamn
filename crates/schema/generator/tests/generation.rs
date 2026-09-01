@@ -702,7 +702,8 @@ fn overlay_manifest() -> Value {
             "visibility": "private",
             "registration": {
                 "source_package": "wamn_receiving",
-                "entity": "receipt"
+                "entity": "receipt",
+                "ops": ["insert"]
             }
         }
     });
@@ -753,6 +754,7 @@ fn overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain() {
     let registration = handler.registration().expect("event registration");
     assert_eq!(registration.source_package, "wamn_receiving");
     assert_eq!(registration.entity, "receipt");
+    assert_eq!(registration.ops, [wamn_event_wire::Op::Insert]);
     let generated = run(&catalog(false), &overlay, &QUERY_SOURCES)
         .expect("the exact overlay vocabulary must validate against its effective catalog");
     let projection = artifact_json(
@@ -769,6 +771,7 @@ fn overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain() {
     assert_eq!(handler["visibility"], "private");
     assert_eq!(handler["permission_token"], Value::Null);
     assert_eq!(handler["registration"]["source_package"], "wamn_receiving");
+    assert_eq!(handler["registration"]["ops"], json!(["insert"]));
 }
 
 #[test]
@@ -870,13 +873,24 @@ fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
 
     let mut projection_registration = overlay_manifest();
     projection_registration["custom_operations"]["quality.load_purchase_order_detail"]["registration"] =
-        json!({"source_package": "wamn_receiving", "entity": "receipt"});
+        json!({"source_package": "wamn_receiving", "entity": "receipt", "ops": ["insert"]});
     assert!(
         PackageManifest::from_slice(
             &serde_json::to_vec(&projection_registration).expect("serialize manifest")
         )
         .is_err()
     );
+
+    for ops in [json!([]), json!(["insert", "insert"])] {
+        let mut invalid_ops = overlay_manifest();
+        invalid_ops["custom_operations"]["quality.create_inspection"]["registration"]["ops"] = ops;
+        assert_eq!(
+            validate_operation_vocabulary(&parsed_manifest(&invalid_ops))
+                .expect_err("an empty or repeated registration op set was accepted")
+                .kind(),
+            GenerateErrorKind::InvalidOperation
+        );
+    }
 
     let mut unknown_kind = overlay_manifest();
     unknown_kind["custom_operations"]["quality.load_purchase_order_detail"]["kind"] =

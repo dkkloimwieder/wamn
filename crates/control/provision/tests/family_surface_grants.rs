@@ -294,9 +294,9 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
            ('t2', 'foreign', '1.0.0', \
             'sha256:1111111111111111111111111111111111111111111111111111111111111111'); \
          INSERT INTO catalog.event_registrations \
-           (tenant_id, package_id, registration_id, flow_id, entity_id, registration) VALUES \
-           ('t1', 'overlay', 'inspect', 'quality-create-inspection', 'receipt', '{}'), \
-           ('t2', 'foreign', 'foreign', 'foreign', 'receipt', '{}');",
+           (tenant_id, package_id, registration_id, entity_id, registration) VALUES \
+           ('t1', 'overlay', 'quality.create_inspection', 'receipt', '{}'), \
+           ('t2', 'foreign', 'foreign', 'receipt', '{}');",
     );
     let as_materializer = role_url(&admin, &login, GENERATION_PW);
     assert_eq!(
@@ -317,14 +317,14 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
                FROM catalog.event_registrations, claim \
               WHERE tenant_id = current_setting('app.tenant', true)"
         ),
-        "overlay::inspect"
+        "overlay::quality.create_inspection"
     );
     assert_eq!(
         sqlstate(
             &as_materializer,
             "INSERT INTO catalog.event_registrations \
-               (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
-             VALUES ('t1', 'overlay', 'forged', 'forged', 'receipt', '{}');"
+               (tenant_id, package_id, registration_id, entity_id, registration) \
+             VALUES ('t1', 'overlay', 'forged', 'receipt', '{}');"
         )
         .as_deref(),
         Some("42501")

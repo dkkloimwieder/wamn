@@ -7,15 +7,14 @@ use crate::EventRegistration;
 
 /// Insert or update one package-owned catalog registration only when facts differ.
 pub const UPSERT_CATALOG_REGISTRATION_SQL: &str = "INSERT INTO catalog.event_registrations AS current \
-       (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb) \
+       (tenant_id, package_id, registration_id, entity_id, registration) \
+     VALUES ($1, $2, $3, $4, $5::jsonb) \
      ON CONFLICT (tenant_id, package_id, registration_id) DO UPDATE \
-       SET flow_id = EXCLUDED.flow_id, \
-           entity_id = EXCLUDED.entity_id, \
+       SET entity_id = EXCLUDED.entity_id, \
            registration = EXCLUDED.registration \
-     WHERE (current.flow_id, current.entity_id, current.registration) \
+     WHERE (current.entity_id, current.registration) \
            IS DISTINCT FROM \
-           (EXCLUDED.flow_id, EXCLUDED.entity_id, EXCLUDED.registration)";
+           (EXCLUDED.entity_id, EXCLUDED.registration)";
 
 /// Remove residue outside one package's generated registration artifact.
 pub const DELETE_STALE_CATALOG_REGISTRATIONS_SQL: &str = "DELETE FROM catalog.event_registrations \
@@ -26,7 +25,6 @@ pub const DELETE_STALE_CATALOG_REGISTRATIONS_SQL: &str = "DELETE FROM catalog.ev
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogRegistrationRow {
     pub registration_id: String,
-    pub flow_id: String,
     pub entity_id: String,
     pub registration_json: String,
 }
@@ -121,7 +119,6 @@ pub fn project_catalog_registrations(
         retained_registration_ids.push(registration.registration_id.clone());
         rows.push(CatalogRegistrationRow {
             registration_id: registration.registration_id.clone(),
-            flow_id: registration.flow_id.clone(),
             entity_id: registration.entity.clone(),
             registration_json: serde_json::to_string(registration)
                 .expect("EventRegistration serializes"),
@@ -142,10 +139,9 @@ mod tests {
     fn registration(owner: &str, source: &str) -> EventRegistration {
         EventRegistration {
             schema_version: SCHEMA_VERSION.into(),
-            registration_id: "create-inspection".into(),
+            registration_id: "quality.create_inspection".into(),
             package_id: owner.into(),
             source_package_id: source.into(),
-            flow_id: "quality-create-inspection".into(),
             entity: "receipt".into(),
             ops: vec![Op::Insert],
             input: RegistrationInput::Event,
@@ -161,7 +157,10 @@ mod tests {
         let projection =
             project_catalog_registrations("client_acme_receiving", &declarations).unwrap();
         assert_eq!(projection.package_id, "client_acme_receiving");
-        assert_eq!(projection.retained_registration_ids, ["create-inspection"]);
+        assert_eq!(
+            projection.retained_registration_ids,
+            ["quality.create_inspection"]
+        );
         assert_eq!(projection.rows.len(), 1);
         let document: EventRegistration =
             serde_json::from_str(&projection.rows[0].registration_json).unwrap();

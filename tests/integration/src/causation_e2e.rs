@@ -487,7 +487,6 @@ fn registration_json(resources: &GateResources) -> String {
         registration_id: resources.registration_id.clone(),
         package_id: resources.package_id.clone(),
         source_package_id: resources.package_id.clone(),
-        flow_id: resources.flow_id.clone(),
         entity: resources.entity_id.clone(),
         ops: vec![Op::Insert, Op::Delete],
         input: wamn_event_reg::RegistrationInput::default(),
@@ -1066,13 +1065,12 @@ async fn setup_project(
     transaction
         .execute(
             "INSERT INTO catalog.event_registrations \
-           (tenant_id,package_id,registration_id,flow_id,entity_id,registration) \
-         VALUES ($1,$2,$3,$4,$5,$6::text::jsonb)",
+           (tenant_id,package_id,registration_id,entity_id,registration) \
+         VALUES ($1,$2,$3,$4,$5::text::jsonb)",
             &[
                 &resources.tenant,
                 &resources.package_id,
                 &resources.registration_id,
-                &resources.flow_id,
                 &resources.entity_id,
                 &registration,
             ],
@@ -3326,7 +3324,6 @@ mod tests {
         assert_eq!(registration["registration-id"], resources.registration_id);
         assert_eq!(registration["package-id"], resources.package_id);
         assert_eq!(registration["source-package-id"], resources.package_id);
-        assert_eq!(registration["flow-id"], resources.flow_id);
         assert_eq!(registration["entity"], resources.entity_id);
         assert_eq!(registration["ops"], serde_json::json!(["insert", "delete"]));
         assert_eq!(

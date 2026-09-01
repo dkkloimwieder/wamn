@@ -119,6 +119,7 @@ pub struct EventHandlerDeclaration {
 pub struct EventRegistrationDeclaration {
     pub source_package: String,
     pub entity: String,
+    pub ops: Vec<wamn_event_wire::Op>,
 }
 
 /// Transaction boundary admitted for custom commands in the POC.
@@ -502,6 +503,23 @@ fn validate_custom_operation(
     if let Some(registration) = operation.registration() {
         validate_identifier(&registration.source_package, "event source package")?;
         validate_identifier(&registration.entity, "event entity")?;
+        if registration.ops.is_empty() {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("event handler {operation_name} registration must declare at least one op"),
+            ));
+        }
+        for (index, op) in registration.ops.iter().enumerate() {
+            if registration.ops[..index].contains(op) {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "event handler {operation_name} registration repeats op {:?}",
+                        op.as_str()
+                    ),
+                ));
+            }
+        }
         let source_is_declared = registration.source_package == manifest.package.id
             || manifest
                 .base_dependencies

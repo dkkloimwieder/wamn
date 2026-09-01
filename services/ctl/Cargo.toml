@@ -47,6 +47,7 @@ oci-client = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"], optional = true }
 futures-util = { workspace = true, optional = true }
 wamn-event-wire = { workspace = true, optional = true }
+wamn-event-reg = { workspace = true }
 # Release authoring parses and validates immutable execution graphs.
 wamn-execution-contract = { workspace = true }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity

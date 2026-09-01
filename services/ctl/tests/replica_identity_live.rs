@@ -37,7 +37,6 @@ fn registration() -> String {
         "registration-id": "orders-delete",
         "package-id": OWNER_PACKAGE_ID,
         "source-package-id": PACKAGE_ID,
-        "flow-id": "orders-flow",
         "entity": "orders",
         "ops": ["delete"],
         "condition": null
@@ -106,8 +105,8 @@ async fn package_registration_union_flips_exact_tables_and_unreadable_state_refu
     client
         .execute(
             "INSERT INTO catalog.event_registrations \
-             (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
-             VALUES ('t1', $1, 'orders-delete', 'orders-flow', 'orders', $2::text::jsonb)",
+             (tenant_id, package_id, registration_id, entity_id, registration) \
+             VALUES ('t1', $1, 'orders-delete', 'orders', $2::text::jsonb)",
             &[&OWNER_PACKAGE_ID, &registration()],
         )
         .await

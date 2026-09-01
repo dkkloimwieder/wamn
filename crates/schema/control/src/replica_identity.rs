@@ -244,7 +244,6 @@ mod tests {
             registration_id: id.into(),
             package_id: "shop".into(),
             source_package_id: "shop".into(),
-            flow_id: "notify".into(),
             entity: entity.into(),
             ops,
             input: RegistrationInput::Event,

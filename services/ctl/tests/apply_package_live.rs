@@ -69,6 +69,30 @@ fn copy_receiving_package(root: &Path) {
         root.join("migrations/0001_initial.sql"),
     )
     .expect("copy exact initial migration");
+
+    let manifest_path = root.join("wamn.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).expect("read copied package manifest"),
+    )
+    .expect("parse copied package manifest");
+    manifest["custom_operations"]["quality.create_inspection"] = serde_json::json!({
+        "kind": "event_handler",
+        "visibility": "private",
+        "registration": {
+            "source_package": "wamn_receiving",
+            "entity": "receipt",
+            "ops": ["insert"]
+        }
+    });
+    manifest["components"]["quality_create_inspection"] = serde_json::json!({
+        "operations": ["quality.create_inspection"],
+        "connections": ["postgres"]
+    });
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize handler package manifest"),
+    )
+    .expect("write handler package manifest");
 }
 
 fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
@@ -79,6 +103,8 @@ fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
     )
     .expect("parse copied package manifest");
     manifest["package"]["id"] = serde_json::Value::String(package_id.to_owned());
+    manifest["custom_operations"]["quality.create_inspection"]["registration"]["source_package"] =
+        serde_json::Value::String(package_id.to_owned());
     for model in manifest["models"]
         .as_object_mut()
         .expect("manifest models are an object")
@@ -338,6 +364,9 @@ async fn write_identity(client: &Client) -> Vec<String> {
                UNION ALL \
                SELECT 'permission:' || permission || ':' || xmin::text \
                  FROM app_system.permissions WHERE tenant_id = $1 \
+               UNION ALL \
+               SELECT 'registration:' || registration_id || ':' || xmin::text \
+                 FROM catalog.event_registrations WHERE tenant_id = $1 \
              ) AS observed ORDER BY identity COLLATE \"C\"",
             &[&TENANT],
         )
@@ -441,6 +470,23 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .get::<_, i64>(0),
         1
     );
+    let registration: String = client
+        .query_one(
+            "SELECT registration::text FROM catalog.event_registrations \
+              WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                AND registration_id = 'quality.create_inspection'",
+            &[&TENANT],
+        )
+        .await
+        .expect("apply-package projects the inline handler registration")
+        .get(0);
+    let registration: serde_json::Value =
+        serde_json::from_str(&registration).expect("parse projected registration");
+    assert_eq!(registration["registration-id"], "quality.create_inspection");
+    assert_eq!(registration["source-package-id"], "wamn_receiving");
+    assert_eq!(registration["entity"], "receipt");
+    assert_eq!(registration["ops"], serde_json::json!(["insert"]));
+    assert!(registration.get("flow-id").is_none());
     let first_identity = write_identity(&client).await;
     apply(&url, &package)
         .await

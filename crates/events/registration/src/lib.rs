@@ -3,7 +3,7 @@
 //! MVP outcome: event spine (causation depth = loop guard).
 //!
 //! The **declaration surface** for the event plane's materializer (l5i9.17): an
-//! [`EventRegistration`] is a subscribing flow's "a registration, not code" —
+//! [`EventRegistration`] is a subscribing operation's "a registration, not code" —
 //! an entity id, an op set, event-or-batch delivery grain, and an optional
 //! condition. This crate models and validates that declaration; it is pure Rust
 //! (no DB, no clock, no wasm) and does not decode WAL or evaluate conditions —

@@ -180,15 +180,12 @@
     {
       "path": "deploy/sql/postgres-init.sql",
       "source_class": "gate-fixture-stand-in",
-      "reason": "S2/S3 benchmark and host-plugin fixtures are not production PostgreSQL authority",
+      "reason": "S2 benchmark and host-plugin fixtures are not production PostgreSQL authority",
       "expected_objects": [
         "s2.bench",
         "s2.rls_secrets",
         "s2.scratch",
-        "s2.fkchild",
-        "s3.flows",
-        "s3.sink",
-        "s3.runs"
+        "s2.fkchild"
       ]
     }
   ],
@@ -1000,6 +997,7 @@
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
         "schema-control",
+        "event-registration-model",
         "ctl-copy"
       ],
       "readers": [

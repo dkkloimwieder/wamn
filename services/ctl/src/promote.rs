@@ -23,7 +23,7 @@ use wamn_schema_control::BareSchemaName;
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 
 use crate::publish_release::{
-    DeploymentCoordinate, MintReleaseManifest, ReleaseWiringTarget, mint_release_manifest,
+    DeploymentCoordinate, MintReleaseManifest, ReleaseWiringTarget, mint_promoted_release_manifest,
     project_release_identity, read_expected_environment, report_deployment_coordinate,
     verify_provisioned_environment,
 };
@@ -690,7 +690,7 @@ async fn promote_target(
             }
         })
         .collect::<BTreeSet<_>>();
-    let minted = mint_release_manifest(
+    let minted = mint_promoted_release_manifest(
         &tx,
         &MintReleaseManifest {
             tenant_id: &args.tenant,
@@ -700,8 +700,8 @@ async fn promote_target(
             packages: &packages,
             wirings: &wirings,
             attachments: &source.manifest.attachments,
-            registrations: &source.manifest.registrations,
         },
+        &source.manifest.registrations,
     )
     .await
     .context("mint target format-3 release snapshot")?;

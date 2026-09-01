@@ -3776,8 +3776,8 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     seed_run_admission_facts(su, "t1", "cat", 1, "dev", "durable").await;
     su.execute(
         "INSERT INTO catalog.event_registrations \
-           (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
-         VALUES ('t1', 'cat', 'r1', 'f', 'e', \
+           (tenant_id, package_id, registration_id, entity_id, registration) \
+         VALUES ('t1', 'cat', 'r1', 'e', \
                  $1::text::jsonb)",
         &[&r#"{"registration-id":"r1","package-id":"cat","source-package-id":"cat","partition-key":"serial","retained":"yes","state":"shadow"}"#],
     )

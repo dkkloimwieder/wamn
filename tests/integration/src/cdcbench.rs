@@ -179,7 +179,6 @@ fn registration_json(reg_id: &str, entity: &str) -> String {
         "registration-id": reg_id,
         "package-id": PACKAGE_ID,
         "source-package-id": PACKAGE_ID,
-        "flow-id": "ccdc-flow",
         "entity": entity,
         "ops": ["delete"],
         "condition": null,
@@ -1216,13 +1215,12 @@ async fn ri_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
     for (reg_id, entity) in [("r-sup", "suppliers"), ("r-usr", "users")] {
         db.execute(
             "INSERT INTO catalog.event_registrations \
-             (tenant_id, package_id, registration_id, flow_id, entity_id, registration) \
-             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb)",
+             (tenant_id, package_id, registration_id, entity_id, registration) \
+             VALUES ($1, $2, $3, $4, $5::text::jsonb)",
             &[
                 &TENANT,
                 &PACKAGE_ID,
                 &reg_id,
-                &"ccdc-flow",
                 &entity,
                 &registration_json(reg_id, entity),
             ],

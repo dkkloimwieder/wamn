@@ -270,7 +270,9 @@ Non-CRUD declarations use one closed `custom_operations` map with kinds
 `projection`, `command`, and `event_handler`. Every declaration is explicitly
 `public` or `private`: a public operation carries its exact local permission,
 while a private operation carries no permission token. An event handler alone
-carries inline `source_package` and `entity` registration metadata.
+carries inline `source_package`, `entity`, and explicit nonempty,
+duplicate-free `ops` registration metadata; the first handler declares
+`ops: [insert]`. Its registration id is the exact package-local operation key.
 
 [Owner-ruling correction, 2026-09-01 — one custom-operation grammar replaces
 separate command/projection/handler grammars; private handlers are not public

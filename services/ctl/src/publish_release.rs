@@ -144,7 +144,6 @@ pub struct MintReleaseManifest<'a> {
     pub packages: &'a BTreeSet<PackageCoordinate>,
     pub wirings: &'a BTreeSet<ReleaseWiringTarget>,
     pub attachments: &'a BTreeMap<String, ServingAttachment>,
-    pub registrations: &'a BTreeMap<String, ServingRegistration>,
 }
 
 /// The deployment-attestation key derived from mounted release bytes.
@@ -182,6 +181,7 @@ pub enum MintManifestErrorKind {
     Component,
     OperationDependency,
     UnauthenticatedRegisteredOperation,
+    Registration,
     ClosureConflict,
     Document,
     RouteHostUnbound,
@@ -198,6 +198,7 @@ impl MintManifestErrorKind {
             Self::Component => "component",
             Self::OperationDependency => "operation-dependency",
             Self::UnauthenticatedRegisteredOperation => "unauthenticated-registered-operation",
+            Self::Registration => "registration",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
             Self::RouteHostUnbound => "route-host-unbound",
@@ -309,10 +310,8 @@ pub struct PublishReleaseArgs {
     /// Deployment-owned hostname applied to every HTTP route.
     #[arg(long)]
     pub route_host: Option<String>,
-    #[arg(long)]
-    pub registrations: PathBuf,
-    /// Exact `wamn.json` for each package whose wiring invokes a base alias.
-    #[arg(long = "package-manifest", value_name = "PATH")]
+    /// Exact `wamn.json` for every package in the release.
+    #[arg(long = "package-manifest", value_name = "PATH", required = true)]
     pub package_manifests: Vec<PathBuf>,
 }
 
@@ -350,7 +349,6 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
     let authored_attachments = read_document(&args.attachments, "attachments")?;
     let attachments =
         resolve_route_host_overlay(&authored_attachments, args.route_host.as_deref())?;
-    let registrations = read_document(&args.registrations, "registrations")?;
     let package_manifests = read_package_manifests(&args.package_manifests)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -374,6 +372,13 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
             manifest.package.version,
         );
     }
+    ensure!(
+        package_manifests.len() == packages.len()
+            && packages
+                .iter()
+                .all(|package| package_manifests.contains_key(package.package_id())),
+        "publish-release requires one exact package manifest for every release package"
+    );
     let wirings = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
         wirings.len() == args.wirings.len(),
@@ -389,7 +394,6 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         packages: &packages,
         wirings: &wirings,
         attachments: &attachments,
-        registrations: &registrations,
     };
     let run_schema = args.verified_run_schema()?;
 
@@ -644,18 +648,34 @@ fn read_package_manifests(
     Ok(manifests)
 }
 
-pub async fn mint_release_manifest(
+pub async fn mint_promoted_release_manifest(
     transaction: &Transaction<'_>,
     request: &MintReleaseManifest<'_>,
+    registrations: &BTreeMap<String, ServingRegistration>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     let package_manifests = BTreeMap::new();
-    mint_release_manifest_with_package_manifests(transaction, request, &package_manifests).await
+    mint_release_manifest_from_sources(
+        transaction,
+        request,
+        &package_manifests,
+        Some(registrations),
+    )
+    .await
 }
 
 async fn mint_release_manifest_with_package_manifests(
     transaction: &Transaction<'_>,
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+) -> Result<MintedReleaseManifest, MintManifestError> {
+    mint_release_manifest_from_sources(transaction, request, package_manifests, None).await
+}
+
+async fn mint_release_manifest_from_sources(
+    transaction: &Transaction<'_>,
+    request: &MintReleaseManifest<'_>,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    promoted_registrations: Option<&BTreeMap<String, ServingRegistration>>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     transaction
         .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
@@ -668,6 +688,7 @@ async fn mint_release_manifest_with_package_manifests(
     let mut wirings = BTreeSet::new();
     let mut membership = BTreeSet::new();
     let mut component_facts = BTreeMap::new();
+    let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
     for package in request.packages {
         let scope = ComponentPackageScope {
             tenant_id: request.tenant_id.to_owned(),
@@ -700,7 +721,7 @@ async fn mint_release_manifest_with_package_manifests(
             package_id: target.package_id.clone(),
             package_version: target.package_version.clone(),
         };
-        resolve_wiring(
+        let entry_operation = resolve_wiring(
             transaction,
             request,
             target,
@@ -712,7 +733,19 @@ async fn mint_release_manifest_with_package_manifests(
             &mut membership,
         )
         .await?;
+        if let Some(operation) = entry_operation {
+            entry_targets
+                .entry(operation)
+                .or_default()
+                .push(target.clone());
+        }
     }
+
+    let registrations = if let Some(registrations) = promoted_registrations {
+        registrations.clone()
+    } else {
+        derive_serving_registrations(package_manifests, &entry_targets)?
+    };
 
     let release_id = EffectiveReleaseId::new(
         u32::try_from(request.effective_release_id).expect("validate_request checked release id"),
@@ -729,7 +762,7 @@ async fn mint_release_manifest_with_package_manifests(
         components,
         wirings,
         attachments: request.attachments.clone(),
-        registrations: request.registrations.clone(),
+        registrations,
     };
     let canonical_bytes = projected.canonical_bytes();
     let (manifest, digest) =
@@ -1182,6 +1215,68 @@ fn resolve_wiring_components(
     Ok(resolved)
 }
 
+fn derive_serving_registrations(
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    entry_targets: &BTreeMap<String, Vec<ReleaseWiringTarget>>,
+) -> Result<BTreeMap<String, ServingRegistration>, MintManifestError> {
+    let mut registrations = BTreeMap::new();
+    for manifest in package_manifests.values() {
+        for (operation_key, operation) in &manifest.custom_operations {
+            let Some(declaration) = operation.registration() else {
+                continue;
+            };
+            let operation_id = wamn_schema_generator::canonical_operation_identity(
+                &manifest.package,
+                operation_key,
+            )
+            .map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::Registration,
+                    format!("derive exact handler operation {operation_key:?}"),
+                    error,
+                )
+            })?;
+            let targets = entry_targets
+                .get(&operation_id)
+                .into_iter()
+                .flatten()
+                .filter(|target| {
+                    target.package_id == manifest.package.id
+                        && target.package_version == manifest.package.version
+                })
+                .collect::<Vec<_>>();
+            if targets.len() != 1 {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::Registration,
+                    format!(
+                        "event handler {operation_id:?} resolves to {} selected owner wiring(s); expected exactly one",
+                        targets.len()
+                    ),
+                ));
+            }
+            let target = targets[0];
+            let registration_id = format!("{}::{operation_key}", manifest.package.id);
+            registrations.insert(
+                registration_id,
+                ServingRegistration {
+                    package_id: manifest.package.id.clone(),
+                    source_package_id: declaration.source_package.clone(),
+                    wiring_id: target.wiring_id.clone(),
+                    wiring_version: target.wiring_version,
+                    entity: declaration.entity.clone(),
+                    ops: declaration
+                        .ops
+                        .iter()
+                        .map(|op| op.as_str().to_owned())
+                        .collect(),
+                    input: wamn_catalog::ServingRegistrationInput::Event,
+                },
+            );
+        }
+    }
+    Ok(registrations)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn resolve_wiring(
     transaction: &Transaction<'_>,
@@ -1193,7 +1288,7 @@ async fn resolve_wiring(
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
-) -> Result<(), MintManifestError> {
+) -> Result<Option<String>, MintManifestError> {
     let version = i32::try_from(target.wiring_version).map_err(|error| {
         MintManifestError::with_source(
             MintManifestErrorKind::Wiring,
@@ -1269,6 +1364,9 @@ async fn resolve_wiring(
         )
     })?;
     validate_anonymous_wiring_closure(request.attachments, target, &document, &resolved)?;
+    let entry_operation = resolved
+        .get(&document.entry)
+        .and_then(|component| component.registered_operation.clone());
     wirings.insert(ServingWiring {
         package_id: target.package_id.clone(),
         wiring_id: target.wiring_id.clone(),
@@ -1304,7 +1402,7 @@ async fn resolve_wiring(
             component_digest: fact.component_digest.clone(),
         });
     }
-    Ok(())
+    Ok(entry_operation)
 }
 
 /// Refuse an anonymous attachment whose selected wiring can reach a registered
@@ -1757,6 +1855,72 @@ mod tests {
         serde_json::from_value(document).expect("the dependency fixture manifest parses")
     }
 
+    fn handler_manifest() -> wamn_schema_generator::PackageManifest {
+        let mut document: serde_json::Value =
+            serde_json::from_str(include_str!("../../../packages/receiving/wamn.json"))
+                .expect("the repository package manifest parses as JSON");
+        document["package"] = serde_json::json!({
+            "id": "client_acme_receiving",
+            "version": "3.0.0"
+        });
+        document["base_dependencies"] = serde_json::json!({
+            "base_receiving": {
+                "package": "wamn_receiving",
+                "version": "1.0.0",
+                "digest": DIGEST,
+                "operations": ["receiving.record_receipt"]
+            }
+        });
+        document["models"] = serde_json::json!({});
+        document["custom_operations"] = serde_json::json!({
+            "quality.create_inspection": {
+                "kind": "event_handler",
+                "visibility": "private",
+                "registration": {
+                    "source_package": "wamn_receiving",
+                    "entity": "receipt",
+                    "ops": ["insert"]
+                }
+            }
+        });
+        document["components"] = serde_json::json!({
+            "quality_create_inspection": {
+                "operations": ["quality.create_inspection"],
+                "connections": ["postgres"]
+            }
+        });
+        serde_json::from_value(document).expect("the handler fixture manifest parses")
+    }
+
+    #[test]
+    fn serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring() {
+        let manifest = handler_manifest();
+        let manifests = BTreeMap::from([("client_acme_receiving".to_owned(), manifest)]);
+        let operation = "client_acme_receiving@3.0.0::quality.create_inspection".to_owned();
+        let target = ReleaseWiringTarget {
+            package_id: "client_acme_receiving".to_owned(),
+            package_version: "3.0.0".to_owned(),
+            wiring_id: "quality_create_inspection".to_owned(),
+            wiring_version: 1,
+        };
+        let targets = BTreeMap::from([(operation.clone(), vec![target.clone()])]);
+        let registrations = derive_serving_registrations(&manifests, &targets)
+            .expect("one entry wiring resolves the handler operation");
+        let registration = &registrations["client_acme_receiving::quality.create_inspection"];
+        assert_eq!(registration.package_id, "client_acme_receiving");
+        assert_eq!(registration.source_package_id, "wamn_receiving");
+        assert_eq!(registration.wiring_id, target.wiring_id);
+        assert_eq!(registration.entity, "receipt");
+        assert_eq!(registration.ops, BTreeSet::from(["insert".to_owned()]));
+
+        for selected in [Vec::new(), vec![target.clone(), target]] {
+            let targets = BTreeMap::from([(operation.clone(), selected)]);
+            let error = derive_serving_registrations(&manifests, &targets)
+                .expect_err("zero or multiple handler entry wirings were accepted");
+            assert_eq!(error.kind(), MintManifestErrorKind::Registration);
+        }
+    }
+
     fn dependency_document() -> WiringDocument {
         WiringDocument::new(
             "receiving",
@@ -1871,13 +2035,19 @@ mod tests {
             wiring_id: "receiving".to_owned(),
             wiring_version: 1,
         };
-        let facts = [
-            closure_component("entry-component", None),
-            closure_component(
-                "registered-component",
-                Some("base@1.0.0::purchase_order.get"),
+        let facts = BTreeMap::from([
+            (
+                "entry".to_owned(),
+                closure_component("entry-component", None),
             ),
-        ];
+            (
+                "registered".to_owned(),
+                closure_component(
+                    "registered-component",
+                    Some("base@1.0.0::purchase_order.get"),
+                ),
+            ),
+        ]);
         let anonymous = BTreeMap::from([(
             "receiving-http".to_owned(),
             closure_attachment(wamn_catalog::NO_AUTHENTICATION_MODE),

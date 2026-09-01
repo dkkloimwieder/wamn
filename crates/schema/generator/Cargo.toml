@@ -14,6 +14,7 @@ serde_json.workspace = true
 sha2.workspace = true
 wamn-schema-introspection = { workspace = true }
 wamn-execution-contract = { workspace = true }
+wamn-event-wire = { workspace = true }
 
 [dev-dependencies]
 anyhow.workspace = true

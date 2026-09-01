@@ -856,7 +856,6 @@ mod tests {
                 registration_id: "receive-receipt".into(),
                 package_id: "client_acme_receiving".into(),
                 source_package_id: "receiving".into(),
-                flow_id: "receive".into(),
                 entity: "receipts".into(),
                 ops: vec![Op::Insert],
                 input: RegistrationInput::Event,

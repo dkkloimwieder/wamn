@@ -216,7 +216,7 @@ wamn-ctl publish-release \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
   --wiring "$PACKAGE_ID@$PACKAGE_VERSION::$WIRING_ID=$WIRING_VERSION" \
   --attachments attachments.json --route-host "$ROUTE_HOST" \
-  --registrations registrations.json
+  --package-manifest ../../packages/receiving/wamn.json
 
 # 2. PUSH the frozen bytes as an OCI artifact, read back from the snapshot the
 #    mint wrote rather than from a file, and re-print the same digest.

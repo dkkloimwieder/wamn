@@ -4,9 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_catalog::{
-    AttachmentKind, ComponentDeclaration, ServingRegistration, WiringDocument, WiringTerminal,
-};
+use wamn_catalog::{AttachmentKind, ComponentDeclaration, WiringDocument, WiringTerminal};
 
 const TENANT: &str = "receiving-publication-proof";
 const PACKAGE_ID: &str = "wamn_receiving";
@@ -103,13 +101,6 @@ fn package_owned_inputs_declare_the_exact_six_route_closure() {
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_value(read_json(&publication_root().join("attachments.json")))
             .expect("the attachment map has the serving wire shape");
-    let registrations: BTreeMap<String, ServingRegistration> =
-        serde_json::from_value(read_json(&publication_root().join("registrations.json")))
-            .expect("the registration map has the serving wire shape");
-    assert!(
-        registrations.is_empty(),
-        "slice iii declares no event consumer"
-    );
     assert_eq!(attachments.len(), OPERATIONS.len());
 
     for operation in &OPERATIONS {

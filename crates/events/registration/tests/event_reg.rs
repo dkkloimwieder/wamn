@@ -20,7 +20,6 @@ fn reg() -> EventRegistration {
         registration_id: "on-order-shipped".into(),
         package_id: "shop".into(),
         source_package_id: "shop".into(),
-        flow_id: "notify".into(),
         entity: "sales_orders".into(),
         ops: vec![Op::Insert, Op::Update],
         input: RegistrationInput::Event,
@@ -123,13 +122,11 @@ fn source_package_is_independent_from_the_registration_owner() {
 }
 
 #[test]
-fn an_empty_registration_id_or_flow_id_is_rejected() {
+fn an_empty_registration_id_is_rejected() {
     let mut r = reg();
     r.registration_id = "".into();
-    r.flow_id = " ".into();
     let issues = validate(&r, "shop", "shop", &model_keys()).unwrap_err();
     assert!(issues.iter().any(|i| i.code == "empty-registration-id"));
-    assert!(issues.iter().any(|i| i.code == "empty-flow-id"));
 }
 
 #[test]
@@ -154,14 +151,14 @@ fn frozen_wire_shape_is_the_exact_field_order_and_spellings() {
     let full = serde_json::to_string(&reg()).unwrap();
     assert_eq!(
         full,
-        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","package-id":"shop","source-package-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"],"input":"event","condition":"new.status == 'shipped' && old.status != 'shipped'"}"#
+        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","package-id":"shop","source-package-id":"shop","entity":"sales_orders","ops":["insert","update"],"input":"event","condition":"new.status == 'shipped' && old.status != 'shipped'"}"#
     );
     // Minimal: the optional condition is OMITTED (not null).
     let mut r = reg();
     r.condition = None;
     assert_eq!(
         serde_json::to_string(&r).unwrap(),
-        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","package-id":"shop","source-package-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"],"input":"event"}"#
+        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","package-id":"shop","source-package-id":"shop","entity":"sales_orders","ops":["insert","update"],"input":"event"}"#
     );
 }
 
@@ -171,13 +168,13 @@ fn input_is_closed_to_event_or_batch_and_legacy_rows_mean_event() {
     batch.input = RegistrationInput::Batch;
     assert!(batch.to_json().contains("\"input\": \"batch\""));
 
-    let legacy = r#"{"schema-version":"0.1","registration-id":"x","package-id":"shop","source-package-id":"shop","flow-id":"f","entity":"sales_orders","ops":["insert"]}"#;
+    let legacy = r#"{"schema-version":"0.1","registration-id":"x","package-id":"shop","source-package-id":"shop","entity":"sales_orders","ops":["insert"]}"#;
     assert_eq!(
         EventRegistration::from_json(legacy).unwrap().input,
         RegistrationInput::Event
     );
 
-    let invalid = r#"{"schema-version":"0.1","registration-id":"x","package-id":"shop","source-package-id":"shop","flow-id":"f","entity":"sales_orders","ops":["insert"],"input":"stream"}"#;
+    let invalid = r#"{"schema-version":"0.1","registration-id":"x","package-id":"shop","source-package-id":"shop","entity":"sales_orders","ops":["insert"],"input":"stream"}"#;
     assert!(EventRegistration::from_json(invalid).is_err());
 }
 
@@ -193,7 +190,14 @@ fn optional_fields_are_omitted_when_absent() {
 fn unknown_fields_are_rejected_on_import() {
     // deny_unknown_fields: a smuggled key is not silently dropped.
     let json = r#"{"schema-version":"0.1","registration-id":"x","package-id":"shop",
-        "source-package-id":"shop","flow-id":"f","entity":"sales_orders","ops":["insert"],"surprise":1}"#;
+        "source-package-id":"shop","entity":"sales_orders","ops":["insert"],"surprise":1}"#;
+    assert!(EventRegistration::from_json(json).is_err());
+}
+
+#[test]
+fn retired_flow_identity_is_rejected_on_import() {
+    let json = r#"{"schema-version":"0.1","registration-id":"x","package-id":"shop",
+        "source-package-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert"]}"#;
     assert!(EventRegistration::from_json(json).is_err());
 }
 
@@ -208,7 +212,7 @@ fn a_legacy_state_key_is_rejected_on_import() {
     for legacy in ["shadow", "live"] {
         let json = format!(
             r#"{{"schema-version":"0.1","registration-id":"x","package-id":"shop",
-        "source-package-id":"shop","flow-id":"f","entity":"sales_orders","ops":["insert"],"state":"{legacy}"}}"#
+        "source-package-id":"shop","entity":"sales_orders","ops":["insert"],"state":"{legacy}"}}"#
         );
         assert!(EventRegistration::from_json(&json).is_err());
     }
@@ -217,7 +221,7 @@ fn a_legacy_state_key_is_rejected_on_import() {
 #[test]
 fn a_retired_partition_key_is_rejected_on_import() {
     let json = r#"{"schema-version":"0.1","registration-id":"x","package-id":"shop",
-        "source-package-id":"shop","flow-id":"f","entity":"sales_orders","ops":["insert"],"partition-key":"new.id"}"#;
+        "source-package-id":"shop","entity":"sales_orders","ops":["insert"],"partition-key":"new.id"}"#;
     assert!(
         EventRegistration::from_json(json).is_err(),
         "retired ordering vocabulary must fail closed, not be silently ignored"
@@ -227,6 +231,6 @@ fn a_retired_partition_key_is_rejected_on_import() {
 #[test]
 fn source_package_identity_is_structurally_required() {
     let json = r#"{"schema-version":"0.1","registration-id":"x","package-id":"shop",
-        "flow-id":"f","entity":"sales_orders","ops":["insert"]}"#;
+        "entity":"sales_orders","ops":["insert"]}"#;
     assert!(EventRegistration::from_json(json).is_err());
 }

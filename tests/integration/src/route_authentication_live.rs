@@ -1433,8 +1433,7 @@ async fn publish_journey_release(
         wirings,
         attachments: publication_root().join("attachments.json"),
         route_host: Some(inputs.route_host.clone()),
-        registrations: publication_root().join("registrations.json"),
-        package_manifests: Vec::new(),
+        package_manifests: vec![package_root().join("wamn.json")],
     })
     .await
     .context("mint the production Receiving release")?;

@@ -1,6 +1,6 @@
 //! Apply one package-owned migration stream exactly once per immutable file.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +10,10 @@ use tokio_postgres::{NoTls, Transaction, error::SqlState};
 use wamn_control_provision::operation_grants::{
     OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
+};
+use wamn_event_reg::{
+    DELETE_STALE_CATALOG_REGISTRATIONS_SQL, EventRegistration, RegistrationInput,
+    UPSERT_CATALOG_REGISTRATION_SQL, project_catalog_registrations,
 };
 use wamn_schema_control::{
     AppliedPackage, MigrationSource, PackageDirectory, PackageMigrationError, RecordedMigration,
@@ -415,6 +419,9 @@ async fn apply(
     manifest: &PackageManifest,
     migration_policy: MigrationPolicyPlan,
 ) -> anyhow::Result<ApplyOutcome> {
+    wamn_schema_generator::validate_operation_vocabulary(manifest)
+        .context("validate package manifest for registration projection")?;
+    let registrations = derive_catalog_registrations(manifest);
     let presented =
         plan_package_migrations(directory, None).context("validate package directory")?;
     let package_id = presented.coordinate.package_id().to_owned();
@@ -506,11 +513,79 @@ async fn apply(
     reconcile_entity_maps(&tx, &plan, manifest).await?;
     let operation_grants =
         reconcile_package_operation_grants(&tx, &directory.manifest_bytes, tenant).await?;
+    let registrations_changed =
+        reconcile_package_registrations(&tx, tenant, &package_id, &registrations).await?;
     tx.commit().await.context("commit whole package suffix")?;
     Ok(ApplyOutcome {
         migrations_applied: applied_count,
-        changed: migration_changed || ownership_changed || !operation_grants.is_noop(),
+        changed: migration_changed
+            || ownership_changed
+            || !operation_grants.is_noop()
+            || registrations_changed,
     })
+}
+
+fn derive_catalog_registrations(
+    manifest: &wamn_schema_generator::PackageManifest,
+) -> BTreeMap<String, EventRegistration> {
+    let mut declarations = BTreeMap::new();
+    for (operation_key, operation) in &manifest.custom_operations {
+        let Some(registration) = operation.registration() else {
+            continue;
+        };
+        let declaration = EventRegistration {
+            schema_version: wamn_event_reg::SCHEMA_VERSION.to_owned(),
+            registration_id: operation_key.clone(),
+            package_id: manifest.package.id.clone(),
+            source_package_id: registration.source_package.clone(),
+            entity: registration.entity.clone(),
+            ops: registration.ops.clone(),
+            input: RegistrationInput::Event,
+            condition: None,
+        };
+        declarations.insert(operation_key.clone(), declaration);
+    }
+    declarations
+}
+
+async fn reconcile_package_registrations(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    package_id: &str,
+    declarations: &BTreeMap<String, EventRegistration>,
+) -> anyhow::Result<bool> {
+    let projection = project_catalog_registrations(package_id, declarations)
+        .context("derive exact package registration rows")?;
+    let mut changed = false;
+    for row in &projection.rows {
+        changed |= tx
+            .execute(
+                UPSERT_CATALOG_REGISTRATION_SQL,
+                &[
+                    &tenant,
+                    &projection.package_id,
+                    &row.registration_id,
+                    &row.entity_id,
+                    &row.registration_json,
+                ],
+            )
+            .await
+            .with_context(|| format!("reconcile registration {:?}", row.registration_id))?
+            > 0;
+    }
+    changed |= tx
+        .execute(
+            DELETE_STALE_CATALOG_REGISTRATIONS_SQL,
+            &[
+                &tenant,
+                &projection.package_id,
+                &projection.retained_registration_ids,
+            ],
+        )
+        .await
+        .context("delete stale package registrations")?
+        > 0;
+    Ok(changed)
 }
 
 async fn reconcile_package_operation_grants(
@@ -1409,4 +1484,56 @@ pub(crate) fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirec
         manifest_bytes,
         migrations,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_registration_projection_does_not_require_redeclaring_the_base_entity() {
+        let mut document: serde_json::Value =
+            serde_json::from_str(include_str!("../../../packages/receiving/wamn.json"))
+                .expect("the repository package manifest parses as JSON");
+        document["package"] =
+            serde_json::json!({"id": "client_acme_receiving", "version": "3.0.0"});
+        document["base_dependencies"] = serde_json::json!({
+            "base_receiving": {
+                "package": "wamn_receiving",
+                "version": "1.0.0",
+                "digest": format!("sha256:{}", "a".repeat(64)),
+                "operations": ["receiving.record_receipt"]
+            }
+        });
+        document["models"] = serde_json::json!({});
+        document["custom_operations"] = serde_json::json!({
+            "quality.create_inspection": {
+                "kind": "event_handler",
+                "visibility": "private",
+                "registration": {
+                    "source_package": "wamn_receiving",
+                    "entity": "receipt",
+                    "ops": ["insert"]
+                }
+            }
+        });
+        document["components"] = serde_json::json!({
+            "quality_create_inspection": {
+                "operations": ["quality.create_inspection"],
+                "connections": ["postgres"]
+            }
+        });
+        let manifest: wamn_schema_generator::PackageManifest =
+            serde_json::from_value(document).expect("the overlay manifest parses");
+        wamn_schema_generator::validate_operation_vocabulary(&manifest)
+            .expect("the overlay operation vocabulary is valid without base model restatement");
+
+        let declarations = derive_catalog_registrations(&manifest);
+        let registration = &declarations["quality.create_inspection"];
+        assert_eq!(registration.registration_id, "quality.create_inspection");
+        assert_eq!(registration.package_id, "client_acme_receiving");
+        assert_eq!(registration.source_package_id, "wamn_receiving");
+        assert_eq!(registration.entity, "receipt");
+        assert_eq!(registration.ops, [wamn_event_reg::Op::Insert]);
+    }
 }

@@ -232,7 +232,6 @@ mod tests {
             registration_id: "r1".into(),
             package_id: "cat".into(),
             source_package_id: "cat".into(),
-            flow_id: "legacy-flow".into(),
             entity: "receipts".into(),
             ops: vec![Op::Insert, Op::Update],
             input: RegistrationInput::Event,

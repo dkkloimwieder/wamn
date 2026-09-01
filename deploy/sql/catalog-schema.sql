@@ -692,7 +692,6 @@ CREATE TABLE catalog.event_registrations (
     tenant_id       text  NOT NULL CHECK (tenant_id <> ''),
     package_id      text  NOT NULL CHECK (package_id <> ''),
     registration_id text  NOT NULL CHECK (registration_id <> ''),
-    flow_id         text  NOT NULL CHECK (flow_id <> ''),
     entity_id       text  NOT NULL CHECK (entity_id <> ''),
     registration    jsonb NOT NULL,
     CONSTRAINT event_registrations_pkey

@@ -1,6 +1,6 @@
 //! The event-registration model (EVT-REG, D19 v3 §5).
 //!
-//! An [`EventRegistration`] is a **subscribing flow's declaration** — the "a
+//! An [`EventRegistration`] is a **subscribing operation's declaration** — the "a
 //! registration, not code" of §5: WHICH entity's row events it wants
 //! ([`entity`](EventRegistration::entity)), WHICH ops
 //! ([`ops`](EventRegistration::ops)), an optional
@@ -22,7 +22,7 @@
 //!
 //! **Data, not code:** stored as jsonb in `catalog.event_registrations` (this
 //! crate is the source of truth for the semantics; the storage schema denormalizes
-//! `flow_id`/`entity_id` as columns for lookup).
+//! `entity_id` as a column for lookup).
 //!
 //! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). The declaration shape,
 //! the kebab-case field spellings, AND the expression grammar are frozen: a
@@ -51,12 +51,12 @@ pub enum RegistrationInput {
     Batch,
 }
 
-/// One event registration — a subscribing flow's declaration of the row events
+/// One event registration — a subscribing operation's declaration of the row events
 /// it wants and how they are filtered.
 ///
 /// The `(package_id, registration_id)` pair is the identity (unique within a
-/// tenant); `flow_id` + `entity` are denormalized into storage columns for the
-/// materializer's per-entity sweep and impact analysis.
+/// tenant); `entity` is denormalized into storage for the materializer's
+/// per-entity sweep and impact analysis.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct EventRegistration {
@@ -70,9 +70,6 @@ pub struct EventRegistration {
     /// Package whose emitted event identity this registration matches. It may
     /// differ from the owner for a base-to-overlay post-commit invocation.
     pub source_package_id: String,
-    /// The subscribing flow (`Flow::id`) — the durable consumer the materializer
-    /// opens, and the `run_id = <flow>:evt:<seq>` prefix (§5).
-    pub flow_id: String,
     /// Stable package-local model key, matching the CDC envelope's `entity`
     /// segment. It is resolved through the strict package manifest.
     pub entity: String,

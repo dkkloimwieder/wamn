@@ -4792,6 +4792,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-event-reg",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-pg-core",
@@ -5225,6 +5226,7 @@ dependencies = [
  "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
+ "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-schema-introspection",
 ]

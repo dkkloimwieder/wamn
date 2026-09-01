@@ -94,14 +94,6 @@ pub fn validate(
             "registration id is empty",
         ));
     }
-    if reg.flow_id.trim().is_empty() {
-        issues.push(error(
-            "empty-flow-id",
-            "flow-id",
-            "registration has no subscribing flow",
-        ));
-    }
-
     // The entity must resolve BY ID — the rename-proof key. A registration that
     // names no catalog entity can never be materialized (nothing on the stream
     // carries that entity segment).

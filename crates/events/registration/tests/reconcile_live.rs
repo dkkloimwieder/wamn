@@ -27,7 +27,7 @@ fn replay_is_a_no_op_with_base_and_overlay_registrations_applied() {
          CREATE SCHEMA catalog; \
          CREATE TABLE catalog.event_registrations ( \
            tenant_id text NOT NULL, package_id text NOT NULL, \
-           registration_id text NOT NULL, flow_id text NOT NULL, \
+           registration_id text NOT NULL, \
            entity_id text NOT NULL, registration jsonb NOT NULL, \
            PRIMARY KEY (tenant_id, package_id, registration_id)); \
          CREATE TABLE catalog.registration_mutations (kind text NOT NULL); \
@@ -39,32 +39,30 @@ fn replay_is_a_no_op_with_base_and_overlay_registrations_applied() {
          CREATE TRIGGER registration_mutation AFTER INSERT OR UPDATE OR DELETE \
            ON catalog.event_registrations FOR EACH ROW \
            EXECUTE FUNCTION catalog.note_registration_mutation(); \
-         PREPARE reconcile_upsert(text, text, text, text, text, text) AS {upsert}; \
+         PREPARE reconcile_upsert(text, text, text, text, text) AS {upsert}; \
          PREPARE reconcile_delete(text, text, text[]) AS {delete_stale}; \
          EXECUTE reconcile_upsert( \
-           'tenant', 'wamn_receiving', 'base-audit', 'base-audit', 'receipt', \
-           '{{\"schema-version\":\"0.1\",\"registration-id\":\"base-audit\",\"package-id\":\"wamn_receiving\",\"source-package-id\":\"wamn_receiving\",\"flow-id\":\"base-audit\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
+           'tenant', 'wamn_receiving', 'base-audit', 'receipt', \
+           '{{\"schema-version\":\"0.1\",\"registration-id\":\"base-audit\",\"package-id\":\"wamn_receiving\",\"source-package-id\":\"wamn_receiving\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
          EXECUTE reconcile_delete('tenant', 'wamn_receiving', ARRAY['base-audit']); \
          EXECUTE reconcile_upsert( \
-           'tenant', 'client_acme_receiving', 'create-inspection', \
-           'quality-create-inspection', 'receipt', \
-           '{{\"schema-version\":\"0.1\",\"registration-id\":\"create-inspection\",\"package-id\":\"client_acme_receiving\",\"source-package-id\":\"wamn_receiving\",\"flow-id\":\"quality-create-inspection\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
+           'tenant', 'client_acme_receiving', 'quality.create_inspection', 'receipt', \
+           '{{\"schema-version\":\"0.1\",\"registration-id\":\"quality.create_inspection\",\"package-id\":\"client_acme_receiving\",\"source-package-id\":\"wamn_receiving\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
          EXECUTE reconcile_delete( \
-           'tenant', 'client_acme_receiving', ARRAY['create-inspection']); \
+           'tenant', 'client_acme_receiving', ARRAY['quality.create_inspection']); \
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM catalog.event_registrations) = 2; \
            ASSERT (SELECT count(*) FROM catalog.registration_mutations) = 2; \
          END $$; \
          EXECUTE reconcile_upsert( \
-           'tenant', 'wamn_receiving', 'base-audit', 'base-audit', 'receipt', \
-           '{{\"schema-version\":\"0.1\",\"registration-id\":\"base-audit\",\"package-id\":\"wamn_receiving\",\"source-package-id\":\"wamn_receiving\",\"flow-id\":\"base-audit\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
+           'tenant', 'wamn_receiving', 'base-audit', 'receipt', \
+           '{{\"schema-version\":\"0.1\",\"registration-id\":\"base-audit\",\"package-id\":\"wamn_receiving\",\"source-package-id\":\"wamn_receiving\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
          EXECUTE reconcile_delete('tenant', 'wamn_receiving', ARRAY['base-audit']); \
          EXECUTE reconcile_upsert( \
-           'tenant', 'client_acme_receiving', 'create-inspection', \
-           'quality-create-inspection', 'receipt', \
-           '{{\"schema-version\":\"0.1\",\"registration-id\":\"create-inspection\",\"package-id\":\"client_acme_receiving\",\"source-package-id\":\"wamn_receiving\",\"flow-id\":\"quality-create-inspection\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
+           'tenant', 'client_acme_receiving', 'quality.create_inspection', 'receipt', \
+           '{{\"schema-version\":\"0.1\",\"registration-id\":\"quality.create_inspection\",\"package-id\":\"client_acme_receiving\",\"source-package-id\":\"wamn_receiving\",\"entity\":\"receipt\",\"ops\":[\"insert\"],\"input\":\"event\"}}'); \
          EXECUTE reconcile_delete( \
-           'tenant', 'client_acme_receiving', ARRAY['create-inspection']); \
+           'tenant', 'client_acme_receiving', ARRAY['quality.create_inspection']); \
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM catalog.event_registrations) = 2; \
            ASSERT (SELECT count(*) FROM catalog.registration_mutations) = 2, \
