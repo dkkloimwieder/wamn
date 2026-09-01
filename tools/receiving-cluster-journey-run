@@ -948,9 +948,13 @@ EOF
     >"$evidence_dir/host-cold-previous.log"
   warm_startup_ms=$(runtime_startup_ms "$evidence_dir/host-warm.log")
 
-  workload_name=$(jq -er '.metadata.name' "$evidence_dir/flow-http-workload.json")
   for _ in $(seq 1 120); do
-    "${kube[@]}" -n "$namespace" get workload "$workload_name" -o json \
+    "${kube[@]}" -n "$namespace" get workloads -o json \
+      >"$work_dir/workloads-warm.json"
+    jq -e --arg uid "$replicaset_uid" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid))] |
+      if length == 1 then .[0] else empty end
+    ' "$work_dir/workloads-warm.json" \
       >"$work_dir/flow-http-workload-warm.json" 2>/dev/null || true
     "${kube[@]}" -n "$namespace" get endpointslices \
       -l 'kubernetes.io/service-name=flow-http,wasmcloud.dev/route-manager=true' -o json \
