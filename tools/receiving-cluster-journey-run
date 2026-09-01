@@ -398,7 +398,6 @@ test "$(curl --silent --connect-timeout 2 --max-time 5 --output /dev/null \
 test "$(curl --config "$curl_config" --silent --show-error --connect-timeout 2 \
   --max-time 5 --output /dev/null --write-out '%{http_code}' \
   "http://$registry_authority/v2/")" = 200
-unset registry_password
 
 system_url=postgresql://postgres:probe@$postgres_ip:5432/postgres
 component_artifact_base=$registry_authority/wamn/components
@@ -424,11 +423,13 @@ RUSTC_WRAPPER= \
   2>&1 | tee "$evidence_dir/production-route.log"
 
 flow_http_push_ref=$registry_authority/wamn/flow-http:$host_tag
-record_command env DOCKER_CONFIG="$docker_config_directory" wash push \
+record_command env WASH_REG_USER='<redacted>' WASH_REG_PASSWORD='<redacted>' wash push \
   --insecure --allow-latest --output json "$flow_http_push_ref" "$flow_http_wasm"
-DOCKER_CONFIG="$docker_config_directory" wash push --insecure --allow-latest \
-  --output json "$flow_http_push_ref" "$flow_http_wasm" \
+WASH_REG_USER="$registry_username" WASH_REG_PASSWORD="$registry_password" \
+  wash push --insecure --allow-latest --output json \
+  "$flow_http_push_ref" "$flow_http_wasm" \
   >"$evidence_dir/flow-http-push.json"
+unset registry_password
 jq -e '.success == true and (.digest | test("^sha256:[0-9a-f]{64}$"))' \
   >/dev/null "$evidence_dir/flow-http-push.json"
 flow_http_digest=$(jq -er '.digest' "$evidence_dir/flow-http-push.json")
