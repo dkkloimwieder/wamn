@@ -429,6 +429,7 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
         component: component.to_owned(),
         interface_version: "0.1.0".to_owned(),
         operation: operation.to_owned(),
+        operation_dependency: None,
         params: BTreeMap::new(),
         terminal,
     };

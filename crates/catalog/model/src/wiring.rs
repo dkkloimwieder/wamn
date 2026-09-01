@@ -51,10 +51,21 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
 /// Closed event operation used by an admitted Emit selector.
 pub type WiringEventOperation = wamn_event_wire::Op;
 
 use crate::{CatalogIdentityError, DefinitionHash, validate_text};
+
+/// One authored invocation through a package-manifest base dependency alias.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct WiringOperationDependency {
+    /// Alias keyed by the owning package's `base_dependencies` declaration.
+    pub alias: String,
+    /// Canonical package-local operation admitted by that dependency.
+    pub operation: String,
+}
 
 /// The only wiring-document format shipped by the MVP.
 pub const WIRING_DOCUMENT_FORMAT_VERSION: &str = "0.1";
@@ -114,6 +125,11 @@ pub struct WiringNode {
     /// The operation the router invokes over the typed WIT seam once it holds a
     /// pooled instance (`entity.create` is this field's `create`).
     pub operation: String,
+    /// Cross-package registered operation this node resolves through, if any.
+    /// The package manifest owns the alias-to-exact-target requirement; wiring
+    /// bytes name only the alias and one operation from its permitted set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_dependency: Option<WiringOperationDependency>,
     /// Values bound to the component's declared params — a generic `entity`
     /// node's relation and filter spec, for instance. Typed by the component's
     /// WIT declaration and checked by the gate (wamn-0h0g.18.3), not by this
@@ -277,6 +293,10 @@ impl WiringDocument {
             validate_text(&node.component, "component")?;
             validate_text(&node.interface_version, "interface-version")?;
             validate_text(&node.operation, "operation")?;
+            if let Some(dependency) = &node.operation_dependency {
+                validate_text(&dependency.alias, "operation-dependency alias")?;
+                validate_text(&dependency.operation, "operation-dependency operation")?;
+            }
             if let Some(WiringTerminal::Emit { entity, .. }) = &node.terminal {
                 validate_text(entity, "emit-entity")?;
             }
@@ -329,7 +349,9 @@ mod tests {
     use wamn_event_wire::Op;
     use wamn_execution_contract::{Expect, ExpectedOutcome, MAX_TEST_SET_CASES, TestSetCase};
 
-    use super::{WiringDocument, WiringEdge, WiringNode, WiringTerminal};
+    use super::{
+        WiringDocument, WiringEdge, WiringNode, WiringOperationDependency, WiringTerminal,
+    };
     use crate::CatalogIdentityError;
 
     fn node(component: &str) -> WiringNode {
@@ -337,6 +359,7 @@ mod tests {
             component: component.to_owned(),
             interface_version: "0.1.0".to_owned(),
             operation: "call".to_owned(),
+            operation_dependency: None,
             params: BTreeMap::new(),
             terminal: None,
         }
@@ -438,6 +461,34 @@ mod tests {
         ] {
             assert!(WiringDocument::parse(&foreign).is_err(), "{foreign}");
         }
+    }
+
+    #[test]
+    fn a_cross_package_node_carries_one_closed_alias_operation_coordinate() {
+        let mut stored = serde_json::to_value(crud_wiring(Vec::new())).expect("serializes");
+        stored["nodes"]["write"]["operation-dependency"] = json!({
+            "alias": "receiving",
+            "operation": "receiving.record_receipt"
+        });
+
+        let parsed = WiringDocument::parse(&stored).expect("dependency coordinate parses");
+        assert_eq!(
+            parsed.nodes["write"].operation_dependency,
+            Some(WiringOperationDependency {
+                alias: "receiving".to_owned(),
+                operation: "receiving.record_receipt".to_owned(),
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(parsed).unwrap()["nodes"]["write"]["operation-dependency"],
+            stored["nodes"]["write"]["operation-dependency"]
+        );
+
+        stored["nodes"]["write"]["operation-dependency"]["package"] = json!("base");
+        assert!(
+            WiringDocument::parse(&stored).is_err(),
+            "wiring bytes cannot author a parallel package coordinate"
+        );
     }
 
     #[test]

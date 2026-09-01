@@ -474,10 +474,7 @@ fn prepare_derived_publication(
         &claim.tenant,
         &claim.project,
         &claim.environment,
-        event
-            .package_id
-            .as_deref()
-            .expect("the native constructor always supplies package identity"),
+        &event.package_id,
         &event.entity,
         event.op,
         &event.dedup_id,
@@ -1220,19 +1217,17 @@ fn exact_registration_identity(
             {registration_id:?} cannot be resolved"
         )
     })?;
-    let registration = manifest.registrations.get(registration_id).ok_or_else(|| {
-        format!(
-            "{UNREGISTERED_SOURCE}: effective release {} has no registration \
-                 {registration_id:?}",
-            manifest.release.effective_release_id.get()
-        )
-    })?;
-    if registration.package_id != package_id {
-        return Err(format!(
-            "{UNREGISTERED_SOURCE}: registration {registration_id:?} belongs to package {:?}, not requested package {package_id:?}",
-            registration.package_id
-        ));
-    }
+    let qualified_registration_id = format!("{package_id}::{registration_id}");
+    let registration = manifest
+        .registrations
+        .get(&qualified_registration_id)
+        .ok_or_else(|| {
+            format!(
+                "{UNREGISTERED_SOURCE}: effective release {} has no registration \
+                 {qualified_registration_id:?}",
+                manifest.release.effective_release_id.get()
+            )
+        })?;
     let (entity, op) = subject_source(filter_subject).ok_or_else(|| {
         format!(
             "{UNREGISTERED_SOURCE}: filter subject {filter_subject:?} does not name one entity \
@@ -2050,7 +2045,7 @@ mod tests {
         assert_eq!(event.tenant, "acme");
         assert_eq!(event.project, "app");
         assert_eq!(event.environment, "dev");
-        assert_eq!(event.package_id.as_deref(), Some("receiving"));
+        assert_eq!(event.package_id, "receiving");
         assert_eq!(event.entity, "orders");
         assert_eq!(event.op, Op::Update);
         assert_eq!(event.dedup_id, dangerous_author_id);
@@ -2151,6 +2146,7 @@ mod tests {
     fn release_registering(entity: &str, ops: &[&str]) -> ServingManifest {
         let registration = ServingRegistration {
             package_id: "cat".into(),
+            source_package_id: "cat".into(),
             wiring_id: "event-handler".into(),
             wiring_version: 1,
             entity: entity.to_string(),
@@ -2175,7 +2171,7 @@ mod tests {
                 .expect("fixture definition hash is canonical"),
             }]),
             BTreeMap::new(),
-            BTreeMap::from([("r1".to_string(), registration)]),
+            BTreeMap::from([("cat::r1".to_string(), registration)]),
         )
         .expect("the fixture release is valid")
     }

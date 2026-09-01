@@ -513,6 +513,7 @@ mod tests {
                     component: "http-request".to_owned(),
                     interface_version: "0.1".to_owned(),
                     operation: "call".to_owned(),
+                    operation_dependency: None,
                     params: BTreeMap::new(),
                     terminal: Some(WiringTerminal::Respond),
                 },

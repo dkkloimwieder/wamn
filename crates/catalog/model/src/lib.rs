@@ -40,14 +40,15 @@ pub use serving_manifest::{
 };
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
-    WiringTerminal,
+    WiringOperationDependency, WiringTerminal,
 };
 pub use wiring_activation::{
     WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, flip_activation,
     previous_confirmed_definition, record_activation_event, resolve_active_wiring,
 };
 pub use wiring_compatibility::{
-    WiringCompatibilityError, WiringCompatibilityErrorKind, validate_wiring_compatibility,
+    WiringCompatibilityError, WiringCompatibilityErrorKind, validate_resolved_wiring_compatibility,
+    validate_wiring_compatibility,
 };
 
 use std::cmp::Ordering;

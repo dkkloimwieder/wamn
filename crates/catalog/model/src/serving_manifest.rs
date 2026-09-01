@@ -133,7 +133,10 @@ fn registration_input_is_event(input: &ServingRegistrationInput) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingRegistration {
+    /// Package that owns the target wiring and registration definition.
     pub package_id: String,
+    /// Package whose committed change emits the event this registration reads.
+    pub source_package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub entity: String,
@@ -324,8 +327,22 @@ impl ServingManifest {
         }
 
         for (registration_id, registration) in &self.registrations {
-            validate_text(registration_id, "registration-id")?;
             validate_package_member(&package_versions, &registration.package_id)?;
+            validate_package_member(&package_versions, &registration.source_package_id)?;
+            let (owner_package_id, local_registration_id) = registration_id
+                .split_once("::")
+                .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
+                    message: format!(
+                        "registration key {registration_id:?} must be <package-id>::<registration-id>"
+                    ),
+                })?;
+            validate_text(local_registration_id, "registration-id")?;
+            if owner_package_id != registration.package_id || local_registration_id.contains("::") {
+                return invalid(format!(
+                    "registration key {registration_id:?} does not name owner package {:?}",
+                    registration.package_id
+                ));
+            }
             validate_wiring_target(
                 &targets,
                 &registration.package_id,
@@ -539,6 +556,7 @@ mod tests {
     fn registration() -> ServingRegistration {
         ServingRegistration {
             package_id: "overlay".into(),
+            source_package_id: "base".into(),
             wiring_id: "shipping".into(),
             wiring_version: 2,
             entity: "orders".into(),
@@ -553,7 +571,7 @@ mod tests {
             components(),
             wirings(),
             BTreeMap::from([("orders".to_string(), attachment())]),
-            BTreeMap::from([("orders-changed".to_string(), registration())]),
+            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("fixture manifest is valid")
     }
@@ -566,7 +584,7 @@ mod tests {
             components().into_iter().rev().collect(),
             wirings().into_iter().rev().collect(),
             BTreeMap::from([("orders".to_string(), attachment())]),
-            BTreeMap::from([("orders-changed".to_string(), registration())]),
+            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("reordered fixture is valid");
 
@@ -764,7 +782,7 @@ mod tests {
                 components(),
                 wirings(),
                 BTreeMap::new(),
-                BTreeMap::from([("orders-changed".to_string(), missing)]),
+                BTreeMap::from([("overlay::orders-changed".to_string(), missing)]),
             ),
             Err(CatalogIdentityError::UnresolvableManifestWiring {
                 package_id: "overlay".into(),
@@ -789,6 +807,66 @@ mod tests {
                 wiring_version: 3,
             })
         );
+    }
+
+    #[test]
+    fn registration_identity_keeps_owner_and_emitter_distinct() {
+        let mut registrations = BTreeMap::from([
+            (
+                "base::receipt-created".to_owned(),
+                ServingRegistration {
+                    package_id: "base".into(),
+                    source_package_id: "base".into(),
+                    wiring_id: "orders".into(),
+                    wiring_version: 3,
+                    entity: "receipt".into(),
+                    ops: BTreeSet::from(["insert".into()]),
+                    input: ServingRegistrationInput::Event,
+                },
+            ),
+            ("overlay::receipt-created".to_owned(), registration()),
+        ]);
+        ServingManifest::new(
+            release(),
+            components(),
+            wirings(),
+            BTreeMap::new(),
+            registrations.clone(),
+        )
+        .expect("the same local registration id remains distinct by owner package");
+
+        let overlay = registrations
+            .get_mut("overlay::receipt-created")
+            .expect("fixture carries the overlay registration");
+        overlay.source_package_id = "missing".into();
+        let error = ServingManifest::new(
+            release(),
+            components(),
+            wirings(),
+            BTreeMap::new(),
+            registrations,
+        )
+        .expect_err("the emitter must be an exact member of the release");
+        assert!(
+            error
+                .to_string()
+                .contains("absent from the effective release")
+        );
+    }
+
+    #[test]
+    fn registration_map_key_is_owner_qualified() {
+        for key in ["orders-changed", "base::orders-changed", "overlay::bad::id"] {
+            let error = ServingManifest::new(
+                release(),
+                components(),
+                wirings(),
+                BTreeMap::new(),
+                BTreeMap::from([(key.to_owned(), registration())]),
+            )
+            .expect_err("a registration key must carry its exact owner coordinate");
+            assert!(error.to_string().contains("registration key"));
+        }
     }
 
     #[test]

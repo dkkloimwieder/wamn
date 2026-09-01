@@ -248,6 +248,7 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
                 component: COMPONENT.to_owned(),
                 interface_version: INTERFACE_VERSION.to_owned(),
                 operation: OPERATION.to_owned(),
+                operation_dependency: None,
                 params: BTreeMap::from([
                     (
                         "requirement".to_owned(),
@@ -558,9 +559,10 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.release_components (\
-                 tenant_id, effective_release_id, package_id, package_version, wiring_id, \
-                 wiring_version, component_digest\
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                 tenant_id, effective_release_id, wiring_package_id, \
+                 wiring_package_version, wiring_id, wiring_version, node_id, package_id, \
+                 package_version, component_digest\
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             &[
                 &TENANT,
                 &EFFECTIVE_RELEASE_ID,
@@ -568,6 +570,9 @@ async fn seed_with_client(
                 &PACKAGE_VERSION,
                 &WIRING_ID,
                 &wiring_version,
+                &NODE_ID,
+                &PACKAGE,
+                &PACKAGE_VERSION,
                 &component.component_digest,
             ],
         )

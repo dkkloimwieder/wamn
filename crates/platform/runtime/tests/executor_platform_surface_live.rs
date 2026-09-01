@@ -312,10 +312,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              VALUES ('{TENANT}','{PACKAGE_ID}','{ENVIRONMENT}','{DEAD_WIRING_ID}', \
                      'surface-proof'); \
              INSERT INTO catalog.release_components \
-               (tenant_id,effective_release_id,package_id,package_version,wiring_id, \
-                wiring_version,component_digest) \
+               (tenant_id,effective_release_id,wiring_package_id,wiring_package_version, \
+                wiring_id,wiring_version,node_id,package_id,package_version,component_digest) \
              VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{PACKAGE_ID}','{PACKAGE_VERSION}', \
-                     '{WIRING_ID}',{WIRING_VERSION},'{component_digest}'); \
+                     '{WIRING_ID}',{WIRING_VERSION},'node','{PACKAGE_ID}','{PACKAGE_VERSION}', \
+                     '{component_digest}'); \
              INSERT INTO catalog.release_manifest_v3_snapshots \
                (tenant_id,effective_release_id,manifest_digest,canonical_bytes) \
              SELECT '{TENANT}',{EFFECTIVE_RELEASE_ID}, \
@@ -460,7 +461,11 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         Some(1),
         "release membership produced no component closure"
     );
-    assert_eq!(release_components[0]["component-digest"], component_digest);
+    assert_eq!(release_components[0]["node-id"], "node");
+    assert_eq!(
+        release_components[0]["component"]["component-digest"],
+        component_digest
+    );
 
     // The release path's own legitimate zero: the same coordinates under a
     // manifest digest this release never sealed.

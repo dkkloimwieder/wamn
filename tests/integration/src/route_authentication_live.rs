@@ -1434,6 +1434,7 @@ async fn publish_journey_release(
         attachments: publication_root().join("attachments.json"),
         route_host: Some(inputs.route_host.clone()),
         registrations: publication_root().join("registrations.json"),
+        package_manifests: Vec::new(),
     })
     .await
     .context("mint the production Receiving release")?;

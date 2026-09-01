@@ -18,7 +18,7 @@ use wamn_catalog::{
     ArtifactHash, ComponentPackageScope, EffectiveReleaseId, ManifestDigest, PackageCoordinate,
     SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
     ServingRegistration, ServingRelease, ServingWiring, WiringDocument,
-    validate_wiring_compatibility,
+    validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_schema_control::{
@@ -57,16 +57,17 @@ SELECT wiring_hash, graph_json::text \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
    AND wiring_id = $4 AND version = $5 FOR SHARE";
 const SELECT_RELEASE_COMPONENTS_SQL: &str = "\
-SELECT package_id, package_version, wiring_id, wiring_version, component_digest \
+SELECT wiring_package_id, wiring_package_version, wiring_id, wiring_version, node_id, \
+       package_id, package_version, component_digest \
   FROM catalog.release_components \
  WHERE tenant_id = $1 AND effective_release_id = $2 \
- ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\", \
-          wiring_id COLLATE \"C\", wiring_version, component_digest COLLATE \"C\" FOR SHARE";
+ ORDER BY wiring_package_id COLLATE \"C\", wiring_package_version COLLATE \"C\", \
+          wiring_id COLLATE \"C\", wiring_version, node_id COLLATE \"C\" FOR SHARE";
 const INSERT_RELEASE_COMPONENT_SQL: &str = "\
 INSERT INTO catalog.release_components (\
-       tenant_id, effective_release_id, package_id, package_version, \
-       wiring_id, wiring_version, component_digest\
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7)";
+       tenant_id, effective_release_id, wiring_package_id, wiring_package_version, \
+       wiring_id, wiring_version, node_id, package_id, package_version, component_digest\
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)";
 const SELECT_RELEASE_SNAPSHOT_SQL: &str = "\
 SELECT manifest_digest, canonical_bytes \
   FROM catalog.release_manifest_v3_snapshots \
@@ -179,6 +180,7 @@ pub enum MintManifestErrorKind {
     Release,
     Wiring,
     Component,
+    OperationDependency,
     UnauthenticatedRegisteredOperation,
     ClosureConflict,
     Document,
@@ -194,6 +196,7 @@ impl MintManifestErrorKind {
             Self::Release => "release",
             Self::Wiring => "wiring",
             Self::Component => "component",
+            Self::OperationDependency => "operation-dependency",
             Self::UnauthenticatedRegisteredOperation => "unauthenticated-registered-operation",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
@@ -260,10 +263,13 @@ impl std::error::Error for MintManifestError {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct ReleaseComponentMembership {
-    package_id: String,
-    package_version: String,
+    wiring_package_id: String,
+    wiring_package_version: String,
     wiring_id: String,
     wiring_version: u32,
+    node_id: String,
+    package_id: String,
+    package_version: String,
     component_digest: String,
 }
 
@@ -305,6 +311,9 @@ pub struct PublishReleaseArgs {
     pub route_host: Option<String>,
     #[arg(long)]
     pub registrations: PathBuf,
+    /// Exact `wamn.json` for each package whose wiring invokes a base alias.
+    #[arg(long = "package-manifest", value_name = "PATH")]
+    pub package_manifests: Vec<PathBuf>,
 }
 
 fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
@@ -342,6 +351,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
     let attachments =
         resolve_route_host_overlay(&authored_attachments, args.route_host.as_deref())?;
     let registrations = read_document(&args.registrations, "registrations")?;
+    let package_manifests = read_package_manifests(&args.package_manifests)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
         packages.len() == args.packages.len(),
@@ -354,6 +364,16 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
             .all(|package| package_ids.insert(package.package_id())),
         "effective release names more than one version of a package"
     );
+    for manifest in package_manifests.values() {
+        let coordinate = PackageCoordinate::new(&manifest.package.id, &manifest.package.version)
+            .context("package manifest carries an invalid coordinate")?;
+        ensure!(
+            packages.contains(&coordinate),
+            "package manifest {}@{} is outside the effective release membership",
+            manifest.package.id,
+            manifest.package.version,
+        );
+    }
     let wirings = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
         wirings.len() == args.wirings.len(),
@@ -377,7 +397,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         .await
         .context("connect to the release project environment")?;
     let connection_task = tokio::spawn(connection);
-    let minted = mint_in_transaction(&mut client, &request, &run_schema).await;
+    let minted = mint_in_transaction(&mut client, &request, &package_manifests, &run_schema).await;
     match minted {
         Ok(minted) => {
             drop(client);
@@ -401,13 +421,16 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
 async fn mint_in_transaction(
     client: &mut Client,
     request: &MintReleaseManifest<'_>,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     run_schema: &BareSchemaName,
 ) -> anyhow::Result<MintedReleaseManifest> {
     let transaction = client
         .transaction()
         .await
         .context("begin the release mint")?;
-    let minted = mint_release_manifest(&transaction, request).await?;
+    let minted =
+        mint_release_manifest_with_package_manifests(&transaction, request, package_manifests)
+            .await?;
     let expected = read_expected_environment(&transaction, run_schema, request.tenant_id).await?;
     verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
     transaction
@@ -601,9 +624,38 @@ fn read_document<T: DeserializeOwned>(path: &Path, field: &'static str) -> anyho
         .with_context(|| format!("parse release {field} {}", path.display()))
 }
 
+fn read_package_manifests(
+    paths: &[PathBuf],
+) -> anyhow::Result<BTreeMap<String, wamn_schema_generator::PackageManifest>> {
+    let mut manifests = BTreeMap::new();
+    for path in paths {
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("read package manifest {}", path.display()))?;
+        let manifest = wamn_schema_generator::PackageManifest::from_slice(&bytes)
+            .with_context(|| format!("parse package manifest {}", path.display()))?;
+        wamn_schema_generator::validate_operation_vocabulary(&manifest)
+            .with_context(|| format!("validate package manifest {}", path.display()))?;
+        let package_id = manifest.package.id.clone();
+        ensure!(
+            manifests.insert(package_id.clone(), manifest).is_none(),
+            "more than one package manifest names {package_id:?}"
+        );
+    }
+    Ok(manifests)
+}
+
 pub async fn mint_release_manifest(
     transaction: &Transaction<'_>,
     request: &MintReleaseManifest<'_>,
+) -> Result<MintedReleaseManifest, MintManifestError> {
+    let package_manifests = BTreeMap::new();
+    mint_release_manifest_with_package_manifests(transaction, request, &package_manifests).await
+}
+
+async fn mint_release_manifest_with_package_manifests(
+    transaction: &Transaction<'_>,
+    request: &MintReleaseManifest<'_>,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     transaction
         .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
@@ -615,6 +667,19 @@ pub async fn mint_release_manifest(
     let mut components = BTreeSet::new();
     let mut wirings = BTreeSet::new();
     let mut membership = BTreeSet::new();
+    let mut component_facts = BTreeMap::new();
+    for package in request.packages {
+        let scope = ComponentPackageScope {
+            tenant_id: request.tenant_id.to_owned(),
+            package_id: package.package_id().to_owned(),
+            package_version: package.package_version().to_owned(),
+        };
+        let facts = load_component_facts(transaction, &scope).await?;
+        component_facts.insert(
+            (scope.package_id.clone(), scope.package_version.clone()),
+            facts,
+        );
+    }
     for target in request.wirings {
         let package = PackageCoordinate::new(&target.package_id, &target.package_version)
             .expect("ReleaseWiringTarget parsing admitted this coordinate");
@@ -635,13 +700,13 @@ pub async fn mint_release_manifest(
             package_id: target.package_id.clone(),
             package_version: target.package_version.clone(),
         };
-        let facts = load_component_facts(transaction, &scope).await?;
         resolve_wiring(
             transaction,
             request,
             target,
             &scope,
-            &facts,
+            &component_facts,
+            package_manifests,
             &mut components,
             &mut wirings,
             &mut membership,
@@ -1004,13 +1069,127 @@ fn decode_json<T: DeserializeOwned>(
     })
 }
 
+fn resolve_wiring_components(
+    document: &WiringDocument,
+    owner: &ComponentPackageScope,
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    package_manifest: Option<&wamn_schema_generator::PackageManifest>,
+) -> Result<BTreeMap<String, AdmittedComponent>, MintManifestError> {
+    let mut resolved = BTreeMap::new();
+    for (node_id, node) in &document.nodes {
+        let (package_id, package_version, digest, registered_operation) = match &node
+            .operation_dependency
+        {
+            None => (
+                owner.package_id.as_str(),
+                owner.package_version.as_str(),
+                None,
+                None,
+            ),
+            Some(dependency) => {
+                let manifest = package_manifest.ok_or_else(|| {
+                        MintManifestError::new(
+                            MintManifestErrorKind::OperationDependency,
+                            format!(
+                                "wiring node {node_id:?} invokes dependency alias {:?}, but package {}@{} supplied no package manifest",
+                                dependency.alias, owner.package_id, owner.package_version
+                            ),
+                        )
+                    })?;
+                if manifest.package.id != owner.package_id
+                    || manifest.package.version != owner.package_version
+                {
+                    return Err(MintManifestError::new(
+                        MintManifestErrorKind::OperationDependency,
+                        format!(
+                            "wiring node {node_id:?} dependency manifest coordinate differs from {}@{}",
+                            owner.package_id, owner.package_version
+                        ),
+                    ));
+                }
+                let requirement = manifest
+                    .base_dependencies
+                    .get(&dependency.alias)
+                    .ok_or_else(|| {
+                        MintManifestError::new(
+                            MintManifestErrorKind::OperationDependency,
+                            format!(
+                                "wiring node {node_id:?} names undeclared dependency alias {:?}",
+                                dependency.alias
+                            ),
+                        )
+                    })?;
+                if !requirement.operations.contains(&dependency.operation) {
+                    return Err(MintManifestError::new(
+                        MintManifestErrorKind::OperationDependency,
+                        format!(
+                            "wiring node {node_id:?} operation {:?} is absent from dependency alias {:?}",
+                            dependency.operation, dependency.alias
+                        ),
+                    ));
+                }
+                (
+                    requirement.package.as_str(),
+                    requirement.version.as_str(),
+                    Some(requirement.digest.as_str()),
+                    Some(format!(
+                        "{}@{}::{}",
+                        requirement.package, requirement.version, dependency.operation
+                    )),
+                )
+            }
+        };
+        let facts = component_facts
+            .get(&(package_id.to_owned(), package_version.to_owned()))
+            .ok_or_else(|| {
+                MintManifestError::new(
+                    MintManifestErrorKind::OperationDependency,
+                    format!(
+                        "wiring node {node_id:?} target package {package_id}@{package_version} is absent from the effective release"
+                    ),
+                )
+            })?;
+        let mut matches = facts.iter().filter(|fact| {
+            fact.component == node.component
+                && fact.interface_version == node.interface_version
+                && fact.operation == node.operation
+                && digest.is_none_or(|digest| fact.component_digest == digest)
+                && registered_operation
+                    .as_deref()
+                    .is_none_or(|operation| fact.registered_operation.as_deref() == Some(operation))
+        });
+        let Some(component) = matches.next() else {
+            let kind = if node.operation_dependency.is_some() {
+                MintManifestErrorKind::OperationDependency
+            } else {
+                MintManifestErrorKind::Component
+            };
+            return Err(MintManifestError::new(
+                kind,
+                format!(
+                    "wiring node {node_id:?} has no exact component tuple in {package_id}@{package_version}"
+                ),
+            ));
+        };
+        if matches.next().is_some() {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::Component,
+                format!("wiring node {node_id:?} resolves more than one exact component fact"),
+            ));
+        }
+        resolved.insert(node_id.clone(), component.clone());
+    }
+    Ok(resolved)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn resolve_wiring(
     transaction: &Transaction<'_>,
     request: &MintReleaseManifest<'_>,
     target: &ReleaseWiringTarget,
     scope: &ComponentPackageScope,
-    component_facts: &[AdmittedComponent],
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
@@ -1073,32 +1252,30 @@ async fn resolve_wiring(
             "wiring row hash differs from its canonical document hash",
         ));
     }
-    validate_wiring_compatibility(&document, scope, component_facts).map_err(|error| {
+    let resolved = resolve_wiring_components(
+        &document,
+        scope,
+        component_facts,
+        package_manifests.get(&target.package_id),
+    )?;
+    validate_resolved_wiring_compatibility(&document, &resolved).map_err(|error| {
         MintManifestError::with_source(
             MintManifestErrorKind::Component,
             format!(
-                "wiring {:?} version {} is incompatible with its package component facts",
+                "wiring {:?} version {} is incompatible with its resolved component facts",
                 target.wiring_id, target.wiring_version
             ),
             error,
         )
     })?;
-    validate_anonymous_wiring_closure(request.attachments, target, &document, component_facts)?;
+    validate_anonymous_wiring_closure(request.attachments, target, &document, &resolved)?;
     wirings.insert(ServingWiring {
         package_id: target.package_id.clone(),
         wiring_id: target.wiring_id.clone(),
         wiring_version: target.wiring_version,
         graph_hash: derived_hash,
     });
-    for node in document.nodes.values() {
-        let fact = component_facts
-            .iter()
-            .find(|fact| {
-                fact.component == node.component
-                    && fact.interface_version == node.interface_version
-                    && fact.operation == node.operation
-            })
-            .expect("the semantic gate resolved every wiring node");
+    for (node_id, fact) in resolved {
         let digest = ArtifactHash::parse(fact.component_digest.clone()).map_err(|error| {
             MintManifestError::with_source(
                 MintManifestErrorKind::Component,
@@ -1110,17 +1287,20 @@ async fn resolve_wiring(
             )
         })?;
         components.insert(ServingComponent {
-            package_id: target.package_id.clone(),
+            package_id: fact.scope.package_id.clone(),
             component: fact.component.clone(),
             interface_version: fact.interface_version.clone(),
             digest,
             registered_operation: fact.registered_operation.clone(),
         });
         membership.insert(ReleaseComponentMembership {
-            package_id: target.package_id.clone(),
-            package_version: target.package_version.clone(),
+            wiring_package_id: target.package_id.clone(),
+            wiring_package_version: target.package_version.clone(),
             wiring_id: target.wiring_id.clone(),
             wiring_version: target.wiring_version,
+            node_id,
+            package_id: fact.scope.package_id.clone(),
+            package_version: fact.scope.package_version.clone(),
             component_digest: fact.component_digest.clone(),
         });
     }
@@ -1138,7 +1318,7 @@ fn validate_anonymous_wiring_closure(
     attachments: &BTreeMap<String, ServingAttachment>,
     target: &ReleaseWiringTarget,
     document: &WiringDocument,
-    component_facts: &[AdmittedComponent],
+    component_facts: &BTreeMap<String, AdmittedComponent>,
 ) -> Result<(), MintManifestError> {
     let anonymous_attachments = attachments.iter().filter(|(_, attachment)| {
         attachment.package_id == target.package_id
@@ -1152,18 +1332,13 @@ fn validate_anonymous_wiring_closure(
     });
     let reachable = reachable_nodes(document);
     for (attachment_id, _) in anonymous_attachments {
-        for (node_id, node) in document
+        for node_id in document
             .nodes
-            .iter()
-            .filter(|(node_id, _)| reachable.contains(*node_id))
+            .keys()
+            .filter(|node_id| reachable.contains(*node_id))
         {
             let fact = component_facts
-                .iter()
-                .find(|fact| {
-                    fact.component == node.component
-                        && fact.interface_version == node.interface_version
-                        && fact.operation == node.operation
-                })
+                .get(node_id)
                 .expect("wiring compatibility resolved every reachable node");
             if let Some(operation) = fact.registered_operation.as_deref() {
                 return Err(MintManifestError::new(
@@ -1217,11 +1392,14 @@ async fn freeze_release(
         .map(|row| {
             let version: i32 = row.get(3);
             Ok(ReleaseComponentMembership {
-                package_id: row.get(0),
-                package_version: row.get(1),
+                wiring_package_id: row.get(0),
+                wiring_package_version: row.get(1),
                 wiring_id: row.get(2),
                 wiring_version: positive_u32(version, "wiring-version")?,
-                component_digest: row.get(4),
+                node_id: row.get(4),
+                package_id: row.get(5),
+                package_version: row.get(6),
+                component_digest: row.get(7),
             })
         })
         .collect::<Result<BTreeSet<_>, MintManifestError>>()?;
@@ -1266,10 +1444,13 @@ async fn freeze_release(
                 &[
                     &request.tenant_id,
                     &request.effective_release_id,
-                    &member.package_id,
-                    &member.package_version,
+                    &member.wiring_package_id,
+                    &member.wiring_package_version,
                     &member.wiring_id,
                     &wiring_version,
+                    &member.node_id,
+                    &member.package_id,
+                    &member.package_version,
                     &member.component_digest,
                 ],
             )
@@ -1524,6 +1705,7 @@ mod tests {
                         component: "entry-component".to_owned(),
                         interface_version: "0.1.0".to_owned(),
                         operation: "run".to_owned(),
+                        operation_dependency: None,
                         params: BTreeMap::new(),
                         terminal: None,
                     },
@@ -1534,6 +1716,7 @@ mod tests {
                         component: "registered-component".to_owned(),
                         interface_version: "0.1.0".to_owned(),
                         operation: "run".to_owned(),
+                        operation_dependency: None,
                         params: BTreeMap::new(),
                         terminal: None,
                     },
@@ -1557,6 +1740,127 @@ mod tests {
             auth_policy: serde_json::json!({"mode": mode}),
             registered_operation: None,
         }
+    }
+
+    fn dependency_manifest(digest: &str) -> wamn_schema_generator::PackageManifest {
+        let mut document: serde_json::Value =
+            serde_json::from_str(include_str!("../../../packages/receiving/wamn.json"))
+                .expect("the repository package manifest parses as JSON");
+        document["base_dependencies"] = serde_json::json!({
+            "base": {
+                "package": "base",
+                "version": "1.0.0",
+                "digest": digest,
+                "operations": ["receiving.record_receipt"]
+            }
+        });
+        serde_json::from_value(document).expect("the dependency fixture manifest parses")
+    }
+
+    fn dependency_document() -> WiringDocument {
+        WiringDocument::new(
+            "receiving",
+            1,
+            "registered",
+            BTreeMap::from([(
+                "registered".to_owned(),
+                wamn_catalog::WiringNode {
+                    component: "registered-component".to_owned(),
+                    interface_version: "0.1.0".to_owned(),
+                    operation: "run".to_owned(),
+                    operation_dependency: Some(wamn_catalog::WiringOperationDependency {
+                        alias: "base".to_owned(),
+                        operation: "receiving.record_receipt".to_owned(),
+                    }),
+                    params: BTreeMap::new(),
+                    terminal: Some(wamn_catalog::WiringTerminal::Respond),
+                },
+            )]),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("construct dependency wiring")
+    }
+
+    #[test]
+    fn operation_dependency_resolves_the_exact_release_tuple_without_relabeling() {
+        let owner = ComponentPackageScope {
+            tenant_id: "tenant-a".to_owned(),
+            package_id: "wamn_receiving".to_owned(),
+            package_version: "1.0.0".to_owned(),
+        };
+        let mut base = closure_component(
+            "registered-component",
+            Some("base@1.0.0::receiving.record_receipt"),
+        );
+        base.scope.package_id = "base".to_owned();
+        let mut local_same_name = closure_component(
+            "registered-component",
+            Some("wamn_receiving@1.0.0::receiving.record_receipt"),
+        );
+        local_same_name.component_digest = format!("sha256:{}", "c".repeat(64));
+        let facts = BTreeMap::from([
+            (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
+            (
+                ("wamn_receiving".to_owned(), "1.0.0".to_owned()),
+                vec![local_same_name],
+            ),
+        ]);
+
+        let resolved = resolve_wiring_components(
+            &dependency_document(),
+            &owner,
+            &facts,
+            Some(&dependency_manifest(&base.component_digest)),
+        )
+        .expect("the alias resolves its exact package, version, digest, and operation");
+
+        assert_eq!(resolved["registered"], base);
+        assert_eq!(resolved["registered"].scope.package_id, "base");
+    }
+
+    #[test]
+    fn operation_dependency_refuses_digest_and_release_membership_drift() {
+        let owner = ComponentPackageScope {
+            tenant_id: "tenant-a".to_owned(),
+            package_id: "wamn_receiving".to_owned(),
+            package_version: "1.0.0".to_owned(),
+        };
+        let mut base = closure_component(
+            "registered-component",
+            Some("base@1.0.0::receiving.record_receipt"),
+        );
+        base.scope.package_id = "base".to_owned();
+        let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base])]);
+
+        let digest_error = resolve_wiring_components(
+            &dependency_document(),
+            &owner,
+            &facts,
+            Some(&dependency_manifest(&format!("sha256:{}", "d".repeat(64)))),
+        )
+        .expect_err("digest drift refuses the dependency");
+        assert_eq!(
+            digest_error.kind(),
+            MintManifestErrorKind::OperationDependency
+        );
+
+        let membership_error = resolve_wiring_components(
+            &dependency_document(),
+            &owner,
+            &BTreeMap::new(),
+            Some(&dependency_manifest(DIGEST)),
+        )
+        .expect_err("a dependency outside the release refuses publication");
+        assert_eq!(
+            membership_error.kind(),
+            MintManifestErrorKind::OperationDependency
+        );
+        assert!(
+            membership_error
+                .detail()
+                .contains("absent from the effective release")
+        );
     }
 
     #[test]

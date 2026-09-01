@@ -1,8 +1,10 @@
 //! Host-owned active-wiring resolution through the existing platform pool.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Context as _;
+use serde::Deserialize;
 use tokio_postgres::types::ToSql;
 use wamn_catalog::{AdmittedComponent, WiringDocument};
 use wamn_router::Wiring;
@@ -57,38 +59,42 @@ SELECT selected.version, \
        COALESCE( \
            jsonb_agg( \
                jsonb_build_object( \
-                   'scope', jsonb_build_object( \
-                       'tenant-id', $1::text, \
-                       'package-id', $2::text, \
-                       'package-version', component.package_version \
-                   ), \
-                   'component', component.component, \
-                   'interface-version', component.interface_version, \
-                   'operation', component.operation, \
-                   'registered-operation', component.registered_operation, \
-                   'component-digest', component.component_digest, \
-                   'imports', component.imports, \
-                   'imports-fingerprint', component.imports_fingerprint, \
-                   'effects', component.effects, \
-                   'input-ports', component.input_ports, \
-                   'output-ports', component.output_ports, \
-                   'parameters', component.parameters \
-               ) ORDER BY component.component, component.interface_version \
-           ) FILTER (WHERE component.component IS NOT NULL), \
+                   'node-id', member.node_id, \
+                   'component', jsonb_build_object( \
+                       'scope', jsonb_build_object( \
+                           'tenant-id', $1::text, \
+                           'package-id', component.package_id, \
+                           'package-version', component.package_version \
+                       ), \
+                       'component', component.component, \
+                       'interface-version', component.interface_version, \
+                       'operation', component.operation, \
+                       'registered-operation', component.registered_operation, \
+                       'component-digest', component.component_digest, \
+                       'imports', component.imports, \
+                       'imports-fingerprint', component.imports_fingerprint, \
+                       'effects', component.effects, \
+                       'input-ports', component.input_ports, \
+                       'output-ports', component.output_ports, \
+                       'parameters', component.parameters \
+                   ) \
+               ) ORDER BY member.node_id COLLATE \"C\" \
+           ) FILTER (WHERE member.node_id IS NOT NULL), \
            '[]'::jsonb \
-       )::text AS components \
+       )::text AS node_components \
   FROM selected \
+  LEFT JOIN catalog.release_components AS member \
+    ON member.tenant_id = $1 \
+   AND member.effective_release_id = selected.effective_release_id \
+   AND member.wiring_package_id = $2 \
+   AND member.wiring_package_version = selected.package_version \
+   AND member.wiring_id = $4 \
+   AND member.wiring_version = $5 \
   LEFT JOIN catalog.component_library AS component \
-   ON component.tenant_id = $1 \
-   AND component.package_id = $2 \
-   AND component.package_version = selected.package_version \
-   AND EXISTS ( \
-       SELECT 1 \
-         FROM jsonb_each(selected.graph_json -> 'nodes') AS node(node_id, definition) \
-        WHERE definition ->> 'component' = component.component \
-          AND definition ->> 'interface-version' = component.interface_version \
-          AND definition ->> 'operation' = component.operation \
-   ) \
+    ON component.tenant_id = member.tenant_id \
+   AND component.package_id = member.package_id \
+   AND component.package_version = member.package_version \
+   AND component.component_digest = member.component_digest \
  GROUP BY selected.version, selected.effective_release_id, \
           selected.package_version, \
           selected.graph_json, selected.wiring_hash";
@@ -128,8 +134,8 @@ WITH release_scope AS MATERIALIZED ( \
              FROM catalog.release_components AS member \
             WHERE member.tenant_id = $1 \
               AND member.effective_release_id = release_scope.effective_release_id \
-              AND member.package_id = $2 \
-              AND member.package_version = release_scope.package_version \
+              AND member.wiring_package_id = $2 \
+              AND member.wiring_package_version = release_scope.package_version \
               AND member.wiring_id = $4 \
               AND member.wiring_version = $5 \
        ) \
@@ -140,32 +146,35 @@ SELECT selected.version, selected.effective_release_id, \
        COALESCE( \
            jsonb_agg( \
                jsonb_build_object( \
-                   'scope', jsonb_build_object( \
-                       'tenant-id', $1::text, \
-                       'package-id', $2::text, \
-                       'package-version', component.package_version \
-                   ), \
-                   'component', component.component, \
-                   'interface-version', component.interface_version, \
-                   'operation', component.operation, \
-                   'registered-operation', component.registered_operation, \
-                   'component-digest', component.component_digest, \
-                   'imports', component.imports, \
-                   'imports-fingerprint', component.imports_fingerprint, \
-                   'effects', component.effects, \
-                   'input-ports', component.input_ports, \
-                   'output-ports', component.output_ports, \
-                   'parameters', component.parameters \
-               ) ORDER BY component.component, component.interface_version \
-           ) FILTER (WHERE component.component IS NOT NULL), \
+                   'node-id', member.node_id, \
+                   'component', jsonb_build_object( \
+                       'scope', jsonb_build_object( \
+                           'tenant-id', $1::text, \
+                           'package-id', component.package_id, \
+                           'package-version', component.package_version \
+                       ), \
+                       'component', component.component, \
+                       'interface-version', component.interface_version, \
+                       'operation', component.operation, \
+                       'registered-operation', component.registered_operation, \
+                       'component-digest', component.component_digest, \
+                       'imports', component.imports, \
+                       'imports-fingerprint', component.imports_fingerprint, \
+                       'effects', component.effects, \
+                       'input-ports', component.input_ports, \
+                       'output-ports', component.output_ports, \
+                       'parameters', component.parameters \
+                   ) \
+               ) ORDER BY member.node_id COLLATE \"C\" \
+           ) FILTER (WHERE member.node_id IS NOT NULL), \
            '[]'::jsonb \
-       )::text AS components \
+       )::text AS node_components \
   FROM selected \
   LEFT JOIN catalog.release_components AS member \
     ON member.tenant_id = $1 \
    AND member.effective_release_id = selected.release_id \
-   AND member.package_id = $2 \
-   AND member.package_version = selected.package_version \
+   AND member.wiring_package_id = $2 \
+   AND member.wiring_package_version = selected.package_version \
    AND member.wiring_id = $4 \
    AND member.wiring_version = $5 \
   LEFT JOIN catalog.component_library AS component \
@@ -444,7 +453,8 @@ impl WamnPostgres {
         let result = match selected {
             Ok(None) => Ok(None),
             Ok(Some(row)) => {
-                decode_active_wiring(tenant_id, package_id, environment, wiring_id, &row).map(Some)
+                decode_released_wiring(tenant_id, package_id, environment, wiring_id, &row)
+                    .map(Some)
             }
             Err(error) => Err(error),
         };
@@ -531,7 +541,8 @@ impl WamnPostgres {
         let result = match selected {
             Ok(None) => Ok(None),
             Ok(Some(row)) => {
-                decode_active_wiring(tenant_id, package_id, environment, wiring_id, &row).map(Some)
+                decode_released_wiring(tenant_id, package_id, environment, wiring_id, &row)
+                    .map(Some)
             }
             Err(error) => Err(error),
         };
@@ -754,13 +765,22 @@ impl WamnPostgres {
     }
 }
 
-fn decode_active_wiring(
-    tenant_id: &str,
-    package_id: &str,
-    environment: &str,
-    wiring_id: &str,
-    row: &tokio_postgres::Row,
-) -> anyhow::Result<ResolvedActiveWiring> {
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct ResolvedNodeComponent {
+    node_id: String,
+    component: AdmittedComponent,
+}
+
+struct DecodedWiring {
+    version: u32,
+    effective_release_id: u32,
+    package_version: String,
+    graph_hash: String,
+    document: WiringDocument,
+}
+
+fn decode_wiring(wiring_id: &str, row: &tokio_postgres::Row) -> anyhow::Result<DecodedWiring> {
     let version: i32 = row.try_get(0).context("decode active wiring version")?;
     let version = u32::try_from(version).context("active wiring version is not positive")?;
     let effective_release_id: i32 = row.try_get(1).context("decode effective release id")?;
@@ -780,38 +800,140 @@ fn decode_active_wiring(
         document.wiring_hash().as_str() == graph_hash,
         "active-wiring-hash-mismatch"
     );
+    Ok(DecodedWiring {
+        version,
+        effective_release_id,
+        package_version,
+        graph_hash,
+        document,
+    })
+}
 
+fn decode_released_wiring(
+    tenant_id: &str,
+    package_id: &str,
+    environment: &str,
+    wiring_id: &str,
+    row: &tokio_postgres::Row,
+) -> anyhow::Result<ResolvedActiveWiring> {
+    let decoded = decode_wiring(wiring_id, row)?;
+    let node_components: String = row
+        .try_get(5)
+        .context("decode release wiring node component facts")?;
+    let node_components: Vec<ResolvedNodeComponent> = serde_json::from_str(&node_components)
+        .context("parse release wiring node component facts")?;
+    let node_components = node_components
+        .into_iter()
+        .map(|binding| (binding.node_id, binding.component))
+        .collect::<BTreeMap<_, _>>();
+    anyhow::ensure!(
+        node_components.len() == decoded.document.nodes.len(),
+        "release-wiring-node-closure-incomplete"
+    );
+    lower_resolved_wiring(tenant_id, package_id, environment, decoded, node_components)
+}
+
+fn decode_active_wiring(
+    tenant_id: &str,
+    package_id: &str,
+    environment: &str,
+    wiring_id: &str,
+    row: &tokio_postgres::Row,
+) -> anyhow::Result<ResolvedActiveWiring> {
+    let decoded = decode_wiring(wiring_id, row)?;
+    anyhow::ensure!(
+        decoded
+            .document
+            .nodes
+            .values()
+            .all(|node| node.operation_dependency.is_none()),
+        "candidate-operation-dependency-unresolved"
+    );
     let components: String = row
         .try_get(5)
-        .context("decode active wiring component facts")?;
+        .context("decode candidate wiring component facts")?;
     let components: Vec<AdmittedComponent> =
-        serde_json::from_str(&components).context("parse active wiring component facts")?;
-    let components = components_used_by_document(&document, components);
+        serde_json::from_str(&components).context("parse candidate wiring component facts")?;
+    let mut node_components = BTreeMap::new();
+    for (node_id, node) in &decoded.document.nodes {
+        let mut matches = components.iter().filter(|component| {
+            node.component == component.component
+                && node.interface_version == component.interface_version
+                && node.operation == component.operation
+        });
+        let component = matches
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("candidate-wiring-node-component-missing"))?;
+        anyhow::ensure!(
+            matches.next().is_none(),
+            "candidate-wiring-node-component-ambiguous"
+        );
+        node_components.insert(node_id.clone(), component.clone());
+    }
+    lower_resolved_wiring(tenant_id, package_id, environment, decoded, node_components)
+}
+
+fn lower_resolved_wiring(
+    tenant_id: &str,
+    package_id: &str,
+    environment: &str,
+    decoded: DecodedWiring,
+    resolved: BTreeMap<String, AdmittedComponent>,
+) -> anyhow::Result<ResolvedActiveWiring> {
+    let mut executable = decoded.document.clone();
+    let mut operations = Vec::with_capacity(resolved.len());
+    let mut components = Vec::new();
+    for (node_id, component) in resolved {
+        let node = decoded
+            .document
+            .nodes
+            .get(&node_id)
+            .ok_or_else(|| anyhow::anyhow!("release-wiring-node-binding-extra"))?;
+        anyhow::ensure!(
+            node.component == component.component
+                && node.interface_version == component.interface_version
+                && node.operation == component.operation,
+            "release-wiring-node-binding-mismatch"
+        );
+        let runtime_key = component.component_digest.clone();
+        executable
+            .nodes
+            .get_mut(&node_id)
+            .expect("the resolved node belongs to the cloned document")
+            .component = runtime_key.clone();
+        let mut operation = project_component_operation(&component);
+        operation.component = runtime_key;
+        if !operations.contains(&operation) {
+            operations.push(operation);
+        }
+        if !components.contains(&component) {
+            components.push(component.clone());
+        }
+    }
     verify_served_effect_projections(&components)?;
     let scope = WiringScope {
         tenant_id,
         package_id,
         environment,
     };
-    let operations: Vec<_> = components.iter().map(project_component_operation).collect();
     let wiring = lower_active_wiring(
         GatedActiveWiring {
             scope,
-            package_version: &package_version,
-            document: &document,
+            package_version: &decoded.package_version,
+            document: &executable,
         },
         ScopedWiringOperationFacts {
             scope,
-            package_version: &package_version,
+            package_version: &decoded.package_version,
             operations: &operations,
         },
     )
     .context("lower active wiring")?;
 
     Ok(ResolvedActiveWiring {
-        version,
-        effective_release_id,
-        graph_hash: Arc::from(graph_hash),
+        version: decoded.version,
+        effective_release_id: decoded.effective_release_id,
+        graph_hash: Arc::from(decoded.graph_hash),
         wiring,
         components: components.into(),
     })
@@ -837,22 +959,6 @@ fn verify_served_effect_projections(components: &[AdmittedComponent]) -> anyhow:
         })?;
     }
     Ok(())
-}
-
-fn components_used_by_document(
-    document: &WiringDocument,
-    components: Vec<AdmittedComponent>,
-) -> Vec<AdmittedComponent> {
-    components
-        .into_iter()
-        .filter(|component| {
-            document.nodes.values().any(|node| {
-                node.component == component.component
-                    && node.interface_version == component.interface_version
-                    && node.operation == component.operation
-            })
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -893,42 +999,72 @@ mod tests {
         .component
     }
 
-    fn document() -> WiringDocument {
-        WiringDocument::parse(&json!({
+    #[test]
+    fn same_local_name_nodes_keep_exact_target_package_identity() {
+        let document = WiringDocument::parse(&json!({
             "format-version": "0.1",
-            "wiring-id": "create-order",
+            "wiring-id": "compose-orders",
             "version": 3,
-            "entry": "create",
+            "entry": "base",
             "nodes": {
-                "create": {
+                "base": {
                     "component": "entity",
                     "interface-version": "0.1.0",
                     "operation": "create"
+                },
+                "overlay": {
+                    "component": "entity",
+                    "interface-version": "0.1.0",
+                    "operation": "create",
+                    "terminal": "respond"
                 }
-            }
+            },
+            "edges": [{
+                "from": "base",
+                "from-port": "error",
+                "to": "overlay",
+                "to-port": "input"
+            }]
         }))
-        .expect("fixture wiring admits")
-    }
+        .expect("cross-package fixture wiring admits");
+        let mut base = component("entity", "create", 'a');
+        base.scope.package_id = "base".to_owned();
+        base.scope.package_version = "1.0.0".to_owned();
+        base.registered_operation = Some("base@1.0.0::entity.create".to_owned());
+        let mut overlay = component("entity", "create", 'b');
+        overlay.scope.package_id = "overlay".to_owned();
+        overlay.scope.package_version = "2.0.0".to_owned();
+        overlay.registered_operation = Some("overlay@2.0.0::entity.create".to_owned());
+        let graph_hash = document.wiring_hash().as_str().to_owned();
 
-    #[test]
-    fn unrelated_package_component_is_absent_from_resolved_facts() {
-        let used = component("entity", "create", 'a');
-        let unrelated = component("logging", "write", 'b');
+        let resolved = lower_resolved_wiring(
+            "tenant-a",
+            "overlay",
+            "prod",
+            DecodedWiring {
+                version: 3,
+                effective_release_id: 7,
+                package_version: "2.0.0".to_owned(),
+                graph_hash,
+                document,
+            },
+            BTreeMap::from([
+                ("base".to_owned(), base.clone()),
+                ("overlay".to_owned(), overlay.clone()),
+            ]),
+        )
+        .expect("exact node targets lower");
 
-        let filtered = components_used_by_document(&document(), vec![used.clone(), unrelated]);
-
-        assert_eq!(filtered, vec![used]);
-    }
-
-    #[test]
-    fn active_query_selects_only_exact_graph_operation_tuples() {
-        assert!(ACTIVE_WIRING_SQL.contains("jsonb_each(selected.graph_json -> 'nodes')"));
-        assert!(ACTIVE_WIRING_SQL.contains("definition ->> 'component' = component.component"));
-        assert!(
-            ACTIVE_WIRING_SQL
-                .contains("definition ->> 'interface-version' = component.interface_version")
+        assert_eq!(
+            resolved.wiring.node("base").unwrap().component,
+            base.component_digest
         );
-        assert!(ACTIVE_WIRING_SQL.contains("definition ->> 'operation' = component.operation"));
+        assert_eq!(
+            resolved.wiring.node("overlay").unwrap().component,
+            overlay.component_digest
+        );
+        assert!(resolved.components.contains(&base));
+        assert!(resolved.components.contains(&overlay));
     }
 
     #[test]

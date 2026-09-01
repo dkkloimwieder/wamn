@@ -100,9 +100,10 @@ fn manifest() -> ServingManifest {
             },
         )]),
         BTreeMap::from([(
-            "orders-changed".into(),
+            "wamn_receiving::orders-changed".into(),
             ServingRegistration {
                 package_id: "wamn_receiving".into(),
+                source_package_id: "wamn_receiving".into(),
                 wiring_id: "shipping".into(),
                 wiring_version: 2,
                 entity: "orders".into(),
@@ -232,12 +233,13 @@ fn every_manifest_field_is_pinned() {
         ]
     );
     assert_eq!(
-        sorted_keys(&document["registrations"]["orders-changed"]),
+        sorted_keys(&document["registrations"]["wamn_receiving::orders-changed"]),
         [
             "entity",
             "input",
             "ops",
             "package-id",
+            "source-package-id",
             "wiring-id",
             "wiring-version"
         ]
@@ -266,7 +268,7 @@ fn each_exact_target_reaches_the_digest() {
     let mut retargeted = manifest();
     let registration = retargeted
         .registrations
-        .get_mut("orders-changed")
+        .get_mut("wamn_receiving::orders-changed")
         .expect("fixture registration");
     registration.wiring_id = "orders".into();
     registration.wiring_version = 1;
@@ -277,7 +279,7 @@ fn each_exact_target_reaches_the_digest() {
     let mut regrained = manifest();
     regrained
         .registrations
-        .get_mut("orders-changed")
+        .get_mut("wamn_receiving::orders-changed")
         .expect("fixture registration")
         .input = ServingRegistrationInput::Event;
     assert_ne!(baseline.digest(), regrained.digest());

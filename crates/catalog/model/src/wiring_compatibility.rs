@@ -97,6 +97,62 @@ pub fn validate_wiring_compatibility(
         resolved.insert(node_id.as_str(), component);
     }
 
+    validate_resolved_edges(wiring, &resolved)
+}
+
+/// Validate a wiring against the exact component fact selected for every node.
+///
+/// Unlike [`validate_wiring_compatibility`], this form admits facts from
+/// different exact package scopes. The release publisher owns resolving each
+/// authored dependency alias before calling it; this function verifies that
+/// the supplied target still matches the node tuple and then applies the same
+/// parameter, port, and schema rules as the package-local gate.
+pub fn validate_resolved_wiring_compatibility(
+    wiring: &WiringDocument,
+    components: &BTreeMap<String, AdmittedComponent>,
+) -> Result<(), WiringCompatibilityError> {
+    let mut resolved = BTreeMap::new();
+    for (node_id, node) in &wiring.nodes {
+        let component = components.get(node_id).ok_or_else(|| {
+            WiringCompatibilityError::new(
+                WiringCompatibilityErrorKind::MissingComponent,
+                format!("wiring node {node_id:?} has no resolved component fact"),
+            )
+        })?;
+        if component.component != node.component
+            || component.interface_version != node.interface_version
+            || component.operation != node.operation
+        {
+            return Err(WiringCompatibilityError::new(
+                WiringCompatibilityErrorKind::MissingOperation,
+                format!(
+                    "wiring node {node_id:?} tuple ({:?}, {:?}, {:?}) differs from resolved component tuple ({:?}, {:?}, {:?})",
+                    node.component,
+                    node.interface_version,
+                    node.operation,
+                    component.component,
+                    component.interface_version,
+                    component.operation,
+                ),
+            ));
+        }
+        validate_parameters(node_id, node, component)?;
+        resolved.insert(node_id.as_str(), component);
+    }
+    if components.len() != resolved.len() {
+        return Err(WiringCompatibilityError::new(
+            WiringCompatibilityErrorKind::DuplicateOperationFact,
+            "resolved component facts contain a node absent from the wiring",
+        ));
+    }
+
+    validate_resolved_edges(wiring, &resolved)
+}
+
+fn validate_resolved_edges(
+    wiring: &WiringDocument,
+    resolved: &BTreeMap<&str, &AdmittedComponent>,
+) -> Result<(), WiringCompatibilityError> {
     for edge in &wiring.edges {
         let source = resolved
             .get(edge.from.as_str())
@@ -364,6 +420,7 @@ mod tests {
                         component: "source".to_string(),
                         interface_version: "0.1.0".to_string(),
                         operation: "read".to_string(),
+                        operation_dependency: None,
                         params: BTreeMap::new(),
                         terminal: None,
                     },
@@ -374,6 +431,7 @@ mod tests {
                         component: "target".to_string(),
                         interface_version: "0.1.0".to_string(),
                         operation: "write".to_string(),
+                        operation_dependency: None,
                         params: BTreeMap::from([("relation".to_string(), json!("orders"))]),
                         terminal: Some(WiringTerminal::Respond),
                     },
@@ -414,6 +472,24 @@ mod tests {
     fn exact_scoped_schema_and_parameter_facts_admit() {
         validate_wiring_compatibility(&wiring(), &scope(), &components())
             .expect("exact compatibility admits");
+    }
+
+    #[test]
+    fn resolved_cross_package_facts_keep_their_exact_target_scopes() {
+        let mut facts = components();
+        facts[1].scope.package_id = "base".to_owned();
+        facts[1].scope.package_version = "3.1.0".to_owned();
+        let resolved = BTreeMap::from([
+            ("source".to_owned(), facts[0].clone()),
+            ("target".to_owned(), facts[1].clone()),
+        ]);
+
+        validate_resolved_wiring_compatibility(&wiring(), &resolved)
+            .expect("exact per-node target facts admit");
+
+        assert_eq!(resolved["source"].scope, scope());
+        assert_eq!(resolved["target"].scope.package_id, "base");
+        assert_eq!(resolved["target"].scope.package_version, "3.1.0");
     }
 
     #[test]

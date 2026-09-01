@@ -725,7 +725,7 @@ mod tests {
 
     use super::*;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","package-id":"manifest_mint"}],"format-version":3,"registrations":{"orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","package-id":"manifest_mint"}],"format-version":3,"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)
@@ -748,7 +748,10 @@ mod tests {
             })
         );
         assert_eq!(
-            resolve_target(&manifest(), SourceRef::Registration("orders-changed")),
+            resolve_target(
+                &manifest(),
+                SourceRef::Registration("manifest_mint::orders-changed"),
+            ),
             Some(ResolvedTarget {
                 package_id: "manifest_mint".into(),
                 wiring_id: "shipping".into(),
@@ -802,16 +805,16 @@ mod tests {
 
         let registration = resolve_target(
             &protected_manifest,
-            SourceRef::Registration("orders-changed"),
+            SourceRef::Registration("manifest_mint::orders-changed"),
         )
         .expect("the fixture names the callerless registration");
         assert!(caller_matches_source(
-            SourceRef::Registration("orders-changed"),
+            SourceRef::Registration("manifest_mint::orders-changed"),
             registration.anonymous_caller_permitted,
             None,
         ));
         assert!(!caller_matches_source(
-            SourceRef::Registration("orders-changed"),
+            SourceRef::Registration("manifest_mint::orders-changed"),
             registration.anonymous_caller_permitted,
             Some("orders-http"),
         ));
@@ -1011,17 +1014,20 @@ mod tests {
             ]
         );
 
-        let registration = resolve_target(&manifest, SourceRef::Registration("orders-changed"))
-            .expect("the fixture names this registration");
+        let registration = resolve_target(
+            &manifest,
+            SourceRef::Registration("manifest_mint::orders-changed"),
+        )
+        .expect("the fixture names this registration");
         assert_eq!(
             delivery_attributes(
-                SourceRef::Registration("orders-changed"),
+                SourceRef::Registration("manifest_mint::orders-changed"),
                 &registration.wiring_id,
                 registration.wiring_version,
             ),
             vec![
                 KeyValue::new(SOURCE_KIND, "registration"),
-                KeyValue::new(SOURCE_ID, "orders-changed"),
+                KeyValue::new(SOURCE_ID, "manifest_mint::orders-changed"),
                 KeyValue::new(WIRING_ID, "shipping"),
                 KeyValue::new(WIRING_VERSION, 2_i64),
             ]
@@ -1060,15 +1066,18 @@ mod tests {
     fn each_driver_refusal_counts_as_an_attempt_and_a_named_error() {
         let harness = MetricHarness::install();
         let metrics = harness.metrics();
-        let attributes =
-            delivery_attributes(SourceRef::Registration("orders-changed"), "shipping", 2);
+        let attributes = delivery_attributes(
+            SourceRef::Registration("manifest_mint::orders-changed"),
+            "shipping",
+            2,
+        );
 
         metrics.record(&attributes, DeliveryClass::PermissionDenied);
         metrics.record(&attributes, DeliveryClass::ExecutionFailed);
 
         let base = [
             ("wamn.source.kind", "registration"),
-            ("wamn.source.id", "orders-changed"),
+            ("wamn.source.id", "manifest_mint::orders-changed"),
             ("wamn.wiring.id", "shipping"),
             ("wamn.wiring.version", "2"),
         ];

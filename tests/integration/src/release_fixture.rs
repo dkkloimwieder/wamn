@@ -59,8 +59,9 @@ pub(crate) fn load_release(
         }],
         "attachments": {},
         "registrations": {
-            fixture.registration: {
+            (format!("{}::{}", fixture.package, fixture.registration)): {
                 "package-id": fixture.package,
+                "source-package-id": fixture.package,
                 "wiring-id": fixture.wiring,
                 "wiring-version": 1,
                 "entity": fixture.entity,

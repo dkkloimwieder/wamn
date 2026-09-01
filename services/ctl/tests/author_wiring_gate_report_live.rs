@@ -108,6 +108,7 @@ fn wiring(id: &str, version: u32) -> WiringDocument {
                 component: "receiving_data".to_string(),
                 interface_version: "0.1".to_string(),
                 operation: "run".to_string(),
+                operation_dependency: None,
                 params: BTreeMap::new(),
                 terminal: Some(WiringTerminal::Respond),
             },

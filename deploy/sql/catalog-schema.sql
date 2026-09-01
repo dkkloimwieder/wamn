@@ -590,22 +590,31 @@ CREATE TRIGGER wiring_activation_doorbell
     FOR EACH ROW EXECUTE FUNCTION catalog.notify_wiring_activation();
 
 CREATE TABLE catalog.release_components (
-    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
-    effective_release_id int  NOT NULL CHECK (effective_release_id > 0),
-    package_id           text NOT NULL CHECK (package_id <> ''),
-    package_version      text NOT NULL CHECK (package_version <> ''),
-    wiring_id            text NOT NULL CHECK (wiring_id <> ''),
-    wiring_version       int  NOT NULL CHECK (wiring_version > 0),
-    component_digest     text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
+    tenant_id             text NOT NULL CHECK (tenant_id <> ''),
+    effective_release_id  int  NOT NULL CHECK (effective_release_id > 0),
+    wiring_package_id     text NOT NULL CHECK (wiring_package_id <> ''),
+    wiring_package_version text NOT NULL CHECK (wiring_package_version <> ''),
+    wiring_id             text NOT NULL CHECK (wiring_id <> ''),
+    wiring_version        int  NOT NULL CHECK (wiring_version > 0),
+    node_id               text NOT NULL CHECK (node_id <> ''),
+    package_id            text NOT NULL CHECK (package_id <> ''),
+    package_version       text NOT NULL CHECK (package_version <> ''),
+    component_digest      text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT release_components_pkey
-        PRIMARY KEY (tenant_id, effective_release_id, package_id, package_version,
-                     wiring_id, wiring_version, component_digest),
-    CONSTRAINT release_components_membership_fkey
+        PRIMARY KEY (tenant_id, effective_release_id, wiring_package_id,
+                     wiring_package_version, wiring_id, wiring_version, node_id),
+    CONSTRAINT release_components_wiring_membership_fkey
+        FOREIGN KEY (tenant_id, effective_release_id, wiring_package_id,
+                     wiring_package_version)
+        REFERENCES catalog.effective_release_packages
+            (tenant_id, effective_release_id, package_id, package_version),
+    CONSTRAINT release_components_component_membership_fkey
         FOREIGN KEY (tenant_id, effective_release_id, package_id, package_version)
         REFERENCES catalog.effective_release_packages
             (tenant_id, effective_release_id, package_id, package_version),
     CONSTRAINT release_components_wiring_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version, wiring_id, wiring_version)
+        FOREIGN KEY (tenant_id, wiring_package_id, wiring_package_version,
+                     wiring_id, wiring_version)
         REFERENCES catalog.wirings
             (tenant_id, package_id, package_version, wiring_id, version),
     CONSTRAINT release_components_component_fkey

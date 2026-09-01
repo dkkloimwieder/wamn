@@ -1259,7 +1259,7 @@ impl RouterDriver {
                 release,
             },
             invocation: ConnectionInvocation {
-                package_id: request.package_id.clone(),
+                package_id: component.scope.package_id.clone(),
                 wiring_id: request.wiring_id.clone(),
                 wiring_version: active.version,
                 node_id: call.node.clone(),
@@ -2036,9 +2036,10 @@ mod tests {
                 ),
             ]),
             registrations: BTreeMap::from([(
-                "events".to_owned(),
+                "orders::events".to_owned(),
                 ServingRegistration {
                     package_id: "orders".to_owned(),
+                    source_package_id: "orders".to_owned(),
                     wiring_id: "stream-wiring".to_owned(),
                     wiring_version: 4,
                     entity: "order".to_owned(),
