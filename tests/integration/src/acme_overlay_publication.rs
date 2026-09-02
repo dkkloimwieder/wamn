@@ -4,7 +4,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_catalog::{ComponentDeclaration, WiringDocument, WiringTerminal};
+use wamn_catalog::{
+    ComponentDeclaration, ComponentOperationDependency, WiringDocument, WiringTerminal,
+};
 
 const TENANT: &str = "acme-overlay-publication-proof";
 const PACKAGE_ID: &str = "client_acme_receiving";
@@ -12,6 +14,9 @@ const PACKAGE_VERSION: &str = "3.0.0";
 const COMPONENT: &str = "client_acme_receiving";
 const INTERFACE_VERSION: &str = "0.1.0";
 const PRIVATE_OPERATION: &str = "client-acme-receiving:quality/create-inspection@3.0.0";
+const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+const BASE_COMPONENT_DIGEST: &str =
+    "sha256:c10453c58e992b45a82af3b25b8f843ec8263b5d846a19cab8964cad6e910b2d";
 const DIRECT_OPERATIONS: [(&str, &str); 5] = [
     (
         "purchase_order_get",
@@ -96,6 +101,17 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
     for (wiring_id, operation) in DIRECT_OPERATIONS {
         let fact = &declaration.operations[operation];
         assert_eq!(fact.registered_operation.as_deref(), Some(operation));
+        let expected_dependencies = (operation
+            == "client-acme-receiving:receiving/record-receipt@3.0.0")
+            .then(|| ComponentOperationDependency {
+                package: "wamn_receiving".to_owned(),
+                version: "1.0.0".to_owned(),
+                digest: BASE_COMPONENT_DIGEST.to_owned(),
+                operation: BASE_RECORD_RECEIPT.to_owned(),
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert_eq!(fact.dependencies, expected_dependencies);
         let document = wiring(wiring_id);
         assert_eq!(document.wiring_id, wiring_id);
         assert_eq!(document.version, 1);
@@ -115,6 +131,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
         private_fact.registered_operation.is_none(),
         "the private handler must not fabricate an originating caller permission"
     );
+    assert!(private_fact.dependencies.is_empty());
     let handler = wiring("quality_create_inspection");
     assert_eq!(handler.wiring_id, "quality_create_inspection");
     assert_eq!(handler.version, 1);
