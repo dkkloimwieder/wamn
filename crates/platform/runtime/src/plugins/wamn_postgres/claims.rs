@@ -3425,12 +3425,18 @@ mod tests {
         pg.bind_workload_authority("invalid", "executor-platform")
             .expect_err("no other explicit authority is admitted");
 
-        pg.checkout_workload("materializer", DEFAULT_PROJECT, "tenant-a")
-            .await
-            .expect_err("the recording provider deliberately names no credential");
-        pg.checkout_workload("ordinary-guest", DEFAULT_PROJECT, "tenant-a")
-            .await
-            .expect_err("the recording provider deliberately names no credential");
+        assert!(
+            pg.checkout_workload("materializer", DEFAULT_PROJECT, "tenant-a")
+                .await
+                .is_err(),
+            "the recording provider deliberately names no credential"
+        );
+        assert!(
+            pg.checkout_workload("ordinary-guest", DEFAULT_PROJECT, "tenant-a")
+                .await
+                .is_err(),
+            "the recording provider deliberately names no credential"
+        );
 
         let asked = provider
             .asked
