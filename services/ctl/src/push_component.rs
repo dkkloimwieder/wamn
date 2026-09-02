@@ -266,8 +266,79 @@ pub struct PushComponentArgs {
     pub control_database_url: String,
 }
 
-/// Validate, publish, verify, and finally record one admitted component.
-pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
+/// Source-owned inputs for one exact component admission.
+#[derive(Debug)]
+pub struct AdmitComponentArgs {
+    /// Package root whose strict manifest and generated evidence own the component.
+    pub package: PathBuf,
+    /// Exact wasm component bytes to admit.
+    pub component_bytes: PathBuf,
+    /// Package-owned component declaration to bind to the bytes.
+    pub declaration: PathBuf,
+    /// Closed platform-capability set granted to these exact bytes.
+    pub admitted_platform_packages: Vec<String>,
+}
+
+/// Deployment-owned effects applied to one completed component admission.
+pub struct PublishAdmittedComponentArgs {
+    /// Registry and repository base for the immutable component artifact.
+    pub artifact_base: String,
+    /// Docker configuration carrying the registry push credential.
+    pub registry_auth_file: PathBuf,
+    /// Whether the exact registry host may use plain HTTP.
+    pub insecure_registry: bool,
+    /// Already-applied project database receiving the admitted facts.
+    pub project_database_url: String,
+    /// Control database receiving the identical admitted facts.
+    pub control_database_url: String,
+}
+
+impl fmt::Debug for PublishAdmittedComponentArgs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PublishAdmittedComponentArgs")
+            .field("artifact_base", &self.artifact_base)
+            .field("registry_auth_file", &self.registry_auth_file)
+            .field("insecure_registry", &self.insecure_registry)
+            .field("project_database_url", &"[redacted]")
+            .field("control_database_url", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Exact saved-byte admission reused by later publication.
+///
+/// Fields stay private so callers cannot replace admitted facts, package
+/// evidence, or component bytes independently. The receipt deliberately does
+/// not implement `Clone`; retries borrow the same admission.
+pub struct ComponentAdmissionReceipt {
+    package_path: PathBuf,
+    directory: PackageDirectory,
+    component_bytes: Box<[u8]>,
+    component: AdmittedComponent,
+    requirements: Box<[ComponentConnectionRequirement]>,
+    manifest_sha256: Box<str>,
+    projection_hash: Box<str>,
+}
+
+impl fmt::Debug for ComponentAdmissionReceipt {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ComponentAdmissionReceipt")
+            .field("package_id", &self.component.scope.package_id)
+            .field("package_version", &self.component.scope.package_version)
+            .field("component", &self.component.component)
+            .field("component_digest", &self.component.component_digest)
+            .field("component_bytes_len", &self.component_bytes.len())
+            .field("requirement_count", &self.requirements.len())
+            .field("manifest_sha256", &self.manifest_sha256)
+            .field("projection_hash", &self.projection_hash)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Validate saved component and package bytes without publication side effects.
+pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmissionReceipt> {
     let directory = crate::apply_package::read_package_directory(&args.package)?;
     let package = plan_package_migrations(&directory, None)
         .context("validate strict package directory before component publication")?;
@@ -306,6 +377,24 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
         .map(|connection| portable_requirement(&admitted.component_digest, connection))
         .collect::<Vec<_>>();
     let projection_hash = admitted_projection_hash(&admitted, &requirements)?;
+
+    Ok(ComponentAdmissionReceipt {
+        package_path: args.package,
+        directory,
+        component_bytes: component_bytes.into_boxed_slice(),
+        component: admitted,
+        requirements: requirements.into_boxed_slice(),
+        manifest_sha256: package.manifest_sha256.into_boxed_str(),
+        projection_hash: projection_hash.into_boxed_str(),
+    })
+}
+
+/// Publish one exact admission and project its facts without rereading sources.
+pub async fn publish_admitted_component(
+    admission: &ComponentAdmissionReceipt,
+    args: PublishAdmittedComponentArgs,
+) -> anyhow::Result<()> {
+    let admitted = &admission.component;
     let project_config: PgConfig = args
         .project_database_url
         .parse()
@@ -314,7 +403,13 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
         .control_database_url
         .parse()
         .context("parse T1 control database URL")?;
-    verify_source_package(&project_config, &admitted, &directory, &args.package).await?;
+    verify_source_package(
+        &project_config,
+        admitted,
+        &admission.directory,
+        &admission.package_path,
+    )
+    .await?;
     let artifact = component_artifact_reference(&args.artifact_base, &admitted.component_digest)
         .context("derive component artifact reference")?;
     let reference = Reference::with_tag(
@@ -325,15 +420,15 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
     let registry_credentials =
         read_registry_credentials(&args.registry_auth_file, artifact.registry())
             .context("load component registry push credential")?;
-    let config_bytes = component_artifact_config_bytes(&admitted);
+    let config_bytes = component_artifact_config_bytes(admitted);
 
     publish_and_verify(
         &reference,
         &args.artifact_base,
         args.insecure_registry,
-        &component_bytes,
+        &admission.component_bytes,
         &config_bytes,
-        &admitted,
+        admitted,
         &registry_credentials,
     )
     .await?;
@@ -341,12 +436,12 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
     let projected = project_component_facts(
         &project_config,
         &control_config,
-        &admitted,
-        &requirements,
-        &package.manifest_sha256,
-        &projection_hash,
-        &directory,
-        &args.package,
+        admitted,
+        &admission.requirements,
+        &admission.manifest_sha256,
+        &admission.projection_hash,
+        &admission.directory,
+        &admission.package_path,
     )
     .await?;
     println!(
@@ -365,6 +460,38 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
     );
     println!("{}", admitted.component_digest);
     Ok(())
+}
+
+/// Validate, publish, verify, and finally record one admitted component.
+pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
+    let PushComponentArgs {
+        package,
+        component_bytes,
+        declaration,
+        artifact_base,
+        registry_auth_file,
+        insecure_registry,
+        admitted_platform_packages,
+        project_database_url,
+        control_database_url,
+    } = args;
+    let admission = admit_component(AdmitComponentArgs {
+        package,
+        component_bytes,
+        declaration,
+        admitted_platform_packages,
+    })?;
+    publish_admitted_component(
+        &admission,
+        PublishAdmittedComponentArgs {
+            artifact_base,
+            registry_auth_file,
+            insecure_registry,
+            project_database_url,
+            control_database_url,
+        },
+    )
+    .await
 }
 
 /// Translate one admitted connection into its platform-owned portable record.
@@ -1597,6 +1724,30 @@ mod tests {
             imports_fingerprint: format!("sha256:{}", "d".repeat(64)),
             effects: Vec::new(),
         }
+    }
+
+    #[test]
+    fn admission_receipt_debug_exposes_identity_without_saved_bytes_or_paths() {
+        let component = projection_component();
+        let component_digest = component.component_digest.clone();
+        let receipt = ComponentAdmissionReceipt {
+            package_path: PathBuf::from("private-package-path-marker"),
+            directory: PackageDirectory {
+                manifest_bytes: b"private-manifest-bytes-marker".to_vec(),
+                migrations: Vec::new(),
+            },
+            component_bytes: Box::from(&b"private-component-bytes-marker"[..]),
+            component,
+            requirements: Vec::new().into_boxed_slice(),
+            manifest_sha256: format!("sha256:{}", "c".repeat(64)).into_boxed_str(),
+            projection_hash: format!("sha256:{}", "d".repeat(64)).into_boxed_str(),
+        };
+
+        let debug = format!("{receipt:?}");
+        assert!(debug.contains(&component_digest));
+        assert!(!debug.contains("private-package-path-marker"));
+        assert!(!debug.contains("private-manifest-bytes-marker"));
+        assert!(!debug.contains("private-component-bytes-marker"));
     }
 
     #[test]
