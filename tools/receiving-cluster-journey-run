@@ -70,7 +70,9 @@ if [[ -z "$evidence_dir" ]]; then
   usage
   exit 2
 fi
-if [[ -n $(git status --porcelain --untracked-files=normal) ]]; then
+# A sibling worktree may refresh Beads' passive export; it is not build input.
+if [[ -n $(git status --porcelain --untracked-files=normal -- . \
+    ':(exclude).beads/issues.jsonl') ]]; then
   echo "refusing to build a non-clean source tree; commit the final tip first" >&2
   exit 2
 fi
