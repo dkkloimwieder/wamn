@@ -266,10 +266,10 @@ run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
 
 flow_http_wasm=$cargo_target_dir/wasm32-wasip2/debug/http_route.wasm
 component_directory=$cargo_target_dir/virtualized/std-empty-environment
-components=(receiving)
+components=(receiving client_acme_receiving)
 for component in "${components[@]}"; do
   [[ -s "$component_directory/$component.wasm" ]] || {
-    echo "missing virtualized Receiving component: $component" >&2
+    echo "missing virtualized Receiving journey component: $component" >&2
     exit 1
   }
 done
@@ -443,7 +443,7 @@ release_artifact_base=$registry_authority/wamn/releases
 host_secret_directory=$work_dir/host-secrets
 install -d -m 0700 "$host_secret_directory"
 route_caller_secret=$work_dir/route-caller-pat.json
-record_command cargo test production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \
+record_command cargo test production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces \
   '<disposable PostgreSQL and OCI inputs redacted>'
 WAMN_RECEIVING_ROUTE_PG18_URL="$system_url" \
 WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY="$component_directory" \
@@ -458,7 +458,7 @@ WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$route_caller_secret" \
 CARGO_TARGET_DIR="$cargo_target_dir" \
 RUSTC_WRAPPER= \
   cargo test -p wamn-proof-integration --lib --locked --offline \
-  route_authentication_live::production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \
+  route_authentication_live::production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/production-route.log"
 
