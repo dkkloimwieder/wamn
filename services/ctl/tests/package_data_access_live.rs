@@ -254,6 +254,17 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
             .map(|error| error.code().code()),
         Some("42501")
     );
+    for control_relation in ["wamn_entities", "wamn_cdc_exclusions"] {
+        let denied = guest
+            .query(&format!("SELECT * FROM receiving.{control_relation}"), &[])
+            .await
+            .expect_err("package data authority reached a control-owned relation map");
+        assert_eq!(
+            denied.as_db_error().map(|error| error.code().code()),
+            Some("42501"),
+            "{control_relation} became package data authority"
+        );
+    }
     let overlay_delete = guest
         .execute("DELETE FROM receiving.quality_inspection WHERE false", &[])
         .await

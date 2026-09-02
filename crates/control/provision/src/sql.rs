@@ -1607,9 +1607,9 @@ pub fn create_failover_slot_sql(slot: &str) -> String {
 }
 
 /// Grant the replication role its read surface: `CONNECT` on the project-env
-/// database, `USAGE` on the app data schema, and `SELECT` on **exactly one
-/// table** — the decode-time entity map [`ensure_entity_map_sql`], which is the
-/// reader's only table query against a project-env database.
+/// database, `USAGE` on the app data schema, and `SELECT` on exactly the two
+/// decode-time relation classification maps: [`ensure_entity_map_sql`] and
+/// [`ensure_cdc_exclusion_map_sql`].
 ///
 /// It deliberately does NOT grant `SELECT ON ALL TABLES IN SCHEMA`. Logical
 /// *decoding* reads WAL, not tables, and the shipped reader performs no
@@ -1623,17 +1623,49 @@ pub fn create_failover_slot_sql(slot: &str) -> String {
 /// provisioned before this narrowing already executed the blanket grant, and a
 /// narrower grant does not undo it. It precedes the entity-map grant because it
 /// would otherwise strip it. Idempotent; run connected to the project-env
-/// database AFTER the schema AND the entity map exist (`cdc_sql_bundle` emits
-/// [`ensure_entity_map_sql`] first).
+/// database AFTER the schema and both classification maps exist.
 pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) -> String {
     let role = quote_ident(role);
     format!(
         "GRANT CONNECT ON DATABASE {db} TO {role}; \
          GRANT USAGE ON SCHEMA {schema} TO {role}; \
          REVOKE SELECT ON ALL TABLES IN SCHEMA {schema} FROM {role}; \
-         GRANT SELECT ON {schema}.wamn_entities TO {role};",
+         GRANT SELECT ON {schema}.wamn_entities TO {role}; \
+         GRANT SELECT ON {schema}.wamn_cdc_exclusions TO {role};",
         db = quote_ident(database),
         schema = quote_ident(schema),
+    )
+}
+
+/// The decode-time map of explicitly declared package mechanism relations that
+/// must not enter the event plane. OID keys preserve the disposition for WAL
+/// written before a rename or replacement; rows are therefore never deleted.
+pub fn ensure_cdc_exclusion_map_sql(schema: &str) -> String {
+    format!(
+        "CREATE TABLE IF NOT EXISTS {schema}.wamn_cdc_exclusions ( \
+           relation_oid oid PRIMARY KEY, \
+           package_id text NOT NULL, \
+           relation_id text NOT NULL, \
+           table_name text NOT NULL)",
+        schema = quote_ident(schema),
+    )
+}
+
+/// Upsert one explicit CDC exclusion without permitting an OID to be rebound
+/// to another package-local relation identity.
+pub fn upsert_cdc_exclusion_map_sql(schema: &str) -> String {
+    format!(
+        "INSERT INTO {schema}.wamn_cdc_exclusions AS current \
+               (relation_oid, package_id, relation_id, table_name) \
+         SELECT c.oid, $1, $2, $3::text FROM pg_class c \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = {schema_lit} AND c.relname = $3::text AND c.relkind = 'r' \
+         ON CONFLICT (relation_oid) DO UPDATE \
+           SET table_name = EXCLUDED.table_name \
+         WHERE current.package_id = EXCLUDED.package_id \
+           AND current.relation_id = EXCLUDED.relation_id",
+        schema = quote_ident(schema),
+        schema_lit = quote_literal(schema),
     )
 }
 
@@ -2753,17 +2785,18 @@ mod tests {
         );
     }
 
-    /// The CDC role reads WAL, not tables. Its ONLY table read is the entity
-    /// map, so that is its only `SELECT` — and the retroactive `REVOKE` must
-    /// precede the entity-map grant or it would strip it.
+    /// The CDC role reads WAL, not application tables. Its only table reads are
+    /// the two relation-classification maps, and the retroactive `REVOKE` must
+    /// precede both narrow grants or it would strip them.
     #[test]
-    fn replication_grants_cover_connect_usage_and_only_the_entity_map() {
+    fn replication_grants_cover_connect_usage_and_only_the_classification_maps() {
         let sql = grant_replication_access_sql("wamn-db-acme--billing--dev", "wamn_cdc_x", "app");
         assert!(sql.contains(
             "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_cdc_x\""
         ));
         assert!(sql.contains("GRANT USAGE ON SCHEMA \"app\" TO \"wamn_cdc_x\""));
         assert!(sql.contains("GRANT SELECT ON \"app\".wamn_entities TO \"wamn_cdc_x\""));
+        assert!(sql.contains("GRANT SELECT ON \"app\".wamn_cdc_exclusions TO \"wamn_cdc_x\""));
         // Never the blanket read of every tenant table.
         assert!(!sql.contains("GRANT SELECT ON ALL TABLES"));
         // The retroactive half, ordered before the narrow grant it would strip.
@@ -2773,9 +2806,16 @@ mod tests {
         let grant = sql
             .find("GRANT SELECT ON \"app\".wamn_entities")
             .expect("entity-map grant");
+        let exclusion_grant = sql
+            .find("GRANT SELECT ON \"app\".wamn_cdc_exclusions")
+            .expect("exclusion-map grant");
         assert!(
             revoke < grant,
             "the revoke would strip the entity-map grant"
+        );
+        assert!(
+            revoke < exclusion_grant,
+            "the revoke would strip the exclusion-map grant"
         );
     }
 

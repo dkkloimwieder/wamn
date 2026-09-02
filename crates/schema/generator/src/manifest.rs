@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{GenerateError, GenerateErrorKind};
 
+const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
+
 /// Strict package-owned behavior declaration parsed from `wamn.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -13,6 +15,8 @@ pub struct PackageManifest {
     pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
     pub required_platform_policy_contract: PolicyContractRequirement,
     pub models: BTreeMap<String, ModelDeclaration>,
+    #[serde(default)]
+    pub internal_relations: BTreeMap<String, InternalRelationDeclaration>,
     #[serde(default)]
     pub custom_operations: BTreeMap<String, CustomOperationDeclaration>,
     pub connections: BTreeMap<String, ConnectionDeclaration>,
@@ -351,6 +355,7 @@ pub fn validate_operation_vocabulary(
 ) -> Result<BTreeSet<String>, GenerateError> {
     validate_package_identity(&manifest.package)?;
     validate_base_dependencies(manifest)?;
+    validate_internal_relation_vocabulary(manifest)?;
 
     let mut declared = BTreeSet::new();
     let mut component_by_operation = BTreeMap::new();
@@ -404,6 +409,66 @@ pub fn validate_operation_vocabulary(
 
     validate_component_groups(manifest, &component_by_operation)?;
     Ok(declared)
+}
+
+fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(), GenerateError> {
+    let mut coordinates = BTreeMap::<(String, String), String>::new();
+    for (model_id, model) in &manifest.models {
+        if CONTROL_OWNED_RELATION_TABLES.contains(&model.table.as_str()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                format!(
+                    "model {model_id} uses reserved control relation {}.{}",
+                    model.schema, model.table
+                ),
+            ));
+        }
+        if let Some(existing) = coordinates.insert(
+            (model.schema.clone(), model.table.clone()),
+            format!("model {model_id}"),
+        ) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                format!(
+                    "{existing} and model {model_id} classify the same relation {}.{}",
+                    model.schema, model.table
+                ),
+            ));
+        }
+    }
+    for (relation_id, relation) in &manifest.internal_relations {
+        validate_identifier(relation_id, "internal relation")?;
+        validate_identifier(&relation.schema, "internal relation schema")?;
+        validate_identifier(&relation.table, "internal relation table")?;
+        if CONTROL_OWNED_RELATION_TABLES.contains(&relation.table.as_str()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                format!(
+                    "internal relation {relation_id} uses reserved control relation {}.{}",
+                    relation.schema, relation.table
+                ),
+            ));
+        }
+        if manifest.models.contains_key(relation_id) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                format!("relation {relation_id} cannot be both a model and CDC-excluded"),
+            ));
+        }
+        if let Some(existing) = coordinates.insert(
+            (relation.schema.clone(), relation.table.clone()),
+            format!("CDC-excluded relation {relation_id}"),
+        ) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                format!(
+                    "{existing} and CDC-excluded relation {relation_id} classify the same relation {}.{}",
+                    relation.schema, relation.table
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_component_groups(
@@ -1040,6 +1105,15 @@ fn validate_static_sql_declarations(
     for relation in &operation.relations {
         validate_identifier(&relation.schema, "static SQL relation schema")?;
         validate_identifier(&relation.table, "static SQL relation table")?;
+        if CONTROL_OWNED_RELATION_TABLES.contains(&relation.table.as_str()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation_name} references reserved control relation {}.{}",
+                    relation.schema, relation.table
+                ),
+            ));
+        }
         if !relations.insert((relation.schema.as_str(), relation.table.as_str())) {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
@@ -1506,6 +1580,22 @@ pub struct ModelDeclaration {
     #[serde(default)]
     pub enum_fields: BTreeMap<String, Vec<String>>,
     pub operations: BTreeMap<CrudAction, OperationDeclaration>,
+}
+
+/// Package-owned mechanism state that must never enter the CDC event plane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InternalRelationDeclaration {
+    pub schema: String,
+    pub table: String,
+    pub cdc: CdcDisposition,
+}
+
+/// Closed CDC disposition for a package-owned internal relation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CdcDisposition {
+    Excluded,
 }
 
 impl ModelDeclaration {

@@ -1,0 +1,1 @@
+{"fields":[{"enum_values":null,"name":"id","nullable":false,"server_owned":true,"type":"uuid"},{"enum_values":null,"name":"item_number","nullable":false,"server_owned":false,"type":"text"}],"model":"item","owner":"wamn_receiving","schema":"receiving","table":"item"}

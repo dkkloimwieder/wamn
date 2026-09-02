@@ -21,11 +21,11 @@ pub use exposure::{
 };
 pub use model::{SqlStatement, Value};
 pub use package_migrations::{
-    AppliedPackage, ManagedModel, MigrationSource, PACKAGE_MANIFEST_DRIFT_REFUSAL,
-    PACKAGE_MANIFEST_PATH, PACKAGE_MIGRATION_DRIFT_REFUSAL, PACKAGE_MIGRATION_DUPLICATE_REFUSAL,
-    PACKAGE_MIGRATION_GAP_REFUSAL, PackageDirectory, PackageMigrationError,
-    PackageMigrationErrorKind, PackageMigrationPlan, PendingMigration, RecordedMigration,
-    plan_package_migrations,
+    AppliedPackage, CdcExcludedRelation, ManagedModel, MigrationSource,
+    PACKAGE_MANIFEST_DRIFT_REFUSAL, PACKAGE_MANIFEST_PATH, PACKAGE_MIGRATION_DRIFT_REFUSAL,
+    PACKAGE_MIGRATION_DUPLICATE_REFUSAL, PACKAGE_MIGRATION_GAP_REFUSAL, PackageDirectory,
+    PackageMigrationError, PackageMigrationErrorKind, PackageMigrationPlan, PendingMigration,
+    RecordedMigration, plan_package_migrations,
 };
 pub use replica_identity::{
     ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, UnreadableRegistrations,

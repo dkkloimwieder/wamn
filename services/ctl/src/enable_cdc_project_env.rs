@@ -231,17 +231,18 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
 /// dependency order: the eager schema guard (F2 — `FOR TABLES IN SCHEMA`
 /// auto-includes tables created later, so the publication may precede package
 /// apply), the publication, the failover slot (WAL pinned from here),
-/// the decode-time entity map (wamn-l5i9.11 — created BEFORE the grants so the
-/// role's exact SELECT grant covers it; package apply owns its rows),
+/// the decode-time entity and exclusion maps (created BEFORE the grants so the
+/// role's exact SELECT grants cover them; package apply owns their rows),
 /// then the replication role's grants (the role SQL must have been applied to
 /// the cluster first). Every statement is idempotent — re-applying is a no-op.
 fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
     format!(
-        "{schema_guard};\n{publication}\n{slot}\n{entity_map};\n{grants}\n",
+        "{schema_guard};\n{publication}\n{slot}\n{entity_map};\n{exclusion_map};\n{grants}\n",
         schema_guard = sql::ensure_schema_sql(schema),
         publication = sql::create_publication_sql(cdc_name, schema),
         slot = sql::create_failover_slot_sql(cdc_name),
         entity_map = sql::ensure_entity_map_sql(schema),
+        exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
         grants = sql::grant_replication_access_sql(db_name, cdc_name, schema),
     )
 }
@@ -382,11 +383,14 @@ mod tests {
         let entity_map = bundle
             .find("CREATE TABLE IF NOT EXISTS \"app\".wamn_entities")
             .expect("entity map");
+        let exclusion_map = bundle
+            .find("CREATE TABLE IF NOT EXISTS \"app\".wamn_cdc_exclusions")
+            .expect("CDC exclusion map");
         let grants = bundle
             .find("GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\"")
             .expect("grants");
         assert!(schema < publication && publication < slot && slot < entity_map);
-        assert!(entity_map < grants);
+        assert!(entity_map < exclusion_map && exclusion_map < grants);
     }
 
     #[test]

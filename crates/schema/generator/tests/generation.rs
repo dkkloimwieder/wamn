@@ -194,6 +194,25 @@ fn catalog(add_unused_table: bool) -> CatalogIr {
 }
 
 fn receiving_catalog() -> CatalogIr {
+    let item = Table::new(
+        "receiving",
+        "item",
+        vec![
+            Column::new(
+                "id",
+                ColumnType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            ),
+            Column::new("item_number", ColumnType::Text, false, None, None),
+        ],
+        vec![
+            Constraint::primary_key("item_id_pkey", ["id"]).unwrap(),
+            Constraint::unique("item_item_number_key", ["item_number"]).unwrap(),
+        ],
+        Vec::new(),
+    );
     let location = Table::new(
         "receiving",
         "location",
@@ -389,6 +408,7 @@ fn receiving_catalog() -> CatalogIr {
         Vec::new(),
     );
     CatalogIr::new(vec![
+        item,
         location,
         purchase_order,
         purchase_order_line,
@@ -1830,6 +1850,29 @@ fn weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables() {
 }
 
 #[test]
+fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
+    let mut package_manifest = manifest();
+    package_manifest["internal_relations"] = json!({
+        "unused": {
+            "schema": "receiving",
+            "table": "unused",
+            "cdc": "excluded"
+        }
+    });
+    let package = run(&catalog(true), &package_manifest, &QUERY_SOURCES).unwrap();
+    let weld = artifact_json(&package, "generated/package-weld.json");
+    let required = weld["required_schema_contract"]["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|table| table["table"] == "unused")
+        .expect("the explicit exclusion is part of the schema contract");
+    assert_eq!(required["schema"], "receiving");
+    assert_eq!(required["fields"], json!([]));
+    assert_eq!(required["constraints"], json!([]));
+}
+
+#[test]
 fn generated_weld_has_one_strict_canonical_reader() {
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
     let bytes = package
@@ -2225,26 +2268,85 @@ fn generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings() {
 
 #[test]
 fn ownership_only_model_generates_without_fabricated_crud() {
-    let mut manifest = shipped_manifest();
-    manifest["models"]["location"] = json!({
-        "schema": "receiving",
-        "table": "location",
-        "owner": "wamn_receiving",
-        "server_owned_fields": ["id"],
-        "enum_fields": {},
-        "operations": {}
-    });
+    let manifest = shipped_manifest();
     let package = shipped_generation(&receiving_catalog(), &manifest).unwrap();
-    package.file("generated/models/location.json").unwrap();
-    for operation in ["get", "query", "create", "update", "delete"] {
-        assert!(
-            package
-                .file(&format!(
-                    "generated/contracts/location/{operation}.operation.json"
-                ))
-                .is_none()
-        );
+    for model in ["item", "location", "purchase_order_line", "receipt_line"] {
+        package
+            .file(&format!("generated/models/{model}.json"))
+            .unwrap();
+        for operation in ["get", "query", "create", "update", "delete"] {
+            assert!(
+                package
+                    .file(&format!(
+                        "generated/contracts/{model}/{operation}.operation.json"
+                    ))
+                    .is_none()
+            );
+        }
     }
+}
+
+#[test]
+fn internal_relation_cdc_exclusion_is_closed_and_not_a_model() {
+    let manifest = shipped_manifest();
+    let package = shipped_generation(&receiving_catalog(), &manifest).unwrap();
+    assert!(
+        package
+            .file("generated/models/record_receipt_command.json")
+            .is_none(),
+        "the command ledger is mechanism state, not a fabricated model"
+    );
+
+    let mut overlap = manifest.clone();
+    overlap["internal_relations"]["record_receipt_command"]["table"] = json!("receipt");
+    let error = shipped_generation(&receiving_catalog(), &overlap)
+        .expect_err("one physical relation received two CDC classifications");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+
+    let mut duplicate_model = manifest.clone();
+    let receipt_model = duplicate_model["models"]["receipt"].clone();
+    duplicate_model["models"]["receipt_alias"] = receipt_model;
+    let error = shipped_generation(&receiving_catalog(), &duplicate_model)
+        .expect_err("one physical relation received two model identities");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+
+    for (class, pointer, table) in [
+        ("model", "/models/item/table", "wamn_entities"),
+        (
+            "internal relation",
+            "/internal_relations/record_receipt_command/table",
+            "wamn_cdc_exclusions",
+        ),
+    ] {
+        let mut reserved = manifest.clone();
+        *reserved.pointer_mut(pointer).unwrap() = json!(table);
+        let error = shipped_generation(&receiving_catalog(), &reserved)
+            .expect_err("a package claimed a control-owned relation");
+        assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+        assert!(error.to_string().contains(class));
+        assert!(error.to_string().contains(table));
+    }
+
+    let mut reserved_operation = manifest.clone();
+    reserved_operation["custom_operations"]["receiving.record_receipt"]["relations"][0]["table"] =
+        json!("wamn_cdc_exclusions");
+    let error = shipped_generation(&receiving_catalog(), &reserved_operation)
+        .expect_err("a package operation referenced a control-owned relation");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert!(error.to_string().contains("wamn_cdc_exclusions"));
+
+    let mut unknown = manifest.clone();
+    unknown["internal_relations"]["record_receipt_command"]["table"] = json!("missing");
+    let error = shipped_generation(&receiving_catalog(), &unknown)
+        .expect_err("an exclusion for an absent relation was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::UnknownRelation);
+
+    let mut open_vocabulary = manifest;
+    open_vocabulary["internal_relations"]["record_receipt_command"]["cdc"] = json!("ignored");
+    assert!(
+        PackageManifest::from_slice(&serde_json::to_vec(&open_vocabulary).unwrap()).is_err(),
+        "the CDC disposition vocabulary became open-ended"
+    );
 }
 
 #[test]
@@ -2570,8 +2672,8 @@ fn additive_unused_column_on_consumed_relation_preserves_required_contract() {
     let manifest = shipped_manifest();
     let catalog = receiving_catalog();
     let base = shipped_generation(&catalog, &manifest).unwrap();
-    let location = table(&catalog, "location");
-    let mut columns = location.columns().to_vec();
+    let command_ledger = table(&catalog, "record_receipt_command");
+    let mut columns = command_ledger.columns().to_vec();
     columns.push(Column::new(
         "unused_receiving_note",
         ColumnType::Text,
@@ -2581,7 +2683,11 @@ fn additive_unused_column_on_consumed_relation_preserves_required_contract() {
     ));
     let additive_catalog = replacing_table(
         &catalog,
-        rebuilt_table(location, columns, location.constraints().to_vec()),
+        rebuilt_table(
+            command_ledger,
+            columns,
+            command_ledger.constraints().to_vec(),
+        ),
     );
     let additive = shipped_generation(&additive_catalog, &manifest).unwrap();
     let base_weld = artifact_json(&base, "generated/package-weld.json");

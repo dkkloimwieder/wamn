@@ -60,14 +60,13 @@
 //!   and would otherwise reset the streak forever. The slot admits one
 //!   consumer, so exclusivity is structural (the lease that elects WHICH
 //!   replica holds the session is deferred — run replicas=1).
-//! - **Entity keying** (wamn-l5i9.11): each relation resolves to its package id
-//!   and stable package-local entity id via the OID-keyed `wamn_entities` map
-//!   (maintained by package migration application). Mappings cache per session
-//!   and remain valid across `ALTER TABLE RENAME` because OIDs survive. An
-//!   unmapped relation is a typed publication refusal and cannot enter the
-//!   stream without package identity.
+//! - **Relation classification** (wamn-l5i9.11): each relation resolves by OID
+//!   to either a package-local entity identity or a package-declared internal
+//!   exclusion. Both maps are maintained atomically by package application and
+//!   remain valid across renames because OIDs survive. Exclusions are counted;
+//!   an undeclared relation is a typed publication refusal.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
@@ -318,15 +317,17 @@ fn preflight_url(plain: &str, sslmode: &str) -> anyhow::Result<String> {
     Ok(format!("{plain}?sslmode={sslmode}"))
 }
 
-/// The decode-time OID → package/entity lookup (wamn-l5i9.11): one row of the
-/// `wamn_entities` map package migration application maintains with the DDL.
-/// Queried by the RELATION OID, which survives `ALTER TABLE RENAME` — so the
-/// resolution is timeless under catch-up (a session decoding pre-rename
-/// backlog resolves identically).
-fn entity_lookup_sql(schema: &str) -> String {
+/// Resolve one WAL relation OID against the two closed package classifications:
+/// a publishable entity or an explicitly excluded internal relation.
+fn relation_classification_lookup_sql(schema: &str) -> String {
     format!(
-        "SELECT package_id, entity_id FROM {}.wamn_entities WHERE relation_oid = $1",
-        quote_ident(schema)
+        "SELECT entity.package_id AS entity_package_id, entity.entity_id, \
+                excluded.package_id AS excluded_package_id, excluded.relation_id \
+           FROM (SELECT $1::oid AS relation_oid) AS lookup \
+           LEFT JOIN {}.wamn_entities AS entity USING (relation_oid) \
+           LEFT JOIN {}.wamn_cdc_exclusions AS excluded USING (relation_oid)",
+        quote_ident(schema),
+        quote_ident(schema),
     )
 }
 
@@ -336,63 +337,123 @@ struct EntityMapping {
     entity_id: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExcludedRelation {
+    package_id: String,
+    relation_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RelationClassification {
+    Entity(EntityMapping),
+    Excluded(ExcludedRelation),
+}
+
 /// Typed refusal emitted before an unmapped managed relation can reach NATS.
 pub const UNMAPPED_MANAGED_RELATION_REFUSAL: &str = "cdc-unmapped-managed-relation";
 
 /// Operator remedy paired with [`UNMAPPED_MANAGED_RELATION_REFUSAL`].
 pub const UNMAPPED_MANAGED_RELATION_REMEDY: &str =
-    "reconcile the installed package entity map before resuming CDC publication";
+    "reconcile the installed package relation classifications before resuming CDC publication";
 
 /// The package applier's control-owned OID map lives beside application data so
 /// the CDC credential can resolve identities without crossing a plane. A
 /// schema publication observes its writes, but they are control facts rather
 /// than managed application events and must never recurse through the map.
 const CONTROL_OWNED_ENTITY_MAP_RELATION: &str = "wamn_entities";
+const CONTROL_OWNED_CDC_EXCLUSION_MAP_RELATION: &str = "wamn_cdc_exclusions";
 
-fn remember_entity_mapping(
-    cache: &mut HashMap<u32, EntityMapping>,
+fn remember_relation_classification(
+    cache: &mut HashMap<u32, RelationClassification>,
     relation_oid: u32,
-    resolved: EntityMapping,
-) -> EntityMapping {
+    resolved: RelationClassification,
+) -> RelationClassification {
     cache.insert(relation_oid, resolved.clone());
     resolved
 }
 
-/// Resolve one relation OID to its package-local entity identity over a
+fn publishable_entity(
+    classification: RelationClassification,
+    excluded_counters: &mut BTreeMap<String, u64>,
+) -> Option<EntityMapping> {
+    match classification {
+        RelationClassification::Entity(mapping) => Some(mapping),
+        RelationClassification::Excluded(excluded) => {
+            let identity = format!("{}::{}", excluded.package_id, excluded.relation_id);
+            *excluded_counters.entry(identity).or_default() += 1;
+            None
+        }
+    }
+}
+
+fn merge_relation_counts(committed: &mut BTreeMap<String, u64>, pending: BTreeMap<String, u64>) {
+    for (identity, count) in pending {
+        *committed.entry(identity).or_default() += count;
+    }
+}
+
+/// Resolve one relation OID to its package-owned CDC classification over a
 /// short-lived SQL connection (the preflight-style credential — the CDC role's
-/// grants cover the map). An absent row or map is a non-retryable typed refusal;
+/// grants cover both maps). An absent row or map is a non-retryable typed refusal;
 /// connection/query failure remains transient and reopens the session.
-async fn resolve_entity_mapping(
+async fn resolve_relation_classification(
     args: &EventReaderArgs,
     schema: &str,
     relation_oid: u32,
-) -> Result<EntityMapping, ReplicationError> {
+) -> Result<RelationClassification, ReplicationError> {
     let url = preflight_url(&args.cdc_url, &args.sslmode)
         .map_err(|e| ReplicationError::Config(e.to_string()))?;
     let (client, conn) = tokio_postgres::connect(&url, NoTls)
         .await
-        .map_err(|e| ReplicationError::TransientConnection(format!("entity-map connect: {e}")))?;
+        .map_err(|e| ReplicationError::TransientConnection(format!("relation-map connect: {e}")))?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
     match client
-        .query_opt(entity_lookup_sql(schema).as_str(), &[&relation_oid])
+        .query_one(
+            relation_classification_lookup_sql(schema).as_str(),
+            &[&relation_oid],
+        )
         .await
     {
-        Ok(Some(row)) => Ok(EntityMapping {
-            package_id: row.get("package_id"),
-            entity_id: row.get("entity_id"),
-        }),
-        Ok(None) => Err(ReplicationError::Config(format!(
-            "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema={schema:?} relation_oid={relation_oid}; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
-        ))),
+        Ok(row) => {
+            let entity_package = row.get::<_, Option<String>>("entity_package_id");
+            let entity_id = row.get::<_, Option<String>>("entity_id");
+            let excluded_package = row.get::<_, Option<String>>("excluded_package_id");
+            let excluded_relation = row.get::<_, Option<String>>("relation_id");
+            match (
+                entity_package,
+                entity_id,
+                excluded_package,
+                excluded_relation,
+            ) {
+                (Some(package_id), Some(entity_id), None, None) => {
+                    Ok(RelationClassification::Entity(EntityMapping {
+                        package_id,
+                        entity_id,
+                    }))
+                }
+                (None, None, Some(package_id), Some(relation_id)) => {
+                    Ok(RelationClassification::Excluded(ExcludedRelation {
+                        package_id,
+                        relation_id,
+                    }))
+                }
+                (None, None, None, None) => Err(ReplicationError::Config(format!(
+                    "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema={schema:?} relation_oid={relation_oid}; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
+                ))),
+                _ => Err(ReplicationError::Config(format!(
+                    "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema={schema:?} relation_oid={relation_oid} has conflicting classifications; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
+                ))),
+            }
+        }
         Err(error) if error.code() == Some(&tokio_postgres::error::SqlState::UNDEFINED_TABLE) => {
             Err(ReplicationError::Config(format!(
-                "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema={schema:?} has no wamn_entities map; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
+                "{UNMAPPED_MANAGED_RELATION_REFUSAL}: schema={schema:?} has incomplete CDC relation maps; remedy: {UNMAPPED_MANAGED_RELATION_REMEDY}"
             )))
         }
         Err(e) => Err(ReplicationError::TransientConnection(format!(
-            "entity-map lookup: {e}"
+            "relation-map lookup: {e}"
         ))),
     }
 }
@@ -801,6 +862,7 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
 
         match drain(&mut stream, &args, &token, &js, &last_lsn_advance_ms).await {
             DrainOutcome::Shutdown(summary) => {
+                log_drain_summary(&summary, "shutdown");
                 let _ = stream.shutdown().await;
                 tracing::info!(
                     reopens = ladder.reopens(),
@@ -810,6 +872,7 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
                 return Ok(());
             }
             DrainOutcome::Severed(e, summary) => {
+                log_drain_summary(&summary, "severed");
                 // `EventStream::shutdown` cancels the token it was constructed
                 // with. Snapshot caller intent first so cleanup cannot turn a
                 // fatal decode refusal into a successful shutdown.
@@ -880,6 +943,7 @@ struct Txn {
     commit_ts: chrono::DateTime<chrono::Utc>,
     causation: Option<Causation>,
     rows: Vec<PendingRow>,
+    excluded_by_relation: BTreeMap<String, u64>,
 }
 
 /// A decoded row event awaiting its transaction's `Commit`. Entity resolution
@@ -902,6 +966,19 @@ struct DrainSummary {
     commits: u64,
     published: u64,
     deduped: u64,
+    excluded_by_relation: BTreeMap<String, u64>,
+}
+
+fn log_drain_summary(summary: &DrainSummary, ending: &str) {
+    tracing::info!(
+        target: "wamn::event_reader",
+        commits = summary.commits,
+        events_published = summary.published,
+        deduped = summary.deduped,
+        excluded_by_relation = ?summary.excluded_by_relation,
+        ending,
+        "drain summary"
+    );
 }
 
 /// How a drain ended: either shutdown was requested (exit cleanly) or the
@@ -933,33 +1010,16 @@ async fn drain(
         commits: 0,
         published: 0,
         deduped: 0,
+        excluded_by_relation: BTreeMap::new(),
     };
-    // The per-session OID → package/entity cache stores resolved mappings.
+    // The per-session OID cache stores the relation's closed classification.
     // OIDs survive renames, so a resolution stays correct for the session.
-    let mut entity_mappings: HashMap<u32, EntityMapping> = HashMap::new();
+    let mut relation_classifications: HashMap<u32, RelationClassification> = HashMap::new();
     loop {
         let ev = match stream.next_event().await {
             Ok(ev) => ev,
-            Err(ReplicationError::Cancelled(_)) => {
-                tracing::info!(
-                    target: "wamn::event_reader",
-                    commits = summary.commits,
-                    events_published = summary.published,
-                    deduped = summary.deduped,
-                    "drain summary"
-                );
-                return DrainOutcome::Shutdown(summary);
-            }
-            Err(e) => {
-                tracing::info!(
-                    target: "wamn::event_reader",
-                    commits = summary.commits,
-                    events_published = summary.published,
-                    deduped = summary.deduped,
-                    "drain summary (severed)"
-                );
-                return DrainOutcome::Severed(e, summary);
-            }
+            Err(ReplicationError::Cancelled(_)) => return DrainOutcome::Shutdown(summary),
+            Err(e) => return DrainOutcome::Severed(e, summary),
         };
         let lsn = ev.lsn.value();
         let (op, old, new, schema, table, relation_oid) = match ev.event_type {
@@ -973,6 +1033,7 @@ async fn drain(
                     commit_ts: commit_timestamp,
                     causation: None,
                     rows: Vec::new(),
+                    excluded_by_relation: BTreeMap::new(),
                 });
                 continue;
             }
@@ -1027,6 +1088,7 @@ async fn drain(
                 // E1: pipeline the txn's publishes — sent without awaiting, the
                 // ack futures held in publish order, ALL settled here before the
                 // LSN advances (the v3 §4 per-txn invariant, unchanged).
+                let has_exclusions = !frame.excluded_by_relation.is_empty();
                 let stall_threshold = Duration::from_secs(args.stall_threshold_secs);
                 let mut tally = PublishTally::default();
                 match publish_txn(
@@ -1042,17 +1104,12 @@ async fn drain(
                     PublishOutcome::Acked => {
                         summary.published += tally.published;
                         summary.deduped += tally.deduped;
-                    }
-                    PublishOutcome::CancelledMidRetry => {
-                        tracing::info!(
-                            target: "wamn::event_reader",
-                            commits = summary.commits,
-                            events_published = summary.published,
-                            deduped = summary.deduped,
-                            "drain summary (cancelled mid-publish)"
+                        merge_relation_counts(
+                            &mut summary.excluded_by_relation,
+                            frame.excluded_by_relation,
                         );
-                        return DrainOutcome::Shutdown(summary);
                     }
+                    PublishOutcome::CancelledMidRetry => return DrainOutcome::Shutdown(summary),
                 }
                 // Every row of this txn is acked — NOW the confirmed LSN may
                 // advance past the commit.
@@ -1060,6 +1117,13 @@ async fn drain(
                 stream.update_flushed_lsn(l);
                 stream.update_applied_lsn(l);
                 summary.commits += 1;
+                if has_exclusions {
+                    tracing::info!(
+                        target: "wamn::event_reader",
+                        excluded_by_relation = ?summary.excluded_by_relation,
+                        "CDC exclusions committed"
+                    );
+                }
                 // Feed the `confirmed_lsn_age_seconds` gauge (E2): the LSN just
                 // advanced, so its age resets to ~0.
                 last_lsn_advance_ms.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
@@ -1136,40 +1200,59 @@ async fn drain(
                 continue;
             }
         };
-        if table.as_ref() == CONTROL_OWNED_ENTITY_MAP_RELATION {
+        if table.as_ref() == CONTROL_OWNED_ENTITY_MAP_RELATION
+            || table.as_ref() == CONTROL_OWNED_CDC_EXCLUSION_MAP_RELATION
+        {
             tracing::debug!(
                 %schema,
                 %table,
                 relation_oid,
-                "control-owned entity-map change excluded from CDC publication"
+                "control-owned relation-map change excluded from CDC publication"
             );
             continue;
         }
         // Resolve an uncached relation OID before buffering anything publishable.
-        let entity_mapping = if let Some(mapping) = entity_mappings.get(&relation_oid) {
-            mapping.clone()
+        let classification = if let Some(classification) =
+            relation_classifications.get(&relation_oid)
+        {
+            classification.clone()
         } else {
-            let resolved = match resolve_entity_mapping(args, &schema, relation_oid).await {
+            let resolved = match resolve_relation_classification(args, &schema, relation_oid).await
+            {
                 Ok(r) => r,
                 Err(e) => return DrainOutcome::Severed(e, summary),
             };
-            tracing::info!(
-                %table,
-                relation_oid,
-                package_id = resolved.package_id.as_str(),
-                entity = resolved.entity_id.as_str(),
-                "entity resolved"
-            );
-            remember_entity_mapping(&mut entity_mappings, relation_oid, resolved)
+            match &resolved {
+                RelationClassification::Entity(mapping) => tracing::info!(
+                    %table,
+                    relation_oid,
+                    package_id = mapping.package_id.as_str(),
+                    entity = mapping.entity_id.as_str(),
+                    "entity resolved"
+                ),
+                RelationClassification::Excluded(excluded) => tracing::info!(
+                    %table,
+                    relation_oid,
+                    package_id = excluded.package_id.as_str(),
+                    relation = excluded.relation_id.as_str(),
+                    "CDC exclusion resolved"
+                ),
+            };
+            remember_relation_classification(&mut relation_classifications, relation_oid, resolved)
         };
-        // Buffer the row; it publishes at Commit, once the txn's causation
-        // stamp (if any) is known.
         let Some(frame) = txn.as_mut() else {
             return DrainOutcome::Severed(
                 ReplicationError::Protocol("row event outside a Begin/Commit frame".into()),
                 summary,
             );
         };
+        let Some(entity_mapping) =
+            publishable_entity(classification, &mut frame.excluded_by_relation)
+        else {
+            continue;
+        };
+        // Buffer the row; it publishes at Commit, once the txn's causation
+        // stamp (if any) is known.
         let old = match old.as_ref().map(row_to_map).transpose() {
             Ok(m) => m,
             Err(e) => return DrainOutcome::Severed(e, summary),
@@ -1735,33 +1818,60 @@ mod tests {
     }
 
     #[test]
-    fn entity_lookup_is_by_relation_oid_in_the_event_schema() {
+    fn relation_classification_lookup_is_by_oid_in_the_event_schema() {
         // The pinned lookup: OID-keyed (rename-proof, timeless under
         // catch-up), qualified by the EVENT's schema — the map lives beside
         // the tables it describes, so no registry column is needed.
         assert_eq!(
-            entity_lookup_sql("app"),
-            "SELECT package_id, entity_id FROM \"app\".wamn_entities WHERE relation_oid = $1"
+            relation_classification_lookup_sql("app"),
+            "SELECT entity.package_id AS entity_package_id, entity.entity_id, excluded.package_id AS excluded_package_id, excluded.relation_id FROM (SELECT $1::oid AS relation_oid) AS lookup LEFT JOIN \"app\".wamn_entities AS entity USING (relation_oid) LEFT JOIN \"app\".wamn_cdc_exclusions AS excluded USING (relation_oid)"
         );
         // pgoutput schema names are server-provided — quote-safe embedding.
         assert_eq!(
-            entity_lookup_sql("we\"ird"),
-            "SELECT package_id, entity_id FROM \"we\"\"ird\".wamn_entities WHERE relation_oid = $1"
+            relation_classification_lookup_sql("we\"ird"),
+            "SELECT entity.package_id AS entity_package_id, entity.entity_id, excluded.package_id AS excluded_package_id, excluded.relation_id FROM (SELECT $1::oid AS relation_oid) AS lookup LEFT JOIN \"we\"\"ird\".wamn_entities AS entity USING (relation_oid) LEFT JOIN \"we\"\"ird\".wamn_cdc_exclusions AS excluded USING (relation_oid)"
         );
     }
 
     #[test]
-    fn resolved_entity_mapping_is_cached_as_one_closed_identity() {
+    fn resolved_relation_classification_is_cached_as_one_closed_identity() {
         let mut cache = HashMap::new();
-        let mapping = EntityMapping {
+        let mapping = RelationClassification::Entity(EntityMapping {
             package_id: "receiving".into(),
             entity_id: "receipt".into(),
-        };
+        });
         assert_eq!(
-            remember_entity_mapping(&mut cache, 42, mapping.clone()),
+            remember_relation_classification(&mut cache, 42, mapping.clone()),
             mapping
         );
         assert_eq!(cache.get(&42), Some(&mapping));
+    }
+
+    #[test]
+    fn excluded_relation_skip_is_counted_by_package_relation_identity() {
+        let excluded = ExcludedRelation {
+            package_id: "wamn_receiving".into(),
+            relation_id: "record_receipt_command".into(),
+        };
+        let mut pending = BTreeMap::new();
+        assert_eq!(
+            publishable_entity(
+                RelationClassification::Excluded(excluded.clone()),
+                &mut pending
+            ),
+            None
+        );
+        assert_eq!(
+            publishable_entity(RelationClassification::Excluded(excluded), &mut pending),
+            None
+        );
+        let mut committed = BTreeMap::new();
+        assert!(committed.is_empty(), "uncommitted skips are not observable");
+        merge_relation_counts(&mut committed, pending);
+        assert_eq!(
+            committed.get("wamn_receiving::record_receipt_command"),
+            Some(&2)
+        );
     }
 
     #[test]

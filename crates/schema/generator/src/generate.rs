@@ -403,6 +403,23 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
     for (model_name, model) in &manifest.models {
         validate_model(input.catalog, manifest, model_name, model)?;
     }
+    for (relation_name, relation) in &manifest.internal_relations {
+        if !input
+            .catalog
+            .tables()
+            .iter()
+            .any(|table| table.schema() == relation.schema && table.name() == relation.table)
+        {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::UnknownRelation,
+                format!(
+                    "CDC-excluded relation {relation_name} references unknown {}.{}",
+                    relation.schema, relation.table
+                ),
+                format!("{}.{}", relation.schema, relation.table),
+            ));
+        }
+    }
     validate_connections(manifest)?;
     validate_authored_sources(manifest, input.authored_sql)?;
     for (operation_name, operation) in &manifest.custom_operations {
@@ -2848,6 +2865,16 @@ fn required_schema_contract(
                 .iter()
                 .map(|constraint| constraint.name().to_owned()),
         );
+    }
+    for relation in manifest.internal_relations.values() {
+        let table = catalog
+            .tables()
+            .iter()
+            .find(|table| table.schema() == relation.schema && table.name() == relation.table)
+            .expect("internal-relation validation resolved relation");
+        consumed
+            .entry((relation.schema.clone(), relation.table.clone()))
+            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
     }
     for operation in manifest.custom_operations.values() {
         for relation in &operation.relations {

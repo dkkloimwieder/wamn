@@ -173,7 +173,7 @@
       "path": "crates/control/provision/src/sql.rs",
       "kind": "inline-family",
       "scope": "production-project-database",
-      "marker": "CREATE TABLE IF NOT EXISTS {schema}.wamn_entities"
+      "marker": "CREATE TABLE IF NOT EXISTS {schema}.wamn_"
     }
   ],
   "excluded_sources": [
@@ -1282,6 +1282,24 @@
       "id": "app-schema-entity-map",
       "plane": "project",
       "pattern": "<app_schema>.wamn_entities",
+      "semantic_owner": "provision-store",
+      "migration_owners": [
+        "provision-store"
+      ],
+      "schema_source": "crates/control/provision/src/sql.rs",
+      "writers": [
+        "provision-store"
+      ],
+      "readers": [
+        "cdc-reader"
+      ],
+      "compatibility_horizon": "catalog-migration-and-retained-wal-horizon",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "app-schema-cdc-exclusion-map",
+      "plane": "project",
+      "pattern": "<app_schema>.wamn_cdc_exclusions",
       "semantic_owner": "provision-store",
       "migration_owners": [
         "provision-store"

@@ -91,6 +91,13 @@ fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
         model["schema"] = serde_json::Value::String(schema.to_owned());
         model["owner"] = serde_json::Value::String(package_id.to_owned());
     }
+    for relation in manifest["internal_relations"]
+        .as_object_mut()
+        .expect("manifest internal relations are an object")
+        .values_mut()
+    {
+        relation["schema"] = serde_json::Value::String(schema.to_owned());
+    }
     std::fs::write(
         &manifest_path,
         serde_json::to_vec_pretty(&manifest).expect("serialize copied package manifest"),
@@ -132,6 +139,7 @@ fn copy_overlay_package(
         }
     });
     manifest["custom_operations"] = serde_json::json!({});
+    manifest["internal_relations"] = serde_json::json!({});
 
     let models = manifest["models"]
         .as_object_mut()
@@ -204,6 +212,47 @@ fn set_package_identity(root: &Path, version: &str, predecessor: Option<&str>) {
         serde_json::to_vec_pretty(&manifest).expect("serialize package manifest identity"),
     )
     .expect("write package manifest identity");
+}
+
+fn declare_ownership_only_model(root: &Path, model_id: &str, table: &str) {
+    let manifest_path = root.join("wamn.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).expect("read package manifest model vocabulary"),
+    )
+    .expect("parse package manifest model vocabulary");
+    manifest["models"][model_id] = serde_json::json!({
+        "schema": "receiving",
+        "table": table,
+        "owner": "wamn_receiving",
+        "server_owned_fields": ["id"],
+        "enum_fields": {},
+        "operations": {}
+    });
+    std::fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize package manifest model vocabulary"),
+    )
+    .expect("write package manifest model vocabulary");
+}
+
+fn rename_internal_relation(root: &Path, from: &str, to: &str) {
+    let manifest_path = root.join("wamn.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).expect("read internal-relation manifest"),
+    )
+    .expect("parse internal-relation manifest");
+    let relations = manifest["internal_relations"]
+        .as_object_mut()
+        .expect("internal relations are an object");
+    let relation = relations
+        .remove(from)
+        .expect("source internal relation exists");
+    assert!(relations.insert(to.to_owned(), relation).is_none());
+    std::fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize internal-relation manifest"),
+    )
+    .expect("write internal-relation manifest");
 }
 
 async fn apply(url: &str, package: &Path) -> anyhow::Result<()> {
@@ -328,6 +377,9 @@ async fn write_identity(client: &Client) -> Vec<String> {
                SELECT 'entity:' || package_id || ':' || entity_id || ':' || xmin::text \
                  FROM receiving.wamn_entities \
                UNION ALL \
+               SELECT 'excluded:' || package_id || ':' || relation_id || ':' || xmin::text \
+                 FROM receiving.wamn_cdc_exclusions \
+               UNION ALL \
                SELECT 'role:' || name || ':' || xmin::text \
                  FROM app_system.roles WHERE tenant_id = $1 \
                UNION ALL \
@@ -356,6 +408,100 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let package = fixture_root();
     copy_receiving_package(&package);
     install(&client).await;
+
+    let distinct_identity = package.with_file_name(format!(
+        "apply-package-distinct-internal-relation-{}",
+        std::process::id()
+    ));
+    copy_receiving_package(&distinct_identity);
+    rename_internal_relation(
+        &distinct_identity,
+        "record_receipt_command",
+        "receipt_command_ledger",
+    );
+    apply(&url, &distinct_identity)
+        .await
+        .expect("apply a relation whose manifest identity differs from its table");
+    let mapping = client
+        .query_one(
+            "SELECT relation_id, table_name FROM receiving.wamn_cdc_exclusions",
+            &[],
+        )
+        .await
+        .expect("read distinct internal relation identity");
+    assert_eq!(mapping.get::<_, String>(0), "receipt_command_ledger");
+    assert_eq!(mapping.get::<_, String>(1), "record_receipt_command");
+    std::fs::remove_dir_all(&distinct_identity).expect("remove distinct internal-relation fixture");
+    install(&client).await;
+
+    let undeclared = package.with_file_name(format!(
+        "apply-package-undeclared-relation-{}",
+        std::process::id()
+    ));
+    copy_receiving_package(&undeclared);
+    std::fs::write(
+        undeclared.join("migrations/0002_undeclared.sql"),
+        "CREATE TABLE receiving.undeclared_relation (id int);",
+    )
+    .expect("write undeclared-relation fixture");
+    let error = apply(&url, &undeclared)
+        .await
+        .expect_err("an undeclared created relation must refuse before writes");
+    assert!(
+        format!("{error:#}").contains(apply_package::DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL),
+        "unexpected undeclared-relation refusal: {error:#}"
+    );
+    assert!(
+        !client
+            .query_one(
+                "SELECT to_regclass('receiving.undeclared_relation') IS NOT NULL",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0),
+        "the undeclared relation reached PostgreSQL"
+    );
+    std::fs::remove_dir_all(&undeclared).expect("remove undeclared-relation fixture");
+
+    let missing_exclusion = package.with_file_name(format!(
+        "apply-package-missing-exclusion-{}",
+        std::process::id()
+    ));
+    copy_receiving_package(&missing_exclusion);
+    let manifest_path = missing_exclusion.join("wamn.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).expect("read missing-exclusion manifest"),
+    )
+    .expect("parse missing-exclusion manifest");
+    manifest["internal_relations"]["missing_command"] = serde_json::json!({
+        "schema": "receiving",
+        "table": "missing_command",
+        "cdc": "excluded"
+    });
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize missing-exclusion manifest"),
+    )
+    .expect("write missing-exclusion manifest");
+    let error = apply(&url, &missing_exclusion)
+        .await
+        .expect_err("an exclusion absent from migrations must refuse before writes");
+    assert!(
+        format!("{error:#}").contains("cdc-excluded-relation-missing"),
+        "unexpected missing-exclusion refusal: {error:#}"
+    );
+    assert_eq!(
+        client
+            .query_one("SELECT count(*) FROM catalog.packages", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0,
+        "a classification refusal wrote a package root"
+    );
+    std::fs::remove_dir_all(&missing_exclusion).expect("remove missing-exclusion fixture");
+
     prove_concurrent_package_grants_share_one_carrier(&url).await;
     client
         .batch_execute(&format!(
@@ -417,6 +563,35 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .unwrap()
             .get::<_, bool>(0),
         "apply-package creates the manifest-declared schema"
+    );
+    assert_eq!(
+        client
+            .query_one("SELECT count(*) FROM receiving.wamn_entities", &[])
+            .await
+            .expect("count package entity mappings")
+            .get::<_, i64>(0),
+        6,
+        "every POC-listed base model has one entity mapping"
+    );
+    let exclusion = client
+        .query_one(
+            "SELECT package_id, relation_id, table_name \
+               FROM receiving.wamn_cdc_exclusions",
+            &[],
+        )
+        .await
+        .expect("read explicit package CDC exclusion");
+    assert_eq!(
+        (
+            exclusion.get::<_, String>(0),
+            exclusion.get::<_, String>(1),
+            exclusion.get::<_, String>(2),
+        ),
+        (
+            "wamn_receiving".into(),
+            "record_receipt_command".into(),
+            "record_receipt_command".into(),
+        )
     );
     assert!(
         client
@@ -729,6 +904,93 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         1
     );
 
+    assert_eq!(
+        client
+            .execute(
+                "UPDATE receiving.wamn_cdc_exclusions \
+                    SET table_name = 'stale_record_receipt_command' \
+                  WHERE package_id = 'wamn_receiving' \
+                    AND relation_id = 'record_receipt_command'",
+                &[],
+            )
+            .await
+            .expect("seed stale CDC-exclusion table name"),
+        1
+    );
+    apply(&url, &package)
+        .await
+        .expect("same exclusion identity may converge its informational table name");
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT table_name FROM receiving.wamn_cdc_exclusions \
+                  WHERE package_id = 'wamn_receiving' \
+                    AND relation_id = 'record_receipt_command'",
+                &[],
+            )
+            .await
+            .expect("read converged CDC exclusion map")
+            .get::<_, String>(0),
+        "record_receipt_command"
+    );
+
+    assert_eq!(
+        client
+            .execute(
+                "UPDATE receiving.wamn_cdc_exclusions \
+                    SET package_id = 'foreign_package', relation_id = 'foreign_relation' \
+                  WHERE package_id = 'wamn_receiving' \
+                    AND relation_id = 'record_receipt_command'",
+                &[],
+            )
+            .await
+            .expect("seed an exclusion OID owned by another package relation"),
+        1
+    );
+    assert_eq!(
+        client
+            .execute(
+                &wamn_control_provision::sql::upsert_cdc_exclusion_map_sql("receiving"),
+                &[
+                    &"wamn_receiving",
+                    &"record_receipt_command",
+                    &"record_receipt_command",
+                ],
+            )
+            .await
+            .expect("run guarded generated CDC-exclusion upsert"),
+        0,
+        "the generated upsert must not rebind an existing relation OID"
+    );
+    let rebind = apply(&url, &package)
+        .await
+        .expect_err("an exclusion OID cannot be rebound to another package relation");
+    assert!(format!("{rebind:#}").contains("package-cdc-exclusion-oid-rebind-refused"));
+    let refused = client
+        .query_one(
+            "SELECT package_id, relation_id FROM receiving.wamn_cdc_exclusions \
+              WHERE table_name = 'record_receipt_command'",
+            &[],
+        )
+        .await
+        .expect("read refused CDC-exclusion rebind");
+    assert_eq!(refused.get::<_, String>(0), "foreign_package");
+    assert_eq!(refused.get::<_, String>(1), "foreign_relation");
+    assert_eq!(
+        client
+            .execute(
+                "UPDATE receiving.wamn_cdc_exclusions \
+                    SET package_id = 'wamn_receiving', \
+                        relation_id = 'record_receipt_command' \
+                  WHERE package_id = 'foreign_package' \
+                    AND relation_id = 'foreign_relation'",
+                &[],
+            )
+            .await
+            .expect("restore CDC-exclusion fixture identity"),
+        1
+    );
+
     let migration = package.join("migrations/0001_initial.sql");
     let original = std::fs::read(&migration).expect("read copied initial migration");
     let mut edited = original.clone();
@@ -745,12 +1007,14 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 
     std::fs::write(
         package.join("migrations/0002_candidate.sql"),
-        "CREATE TABLE receiving.candidate (id int);",
+        "ALTER TABLE receiving.receipt \
+           ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write the first pending migration");
     std::fs::write(
         package.join("migrations/0003_failure.sql"),
-        "CREATE TABLE receiving.purchase_order (id int);",
+        "ALTER TABLE receiving.receipt \
+           ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write the server-refused migration after it");
     apply(&url, &package)
@@ -758,7 +1022,13 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect_err("a failing later statement must roll back the whole suffix");
     assert!(
         !client
-            .query_one("SELECT to_regclass('receiving.candidate') IS NOT NULL", &[])
+            .query_one(
+                "SELECT EXISTS ( \
+                   SELECT 1 FROM information_schema.columns \
+                    WHERE table_schema = 'receiving' AND table_name = 'receipt' \
+                      AND column_name = 'rollback_probe')",
+                &[],
+            )
             .await
             .unwrap()
             .get::<_, bool>(0)
@@ -800,7 +1070,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("seal the applied package coordinate through release membership");
     std::fs::write(
         package.join("migrations/0002_after_seal.sql"),
-        "CREATE TABLE receiving.after_seal (id int);",
+        "ALTER TABLE receiving.receipt \
+           ADD COLUMN sealed_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write a migration after the package coordinate was sealed");
     let sealed = apply(&url, &package)
@@ -822,7 +1093,10 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert!(
         !client
             .query_one(
-                "SELECT to_regclass('receiving.after_seal') IS NOT NULL",
+                "SELECT EXISTS ( \
+                   SELECT 1 FROM information_schema.columns \
+                    WHERE table_schema = 'receiving' AND table_name = 'receipt' \
+                      AND column_name = 'sealed_probe')",
                 &[]
             )
             .await
@@ -845,6 +1119,12 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     );
 
     set_package_identity(&package, "1.0.1", None);
+    declare_ownership_only_model(&package, "after_seal", "after_seal");
+    std::fs::write(
+        package.join("migrations/0002_after_seal.sql"),
+        "CREATE TABLE receiving.after_seal (id int);",
+    )
+    .expect("replace the refused suffix with the new version's declared model");
     let undeclared = apply(&url, &package)
         .await
         .expect_err("a new coordinate over existing history must declare its predecessor");
@@ -989,16 +1269,28 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     apply(&url, &package)
         .await
         .expect("a fresh target executes the complete cumulative stream");
-    for relation in ["receiving.purchase_order", "receiving.after_seal"] {
-        assert!(
-            client
-                .query_one("SELECT to_regclass($1) IS NOT NULL", &[&relation])
-                .await
-                .unwrap()
-                .get::<_, bool>(0),
-            "fresh cumulative apply creates {relation}"
-        );
-    }
+    assert!(
+        client
+            .query_one(
+                "SELECT to_regclass('receiving.purchase_order') IS NOT NULL",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0),
+        "fresh cumulative apply creates the base relation"
+    );
+    assert!(
+        client
+            .query_one(
+                "SELECT to_regclass('receiving.after_seal') IS NOT NULL",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, bool>(0),
+        "fresh cumulative apply executes the suffix"
+    );
     assert_eq!(
         client
             .query_one(

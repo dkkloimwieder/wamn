@@ -39,19 +39,19 @@ pub use generate::{
 };
 pub use manifest::{
     AccessOperationErrorLiteral, AuthoredSqlDeclaration, AuthoredSqlVariant,
-    BaseDependencyRequirement, CommandCanonicalization, CommandLineOrder, CommandTransaction,
-    ComponentDeclaration, ConnectionDeclaration, ContractFieldDeclaration, CountLimitDeclaration,
-    CrudAction, CursorDeclaration, CursorDirection, CursorEncoding, CursorPayload,
-    CustomOperationDeclaration, CustomOperationInputDeclaration, CustomOperationKind,
-    CustomOperationResultDeclaration, EventRegistrationDeclaration, FilterBinding,
-    FilterDeclaration, InputRefusal, ItemSemantics, LimitDeclaration, ModelDeclaration,
-    NumericSpelling, OperationDeclaration, OperationErrorDetailDeclaration,
-    OperationErrorDetailKey, OperationVisibility, PackageIdentity, PackageManifest,
-    PaginationDeclaration, PaginationKind, PolicyContractRequirement, PolicyContractState,
-    ResultClass, SortDeclaration, SortKey, StaticSqlFetch, StaticSqlRelationDeclaration,
-    StaticSqlStatementDeclaration, StaticSqlValueDeclaration, TieBreakerDeclaration,
-    TimestamptzSpelling, UuidSpelling, canonical_operation_identity, canonical_operation_prefix,
-    validate_operation_vocabulary,
+    BaseDependencyRequirement, CdcDisposition, CommandCanonicalization, CommandLineOrder,
+    CommandTransaction, ComponentDeclaration, ConnectionDeclaration, ContractFieldDeclaration,
+    CountLimitDeclaration, CrudAction, CursorDeclaration, CursorDirection, CursorEncoding,
+    CursorPayload, CustomOperationDeclaration, CustomOperationInputDeclaration,
+    CustomOperationKind, CustomOperationResultDeclaration, EventRegistrationDeclaration,
+    FilterBinding, FilterDeclaration, InputRefusal, InternalRelationDeclaration, ItemSemantics,
+    LimitDeclaration, ModelDeclaration, NumericSpelling, OperationDeclaration,
+    OperationErrorDetailDeclaration, OperationErrorDetailKey, OperationVisibility, PackageIdentity,
+    PackageManifest, PaginationDeclaration, PaginationKind, PolicyContractRequirement,
+    PolicyContractState, ResultClass, SortDeclaration, SortKey, StaticSqlFetch,
+    StaticSqlRelationDeclaration, StaticSqlStatementDeclaration, StaticSqlValueDeclaration,
+    TieBreakerDeclaration, TimestamptzSpelling, UuidSpelling, canonical_operation_identity,
+    canonical_operation_prefix, validate_operation_vocabulary,
 };
 pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
 pub use wamn_schema_introspection::ir::CatalogIr;

@@ -1,0 +1,1 @@
+{"manifest":"wamn.json#/models/location","model":"location","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://receiving.location","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"sql_constant_visibility":"crate"}}

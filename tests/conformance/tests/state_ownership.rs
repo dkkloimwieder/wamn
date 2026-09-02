@@ -1360,6 +1360,9 @@ fn resolve_target<'a>(
     if basename == "wamn_entities" {
         return family(manifest, "app-schema-entity-map");
     }
+    if basename == "wamn_cdc_exclusions" {
+        return family(manifest, "app-schema-cdc-exclusion-map");
+    }
     if let Some(dynamic) = manifest.scan_policy.dynamic_writers.iter().find(|writer| {
         writer.path == discovery.path
             && (normalized.contains('{')

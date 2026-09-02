@@ -8,6 +8,26 @@
     "state": "satisfied"
   },
   "models": {
+    "item": {
+      "schema": "receiving",
+      "table": "item",
+      "owner": "wamn_receiving",
+      "server_owned_fields": [
+        "id"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    },
+    "location": {
+      "schema": "receiving",
+      "table": "location",
+      "owner": "wamn_receiving",
+      "server_owned_fields": [
+        "id"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    },
     "purchase_order": {
       "schema": "receiving",
       "table": "purchase_order",
@@ -170,6 +190,16 @@
         }
       }
     },
+    "purchase_order_line": {
+      "schema": "receiving",
+      "table": "purchase_order_line",
+      "owner": "wamn_receiving",
+      "server_owned_fields": [
+        "id"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    },
     "receipt": {
       "schema": "receiving",
       "table": "receipt",
@@ -242,6 +272,23 @@
           "result": "page"
         }
       }
+    },
+    "receipt_line": {
+      "schema": "receiving",
+      "table": "receipt_line",
+      "owner": "wamn_receiving",
+      "server_owned_fields": [
+        "id"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    }
+  },
+  "internal_relations": {
+    "record_receipt_command": {
+      "schema": "receiving",
+      "table": "record_receipt_command",
+      "cdc": "excluded"
     }
   },
   "custom_operations": {

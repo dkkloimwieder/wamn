@@ -19,9 +19,9 @@ const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
 const SELECT_INSTALLED_SQL: &str = "\
 SELECT package_id, package_version, manifest_sha256 FROM catalog.packages \
  WHERE tenant_id = $1 ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"";
-// apply-package owns this OID history beside application tables; package ACL
+// apply-package owns these OID histories beside application tables; package ACL
 // declarations neither consume nor reconcile control-owned objects.
-const CONTROL_OWNED_ENTITY_MAP: &str = "wamn_entities";
+const CONTROL_OWNED_RELATION_MAPS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 
 /// Post-apply generated ACL reconciliation arguments.
 #[derive(Debug, Args)]
@@ -325,11 +325,11 @@ async fn relation_inventory(
            JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
           WHERE namespace.nspname = ANY($1::text[]) \
             AND relation.relkind = 'r' \
-            AND relation.relname <> $2 \
+            AND relation.relname <> ALL($2::text[]) \
             AND attribute.attnum > 0 AND NOT attribute.attisdropped \
           GROUP BY namespace.nspname, relation.relname \
           ORDER BY namespace.nspname COLLATE \"C\", relation.relname COLLATE \"C\"",
-        &[&schemas, &CONTROL_OWNED_ENTITY_MAP],
+        &[&schemas, &CONTROL_OWNED_RELATION_MAPS.as_slice()],
     )
     .await
     .context("read live package relation inventory")?

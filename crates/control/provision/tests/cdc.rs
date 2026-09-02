@@ -81,16 +81,17 @@ fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
     );
 
     // Project-env DB: the CDC bundle (schema guard → publication → failover
-    // slot → entity map → grants — the exact order `cdc_sql_bundle` emits; the
-    // entity map precedes the grants because the grants now name it), then a
+    // slot → classification maps → grants — the exact order `cdc_sql_bundle`
+    // emits; both maps precede the grants because the grants name them), then a
     // table created AFTER the publication, then the live assertions.
     let db_url = swap_db(&url, &db);
     let cdc_sql = format!(
-        "{schema_guard};\n{publication}\n{slot}\n{entity_map};\n{grants}\n",
+        "{schema_guard};\n{publication}\n{slot}\n{entity_map};\n{exclusion_map};\n{grants}\n",
         schema_guard = sql::ensure_schema_sql(schema),
         publication = sql::create_publication_sql(&cdc, schema),
         slot = sql::create_failover_slot_sql(&cdc),
         entity_map = sql::ensure_entity_map_sql(schema),
+        exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
         grants = sql::grant_replication_access_sql(&db, &cdc, schema),
     );
     run_ok(&db_url, &cdc_sql);
@@ -132,7 +133,9 @@ DO $$ BEGIN
   ASSERT has_table_privilege('{cdc}', '{schema}.receipts'::regclass, 'SELECT') = false,
     'a table created AFTER the grant is not retro-granted (decoding needs no SELECT)';
   ASSERT has_table_privilege('{cdc}', '{schema}.wamn_entities'::regclass, 'SELECT'),
-    'the role reads the decode-time entity map — its ONE table query';
+    'the role reads the decode-time entity map';
+  ASSERT has_table_privilege('{cdc}', '{schema}.wamn_cdc_exclusions'::regclass, 'SELECT'),
+    'the role reads the explicit CDC-exclusion map';
 END $$;
 "#,
         ),
@@ -151,7 +154,7 @@ END $$;
     );
 }
 
-/// The CDC role's table read is the entity map and nothing else, and the
+/// The CDC role's table reads are the two classification maps and nothing else, and the
 /// narrowing is SAFE: a tenant table it cannot `SELECT` still decodes.
 ///
 /// The blanket `GRANT SELECT ON ALL TABLES IN SCHEMA` the old builder emitted
@@ -163,7 +166,7 @@ END $$;
 /// already-executed blanket grant standing, and every assertion below would pass
 /// on new environments while production stayed wide open.
 #[test]
-fn cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables() {
+fn cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables() {
     let Ok(url) = std::env::var("WAMN_CDC_PG_URL") else {
         eprintln!(
             "skipping cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables (set WAMN_CDC_PG_URL to run)"
@@ -198,6 +201,7 @@ fn cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables() {
             "{schema_guard};\n\
              CREATE TABLE {schema_ident}.receipts (id int PRIMARY KEY, tenant_secret text);\n\
              {entity_map};\n\
+             {exclusion_map};\n\
              GRANT USAGE ON SCHEMA {schema_ident} TO \"{cdc}\";\n\
              GRANT SELECT ON ALL TABLES IN SCHEMA {schema_ident} TO \"{cdc}\";\n\
              DO $$ BEGIN \
@@ -207,6 +211,7 @@ fn cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables() {
             schema_guard = sql::ensure_schema_sql(schema),
             schema_ident = format!("\"{schema}\""),
             entity_map = sql::ensure_entity_map_sql(schema),
+            exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
         ),
     );
 
@@ -235,7 +240,9 @@ DO $$ BEGIN
   ASSERT has_table_privilege('{cdc}', '{schema}.receipts'::regclass, 'SELECT') = false,
     'the retroactive REVOKE removed the blanket read an old environment already had';
   ASSERT has_table_privilege('{cdc}', '{schema}.wamn_entities'::regclass, 'SELECT'),
-    'the entity map survives the REVOKE that precedes it — the ONE table the reader queries';
+    'the entity map survives the REVOKE that precedes it';
+  ASSERT has_table_privilege('{cdc}', '{schema}.wamn_cdc_exclusions'::regclass, 'SELECT'),
+    'the exclusion map survives the REVOKE that precedes it';
   ASSERT has_schema_privilege('{cdc}', '{schema}', 'USAGE'),
     'schema USAGE is untouched by the narrowing';
   ASSERT has_database_privilege('{cdc}', '{db}', 'CONNECT'),
@@ -252,6 +259,7 @@ DO $$ BEGIN
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
   PERFORM count(*) FROM {schema}.wamn_entities;
+  PERFORM count(*) FROM {schema}.wamn_cdc_exclusions;
 END $$;
 DO $$ DECLARE frames bigint; BEGIN
   SELECT count(*) INTO frames FROM pg_logical_slot_peek_binary_changes(

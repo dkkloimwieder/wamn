@@ -62,6 +62,14 @@ pub struct ManagedModel {
     pub table: String,
 }
 
+/// Package-owned mechanism relation explicitly excluded from CDC publication.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CdcExcludedRelation {
+    pub relation_id: String,
+    pub schema: String,
+    pub table: String,
+}
+
 /// One validated pending file and its immutable ledger identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingMigration {
@@ -77,6 +85,7 @@ pub struct PackageMigrationPlan {
     pub predecessor_version: Option<String>,
     pub manifest_sha256: String,
     pub models: Vec<ManagedModel>,
+    pub cdc_excluded_relations: Vec<CdcExcludedRelation>,
     pub verified_prefix: Vec<PendingMigration>,
     pub pending: Vec<PendingMigration>,
     pub statements: Vec<SqlStatement>,
@@ -311,6 +320,15 @@ pub fn plan_package_migrations(
             table: model.table,
         });
     }
+    let cdc_excluded_relations = manifest
+        .internal_relations
+        .into_iter()
+        .map(|(relation_id, relation)| CdcExcludedRelation {
+            relation_id,
+            schema: relation.schema,
+            table: relation.table,
+        })
+        .collect();
     let pending_sources = &migrations[recorded.len()..];
     let pending = pending_sources
         .iter()
@@ -334,6 +352,7 @@ pub fn plan_package_migrations(
         predecessor_version,
         manifest_sha256,
         models,
+        cdc_excluded_relations,
         verified_prefix: Vec::new(),
         pending,
         statements,
@@ -423,6 +442,7 @@ fn plan_package_migrations_from_predecessor(
         predecessor_version: fresh.predecessor_version,
         manifest_sha256: fresh.manifest_sha256,
         models: fresh.models,
+        cdc_excluded_relations: fresh.cdc_excluded_relations,
         verified_prefix,
         pending,
         statements,

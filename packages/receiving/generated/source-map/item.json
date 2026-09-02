@@ -1,0 +1,1 @@
+{"manifest":"wamn.json#/models/item","model":"item","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://receiving.item","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"sql_constant_visibility":"crate"}}

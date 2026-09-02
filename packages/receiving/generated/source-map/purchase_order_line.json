@@ -1,0 +1,1 @@
+{"manifest":"wamn.json#/models/purchase_order_line","model":"purchase_order_line","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://receiving.purchase_order_line","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"sql_constant_visibility":"crate"}}

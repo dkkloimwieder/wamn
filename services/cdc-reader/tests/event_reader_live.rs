@@ -371,6 +371,12 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     )
     .await
     .expect("wamn_app role (the floor + catalog schema's grant target)");
+    sys.batch_execute(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') \
+         THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$",
+    )
+    .await
+    .expect("wamn_scenario_author role (the catalog schema's author-grant target)");
     sys.batch_execute(SYSTEM_SCHEMA)
         .await
         .expect("apply deploy/sql/system-schema.sql");
@@ -462,6 +468,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .expect("schema");
     sys.batch_execute(
         "CREATE TABLE app.receipts (id bigint PRIMARY KEY, val text, big text, note text); \
+         CREATE TABLE app.command_ledger (id bigint PRIMARY KEY, command_bytes bytea NOT NULL); \
          ALTER TABLE app.receipts ALTER COLUMN big SET STORAGE EXTERNAL",
     )
     .await
@@ -472,17 +479,26 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(&sql::create_publication_sql(&cdc_name, "app"))
         .await
         .expect("publication");
-    // The entity map precedes the grants (the enable-cdc bundle order): the
-    // role's SELECT ON ALL TABLES must cover the reader's decode-time lookup.
+    // Both classification maps precede the grants (the enable-cdc bundle
+    // order), so the reader can resolve publish and exclude dispositions.
     sys.batch_execute(&sql::ensure_entity_map_sql("app"))
         .await
         .expect("entity map");
+    sys.batch_execute(&sql::ensure_cdc_exclusion_map_sql("app"))
+        .await
+        .expect("CDC exclusion map");
     sys.execute(
         &sql::upsert_entity_map_sql("app"),
         &[&"receiving", &"receipt", &"receipts"],
     )
     .await
     .expect("receipt entity mapping");
+    sys.execute(
+        &sql::upsert_cdc_exclusion_map_sql("app"),
+        &[&"receiving", &"record_receipt_command", &"command_ledger"],
+    )
+    .await
+    .expect("command-ledger CDC exclusion");
     sys.batch_execute(&sql::grant_replication_access_sql(DB, &cdc_name, "app"))
         .await
         .expect("grants");
@@ -591,7 +607,18 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     // --- phase A: commit order + envelope shape + dedupe --------------------
     let mut expected: Vec<(Op, String)> = Vec::new();
-    for id in 1..=20i64 {
+    // A mixed transaction proves the internal command ledger is counted but
+    // never published while its sibling domain row reaches the stream.
+    sys.batch_execute(
+        "BEGIN; \
+         INSERT INTO app.command_ledger VALUES (1, decode('deadbeef', 'hex')); \
+         INSERT INTO app.receipts (id, val) VALUES (1, 'v1'); \
+         COMMIT",
+    )
+    .await
+    .expect("commit one excluded row beside one publishable row");
+    expected.push((Op::Insert, "1".into()));
+    for id in 2..=20i64 {
         sys.execute(
             "INSERT INTO app.receipts (id, val) VALUES ($1, $2)",
             &[&id, &format!("v{id}")],
