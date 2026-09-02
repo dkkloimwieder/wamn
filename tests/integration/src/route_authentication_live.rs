@@ -3171,7 +3171,7 @@ async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> a
 
     let inspection_rows = project
         .query(
-            "SELECT status, row_version FROM receiving.quality_inspection WHERE receipt_id = $1::uuid",
+            "SELECT status, row_version FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid",
             &[&receipt_id],
         )
         .await
