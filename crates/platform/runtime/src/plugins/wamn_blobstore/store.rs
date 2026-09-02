@@ -67,6 +67,15 @@ impl core::fmt::Display for StoreError {
 
 impl std::error::Error for StoreError {}
 
+/// What the store knows about one object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectHead {
+    /// Object size in bytes.
+    pub size: u64,
+    /// Last-modified time, nanoseconds since the Unix epoch.
+    pub last_modified_unix_nanos: u64,
+}
+
 /// One component's confined view of an object store.
 ///
 /// The bucket is fixed by the binding — this type never names another — and
@@ -175,6 +184,44 @@ impl BoundContainer {
             Ok(()) | Err(object_store::Error::NotFound { .. }) => Ok(()),
             Err(error) => Err(StoreError::Backend(error)),
         }
+    }
+
+    /// Metadata for the object at the caller's key.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::NoSuchObject`] when absent; confinement or backend
+    /// failure otherwise.
+    pub async fn head(&self, author_key: &str) -> Result<ObjectHead, StoreError> {
+        let path = self.path(author_key)?;
+        match self.store.head(&path).await {
+            Ok(meta) => Ok(ObjectHead {
+                size: meta.size,
+                last_modified_unix_nanos: meta
+                    .last_modified
+                    .timestamp_nanos_opt()
+                    .unwrap_or_default()
+                    .unsigned_abs(),
+            }),
+            Err(object_store::Error::NotFound { .. }) => Err(StoreError::NoSuchObject),
+            Err(error) => Err(StoreError::Backend(error)),
+        }
+    }
+
+    /// Remove every object under the bound prefix.
+    ///
+    /// This empties the component's own prefix, never the container: a
+    /// component that cannot name the container must not be able to empty it
+    /// for everyone else sharing it.
+    ///
+    /// # Errors
+    ///
+    /// Backend failure.
+    pub async fn clear(&self) -> Result<(), StoreError> {
+        for key in self.list().await? {
+            self.delete(&key).await?;
+        }
+        Ok(())
     }
 
     /// Every object under the bound prefix, as author-visible keys.
@@ -326,6 +373,47 @@ mod tests {
         assert_eq!(a.get("shared-name.zpl").await.expect("get"), b"a's");
         assert_eq!(b.get("shared-name.zpl").await.expect("get"), b"b's");
         assert_eq!(a.list().await.expect("list"), vec!["shared-name.zpl".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn head_reports_size_and_a_real_timestamp() {
+        let (container, _store) = bound("p");
+        container.put("a.bin", vec![7; 42]).await.expect("put");
+
+        let head = container.head("a.bin").await.expect("head");
+        assert_eq!(head.size, 42);
+        assert!(
+            head.last_modified_unix_nanos > 0,
+            "the timestamp must come from the store, not a fabricated zero"
+        );
+        assert_eq!(
+            container.head("absent").await.expect_err("absent").code(),
+            "no_such_object"
+        );
+    }
+
+    /// Clearing empties the component's own PREFIX, never the container. A
+    /// component that cannot name the container must not be able to empty it
+    /// for everyone sharing it.
+    #[tokio::test]
+    async fn clear_empties_only_the_bound_prefix() {
+        let store = Arc::new(InMemory::new()) as Arc<dyn ObjectStore>;
+        let mine = BoundContainer::new(Arc::clone(&store), "wamn-labels", "tenant-a");
+        let theirs = BoundContainer::new(Arc::clone(&store), "wamn-labels", "tenant-b");
+
+        mine.put("x.zpl", b"mine".to_vec()).await.expect("put");
+        mine.put("deep/y.zpl", b"mine".to_vec()).await.expect("put");
+        theirs.put("x.zpl", b"theirs".to_vec()).await.expect("put");
+
+        mine.clear().await.expect("clear");
+
+        assert!(mine.list().await.expect("list").is_empty());
+        assert_eq!(
+            theirs.list().await.expect("list"),
+            vec!["x.zpl".to_string()],
+            "clearing one binding must not touch a neighbour sharing the container"
+        );
+        assert_eq!(theirs.get("x.zpl").await.expect("get"), b"theirs");
     }
 
     /// The store handle can carry credentials; Debug must never render it.
