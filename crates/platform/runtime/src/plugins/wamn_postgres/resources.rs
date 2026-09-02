@@ -64,6 +64,14 @@ pub struct PgStatementTransaction {
     statements: Option<Arc<BoundStatementSet>>,
 }
 
+impl std::fmt::Debug for PgStatementTransaction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PgStatementTransaction")
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for PgTransaction {
     fn drop(&mut self) {
         let mut st = match self.state.lock() {
