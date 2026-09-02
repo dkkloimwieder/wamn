@@ -171,6 +171,7 @@ async fn provision_project(project: &Client, project_url: &str) {
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
+                statements: BTreeMap::new(),
             },
         )]),
         component_digest: COMPONENT.to_owned(),

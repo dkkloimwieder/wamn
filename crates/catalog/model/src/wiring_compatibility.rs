@@ -413,6 +413,7 @@ mod tests {
                         schema: schema(output_schema),
                     }],
                     parameters: Vec::new(),
+                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: format!("sha256:{}", "a".repeat(64)),

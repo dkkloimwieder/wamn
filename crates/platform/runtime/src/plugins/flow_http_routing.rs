@@ -944,6 +944,7 @@ mod tests {
                 ServingComponentOperation {
                     registered_operation: None,
                     dependencies: Vec::new(),
+                    statements: BTreeMap::new(),
                 },
             )]),
         }])

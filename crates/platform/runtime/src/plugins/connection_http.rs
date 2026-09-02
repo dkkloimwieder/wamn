@@ -901,6 +901,7 @@ mod tests {
                     ServingComponentOperation {
                         registered_operation: snapshot.registered_operation,
                         dependencies: Vec::new(),
+                        statements: BTreeMap::new(),
                     },
                 )]),
             }]),

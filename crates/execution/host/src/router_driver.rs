@@ -1449,6 +1449,7 @@ fn validate_component_in_release(
                     ServingComponentOperation {
                         registered_operation: operation.registered_operation.clone(),
                         dependencies: operation.dependencies.clone(),
+                        statements: operation.statements.clone(),
                     },
                 )
             })
@@ -2505,6 +2506,7 @@ mod tests {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
+                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: digest.to_owned(),
@@ -2539,6 +2541,7 @@ mod tests {
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
+                statements: BTreeMap::new(),
             },
         )]);
         let mut middle = target.clone();
@@ -2567,6 +2570,7 @@ mod tests {
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
+                statements: BTreeMap::new(),
             },
         )]);
         let mut unrelated = leaf.clone();
@@ -2592,6 +2596,7 @@ mod tests {
             input_ports: Vec::new(),
             output_ports: Vec::new(),
             parameters: Vec::new(),
+            statements: BTreeMap::new(),
         };
         let mut caller = target;
         caller.operations = BTreeMap::from([
