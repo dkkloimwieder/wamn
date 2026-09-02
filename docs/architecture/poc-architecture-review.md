@@ -52,8 +52,10 @@ The security half is proven. The "easier" half is not:
 
 - **P2 — `wamn dev`: one command, watch mode.** The loop
   (migrate → introspect → generate → build → virtualize → admit → gate →
-  publish → apply → ACL → release → activate) is ~12 steps. The loop
-  console (wamn-dggp) becomes the single entry point. Without this,
+  publish → apply → ACL → release → activate) is ~12 steps. One programmatic
+  stage engine owns orchestration; `wamn dev` and the loop console are clients,
+  never separate control loops (owner ruling, `wamn-10yt.10.1`, 2026-09-02).
+  Without this,
   components are more secure *and* harder — a failed thesis.
 - **Slice v exit criterion added:** at least one wiring composes a
   package operation with palette components, authored through the
