@@ -1488,29 +1488,18 @@ async fn install_journey_project(project: &Client, project_url: &str) -> anyhow:
     Ok(())
 }
 
-async fn reconcile_journey_data_access(
-    project_url: &str,
-    require_repair: bool,
-) -> anyhow::Result<()> {
+async fn reconcile_journey_data_access(project_url: &str) -> anyhow::Result<()> {
     let packages = JOURNEY_PACKAGES
         .iter()
         .map(|package| journey_package_root(*package))
         .collect::<Vec<_>>();
-    let first = reconcile_package_data_access::reconcile_package_data_access(
-        ReconcilePackageDataAccessArgs {
-            packages: packages.clone(),
-            database_url: project_url.to_owned(),
-            tenant: TENANT.to_owned(),
-        },
-    )
+    reconcile_package_data_access::reconcile_package_data_access(ReconcilePackageDataAccessArgs {
+        packages: packages.clone(),
+        database_url: project_url.to_owned(),
+        tenant: TENANT.to_owned(),
+    })
     .await
     .context("converge the fresh installed-set data-access union")?;
-    if require_repair {
-        anyhow::ensure!(
-            !first.is_noop(),
-            "damaged installed-set data-access reconciliation changed no ACL"
-        );
-    }
     let again = reconcile_package_data_access::reconcile_package_data_access(
         ReconcilePackageDataAccessArgs {
             packages,
@@ -2534,7 +2523,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         &inputs.host_secret_namespace,
     )
     .await?;
-    reconcile_journey_data_access(&route.database_url, false).await?;
+    reconcile_journey_data_access(&route.database_url).await?;
     let declarations = render_component_declarations(root)?;
     push_journey_components(&inputs, &route.database_url, &system_url, &declarations).await?;
     let admitted_component_digests =
@@ -3049,10 +3038,21 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
     assert_no_component_trace(&spans, &unauthorized_trace);
     assert_no_component_trace(&spans, &oversized_trace);
 
-    // The denial arm mutates one grant deliberately. Restore the exact
-    // installed-set union before handing this disposable release to the
-    // operator-managed materializer continuation.
-    reconcile_journey_data_access(&route.database_url, true).await?;
+    // The denial arm mutates one operation grant deliberately. Its package is
+    // the author of that grant, so reapply the exact coordinate before handing
+    // this disposable release to the operator-managed materializer continuation.
+    let base_package = JOURNEY_PACKAGES
+        .into_iter()
+        .find(|package| package.id == BASE_PACKAGE_ID)
+        .context("find the base package in the journey release")?;
+    apply_package::run(ApplyPackageArgs {
+        package: journey_package_root(base_package),
+        database_url: route.database_url.clone(),
+        tenant: TENANT.to_owned(),
+    })
+    .await
+    .context("restore the base package's exact operation grants")?;
+    reconcile_journey_data_access(&route.database_url).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     seed_materializer_trigger_rows(project.as_ref()).await?;
 
