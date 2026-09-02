@@ -343,6 +343,12 @@ pub const UNMAPPED_MANAGED_RELATION_REFUSAL: &str = "cdc-unmapped-managed-relati
 pub const UNMAPPED_MANAGED_RELATION_REMEDY: &str =
     "reconcile the installed package entity map before resuming CDC publication";
 
+/// The package applier's control-owned OID map lives beside application data so
+/// the CDC credential can resolve identities without crossing a plane. A
+/// schema publication observes its writes, but they are control facts rather
+/// than managed application events and must never recurse through the map.
+const CONTROL_OWNED_ENTITY_MAP_RELATION: &str = "wamn_entities";
+
 fn remember_entity_mapping(
     cache: &mut HashMap<u32, EntityMapping>,
     relation_oid: u32,
@@ -804,8 +810,12 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
                 return Ok(());
             }
             DrainOutcome::Severed(e, summary) => {
+                // `EventStream::shutdown` cancels the token it was constructed
+                // with. Snapshot caller intent first so cleanup cannot turn a
+                // fatal decode refusal into a successful shutdown.
+                let cancellation_requested = token.is_cancelled();
                 let _ = stream.shutdown().await;
-                if token.is_cancelled() {
+                if cancellation_requested {
                     return Ok(());
                 }
                 match classify(&e) {
@@ -1126,6 +1136,15 @@ async fn drain(
                 continue;
             }
         };
+        if table.as_ref() == CONTROL_OWNED_ENTITY_MAP_RELATION {
+            tracing::debug!(
+                %schema,
+                %table,
+                relation_oid,
+                "control-owned entity-map change excluded from CDC publication"
+            );
+            continue;
+        }
         // Resolve an uncached relation OID before buffering anything publishable.
         let entity_mapping = if let Some(mapping) = entity_mappings.get(&relation_oid) {
             mapping.clone()

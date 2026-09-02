@@ -945,6 +945,17 @@ mod tests {
         );
         assert!(serde_json::from_slice::<Envelope>(&bytes).is_err());
 
+        let complete = serde_json::to_value(&event).unwrap();
+        for missing in ["package-id", "entity"] {
+            let mut incomplete = complete.clone();
+            incomplete.as_object_mut().unwrap().remove(missing);
+            assert_eq!(
+                decode_source_event(&serde_json::to_vec(&incomplete).unwrap()),
+                Err("poison-invalid-derived-event"),
+                "missing {missing} must typed-refuse at the derived-event boundary"
+            );
+        }
+
         let mut future = serde_json::to_value(event).unwrap();
         future["format-version"] = "0.2".into();
         assert_eq!(

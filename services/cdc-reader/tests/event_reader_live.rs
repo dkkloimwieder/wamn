@@ -415,6 +415,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
             &"",
             &"",
             &"off",
+            &"standard",
         ],
     )
     .await
@@ -555,6 +556,38 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         assert!(Instant::now() < deadline, "walsender never attached");
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+
+    // `FOR TABLES IN SCHEMA` observes the control-owned entity map too. Its
+    // writes are schema-selection facts, not application events: prove the
+    // reader stays healthy while publishing nothing.
+    let map_stream_count = stream_count(&js, &stream_name).await;
+    sys.batch_execute("BEGIN")
+        .await
+        .expect("begin entity-map exclusion probe");
+    assert_eq!(
+        sys.execute(
+            "UPDATE app.wamn_entities SET table_name = table_name \
+              WHERE relation_oid = 'app.receipts'::regclass::oid",
+            &[],
+        )
+        .await
+        .expect("write the control-owned entity map"),
+        1,
+        "the exclusion probe must exercise a real entity-map row write"
+    );
+    sys.batch_execute("COMMIT")
+        .await
+        .expect("commit entity-map exclusion probe");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        !handle.is_finished(),
+        "an entity-map write must not terminate the reader"
+    );
+    assert_eq!(
+        stream_count(&js, &stream_name).await,
+        map_stream_count,
+        "control-owned entity-map writes must not enter the event stream"
+    );
 
     // --- phase A: commit order + envelope shape + dedupe --------------------
     let mut expected: Vec<(Op, String)> = Vec::new();
@@ -847,6 +880,59 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .expect("reader exits promptly on cancellation")
         .expect("reader task join");
     assert!(joined.is_ok(), "clean shutdown: {joined:?}");
+
+    // --- phase H: an unmapped application relation refuses before publish ----
+    let handle3 = tokio::spawn(run_with_token(
+        reader_args(&super_url, &cdc_name, proxied_nats),
+        CancellationToken::new(),
+    ));
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let active: bool = sys
+            .query_one(
+                "SELECT active FROM pg_replication_slots WHERE slot_name = $1",
+                &[&cdc_name],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        if active {
+            break;
+        }
+        assert!(
+            !handle3.is_finished(),
+            "reader died before the unmapped-relation probe: {:?}",
+            handle3.await
+        );
+        assert!(
+            Instant::now() < deadline,
+            "unmapped-relation probe walsender never attached"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let before_unmapped = stream_count(&js, &stream_name).await;
+    sys.batch_execute("CREATE TABLE app.unmapped_probe (id bigint PRIMARY KEY)")
+        .await
+        .expect("create an unmapped application relation");
+    sys.execute("INSERT INTO app.unmapped_probe VALUES (1)", &[])
+        .await
+        .expect("write an unmapped application relation");
+    let joined = tokio::time::timeout(Duration::from_secs(30), handle3)
+        .await
+        .expect("unmapped application relation must stop the reader")
+        .expect("reader task join");
+    let refusal = joined.expect_err("an unmapped application relation must typed-refuse");
+    let refusal_chain = format!("{refusal:#}");
+    assert!(
+        refusal_chain.contains(wamn_cdc_reader::UNMAPPED_MANAGED_RELATION_REFUSAL),
+        "unexpected unmapped-relation refusal: {refusal:#}"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        stream_count(&js, &stream_name).await,
+        before_unmapped,
+        "the refused unmapped row must not enter the event stream"
+    );
 
     // --- teardown: NO slot left behind --------------------------------------
     let _ = js.delete_stream(&stream_name).await;

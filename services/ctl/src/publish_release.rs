@@ -1214,6 +1214,32 @@ fn resolve_wiring_components(
     Ok(resolved)
 }
 
+fn resolved_wiring_entry_operation(
+    document: &WiringDocument,
+    resolved: &BTreeMap<String, AdmittedComponent>,
+) -> Result<String, MintManifestError> {
+    let entry = &document.nodes[&document.entry];
+    let component = resolved.get(&document.entry).ok_or_else(|| {
+        MintManifestError::new(
+            MintManifestErrorKind::Component,
+            format!(
+                "wiring entry {:?} has no resolved component",
+                document.entry
+            ),
+        )
+    })?;
+    if component.operation(&entry.operation).is_none() {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::Component,
+            format!(
+                "wiring entry {:?} has no resolved export {:?}",
+                document.entry, entry.operation
+            ),
+        ));
+    }
+    Ok(entry.operation.clone())
+}
+
 type ComponentOperationKey = (String, String, String);
 
 fn resolve_component_dependency_closure(
@@ -1528,7 +1554,7 @@ async fn resolve_wiring(
     })?;
     let component_closure = resolve_component_dependency_closure(&resolved, component_facts)?;
     validate_anonymous_wiring_closure(request.attachments, target, &document, &resolved)?;
-    let entry_operation = document.nodes[&document.entry].operation.clone();
+    let entry_operation = resolved_wiring_entry_operation(&document, &resolved)?;
     wirings.insert(ServingWiring {
         package_id: target.package_id.clone(),
         wiring_id: target.wiring_id.clone(),
@@ -2072,6 +2098,65 @@ mod tests {
         serde_json::from_value(document).expect("the mutated handler manifest parses")
     }
 
+    fn resolve_repository_private_handler_entry() -> String {
+        let mut declaration: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../packages/client_acme_receiving/publication/components/client_acme_receiving.json.in"
+        ))
+        .expect("the repository component declaration parses as JSON");
+        declaration["scope"]["tenant-id"] = serde_json::json!("tenant-a");
+        let declaration: wamn_catalog::ComponentDeclaration = serde_json::from_value(declaration)
+            .expect("the repository component declaration is structurally valid");
+        let document_value = serde_json::from_str(include_str!(
+            "../../../packages/client_acme_receiving/publication/wirings/quality_create_inspection.json"
+        ))
+        .expect("the repository handler wiring parses as JSON");
+        let document = WiringDocument::parse(&document_value)
+            .expect("the repository handler wiring is structurally valid");
+        let operation = document.nodes[&document.entry].operation.clone();
+        let declared = declaration.operations[&operation].clone();
+        assert!(
+            declared.registered_operation.is_none(),
+            "a private event handler must carry no public authorization token"
+        );
+        let admitted = AdmittedComponent {
+            scope: declaration.scope.clone(),
+            component: declaration.component,
+            interface_version: declaration.interface_version,
+            operations: BTreeMap::from([(
+                operation.clone(),
+                AdmittedComponentOperation {
+                    registered_operation: declared.registered_operation,
+                    dependencies: declared.dependencies,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
+            component_digest: DIGEST.to_owned(),
+            imports: Vec::new(),
+            imports_fingerprint: DIGEST.to_owned(),
+            effects: Vec::new(),
+        };
+        let facts = BTreeMap::from([(
+            (
+                declaration.scope.package_id.clone(),
+                declaration.scope.package_version.clone(),
+            ),
+            vec![admitted],
+        )]);
+        let resolved = resolve_wiring_components(
+            &document,
+            &declaration.scope,
+            &facts,
+            Some(&handler_manifest()),
+        )
+        .expect("the repository private handler resolves through its admitted operation fact");
+        validate_resolved_wiring_compatibility(&document, &resolved)
+            .expect("the repository private handler wiring is compatible");
+        resolved_wiring_entry_operation(&document, &resolved)
+            .expect("the private export token remains the serving selector")
+    }
+
     #[test]
     fn serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring() {
         let manifest = handler_manifest();
@@ -2079,7 +2164,11 @@ mod tests {
             ("client_acme_receiving".to_owned(), manifest),
             ("wamn_receiving".to_owned(), source_manifest()),
         ]);
-        let operation = "client-acme-receiving:quality/create-inspection@3.0.0".to_owned();
+        let operation = resolve_repository_private_handler_entry();
+        assert_eq!(
+            operation,
+            "client-acme-receiving:quality/create-inspection@3.0.0"
+        );
         let target = ReleaseWiringTarget {
             package_id: "client_acme_receiving".to_owned(),
             package_version: "3.0.0".to_owned(),
