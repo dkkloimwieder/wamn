@@ -21,7 +21,7 @@
       {
         "workspace": "components-no-std",
         "manifest": "components/no-std/Cargo.toml",
-        "package_count": 2
+        "package_count": 4
       }
     ],
     "component_workspace_split_reason": "Cargo feature unification is additive-only and applies to every member of one invocation. Members of components/Cargo.toml reach serde_json/std through boon, jmespath and schemars, which have no feature knob, so a no_std guest supplying its own panic_handler fails with E0152 duplicate lang item panic_impl while it shares that invocation. Isolation is a second workspace, not a feature flag (wamn-0h0g.11.56, wamn-1yj4).",
@@ -70,6 +70,7 @@
         "client-acme-receiving",
         "http-request",
         "http-route",
+        "label-render",
         "materializer",
         "receiving",
         "transform"
@@ -137,6 +138,8 @@
         "connection-http-standard",
         "http-request",
         "http-route",
+        "label-render",
+        "label-template",
         "materializer",
         "receiving",
         "sockprobe",
@@ -148,7 +151,7 @@
         "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 14 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 16 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -173,6 +176,8 @@
         "connection-http-standard",
         "http-request",
         "http-route",
+        "label-render",
+        "label-template",
         "materializer",
         "receiving",
         "sockprobe",
@@ -201,6 +206,7 @@
         "client-acme-receiving",
         "http-request",
         "http-route",
+        "label-render",
         "materializer",
         "receiving",
         "transform"
@@ -249,8 +255,8 @@
       "m1_inventory_tier": "product_components",
       "proof_inventory_tier": "full_ci",
       "expected_package_counts": {
-        "m1": 6,
-        "proof": 14
+        "m1": 7,
+        "proof": 16
       }
     }
   },
@@ -282,7 +288,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "the 2 members of components/no-std/Cargo.toml",
+      "selected_packages": "the 4 members of components/no-std/Cargo.toml",
       "qualification": "these members must never share a Cargo invocation with components/Cargo.toml; production guest artifacts require build --workspace --target wasm32-wasip2"
     }
   ],

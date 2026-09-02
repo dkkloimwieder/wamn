@@ -292,7 +292,7 @@ fn profile_contract_matches_locked_metadata() {
     }
 
     assert_eq!(root_members.len(), 36);
-    assert_eq!(component_members.len(), 14);
+    assert_eq!(component_members.len(), 16);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -414,6 +414,7 @@ fn profile_contract_matches_locked_metadata() {
             "client-acme-receiving",
             "http-route",
             "http-request",
+            "label-render",
             "materializer",
             "receiving",
             "transform",
@@ -428,6 +429,8 @@ fn profile_contract_matches_locked_metadata() {
             "connection-http-standard",
             "http-route",
             "http-request",
+            "label-render",
+            "label-template",
             "materializer",
             "receiving",
             "sockprobe",
@@ -440,8 +443,8 @@ fn profile_contract_matches_locked_metadata() {
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 6);
-    assert_eq!(component_proof.len(), 14);
+    assert_eq!(component_m1.len(), 7);
+    assert_eq!(component_proof.len(), 16);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(
@@ -452,6 +455,7 @@ fn profile_contract_matches_locked_metadata() {
         [
             "busyloop",
             "connection-http-standard",
+            "label-template",
             "sockprobe",
             "sqlx-command",
             "std-virtualization-probe",

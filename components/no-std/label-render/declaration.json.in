@@ -1,0 +1,34 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "__PACKAGE_ID__",
+    "package-version": "__PACKAGE_VERSION__"
+  },
+  "component": "label-render",
+  "interface-version": "0.1.0",
+  "operations": {
+    "wamn:node/handler@0.1.0": {
+      "input-ports": [
+        { "name": "input", "schema": { "type": "object" } }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "object",
+            "properties": { "zpl": { "type": "string" } },
+            "required": ["zpl"]
+          }
+        }
+      ],
+      "parameters": [
+        {
+          "name": "template_id",
+          "schema": { "type": "string", "enum": ["pallet", "location", "product"] },
+          "required": true
+        }
+      ]
+    }
+  },
+  "connections": []
+}

@@ -512,6 +512,24 @@
     },
     {
       "workspace": "components-no-std",
+      "name": "label-render",
+      "manifest_path": "components/no-std/label-render/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": true
+    },
+    {
+      "workspace": "components-no-std",
+      "name": "label-template",
+      "manifest_path": "components/no-std/label-template/Cargo.toml",
+      "role": "adapter",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": false
+    },
+    {
+      "workspace": "components-no-std",
       "name": "transform",
       "manifest_path": "components/no-std/transform/Cargo.toml",
       "role": "component",

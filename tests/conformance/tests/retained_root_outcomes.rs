@@ -115,6 +115,8 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "components/fixtures/std-virtualization-probe/src/lib.rs",
     ),
     ("http-request", "components/no-std/http-request/src/lib.rs"),
+    ("label-render", "components/no-std/label-render/src/lib.rs"),
+    ("label-template", "components/no-std/label-template/src/lib.rs"),
     ("transform", "components/no-std/transform/src/lib.rs"),
 ];
 

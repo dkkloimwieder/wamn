@@ -29,11 +29,24 @@ profile.
 
 ### 1b. Label-render palette node (`components/no-std/label-render`)
 
-- Pure transform: `{ template_id, fields } → { zpl }`. Effect-free,
+- Pure transform: a field record in, one ZPL label out. Effect-free,
   allowlist imports only, gate-caseable. no_std, existing workspace.
+  **`template_id` is a wiring PARAMETER, not an input field** (owner ruling
+  2026-09-02, superseding this line's original `{ template_id, fields } →
+  { zpl }` sketch). Template choice is authoring intent: a wirer picks
+  "pallet label" once and the wiring then declares honestly what it renders,
+  so gate cases can pin golden output per wiring; an input-supplied template
+  would make every caller a template chooser and the wiring's behaviour
+  caller-dependent. The closed set therefore rides the declaration's parameter
+  schema as a typed `enum`, so an unknown `template_id` refuses at
+  gate/config-validation time, not at first invocation.
 - Embedded closed template set (`pallet`, `location`, `product`);
   template authoring demand-gated.
-- Golden ZPL outputs for all three templates as the unit gate.
+- Golden ZPL outputs for all three templates as the unit gate. Vectors state
+  label geometry (`^PW812 ^LL1218 ^MD0`, i.e. 4in × 6in at 203 dpi) because
+  geometry-free ZPL is not printable; the stock is a **provisional** guess and
+  moves with the eventual WMS printer fixture decision (owner ruling
+  2026-09-02).
 
 ### 1c. Blobstore S3 spike (isolated; no platform integration)
 
