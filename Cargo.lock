@@ -4881,6 +4881,7 @@ dependencies = [
  "wamn-runtime",
  "wash-runtime",
  "wasmtime-wasi",
+ "wat",
 ]
 
 [[package]]

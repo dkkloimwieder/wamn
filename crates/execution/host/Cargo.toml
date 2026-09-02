@@ -28,6 +28,7 @@ serde_json = { workspace = true }
 [dev-dependencies]
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 tracing-subscriber = { workspace = true }
+wat = "=1.252.0"
 
 [lints]
 workspace = true

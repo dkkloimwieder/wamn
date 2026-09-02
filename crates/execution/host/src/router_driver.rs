@@ -14,8 +14,8 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, AttachmentKind, DefinitionHash, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingWiring,
+    AdmittedComponent, ArtifactHash, AttachmentKind, ComponentOperationDependency, DefinitionHash,
+    ServingComponent, ServingComponentOperation, ServingManifest, ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_router::{
@@ -636,8 +636,9 @@ impl RouterDriver {
             .context("verify synchronous release connection bindings")?;
         anyhow::ensure!(bindings_ready, "release-component-requirement-unbound");
 
+        let components: Arc<[AdmittedComponent]> = components.into_values().collect();
         let component_count = components.len();
-        let pipelines = components.into_values().map(|component| {
+        let pipelines = components.iter().cloned().map(|component| {
             let source = self.source.clone();
             let engine = Arc::clone(&self.engine);
             async move {
@@ -697,6 +698,8 @@ impl RouterDriver {
                 Arc::clone(&self.logging),
                 Arc::clone(&self.allowed_hosts),
                 Arc::clone(&self.release),
+                self.source.clone(),
+                Arc::clone(&components),
                 &self.config,
                 &manifest.release.tenant_id,
                 &component,
@@ -1188,42 +1191,7 @@ impl RouterDriver {
     }
 
     fn validate_release_component(&self, component: &AdmittedComponent) -> anyhow::Result<()> {
-        let manifest = self.release.manifest();
-        let package_version = manifest
-            .release
-            .packages
-            .iter()
-            .find(|package| package.package_id() == component.scope.package_id)
-            .map(|package| package.package_version());
-        anyhow::ensure!(
-            component.scope.tenant_id == manifest.release.tenant_id
-                && package_version == Some(component.scope.package_version.as_str()),
-            "release-component-scope-mismatch"
-        );
-        let expected = ServingComponent {
-            package_id: component.scope.package_id.clone(),
-            component: component.component.clone(),
-            interface_version: component.interface_version.clone(),
-            digest: ArtifactHash::parse(component.component_digest.clone())
-                .context("component fact carries a non-canonical artifact hash")?,
-            operations: component
-                .operations
-                .iter()
-                .map(|(name, operation)| {
-                    (
-                        name.clone(),
-                        ServingComponentOperation {
-                            registered_operation: operation.registered_operation.clone(),
-                        },
-                    )
-                })
-                .collect(),
-        };
-        anyhow::ensure!(
-            manifest.components.contains(&expected),
-            "component-not-in-carried-release"
-        );
-        Ok(())
+        validate_component_in_release(&self.release, component)
     }
 
     async fn invoke_node(
@@ -1318,13 +1286,15 @@ impl RouterDriver {
             Arc::clone(&self.logging),
             Arc::clone(&self.allowed_hosts),
             Arc::clone(&self.release),
+            self.source.clone(),
+            Arc::clone(&active.facts.components),
             &self.config,
             &request.tenant_id,
             component,
         )
         .await?;
         instance
-            .bind_identity(&acquisition)
+            .bind_identity(&acquisition, request.caller.as_ref())
             .with_context(|| format!("bind identity to {} instance", component.component_digest))?;
         let deadline_ms = bounded_node_deadline_ms(call.deadline_ms);
         let context = node_context(request, active.version, call, deadline_ms)?;
@@ -1340,6 +1310,49 @@ impl RouterDriver {
     fn now_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
+}
+
+fn validate_component_in_release(
+    release: &ReleaseManifestWeld,
+    component: &AdmittedComponent,
+) -> anyhow::Result<()> {
+    let manifest = release.manifest();
+    let package_version = manifest
+        .release
+        .packages
+        .iter()
+        .find(|package| package.package_id() == component.scope.package_id)
+        .map(|package| package.package_version());
+    anyhow::ensure!(
+        component.scope.tenant_id == manifest.release.tenant_id
+            && package_version == Some(component.scope.package_version.as_str()),
+        "release-component-scope-mismatch"
+    );
+    let expected = ServingComponent {
+        package_id: component.scope.package_id.clone(),
+        component: component.component.clone(),
+        interface_version: component.interface_version.clone(),
+        digest: ArtifactHash::parse(component.component_digest.clone())
+            .context("component fact carries a non-canonical artifact hash")?,
+        operations: component
+            .operations
+            .iter()
+            .map(|(name, operation)| {
+                (
+                    name.clone(),
+                    ServingComponentOperation {
+                        registered_operation: operation.registered_operation.clone(),
+                        dependencies: operation.dependencies.clone(),
+                    },
+                )
+            })
+            .collect(),
+    };
+    anyhow::ensure!(
+        manifest.components.contains(&expected),
+        "component-not-in-carried-release"
+    );
+    Ok(())
 }
 
 fn synchronous_wiring_targets(manifest: &ServingManifest) -> BTreeSet<(String, String, u32)> {
@@ -1370,12 +1383,336 @@ struct NodeAcquisition {
     invocation: ConnectionInvocation,
 }
 
+#[derive(Debug, Clone)]
+struct BoundNestedInvocation {
+    caller: Option<AuthenticatedCaller>,
+    acquisition: NodeAcquisition,
+    active_operation: Option<Box<str>>,
+}
+
+/// The exact released closure and originating authority available to imports.
+///
+/// Linker construction installs no identity. [`NodeInstance::bind_identity`]
+/// populates the slot only after every host capability is bound, and
+/// [`NodeInstance::run`] names the one export currently allowed to use its
+/// admission-declared dependencies.
+struct NestedOperationHost {
+    engine: Arc<Engine>,
+    postgres: Arc<WamnPostgres>,
+    credentials: Arc<WamnCredentials>,
+    logging: Arc<WamnLogging>,
+    allowed_hosts: Arc<[AllowedHost]>,
+    release: Arc<ReleaseManifestWeld>,
+    source: ComponentArtifactSource,
+    config: RouterDriverConfig,
+    tenant_id: Box<str>,
+    components: Arc<[AdmittedComponent]>,
+    invocation: std::sync::Mutex<Option<BoundNestedInvocation>>,
+}
+
+impl fmt::Debug for NestedOperationHost {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("NestedOperationHost")
+            .field("tenant_id", &self.tenant_id)
+            .field("components", &self.components.len())
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NestedOperationRefusalKind {
+    IdentityUnbound,
+    UndeclaredForExport,
+    ReleaseClosureUnavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NestedOperationRefusal {
+    kind: NestedOperationRefusalKind,
+    operation: Box<str>,
+}
+
+impl NestedOperationRefusal {
+    fn new(kind: NestedOperationRefusalKind, operation: &str) -> Self {
+        Self {
+            kind,
+            operation: operation.into(),
+        }
+    }
+
+    fn literal(&self) -> &'static str {
+        match self.kind {
+            NestedOperationRefusalKind::IdentityUnbound => "nested-operation-identity-unbound",
+            NestedOperationRefusalKind::UndeclaredForExport => {
+                "nested-operation-not-declared-for-export"
+            }
+            NestedOperationRefusalKind::ReleaseClosureUnavailable => {
+                "nested-operation-release-closure-unavailable"
+            }
+        }
+    }
+}
+
+impl fmt::Display for NestedOperationRefusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.literal(), self.operation)
+    }
+}
+
+impl std::error::Error for NestedOperationRefusal {}
+
+fn nested_host_error(error: anyhow::Error) -> wash_runtime::wasmtime::Error {
+    if let Some(denial) = error.downcast_ref::<PermissionDenied>() {
+        return wash_runtime::wasmtime::Error::new(denial.clone());
+    }
+    if let Some(refusal) = error.downcast_ref::<NestedOperationRefusal>() {
+        return wash_runtime::wasmtime::Error::new(refusal.clone());
+    }
+    wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
+}
+
+struct ActiveNestedOperation {
+    host: Arc<NestedOperationHost>,
+}
+
+impl Drop for ActiveNestedOperation {
+    fn drop(&mut self) {
+        if let Some(invocation) = self
+            .host
+            .invocation
+            .lock()
+            .expect("nested invocation lock must not be poisoned")
+            .as_mut()
+        {
+            invocation.active_operation = None;
+        }
+    }
+}
+
+impl NestedOperationHost {
+    fn bind(&self, acquisition: &NodeAcquisition, caller: Option<&AuthenticatedCaller>) {
+        *self
+            .invocation
+            .lock()
+            .expect("nested invocation lock must not be poisoned") = Some(BoundNestedInvocation {
+            caller: caller.cloned(),
+            acquisition: acquisition.clone(),
+            active_operation: None,
+        });
+    }
+
+    fn revoke(&self) {
+        *self
+            .invocation
+            .lock()
+            .expect("nested invocation lock must not be poisoned") = None;
+    }
+
+    fn activate(self: &Arc<Self>, operation: &str) -> anyhow::Result<ActiveNestedOperation> {
+        let mut invocation = self
+            .invocation
+            .lock()
+            .expect("nested invocation lock must not be poisoned");
+        let invocation = invocation.as_mut().ok_or_else(|| {
+            NestedOperationRefusal::new(NestedOperationRefusalKind::IdentityUnbound, operation)
+        })?;
+        invocation.active_operation = Some(operation.into());
+        Ok(ActiveNestedOperation {
+            host: Arc::clone(self),
+        })
+    }
+
+    fn bound_for(
+        &self,
+        owner_operations: &BTreeSet<String>,
+        dependency: &ComponentOperationDependency,
+    ) -> Result<BoundNestedInvocation, NestedOperationRefusal> {
+        let invocation = self
+            .invocation
+            .lock()
+            .expect("nested invocation lock must not be poisoned")
+            .clone()
+            .ok_or_else(|| {
+                NestedOperationRefusal::new(
+                    NestedOperationRefusalKind::IdentityUnbound,
+                    &dependency.operation,
+                )
+            })?;
+        if !invocation
+            .active_operation
+            .as_deref()
+            .is_some_and(|operation| owner_operations.contains(operation))
+        {
+            return Err(NestedOperationRefusal::new(
+                NestedOperationRefusalKind::UndeclaredForExport,
+                &dependency.operation,
+            ));
+        }
+        if invocation.acquisition.claims.release.is_none() {
+            return Err(NestedOperationRefusal::new(
+                NestedOperationRefusalKind::ReleaseClosureUnavailable,
+                &dependency.operation,
+            ));
+        }
+        Ok(invocation)
+    }
+
+    fn resolve_target(
+        &self,
+        dependency: &ComponentOperationDependency,
+    ) -> Result<AdmittedComponent, NestedOperationRefusal> {
+        resolve_nested_target(&self.tenant_id, &self.components, dependency)
+            .cloned()
+            .ok_or_else(|| {
+                NestedOperationRefusal::new(
+                    NestedOperationRefusalKind::ReleaseClosureUnavailable,
+                    &dependency.operation,
+                )
+            })
+    }
+
+    async fn invoke(
+        self: Arc<Self>,
+        owner_operations: Arc<BTreeSet<String>>,
+        dependency: ComponentOperationDependency,
+        context: node_types::NodeContext,
+        input: String,
+    ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
+        let bound = self.bound_for(&owner_operations, &dependency)?;
+        let target = self.resolve_target(&dependency)?;
+        let target_operation = target
+            .operation(&dependency.operation)
+            .expect("resolve_target proves the exact operation exists");
+        authorize_registered_operation(
+            bound.caller.as_ref(),
+            target_operation.registered_operation.as_deref(),
+        )?;
+        validate_component_in_release(&self.release, &target)?;
+
+        let bytes = self
+            .source
+            .pull_verified(&target)
+            .instrument(tracing::info_span!(
+                "wamn.component.pull",
+                wamn.operation = %dependency.operation,
+                wamn.component_digest = %dependency.digest,
+            ))
+            .await?;
+        let mut child = NodeInstance::instantiate(
+            &self.engine,
+            &bytes,
+            Arc::clone(&self.postgres),
+            Arc::clone(&self.credentials),
+            Arc::clone(&self.logging),
+            Arc::clone(&self.allowed_hosts),
+            Arc::clone(&self.release),
+            self.source.clone(),
+            Arc::clone(&self.components),
+            &self.config,
+            &self.tenant_id,
+            &target,
+        )
+        .await?;
+        let mut acquisition = bound.acquisition;
+        acquisition.invocation.package_id = target.scope.package_id.clone();
+        acquisition.invocation.component_digest = target.component_digest.clone();
+        child.bind_identity(&acquisition, bound.caller.as_ref())?;
+        let span = tracing::info_span!(
+            "wamn.component.invoke",
+            wamn.tenant = %self.tenant_id,
+            wamn.project = %self.config.project,
+            wamn.wiring_id = %context.wiring_id,
+            wamn.wiring_version = context.wiring_version,
+            wamn.component_digest = %dependency.digest,
+            wamn.node_id = %context.node_id,
+            wamn.operation = %dependency.operation,
+            wamn.caller_principal_id = tracing::field::Empty,
+        );
+        if let Some(caller) = bound.caller.as_ref() {
+            span.record("wamn.caller_principal_id", caller.principal_id());
+        }
+        child
+            .run(
+                &dependency.operation,
+                &context,
+                &input,
+                bounded_node_deadline_ms(context.deadline_ms),
+            )
+            .instrument(span)
+            .await
+    }
+}
+
+fn resolve_nested_target<'a>(
+    tenant_id: &str,
+    components: &'a [AdmittedComponent],
+    dependency: &ComponentOperationDependency,
+) -> Option<&'a AdmittedComponent> {
+    components.iter().find(|component| {
+        component.scope.tenant_id == tenant_id
+            && component.scope.package_id == dependency.package
+            && component.scope.package_version == dependency.version
+            && component.component_digest == dependency.digest
+            && component.operation(&dependency.operation).is_some()
+    })
+}
+
+fn add_nested_operation_links(
+    linker: &mut Linker<SharedCtx>,
+    host: Arc<NestedOperationHost>,
+    component: &AdmittedComponent,
+) -> anyhow::Result<()> {
+    for (_, (dependency, owner_operations)) in nested_operation_links(component)? {
+        let owner_operations = Arc::new(owner_operations);
+        let nested = Arc::clone(&host);
+        linker.instance(&dependency.operation)?.func_wrap_async(
+            "run",
+            move |_store, (context, input): (node_types::NodeContext, String)| {
+                let nested = Arc::clone(&nested);
+                let owner_operations = Arc::clone(&owner_operations);
+                let dependency = dependency.clone();
+                Box::new(async move {
+                    let result = nested
+                        .invoke(owner_operations, dependency, context, input)
+                        .await
+                        .map_err(nested_host_error)?;
+                    Ok((result,))
+                })
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn nested_operation_links(
+    component: &AdmittedComponent,
+) -> anyhow::Result<BTreeMap<String, (ComponentOperationDependency, BTreeSet<String>)>> {
+    let mut links = BTreeMap::<String, (ComponentOperationDependency, BTreeSet<String>)>::new();
+    for (owner_operation, operation) in &component.operations {
+        for dependency in &operation.dependencies {
+            if links
+                .get(&dependency.operation)
+                .is_some_and(|(pinned, _)| pinned != dependency)
+            {
+                anyhow::bail!("component-operation-dependency-pin-mismatch");
+            }
+            let (_, owners) = links
+                .entry(dependency.operation.clone())
+                .or_insert_with(|| (dependency.clone(), BTreeSet::new()));
+            owners.insert(owner_operation.clone());
+        }
+    }
+    Ok(links)
+}
+
 struct NodeInstance {
     store: Store<SharedCtx>,
     node: Instance,
     postgres: Arc<WamnPostgres>,
     logging: Arc<WamnLogging>,
     connection_http: Arc<ConnectionHttp>,
+    nested: Arc<NestedOperationHost>,
     scope: Box<str>,
 }
 
@@ -1406,6 +1743,8 @@ impl NodeInstance {
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<ReleaseManifestWeld>,
+        source: ComponentArtifactSource,
+        components: Arc<[AdmittedComponent]>,
         config: &RouterDriverConfig,
         tenant_id: &str,
         component_fact: &AdmittedComponent,
@@ -1420,6 +1759,8 @@ impl NodeInstance {
             logging,
             allowed_hosts,
             release,
+            source,
+            components,
             config,
             tenant_id,
             component_fact,
@@ -1439,11 +1780,13 @@ impl NodeInstance {
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<ReleaseManifestWeld>,
+        source: ComponentArtifactSource,
+        components: Arc<[AdmittedComponent]>,
         config: &RouterDriverConfig,
         tenant_id: &str,
         component_fact: &AdmittedComponent,
     ) -> anyhow::Result<Self> {
-        let (mut store, mut workload, connection_http, scope) = async {
+        let (mut store, mut workload, connection_http, nested, scope) = async {
             let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
             wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
             let local = wash_runtime::types::LocalResources {
@@ -1452,12 +1795,26 @@ impl NodeInstance {
             };
             let connection_http = Arc::new(ConnectionHttp::new(
                 Arc::clone(&postgres),
-                credentials,
+                Arc::clone(&credentials),
                 tenant_id,
                 config.project.as_str(),
-                allowed_hosts,
-                Some(release),
+                Arc::clone(&allowed_hosts),
+                Some(Arc::clone(&release)),
             ));
+            let nested = Arc::new(NestedOperationHost {
+                engine: Arc::new(engine.clone()),
+                postgres: Arc::clone(&postgres),
+                credentials: Arc::clone(&credentials),
+                logging: Arc::clone(&logging),
+                allowed_hosts: Arc::clone(&allowed_hosts),
+                release: Arc::clone(&release),
+                source,
+                config: config.clone(),
+                tenant_id: tenant_id.into(),
+                components,
+                invocation: std::sync::Mutex::new(None),
+            });
+            add_nested_operation_links(&mut linker, Arc::clone(&nested), component_fact)?;
             let loopback = Arc::new(std::sync::Mutex::new(
                 wash_runtime::sockets::loopback::Network::default(),
             ));
@@ -1511,6 +1868,7 @@ impl NodeInstance {
             postgres.revoke_session_claims(&scope);
             logging.clear_claim(&scope);
             connection_http.revoke_invocation(&scope);
+            nested.revoke();
             let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
                 HashMap::new();
             plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
@@ -1524,7 +1882,7 @@ impl NodeInstance {
             // ceiling as a call. One tick is only 10 ms and interrupts valid
             // virtualized std components before their instance is ready.
             store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
-            Ok::<_, anyhow::Error>((store, workload, connection_http, scope))
+            Ok::<_, anyhow::Error>((store, workload, connection_http, nested, scope))
         }
         .instrument(tracing::info_span!("wamn.component.linker_setup"))
         .await?;
@@ -1542,6 +1900,7 @@ impl NodeInstance {
             postgres,
             logging,
             connection_http,
+            nested,
             scope,
         })
     }
@@ -1554,6 +1913,7 @@ impl NodeInstance {
         deadline_ms: u64,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
         self.store.set_epoch_deadline(deadline_ticks(deadline_ms));
+        let _active_operation = self.nested.activate(operation)?;
         let handler = self
             .node
             .get_export_index(&mut self.store, None, operation)
@@ -1571,12 +1931,16 @@ impl NodeInstance {
             .map_err(|error| {
                 anyhow::anyhow!("operation {operation:?} handler.run has wrong type: {error}")
             })?;
-        let (outcome,) = run
+        let (outcome,) = match run
             .call_async(&mut self.store, (context, input.as_str()))
             .await
-            .map_err(|error| {
-                anyhow::anyhow!("operation {operation:?} handler.run trapped: {error}")
-            })?;
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let error: anyhow::Error = error.into();
+                return Err(error.context(format!("operation {operation:?} handler.run trapped")));
+            }
+        };
         Ok(outcome)
     }
 
@@ -1586,7 +1950,11 @@ impl NodeInstance {
     /// an identity other than the one acquiring it. An element that is
     /// identity-derived and not bound here is a cross-tenant leak channel; add
     /// it to [`revoke_identity`](Self::revoke_identity) in the same change.
-    fn bind_identity(&mut self, identity: &NodeAcquisition) -> anyhow::Result<()> {
+    fn bind_identity(
+        &mut self,
+        identity: &NodeAcquisition,
+        caller: Option<&AuthenticatedCaller>,
+    ) -> anyhow::Result<()> {
         self.postgres
             .bind_session_claims(&self.scope, &identity.claims)?;
         self.logging.set_claim(
@@ -1606,6 +1974,7 @@ impl NodeInstance {
             self.postgres.revoke_session_claims(&self.scope);
             return Err(error);
         }
+        self.nested.bind(identity, caller);
         Ok(())
     }
 
@@ -1615,6 +1984,7 @@ impl NodeInstance {
     /// nothing bound, so this is safe on an unbound instance and runs from
     /// `Drop` on every path that ends an invocation, cancellation included.
     fn revoke_identity(&mut self) {
+        self.nested.revoke();
         self.connection_http.revoke_invocation(&self.scope);
         self.logging.clear_claim(&self.scope);
         self.postgres.revoke_session_claims(&self.scope);
@@ -1683,6 +2053,69 @@ fn lower_detail(detail: node_types::ErrorDetail) -> ErrorDetail {
 }
 
 #[cfg(test)]
+pub(crate) async fn real_nested_permission_denial(
+    operation: &'static str,
+) -> anyhow::Result<anyhow::Error> {
+    const CALLER_OPERATION: &str = "client-acme-receiving:receiving/record-receipt@3.0.0";
+    let bytes = wat::parse_str(format!(
+        r#"(component
+          (import "{operation}" (instance $dependency
+            (export "run" (func))
+          ))
+          (core func $dependency-run (canon lower (func $dependency "run")))
+          (core module $wrapper
+            (import "dependency" "run" (func $run))
+            (func (export "run")
+              call $run
+            )
+          )
+          (core instance $imports
+            (export "run" (func $dependency-run))
+          )
+          (core instance $wrapped (instantiate $wrapper
+            (with "dependency" (instance $imports))
+          ))
+          (func $run (canon lift (core func $wrapped "run")))
+          (instance $caller
+            (export "run" (func $run))
+          )
+          (export "{CALLER_OPERATION}" (instance $caller))
+        )"#
+    ))
+    .context("encode nested permission-denial component fixture")?;
+    let engine = wash_runtime::wasmtime::Engine::default();
+    let component = Component::new(&engine, bytes)?;
+    let mut linker = Linker::<()>::new(&engine);
+    linker
+        .instance(operation)?
+        .func_wrap_async::<(), (), _>("run", move |_store, ()| {
+            Box::new(async move {
+                Err(wash_runtime::wasmtime::Error::new(PermissionDenied::new(
+                    operation,
+                )))
+            })
+        })?;
+    let mut store = wash_runtime::wasmtime::Store::new(&engine, ());
+    let instance = linker.instantiate_async(&mut store, &component).await?;
+    let handler = instance
+        .get_export_index(&mut store, None, CALLER_OPERATION)
+        .context("fixture must export the caller operation")?;
+    let run = instance
+        .get_export_index(&mut store, Some(&handler), "run")
+        .context("fixture caller operation must export run")?;
+    let run: wash_runtime::wasmtime::component::TypedFunc<(), ()> =
+        instance.get_typed_func(&mut store, &run)?;
+    let error = run
+        .call_async(&mut store, ())
+        .await
+        .expect_err("the real nested host import must deny the operation");
+    let error: anyhow::Error = error.into();
+    Ok(error
+        .context("operation handler.run trapped")
+        .context("invoke wiring node"))
+}
+
+#[cfg(test)]
 mod tests {
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
@@ -1691,6 +2124,7 @@ mod tests {
     };
     use tracing_subscriber::layer::SubscriberExt as _;
     use wamn_catalog::{
+        AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope,
         EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
         ServingRegistration, ServingRegistrationInput, ServingRelease,
     };
@@ -1827,6 +2261,91 @@ mod tests {
         let denial = authorize_registered_operation(None, Some(operation))
             .expect_err("a registered invocation without an originating caller is denied");
         assert_eq!(denial.operation(), operation);
+    }
+
+    #[tokio::test]
+    async fn nested_permission_denial_survives_the_real_component_boundary() {
+        let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
+        let error = real_nested_permission_denial(operation)
+            .await
+            .expect("the component fixture must execute");
+
+        let denial = error
+            .downcast_ref::<PermissionDenied>()
+            .expect("the router-delivery boundary must see the original denial type");
+        assert_eq!(denial.operation(), operation);
+    }
+
+    #[test]
+    fn nested_target_resolution_requires_the_exact_released_coordinate() {
+        let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let dependency = ComponentOperationDependency {
+            package: "wamn_receiving".to_owned(),
+            version: "1.0.0".to_owned(),
+            digest: digest.to_owned(),
+            operation: operation.to_owned(),
+        };
+        let target = AdmittedComponent {
+            scope: ComponentPackageScope {
+                tenant_id: "tenant-a".to_owned(),
+                package_id: "wamn_receiving".to_owned(),
+                package_version: "1.0.0".to_owned(),
+            },
+            component: "receiving".to_owned(),
+            interface_version: "0.1.0".to_owned(),
+            operations: BTreeMap::from([(
+                operation.to_owned(),
+                AdmittedComponentOperation {
+                    registered_operation: Some(operation.to_owned()),
+                    dependencies: Vec::new(),
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
+            component_digest: digest.to_owned(),
+            imports: Vec::new(),
+            imports_fingerprint:
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+            effects: Vec::<AdmittedComponentEffect>::new(),
+        };
+
+        assert!(
+            resolve_nested_target("tenant-a", std::slice::from_ref(&target), &dependency).is_some()
+        );
+        let mut mismatched = dependency.clone();
+        mismatched.digest =
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned();
+        assert!(
+            resolve_nested_target("tenant-a", std::slice::from_ref(&target), &mismatched).is_none(),
+            "a package/version match may not substitute another digest"
+        );
+
+        let declaration = AdmittedComponentOperation {
+            registered_operation: None,
+            dependencies: vec![dependency],
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+        };
+        let mut caller = target;
+        caller.operations = BTreeMap::from([
+            (
+                "client-acme-receiving:one/run@3.0.0".to_owned(),
+                declaration.clone(),
+            ),
+            (
+                "client-acme-receiving:two/run@3.0.0".to_owned(),
+                declaration,
+            ),
+        ]);
+        let links = nested_operation_links(&caller).expect("matching pins may share one import");
+        let (_, owners) = links
+            .get(operation)
+            .expect("the exact dependency import is present once");
+        assert_eq!(links.len(), 1);
+        assert_eq!(owners.len(), 2);
     }
 
     #[test]

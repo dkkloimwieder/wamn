@@ -842,6 +842,24 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn nested_permission_denial_uses_the_direct_call_wire_contract() {
+        let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
+        let error = crate::router_driver::real_nested_permission_denial(operation)
+            .await
+            .expect("the component fixture must execute");
+        let denial = error
+            .downcast_ref::<PermissionDenied>()
+            .expect("context must retain the nested permission denial")
+            .clone();
+
+        assert!(matches!(
+            lower_permission_denied(denial),
+            DeliveryError::PermissionDenied(PermissionDenial { operation: denied })
+                if denied == operation
+        ));
+    }
+
     #[test]
     fn host_mints_current_causation_and_only_inherits_parent_root_depth() {
         assert_eq!(
