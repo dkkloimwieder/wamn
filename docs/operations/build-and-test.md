@@ -945,15 +945,29 @@ docker rm -f wamn-route-auth-pg # BY EXPLICIT NAME. Never prune.
 It owns the fresh server: control/project databases and cluster-wide roles are
 created and reset. The frozen cluster is never a valid target.
 
-### `[RECEIVING-ROUTE-JOURNEY]` — published Receiving routes and traces
+### `[RECEIVING-ROUTE-JOURNEY]` — published base + overlay routes and traces
 
-This gate builds the virtualized Receiving package component and shipped
-`flow-http`, then drives production apply, push, gate, author, mint, attest,
-load, authentication, routing, and PostgreSQL paths. Its PostgreSQL 18 server
-and authenticated plain-HTTP registry are disposable and loopback-only. The
-Docker auth document must carry explicit non-empty `username` and `password`
-fields for the exact registry authority; credentials exist only in the scratch
-directory and are not printed.
+This gate builds the virtualized Receiving base and Acme overlay components
+plus shipped `flow-http`, then drives production apply, installed-set ACL
+reconciliation, push, twelve wiring gates/authorships, one exact two-package
+release mint/attestation/load, eleven PAT routes, and PostgreSQL effects. It
+asserts the overlay registration's exact owner/source/entity/operation set and
+proves the overlay `record_receipt` span invokes its pinned base digest with the
+same originating principal. The deferred CDC/materializer leg is not part of
+this route journey. Its PostgreSQL 18 server and authenticated plain-HTTP
+registry are disposable and loopback-only. The Docker auth document must carry
+explicit non-empty `username` and `password` fields for the exact registry
+authority; credentials exist only in the scratch directory and are not
+printed.
+
+The focused real-boundary guard keeps nested authorization on the same refusal
+grammar as a direct invocation:
+
+```bash
+cargo test -p wamn-execution-host --lib --locked --offline \
+  router_driver::tests::nested_permission_denial_survives_the_real_component_boundary \
+  -- --exact
+```
 
 ```bash
 set -euo pipefail
@@ -992,6 +1006,7 @@ CARGO_TARGET_DIR="$RECEIVING_ROUTE_SCRATCH/target" \
 RECEIVING_ROUTE_COMPONENTS="$RECEIVING_ROUTE_SCRATCH/target/virtualized/std-empty-environment"
 RECEIVING_ROUTE_FLOW_HTTP="$RECEIVING_ROUTE_SCRATCH/target/wasm32-wasip2/debug/http_route.wasm"
 test -s "$RECEIVING_ROUTE_COMPONENTS/receiving.wasm"
+test -s "$RECEIVING_ROUTE_COMPONENTS/client_acme_receiving.wasm"
 test -s "$RECEIVING_ROUTE_FLOW_HTTP"
 
 printf '%s\n' "$RECEIVING_ROUTE_PASSWORD" \
@@ -1041,7 +1056,7 @@ WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$RECEIVING_ROUTE_SECRET_OUTPUT_DIR
 WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT" \
 WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE="$RECEIVING_ROUTE_SECRET_NAMESPACE" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
-  route_authentication_live::production_receiving_release_serves_all_six_pat_routes_with_correlated_traces \
+  route_authentication_live::production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces \
   -- --ignored --exact --nocapture --test-threads=1
 
 receiving_route_cleanup

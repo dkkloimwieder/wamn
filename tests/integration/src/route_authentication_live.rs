@@ -21,7 +21,10 @@ use reqwest::Url;
 use serde_json::Value;
 use tokio_postgres::{Client, NoTls};
 use tracing_subscriber::layer::SubscriberExt as _;
-use wamn_catalog::{PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION};
+use wamn_catalog::{
+    AttachmentKind, ComponentOperationDependency, PackageCoordinate,
+    SERVING_MANIFEST_FORMAT_VERSION,
+};
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader,
     WorkloadRoleFamily, parse_system_reader_url, sql as provision_sql,
@@ -87,13 +90,16 @@ const ROUTE_CALLER_ROLE: &str = "route-caller";
 const ATTACHMENT_ID: &str = "receiving-purchase-order-get";
 const OPERATION: &str = "wamn-receiving:purchase-order/get@1.0.0";
 const RESIDUE: &str = "wamn-receiving:obsolete/operation@1.0.0";
-const PACKAGE_ID: &str = "wamn_receiving";
-const PACKAGE_VERSION: &str = "1.0.0";
-const COMPONENT: &str = "receiving";
+const BASE_PACKAGE_ID: &str = "wamn_receiving";
+const BASE_PACKAGE_VERSION: &str = "1.0.0";
+const BASE_COMPONENT: &str = "receiving";
+const OVERLAY_PACKAGE_ID: &str = "client_acme_receiving";
+const OVERLAY_PACKAGE_VERSION: &str = "3.0.0";
+const OVERLAY_COMPONENT: &str = "client_acme_receiving";
 const RELEASE_ID: u32 = 1;
 const RAW_BODY_LIMIT: usize = 1024 * 1024;
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
-const OPERATIONS: [(&str, &str); 6] = [
+const BASE_OPERATIONS: [(&str, &str); 6] = [
     (
         "purchase_order_get",
         "wamn-receiving:purchase-order/get@1.0.0",
@@ -112,6 +118,149 @@ const OPERATIONS: [(&str, &str); 6] = [
         "receiving_record_receipt",
         "wamn-receiving:receiving/record-receipt@1.0.0",
     ),
+];
+const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
+    (
+        "purchase_order_get",
+        "client-acme-receiving:purchase-order/get@3.0.0",
+    ),
+    (
+        "purchase_order_update",
+        "client-acme-receiving:purchase-order/update@3.0.0",
+    ),
+    (
+        "receiving_record_receipt",
+        "client-acme-receiving:receiving/record-receipt@3.0.0",
+    ),
+    (
+        "quality_load_purchase_order_detail",
+        "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+    ),
+    (
+        "quality_approve_inspection",
+        "client-acme-receiving:quality/approve-inspection@3.0.0",
+    ),
+    (
+        "quality_create_inspection",
+        "client-acme-receiving:quality/create-inspection@3.0.0",
+    ),
+];
+const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+const OVERLAY_RECORD_RECEIPT: &str = "client-acme-receiving:receiving/record-receipt@3.0.0";
+const PREEXISTING_QUALITY_RECEIPT_ID: &str = "00000000-0000-0000-0000-000000000603";
+
+#[derive(Clone, Copy)]
+struct JourneyAttachment {
+    id: &'static str,
+    package_id: &'static str,
+    wiring_id: &'static str,
+    path: &'static str,
+    operation: &'static str,
+}
+
+// Deployment-owned route spellings live in this one publication table rather
+// than leaking into operation or component identity.
+const JOURNEY_ATTACHMENTS: [JourneyAttachment; 11] = [
+    JourneyAttachment {
+        id: "purchase-order-get-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "purchase_order_get",
+        path: "/purchase_order/get",
+        operation: "wamn-receiving:purchase-order/get@1.0.0",
+    },
+    JourneyAttachment {
+        id: "purchase-order-query-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "purchase_order_query",
+        path: "/purchase_order/query",
+        operation: "wamn-receiving:purchase-order/query@1.0.0",
+    },
+    JourneyAttachment {
+        id: "purchase-order-update-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "purchase_order_update",
+        path: "/purchase_order/update",
+        operation: "wamn-receiving:purchase-order/update@1.0.0",
+    },
+    JourneyAttachment {
+        id: "receipt-get-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "receipt_get",
+        path: "/receipt/get",
+        operation: "wamn-receiving:receipt/get@1.0.0",
+    },
+    JourneyAttachment {
+        id: "receipt-query-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "receipt_query",
+        path: "/receipt/query",
+        operation: "wamn-receiving:receipt/query@1.0.0",
+    },
+    JourneyAttachment {
+        id: "receiving-record-receipt-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "receiving_record_receipt",
+        path: "/receiving/record_receipt",
+        operation: BASE_RECORD_RECEIPT,
+    },
+    JourneyAttachment {
+        id: "client-acme-receiving-purchase-order-get-http",
+        package_id: OVERLAY_PACKAGE_ID,
+        wiring_id: "purchase_order_get",
+        path: "/acme/purchase_order/get",
+        operation: "client-acme-receiving:purchase-order/get@3.0.0",
+    },
+    JourneyAttachment {
+        id: "client-acme-receiving-purchase-order-update-http",
+        package_id: OVERLAY_PACKAGE_ID,
+        wiring_id: "purchase_order_update",
+        path: "/acme/purchase_order/update",
+        operation: "client-acme-receiving:purchase-order/update@3.0.0",
+    },
+    JourneyAttachment {
+        id: "client-acme-receiving-receiving-record-receipt-http",
+        package_id: OVERLAY_PACKAGE_ID,
+        wiring_id: "receiving_record_receipt",
+        path: "/acme/receiving/record_receipt",
+        operation: OVERLAY_RECORD_RECEIPT,
+    },
+    JourneyAttachment {
+        id: "client-acme-receiving-quality-load-purchase-order-detail-http",
+        package_id: OVERLAY_PACKAGE_ID,
+        wiring_id: "quality_load_purchase_order_detail",
+        path: "/acme/quality/load_purchase_order_detail",
+        operation: "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+    },
+    JourneyAttachment {
+        id: "client-acme-receiving-quality-approve-inspection-http",
+        package_id: OVERLAY_PACKAGE_ID,
+        wiring_id: "quality_approve_inspection",
+        path: "/acme/quality/approve_inspection",
+        operation: "client-acme-receiving:quality/approve-inspection@3.0.0",
+    },
+];
+
+#[derive(Clone, Copy)]
+struct JourneyPackage {
+    id: &'static str,
+    version: &'static str,
+    component: &'static str,
+    operations: &'static [(&'static str, &'static str)],
+}
+
+const JOURNEY_PACKAGES: [JourneyPackage; 2] = [
+    JourneyPackage {
+        id: BASE_PACKAGE_ID,
+        version: BASE_PACKAGE_VERSION,
+        component: BASE_COMPONENT,
+        operations: &BASE_OPERATIONS,
+    },
+    JourneyPackage {
+        id: OVERLAY_PACKAGE_ID,
+        version: OVERLAY_PACKAGE_VERSION,
+        component: OVERLAY_COMPONENT,
+        operations: &OVERLAY_OPERATIONS,
+    },
 ];
 
 #[derive(Debug, PartialEq, Eq)]
@@ -411,6 +560,18 @@ fn package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving")
 }
 
+fn overlay_package_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/client_acme_receiving")
+}
+
+fn journey_package_root(package: JourneyPackage) -> PathBuf {
+    if package.id == BASE_PACKAGE_ID {
+        package_root()
+    } else {
+        overlay_package_root()
+    }
+}
+
 async fn permission_write_identity(project: &Client) -> anyhow::Result<Vec<String>> {
     Ok(project
         .query(
@@ -521,7 +682,7 @@ fn serving_weld() -> anyhow::Result<Arc<ReleaseManifestWeld>> {
         },
         "components": [{
             "package-id": "wamn_receiving",
-            "component": COMPONENT,
+            "component": BASE_COMPONENT,
             "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)),
             "operations": {
@@ -987,14 +1148,24 @@ fn required_journey_path(key: &str) -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(required_journey(key)?))
 }
 
-fn publication_root() -> PathBuf {
-    package_root().join("publication")
+fn journey_publication_root(package: JourneyPackage) -> PathBuf {
+    journey_package_root(package).join("publication")
 }
 
 fn journey_trace(index: u64) -> (String, String) {
     let trace_id = format!("{index:032x}");
     let span_id = format!("{index:016x}");
     (trace_id.clone(), format!("00-{trace_id}-{span_id}-01"))
+}
+
+fn overlay_route_path(wiring_id: &str) -> &'static str {
+    JOURNEY_ATTACHMENTS
+        .iter()
+        .find_map(|attachment| {
+            (attachment.package_id == OVERLAY_PACKAGE_ID && attachment.wiring_id == wiring_id)
+                .then_some(attachment.path)
+        })
+        .expect("every public overlay wiring has one deployment route")
 }
 
 fn span_attribute(span: &SpanData, key: &str) -> Option<String> {
@@ -1023,20 +1194,24 @@ fn span_descends_from(spans: &[SpanData], span: &SpanData, ancestor: &SpanData) 
     false
 }
 
-fn assert_route_trace(spans: &[SpanData], trace_id: &str, wiring_id: &str, component_digest: &str) {
-    let components = spans
+fn trace_component_invocations<'a>(spans: &'a [SpanData], trace_id: &str) -> Vec<&'a SpanData> {
+    spans
         .iter()
         .filter(|span| {
             span.name == "wamn.component.invoke"
                 && span.span_context.trace_id().to_string() == trace_id
         })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        components.len(),
-        1,
-        "trace {trace_id} must contain one released component invocation"
-    );
-    let component = components[0];
+        .collect()
+}
+
+fn assert_invocation_identity(
+    component: &SpanData,
+    trace_id: &str,
+    wiring_id: &str,
+    operation: &str,
+    component_digest: &str,
+    caller_principal_id: &str,
+) {
     assert_eq!(
         span_attribute(component, "wamn.wiring_id").as_deref(),
         Some(wiring_id),
@@ -1053,37 +1228,155 @@ fn assert_route_trace(spans: &[SpanData], trace_id: &str, wiring_id: &str, compo
         "trace {trace_id} invoked a different released component"
     );
     assert_eq!(
-        span_attribute(component, "wamn.node_id").as_deref(),
-        Some("operation"),
-        "trace {trace_id} invoked a different wiring node"
+        span_attribute(component, "wamn.operation").as_deref(),
+        Some(operation),
+        "trace {trace_id} invoked a different operation"
     );
+    assert_eq!(
+        span_attribute(component, "wamn.caller_principal_id").as_deref(),
+        Some(caller_principal_id),
+        "trace {trace_id} did not preserve the originating caller"
+    );
+}
+
+fn assert_postgres_descendants<'a>(
+    spans: &'a [SpanData],
+    trace_id: &str,
+    ancestor: &SpanData,
+) -> Vec<&'a SpanData> {
     let postgres = spans
         .iter()
         .filter(|span| {
-            span.name == "wamn.postgres" && span.span_context.trace_id().to_string() == trace_id
+            span.name == "wamn.postgres"
+                && span.span_context.trace_id().to_string() == trace_id
+                && span_descends_from(spans, span, ancestor)
         })
         .collect::<Vec<_>>();
     assert!(
         !postgres.is_empty(),
-        "trace {trace_id} contains no wamn.postgres effect"
+        "trace {trace_id} contains no PostgreSQL effect below the expected component invocation"
     );
-    let topology = spans
-        .iter()
-        .filter(|span| span.span_context.trace_id().to_string() == trace_id)
-        .map(|span| {
-            format!(
-                "{}:{}<-{}",
-                span.name,
-                span.span_context.span_id(),
-                span.parent_span_id
-            )
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        postgres
+    postgres
+}
+
+fn assert_direct_route_trace(
+    spans: &[SpanData],
+    trace_id: &str,
+    wiring_id: &str,
+    operation: &str,
+    component_digest: &str,
+    caller_principal_id: &str,
+) {
+    let components = trace_component_invocations(spans, trace_id);
+    assert_eq!(
+        components.len(),
+        1,
+        "trace {trace_id} must contain one released component invocation"
+    );
+    let component = components[0];
+    assert_invocation_identity(
+        component,
+        trace_id,
+        wiring_id,
+        operation,
+        component_digest,
+        caller_principal_id,
+    );
+    assert_eq!(
+        span_attribute(component, "wamn.node_id").as_deref(),
+        Some("operation"),
+        "trace {trace_id} invoked a different wiring node"
+    );
+    let postgres = assert_postgres_descendants(spans, trace_id, component);
+    assert_eq!(
+        postgres.len(),
+        spans
             .iter()
-            .all(|span| span_descends_from(spans, span, component)),
-        "trace {trace_id} contains a PostgreSQL effect outside its component invocation: {topology:?}"
+            .filter(|span| {
+                span.name == "wamn.postgres" && span.span_context.trace_id().to_string() == trace_id
+            })
+            .count(),
+        "trace {trace_id} contains a PostgreSQL effect outside its component invocation"
+    );
+}
+
+fn assert_nested_record_receipt_trace(
+    spans: &[SpanData],
+    trace_id: &str,
+    overlay_digest: &str,
+    base_digest: &str,
+    caller_principal_id: &str,
+) {
+    let components = trace_component_invocations(spans, trace_id);
+    assert_eq!(
+        components.len(),
+        2,
+        "trace {trace_id} must contain overlay and pinned-base invocations"
+    );
+    let overlay = components
+        .iter()
+        .find(|span| {
+            span_attribute(span, "wamn.operation").as_deref() == Some(OVERLAY_RECORD_RECEIPT)
+        })
+        .copied()
+        .expect("overlay record_receipt invocation is present");
+    let base = components
+        .iter()
+        .find(|span| span_attribute(span, "wamn.operation").as_deref() == Some(BASE_RECORD_RECEIPT))
+        .copied()
+        .expect("pinned base record_receipt invocation is present");
+    assert_invocation_identity(
+        overlay,
+        trace_id,
+        "receiving_record_receipt",
+        OVERLAY_RECORD_RECEIPT,
+        overlay_digest,
+        caller_principal_id,
+    );
+    assert_invocation_identity(
+        base,
+        trace_id,
+        "receiving_record_receipt",
+        BASE_RECORD_RECEIPT,
+        base_digest,
+        caller_principal_id,
+    );
+    assert!(
+        span_descends_from(spans, base, overlay),
+        "trace {trace_id} did not parent the pinned-base invocation under the overlay invocation"
+    );
+    assert_postgres_descendants(spans, trace_id, base);
+    assert_postgres_descendants(spans, trace_id, overlay);
+}
+
+fn assert_nested_permission_denial_trace(
+    spans: &[SpanData],
+    trace_id: &str,
+    overlay_digest: &str,
+    base_digest: &str,
+    caller_principal_id: &str,
+) {
+    let components = trace_component_invocations(spans, trace_id);
+    assert_eq!(
+        components.len(),
+        1,
+        "trace {trace_id} reached a component after the nested permission refusal"
+    );
+    let overlay = components[0];
+    assert_invocation_identity(
+        overlay,
+        trace_id,
+        "receiving_record_receipt",
+        OVERLAY_RECORD_RECEIPT,
+        overlay_digest,
+        caller_principal_id,
+    );
+    assert!(
+        components.iter().all(|span| {
+            span_attribute(span, "wamn.operation").as_deref() != Some(BASE_RECORD_RECEIPT)
+                && span_attribute(span, "wamn.component_digest").as_deref() != Some(base_digest)
+        }),
+        "trace {trace_id} invoked the denied pinned-base operation"
     );
 }
 
@@ -1119,13 +1412,80 @@ async fn install_journey_project(project: &Client, project_url: &str) -> anyhow:
         .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))
         .await
         .context("install the application authorization schema")?;
-    apply_package::run(ApplyPackageArgs {
-        package: package_root(),
-        database_url: project_url.to_owned(),
-        tenant: TENANT.to_owned(),
-    })
+    for package in JOURNEY_PACKAGES {
+        apply_package::run(ApplyPackageArgs {
+            package: journey_package_root(package),
+            database_url: project_url.to_owned(),
+            tenant: TENANT.to_owned(),
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "apply {}@{} through the exact-byte runner",
+                package.id, package.version
+            )
+        })?;
+    }
+    Ok(())
+}
+
+async fn reconcile_journey_data_access(project_url: &str) -> anyhow::Result<()> {
+    let packages = JOURNEY_PACKAGES
+        .iter()
+        .map(|package| journey_package_root(*package))
+        .collect::<Vec<_>>();
+    let first = reconcile_package_data_access::reconcile_package_data_access(
+        ReconcilePackageDataAccessArgs {
+            packages: packages.clone(),
+            database_url: project_url.to_owned(),
+            tenant: TENANT.to_owned(),
+        },
+    )
     .await
-    .context("apply the Receiving package through the exact-byte runner")?;
+    .context("converge the fresh installed-set data-access union")?;
+    anyhow::ensure!(
+        !first.is_noop(),
+        "fresh installed-set data-access reconciliation changed no ACL"
+    );
+    let again = reconcile_package_data_access::reconcile_package_data_access(
+        ReconcilePackageDataAccessArgs {
+            packages,
+            database_url: project_url.to_owned(),
+            tenant: TENANT.to_owned(),
+        },
+    )
+    .await
+    .context("replay the installed-set data-access union")?;
+    anyhow::ensure!(
+        again.is_noop(),
+        "installed-set data-access reconciliation did not converge"
+    );
+    Ok(())
+}
+
+async fn verify_journey_operation_grants(project: &Client) -> anyhow::Result<()> {
+    let observed = project
+        .query(
+            "SELECT permission FROM app_system.permissions \
+             WHERE tenant_id = $1 AND role_name = $2 \
+             ORDER BY permission COLLATE \"C\"",
+            &[&TENANT, &ROUTE_CALLER_ROLE],
+        )
+        .await
+        .context("read the installed two-package operation-grant union")?
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<BTreeSet<_>>();
+    let expected = BASE_OPERATIONS
+        .iter()
+        .chain(OVERLAY_OPERATIONS.iter())
+        .map(|(_, token)| (*token).to_owned())
+        .filter(|token| token != "client-acme-receiving:quality/create-inspection@3.0.0")
+        .collect::<BTreeSet<_>>();
+    anyhow::ensure!(
+        observed == expected,
+        "installed packages projected the wrong route-caller grant union: {observed:?}"
+    );
     Ok(())
 }
 
@@ -1226,34 +1586,50 @@ async fn prepare_journey_credentials(
     })
 }
 
-fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
+struct JourneyComponentDeclaration {
+    package: JourneyPackage,
+    path: PathBuf,
+}
+
+fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyComponentDeclaration>> {
     let output = root.join("component-declarations");
     std::fs::create_dir_all(&output).context("create rendered declaration directory")?;
-    let source = publication_root()
-        .join("components")
-        .join("receiving.json.in");
-    let mut declaration: Value = serde_json::from_slice(
-        &std::fs::read(&source).with_context(|| format!("read {}", source.display()))?,
-    )
-    .with_context(|| format!("parse {}", source.display()))?;
-    declaration["scope"]["tenant-id"] = Value::String(TENANT.to_owned());
-    let destination = output.join("receiving.json");
-    std::fs::write(&destination, serde_json::to_vec(&declaration)?)
-        .with_context(|| format!("write {}", destination.display()))?;
-    Ok(vec![(COMPONENT.to_owned(), destination)])
+    JOURNEY_PACKAGES
+        .into_iter()
+        .map(|package| {
+            let source = journey_publication_root(package)
+                .join("components")
+                .join(format!("{}.json.in", package.component));
+            let mut declaration: Value = serde_json::from_slice(
+                &std::fs::read(&source).with_context(|| format!("read {}", source.display()))?,
+            )
+            .with_context(|| format!("parse {}", source.display()))?;
+            declaration["scope"]["tenant-id"] = Value::String(TENANT.to_owned());
+            let destination = output.join(format!("{}.json", package.component));
+            std::fs::write(&destination, serde_json::to_vec(&declaration)?)
+                .with_context(|| format!("write {}", destination.display()))?;
+            Ok(JourneyComponentDeclaration {
+                package,
+                path: destination,
+            })
+        })
+        .collect()
 }
 
 async fn push_journey_components(
     inputs: &JourneyInputs,
     project_url: &str,
     system_url: &str,
-    declarations: &[(String, PathBuf)],
+    declarations: &[JourneyComponentDeclaration],
 ) -> anyhow::Result<()> {
-    for (component, declaration) in declarations {
+    for declaration in declarations {
+        let package = declaration.package;
         push_component::run(PushComponentArgs {
-            package: package_root(),
-            component_bytes: inputs.component_directory.join(format!("{component}.wasm")),
-            declaration: declaration.clone(),
+            package: journey_package_root(package),
+            component_bytes: inputs
+                .component_directory
+                .join(format!("{}.wasm", package.component)),
+            declaration: declaration.path.clone(),
             artifact_base: inputs.component_artifact_base.clone(),
             registry_auth_file: inputs.registry_auth_file.clone(),
             insecure_registry: true,
@@ -1262,68 +1638,98 @@ async fn push_journey_components(
             control_database_url: system_url.to_owned(),
         })
         .await
-        .with_context(|| format!("publish production component {component}"))?;
+        .with_context(|| {
+            format!(
+                "publish production component {}@{}::{}",
+                package.id, package.version, package.component
+            )
+        })?;
     }
     Ok(())
 }
 
-async fn verify_journey_components_are_effectful(project: &Client) -> anyhow::Result<()> {
-    let rows = project
-        .query(
-            "SELECT component, operations, effects FROM catalog.component_library \
-             WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
-             ORDER BY component COLLATE \"C\"",
-            &[&TENANT, &PACKAGE_ID, &PACKAGE_VERSION],
-        )
-        .await
-        .context("read the admitted Receiving effect projection")?;
-    anyhow::ensure!(
-        rows.len() == 1,
-        "component publication projected {} Receiving rows instead of one",
-        rows.len()
-    );
-    let row = &rows[0];
-    let component: String = row.get(0);
-    anyhow::ensure!(
-        component == COMPONENT,
-        "component publication projected {component} instead of {COMPONENT}"
-    );
-    let operations: Value = row.get(1);
-    let operation_facts = operations
-        .as_object()
-        .context("Receiving operations fact is not an object")?;
-    let expected = OPERATIONS
-        .iter()
-        .map(|(_, token)| *token)
-        .collect::<BTreeSet<_>>();
-    let observed = operation_facts
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    anyhow::ensure!(
-        observed == expected,
-        "Receiving component projected the wrong operation set: {observed:?}"
-    );
-    for token in expected {
-        let fact = operation_facts
-            .get(token)
-            .with_context(|| format!("Receiving operation fact missing for {token}"))?;
+async fn verify_journey_components_are_effectful(
+    project: &Client,
+) -> anyhow::Result<HashMap<String, String>> {
+    let mut digests = HashMap::new();
+    for package in JOURNEY_PACKAGES {
+        let rows = project
+            .query(
+                "SELECT component, operations, effects, component_digest \
+                 FROM catalog.component_library \
+                 WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+                 ORDER BY component COLLATE \"C\"",
+                &[&TENANT, &package.id, &package.version],
+            )
+            .await
+            .with_context(|| format!("read the admitted {} effect projection", package.id))?;
         anyhow::ensure!(
-            fact["registered-operation"].as_str() == Some(token),
-            "Receiving operation {token} projected a different authorization identity"
+            rows.len() == 1,
+            "component publication projected {} {} rows instead of one",
+            rows.len(),
+            package.id
+        );
+        let row = &rows[0];
+        let component: String = row.get(0);
+        anyhow::ensure!(
+            component == package.component,
+            "component publication projected {component} instead of {}",
+            package.component
+        );
+        let operations: Value = row.get(1);
+        let operation_facts = operations
+            .as_object()
+            .with_context(|| format!("{} operations fact is not an object", package.id))?;
+        let expected = package
+            .operations
+            .iter()
+            .map(|(_, token)| *token)
+            .collect::<BTreeSet<_>>();
+        let observed = operation_facts
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        anyhow::ensure!(
+            observed == expected,
+            "{} component projected the wrong operation set: {observed:?}",
+            package.id
+        );
+        for token in expected {
+            let fact = operation_facts
+                .get(token)
+                .with_context(|| format!("{} operation fact missing for {token}", package.id))?;
+            let registered = fact["registered-operation"].as_str();
+            if token == "client-acme-receiving:quality/create-inspection@3.0.0" {
+                anyhow::ensure!(
+                    registered.is_none(),
+                    "private operation {token} fabricated an authorization identity"
+                );
+            } else {
+                anyhow::ensure!(
+                    registered == Some(token),
+                    "operation {token} projected a different authorization identity"
+                );
+            }
+        }
+        let effects: Value = row.get(2);
+        anyhow::ensure!(
+            effects
+                .as_array()
+                .is_some_and(|effects| !effects.is_empty()),
+            "{} component is not effectful: {effects}",
+            package.id
+        );
+        let digest: String = row.get(3);
+        anyhow::ensure!(
+            digests.insert(package.id.to_owned(), digest).is_none(),
+            "{} projected more than one component digest",
+            package.id
         );
     }
-    let effects: Value = row.get(2);
-    anyhow::ensure!(
-        effects
-            .as_array()
-            .is_some_and(|effects| !effects.is_empty()),
-        "Receiving component is not effectful: {effects}"
-    );
-    Ok(())
+    Ok(digests)
 }
 
-fn gate_document(command_id: &str, document: Value) -> Value {
+fn gate_document(command_id: &str, package: JourneyPackage, document: Value) -> Value {
     serde_json::json!({
         "document": "request",
         "body": {
@@ -1333,8 +1739,8 @@ fn gate_document(command_id: &str, document: Value) -> Value {
                 "kind": "gate",
                 "input": {
                     "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
-                    "package-id": PACKAGE_ID,
-                    "package-version": PACKAGE_VERSION,
+                    "package-id": package.id,
+                    "package-version": package.version,
                     "document": document,
                 },
             },
@@ -1344,37 +1750,57 @@ fn gate_document(command_id: &str, document: Value) -> Value {
 
 async fn gate_journey_wirings(bind: &str, bearer: &str) -> anyhow::Result<Vec<String>> {
     let client = reqwest::Client::new();
-    let mut reports = Vec::with_capacity(OPERATIONS.len());
-    for (wiring, _) in OPERATIONS {
-        let path = publication_root()
-            .join("wirings")
-            .join(format!("{wiring}.json"));
-        let document: Value = serde_json::from_slice(
-            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .with_context(|| format!("parse {}", path.display()))?;
-        let response = client
-            .post(format!("http://{bind}/authoring"))
-            .bearer_auth(bearer)
-            .json(&gate_document(&format!("gate-{wiring}"), document))
-            .send()
-            .await
-            .with_context(|| format!("submit {wiring} to the production Gate"))?;
-        let status = response.status();
-        let body: Value = response
-            .json()
-            .await
-            .with_context(|| format!("decode {wiring} Gate response"))?;
-        anyhow::ensure!(
-            status == reqwest::StatusCode::OK && body["body"]["outcome"]["status"] == "completed",
-            "production Gate refused {wiring}: status={status} body={body}"
-        );
-        reports.push(
-            body["body"]["outcome"]["value"]["result"]["report-id"]
-                .as_str()
-                .with_context(|| format!("production Gate returned no report id for {wiring}"))?
-                .to_owned(),
-        );
+    let mut reports = Vec::with_capacity(
+        JOURNEY_PACKAGES
+            .iter()
+            .map(|package| package.operations.len())
+            .sum(),
+    );
+    for package in JOURNEY_PACKAGES {
+        for (wiring, _) in package.operations {
+            let path = journey_publication_root(package)
+                .join("wirings")
+                .join(format!("{wiring}.json"));
+            let document: Value = serde_json::from_slice(
+                &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+            )
+            .with_context(|| format!("parse {}", path.display()))?;
+            let response = client
+                .post(format!("http://{bind}/authoring"))
+                .bearer_auth(bearer)
+                .json(&gate_document(
+                    &format!("gate-{}-{wiring}", package.id),
+                    package,
+                    document,
+                ))
+                .send()
+                .await
+                .with_context(|| {
+                    format!("submit {}::{wiring} to the production Gate", package.id)
+                })?;
+            let status = response.status();
+            let body: Value = response
+                .json()
+                .await
+                .with_context(|| format!("decode {}::{wiring} Gate response", package.id))?;
+            anyhow::ensure!(
+                status == reqwest::StatusCode::OK
+                    && body["body"]["outcome"]["status"] == "completed",
+                "production Gate refused {}::{wiring}: status={status} body={body}",
+                package.id
+            );
+            reports.push(
+                body["body"]["outcome"]["value"]["result"]["report-id"]
+                    .as_str()
+                    .with_context(|| {
+                        format!(
+                            "production Gate returned no report id for {}::{wiring}",
+                            package.id
+                        )
+                    })?
+                    .to_owned(),
+            );
+        }
     }
     Ok(reports)
 }
@@ -1383,11 +1809,14 @@ async fn verify_zero_case_gate_reports(
     control: &Client,
     report_ids: &[String],
 ) -> anyhow::Result<()> {
+    let expected_count = JOURNEY_PACKAGES
+        .iter()
+        .map(|package| package.operations.len())
+        .sum::<usize>();
     anyhow::ensure!(
-        report_ids.len() == OPERATIONS.len(),
-        "production Gate returned {} reports for {} wirings",
-        report_ids.len(),
-        OPERATIONS.len()
+        report_ids.len() == expected_count,
+        "production Gate returned {} reports for {expected_count} wirings",
+        report_ids.len()
     );
     for report_id in report_ids {
         let row = control
@@ -1409,19 +1838,21 @@ async fn verify_zero_case_gate_reports(
 }
 
 async fn author_journey_wirings(project_url: &str, system_url: &str) -> anyhow::Result<()> {
-    for (wiring, _) in OPERATIONS {
-        author_wiring::run(AuthorWiringArgs {
-            database_url: project_url.to_owned(),
-            control_database_url: system_url.to_owned(),
-            tenant: TENANT.to_owned(),
-            package_id: PACKAGE_ID.to_owned(),
-            package_version: PACKAGE_VERSION.to_owned(),
-            wiring_document: publication_root()
-                .join("wirings")
-                .join(format!("{wiring}.json")),
-        })
-        .await
-        .with_context(|| format!("author gated wiring {wiring}"))?;
+    for package in JOURNEY_PACKAGES {
+        for (wiring, _) in package.operations {
+            author_wiring::run(AuthorWiringArgs {
+                database_url: project_url.to_owned(),
+                control_database_url: system_url.to_owned(),
+                tenant: TENANT.to_owned(),
+                package_id: package.id.to_owned(),
+                package_version: package.version.to_owned(),
+                wiring_document: journey_publication_root(package)
+                    .join("wirings")
+                    .join(format!("{wiring}.json")),
+            })
+            .await
+            .with_context(|| format!("author gated wiring {}::{wiring}", package.id))?;
+        }
     }
     Ok(())
 }
@@ -1434,12 +1865,14 @@ async fn publish_journey_release(
     project: &Client,
     control: &Client,
 ) -> anyhow::Result<(String, Arc<ReleaseManifestWeld>)> {
-    let wirings = OPERATIONS
+    let wirings = JOURNEY_PACKAGES
         .iter()
-        .map(|(wiring, _)| {
-            format!("{PACKAGE_ID}@{PACKAGE_VERSION}::{wiring}=1")
-                .parse::<ReleaseWiringTarget>()
-                .map_err(anyhow::Error::msg)
+        .flat_map(|package| {
+            package.operations.iter().map(move |(wiring, _)| {
+                format!("{}@{}::{wiring}=1", package.id, package.version)
+                    .parse::<ReleaseWiringTarget>()
+                    .map_err(anyhow::Error::msg)
+            })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     publish_release::run(PublishReleaseArgs {
@@ -1452,11 +1885,20 @@ async fn publish_journey_release(
         environment: ENVIRONMENT.to_owned(),
         verified_publisher_principal: publisher.to_owned(),
         run_schema: "wamn_run".to_owned(),
-        packages: vec![PackageCoordinate::new(PACKAGE_ID, PACKAGE_VERSION)?],
+        packages: JOURNEY_PACKAGES
+            .iter()
+            .map(|package| PackageCoordinate::new(package.id, package.version))
+            .collect::<Result<Vec<_>, _>>()?,
         wirings,
-        attachments: vec![publication_root().join("attachments.json")],
+        attachments: JOURNEY_PACKAGES
+            .iter()
+            .map(|package| journey_publication_root(*package).join("attachments.json"))
+            .collect(),
         route_host: Some(inputs.route_host.clone()),
-        package_manifests: vec![package_root().join("wamn.json")],
+        package_manifests: JOURNEY_PACKAGES
+            .iter()
+            .map(|package| journey_package_root(*package).join("wamn.json"))
+            .collect(),
     })
     .await
     .context("mint the production Receiving release")?;
@@ -1553,24 +1995,108 @@ fn journey_postgres(credentials: &JourneyCredentials) -> anyhow::Result<Arc<Wamn
 
 fn released_component_digests(
     release: &ReleaseManifestWeld,
+    route_host: &str,
 ) -> anyhow::Result<HashMap<String, String>> {
+    let expected_packages = JOURNEY_PACKAGES
+        .iter()
+        .map(|package| PackageCoordinate::new(package.id, package.version))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    anyhow::ensure!(
+        release.manifest().release.packages == expected_packages,
+        "released manifest carries the wrong exact package membership"
+    );
     let digests = release
         .manifest()
         .components
         .iter()
-        .filter(|component| component.package_id == PACKAGE_ID)
         .map(|component| {
             (
-                component.component.clone(),
+                component.package_id.clone(),
                 component.digest.as_str().to_owned(),
             )
         })
         .collect::<HashMap<_, _>>();
-    let expected = BTreeSet::from([COMPONENT]);
+    let expected = JOURNEY_PACKAGES
+        .iter()
+        .map(|package| package.id)
+        .collect::<BTreeSet<_>>();
     let observed = digests.keys().map(String::as_str).collect::<BTreeSet<_>>();
     anyhow::ensure!(
         observed == expected,
-        "released manifest carries the wrong Receiving components: {observed:?}"
+        "released manifest carries the wrong package component closure: {observed:?}"
+    );
+    anyhow::ensure!(
+        release.manifest().components.len() == JOURNEY_PACKAGES.len()
+            && release.manifest().components.iter().all(|component| {
+                JOURNEY_PACKAGES.iter().any(|package| {
+                    component.package_id == package.id && component.component == package.component
+                })
+            }),
+        "released manifest does not carry exactly one component for each package"
+    );
+    let overlay = release
+        .manifest()
+        .components
+        .iter()
+        .find(|component| component.package_id == OVERLAY_PACKAGE_ID)
+        .context("released manifest omitted the overlay component")?;
+    let dependency = ComponentOperationDependency {
+        package: BASE_PACKAGE_ID.to_owned(),
+        version: BASE_PACKAGE_VERSION.to_owned(),
+        digest: digests
+            .get(BASE_PACKAGE_ID)
+            .context("released manifest omitted the base component digest")?
+            .clone(),
+        operation: BASE_RECORD_RECEIPT.to_owned(),
+    };
+    anyhow::ensure!(
+        overlay
+            .operations
+            .get(OVERLAY_RECORD_RECEIPT)
+            .is_some_and(|operation| operation.dependencies == [dependency]),
+        "released overlay record_receipt omitted its exact pinned dependency fact"
+    );
+    let expected_attachment_ids = JOURNEY_ATTACHMENTS
+        .iter()
+        .map(|attachment| attachment.id)
+        .collect::<BTreeSet<_>>();
+    let observed_attachment_ids = release
+        .manifest()
+        .attachments
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    anyhow::ensure!(
+        observed_attachment_ids == expected_attachment_ids,
+        "released manifest carries missing or extra route attachments: {observed_attachment_ids:?}"
+    );
+    for expected in JOURNEY_ATTACHMENTS {
+        let attachment = &release.manifest().attachments[expected.id];
+        anyhow::ensure!(
+            attachment.kind == AttachmentKind::Http
+                && attachment.package_id == expected.package_id
+                && attachment.wiring_id == expected.wiring_id
+                && attachment.wiring_version == 1
+                && attachment.registered_operation.as_deref() == Some(expected.operation)
+                && attachment.definition["route"]["method"] == "POST"
+                && attachment.definition["route"]["path"] == expected.path
+                && attachment.definition["route"]["host"] == route_host
+                && attachment.auth_policy["mode"] == "pat",
+            "released attachment {} does not match its exact PAT route tuple: {attachment:?}",
+            expected.id
+        );
+    }
+    let registration = release
+        .manifest()
+        .registrations
+        .get("client_acme_receiving::quality.create_inspection")
+        .context("released manifest omitted the Acme receipt registration")?;
+    anyhow::ensure!(
+        registration.package_id == OVERLAY_PACKAGE_ID
+            && registration.source_package_id == BASE_PACKAGE_ID
+            && registration.entity == "receipt"
+            && registration.ops == BTreeSet::from(["insert".to_owned()]),
+        "released Acme receipt registration has the wrong owner/source/entity/ops: {registration:?}"
     );
     Ok(digests)
 }
@@ -1779,21 +2305,60 @@ async fn seed_receiving_business_rows(project: &Client) -> anyhow::Result<()> {
              VALUES \
                ('00000000-0000-0000-0000-000000000301', 'PO-301', \
                 '00000000-0000-0000-0000-000000000401', 'open', 1, \
-                '2026-08-31T12:00:00.000000Z', '2026-08-31T12:00:00.000000Z'); \
+                '2026-08-31T12:00:00.000000Z', '2026-08-31T12:00:00.000000Z'), \
+               ('00000000-0000-0000-0000-000000000302', 'PO-302', \
+                '00000000-0000-0000-0000-000000000402', 'open', 1, \
+                '2026-08-31T12:01:00.000000Z', '2026-08-31T12:01:00.000000Z'); \
              INSERT INTO receiving.purchase_order_line \
                (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) \
              VALUES \
                ('00000000-0000-0000-0000-000000000501', \
                 '00000000-0000-0000-0000-000000000301', 1, \
-                '00000000-0000-0000-0000-000000000101', 5.0000, 0.0000);",
+                '00000000-0000-0000-0000-000000000101', 5.0000, 0.0000), \
+               ('00000000-0000-0000-0000-000000000502', \
+                '00000000-0000-0000-0000-000000000302', 1, \
+                '00000000-0000-0000-0000-000000000101', 7.0000, 0.0000); \
+             INSERT INTO receiving.purchase_order \
+               (id, purchase_order_number, supplier_id, status, row_version, created_at, updated_at, \
+                acme_inspection_required, acme_quality_status) \
+             VALUES \
+               ('00000000-0000-0000-0000-000000000303', 'PO-303', \
+                '00000000-0000-0000-0000-000000000403', 'complete', 2, \
+                '2026-08-31T11:00:00.000000Z', '2026-08-31T11:30:00.000000Z', \
+                true, 'pending');",
         )
         .await
         .context("seed only Receiving business rows")
 }
 
+// Distinct route-only approval precondition. This fixture does not claim that
+// CDC or a materializer created the inspection; `.15.25.4` owns that proof.
+async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow::Result<()> {
+    project
+        .batch_execute(
+            "INSERT INTO receiving.record_receipt_command \
+               (idempotency_key, canonical_command, receipt_id, purchase_order_id, \
+                purchase_order_status, row_version) \
+             VALUES \
+               ('quality-route-precondition', '\\x01', \
+                '00000000-0000-0000-0000-000000000603', \
+                '00000000-0000-0000-0000-000000000303', 'complete', 2); \
+             INSERT INTO receiving.receipt \
+               (id, idempotency_key, purchase_order_id, receipt_reference, occurred_at) \
+             VALUES \
+               ('00000000-0000-0000-0000-000000000603', 'quality-route-precondition', \
+                '00000000-0000-0000-0000-000000000303', 'QUALITY-PREEXISTING', \
+                '2026-08-31T11:30:00.000000Z'); \
+             INSERT INTO receiving.quality_inspection (receipt_id, status, row_version) \
+             VALUES ('00000000-0000-0000-0000-000000000603', 'pending', 1);",
+        )
+        .await
+        .context("seed the distinct pre-existing quality approval fixture")
+}
+
 #[tokio::test]
-#[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized Receiving and flow-http artifacts"]
-async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_traces()
+#[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts"]
+async fn production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces()
 -> anyhow::Result<()> {
     let system_url = required_journey(JOURNEY_URL_ENV)?;
     let inputs = JourneyInputs::required()?;
@@ -1816,6 +2381,16 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
     let management_secret = root.join("management-author-pat.json");
     let route =
         provision_route(&system_url, admin.as_ref(), root, Some(&management_secret)).await?;
+    let caller_principal_id = resolve_subject(
+        admin.as_ref(),
+        PrincipalKind::Service,
+        &route.principal_subject,
+    )
+    .await
+    .context("resolve the production route-caller principal")?
+    .context("the production route-caller principal is absent")?
+    .id()
+    .to_string();
     let route_caller_secret = root.join("route-caller-pat.json");
     std::fs::copy(&route_caller_secret, &inputs.route_caller_secret_output).with_context(|| {
         format!(
@@ -1836,6 +2411,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
     })?;
     let (project, project_task) = connect(&route.database_url).await?;
     install_journey_project(project.as_ref(), &route.database_url).await?;
+    verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
     let credentials = prepare_journey_credentials(
         &system_url,
@@ -1845,16 +2421,11 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         &inputs.host_secret_namespace,
     )
     .await?;
-    reconcile_package_data_access::run(ReconcilePackageDataAccessArgs {
-        packages: vec![package_root()],
-        database_url: route.database_url.clone(),
-        tenant: TENANT.to_owned(),
-    })
-    .await
-    .context("reconcile the generated Receiving data privileges")?;
+    reconcile_journey_data_access(&route.database_url).await?;
     let declarations = render_component_declarations(root)?;
     push_journey_components(&inputs, &route.database_url, &system_url, &declarations).await?;
-    verify_journey_components_are_effectful(project.as_ref()).await?;
+    let admitted_component_digests =
+        verify_journey_components_are_effectful(project.as_ref()).await?;
 
     let (readiness_tx, readiness_rx) = tokio::sync::oneshot::channel();
     let mut management_server = tokio::spawn(management::serve_with_readiness(
@@ -1903,13 +2474,17 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         admin.as_ref(),
     )
     .await?;
-    let component_digests = released_component_digests(&release)?;
+    let component_digests = released_component_digests(&release, &inputs.route_host)?;
+    anyhow::ensure!(
+        component_digests == admitted_component_digests,
+        "released component digests differ from the two admitted artifacts"
+    );
     seed_receiving_business_rows(project.as_ref()).await?;
 
     let traces = TraceHarness::install();
     let (engine, flow_http, routing, bridge, identity_task) =
         build_journey_runtime(&inputs, &credentials, release).await?;
-    let mut expected_traces = Vec::new();
+    let mut expected_direct_traces = Vec::new();
 
     let (trace_id, traceparent) = journey_trace(1);
     let response = invoke_journey_route(
@@ -1931,7 +2506,12 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         value["id"] == "00000000-0000-0000-0000-000000000301" && value["row_version"] == "1",
         "purchase_order.get returned the wrong row: {value}"
     );
-    expected_traces.push((trace_id, "purchase_order_get"));
+    expected_direct_traces.push((
+        trace_id,
+        "purchase_order_get",
+        "wamn-receiving:purchase-order/get@1.0.0",
+        BASE_PACKAGE_ID,
+    ));
 
     let (trace_id, traceparent) = journey_trace(2);
     let response = invoke_journey_route(
@@ -1955,7 +2535,12 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         }),
         "purchase_order.query returned the wrong page: {value}"
     );
-    expected_traces.push((trace_id, "purchase_order_query"));
+    expected_direct_traces.push((
+        trace_id,
+        "purchase_order_query",
+        "wamn-receiving:purchase-order/query@1.0.0",
+        BASE_PACKAGE_ID,
+    ));
 
     let (trace_id, traceparent) = journey_trace(3);
     let response = invoke_journey_route(
@@ -1978,7 +2563,12 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
             && value["row_version"] == "2",
         "purchase_order.update returned the wrong row: {value}"
     );
-    expected_traces.push((trace_id, "purchase_order_update"));
+    expected_direct_traces.push((
+        trace_id,
+        "purchase_order_update",
+        "wamn-receiving:purchase-order/update@1.0.0",
+        BASE_PACKAGE_ID,
+    ));
 
     let (trace_id, traceparent) = journey_trace(4);
     let response = invoke_journey_route(
@@ -2004,7 +2594,12 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         .as_str()
         .context("record_receipt returned no receipt_id")?
         .to_owned();
-    expected_traces.push((trace_id, "receiving_record_receipt"));
+    expected_direct_traces.push((
+        trace_id,
+        "receiving_record_receipt",
+        BASE_RECORD_RECEIPT,
+        BASE_PACKAGE_ID,
+    ));
 
     let (trace_id, traceparent) = journey_trace(5);
     let receipt_get = serde_json::to_vec(&serde_json::json!([{
@@ -2028,7 +2623,12 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         value["receipt_reference"] == "RECEIPT-1",
         "receipt.get returned the wrong receipt: {value}"
     );
-    expected_traces.push((trace_id, "receipt_get"));
+    expected_direct_traces.push((
+        trace_id,
+        "receipt_get",
+        "wamn-receiving:receipt/get@1.0.0",
+        BASE_PACKAGE_ID,
+    ));
 
     let (trace_id, traceparent) = journey_trace(6);
     let response = invoke_journey_route(
@@ -2050,9 +2650,201 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         }),
         "receipt.query returned the wrong page: {value}"
     );
-    expected_traces.push((trace_id, "receipt_query"));
+    expected_direct_traces.push((
+        trace_id,
+        "receipt_query",
+        "wamn-receiving:receipt/query@1.0.0",
+        BASE_PACKAGE_ID,
+    ));
+    seed_preexisting_quality_fixture(project.as_ref()).await?;
 
-    let (unauthorized_trace, unauthorized_parent) = journey_trace(7);
+    let (trace_id, traceparent) = journey_trace(7);
+    let response = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        overlay_route_path("purchase_order_get"),
+        Some(&route.token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"acme-purchase-order-get","id":"00000000-0000-0000-0000-000000000302"}]"#,
+        ),
+    )
+    .await?;
+    let value = successful_value(&response, "acme-purchase-order-get")?;
+    anyhow::ensure!(
+        value["id"] == "00000000-0000-0000-0000-000000000302"
+            && value["row_version"] == "1"
+            && value["acme_inspection_required"] == false
+            && value["acme_quality_status"] == "not_required",
+        "Acme purchase_order.get returned the wrong row: {value}"
+    );
+    expected_direct_traces.push((
+        trace_id,
+        "purchase_order_get",
+        "client-acme-receiving:purchase-order/get@3.0.0",
+        OVERLAY_PACKAGE_ID,
+    ));
+
+    let (trace_id, traceparent) = journey_trace(8);
+    let response = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        overlay_route_path("purchase_order_update"),
+        Some(&route.token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"acme-purchase-order-update","id":"00000000-0000-0000-0000-000000000302","expected_row_version":"1","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]"#,
+        ),
+    )
+    .await?;
+    let value = successful_value(&response, "acme-purchase-order-update")?;
+    anyhow::ensure!(
+        value["row_version"] == "2"
+            && value["acme_inspection_required"] == true
+            && value["acme_quality_status"] == "pending",
+        "Acme purchase_order.update returned the wrong row: {value}"
+    );
+    expected_direct_traces.push((
+        trace_id,
+        "purchase_order_update",
+        "client-acme-receiving:purchase-order/update@3.0.0",
+        OVERLAY_PACKAGE_ID,
+    ));
+
+    let (trace_id, traceparent) = journey_trace(9);
+    let response = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        overlay_route_path("quality_load_purchase_order_detail"),
+        Some(&route.token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"quality-load-detail","purchase_order_id":"00000000-0000-0000-0000-000000000302"}]"#,
+        ),
+    )
+    .await?;
+    let value = successful_value(&response, "quality-load-detail")?;
+    anyhow::ensure!(
+        value["id"] == "00000000-0000-0000-0000-000000000302"
+            && value["row_version"] == "2"
+            && value["acme_quality_status"] == "pending",
+        "quality.load_purchase_order_detail returned the wrong row: {value}"
+    );
+    expected_direct_traces.push((
+        trace_id,
+        "quality_load_purchase_order_detail",
+        "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+        OVERLAY_PACKAGE_ID,
+    ));
+
+    let (nested_trace, traceparent) = journey_trace(10);
+    let response = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        overlay_route_path("receiving_record_receipt"),
+        Some(&route.token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"acme-record-receipt","value":{"idempotency_key":"receipt-command-2","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-2","occurred_at":"2026-08-31T12:31:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"7.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#,
+        ),
+    )
+    .await?;
+    let value = successful_value(&response, "acme-record-receipt")?;
+    anyhow::ensure!(
+        value["purchase_order_status"] == "complete"
+            && value["row_version"] == "3"
+            && value["acme_inspection_required"] == true
+            && value["acme_quality_status"] == "pending",
+        "Acme receiving.record_receipt returned the wrong result: {value}"
+    );
+    let (trace_id, traceparent) = journey_trace(11);
+    let approve = serde_json::to_vec(&serde_json::json!([{
+        "request_id": "quality-approve",
+        "receipt_id": PREEXISTING_QUALITY_RECEIPT_ID,
+        "expected_row_version": "1",
+    }]))?;
+    let response = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        overlay_route_path("quality_approve_inspection"),
+        Some(&route.token),
+        &traceparent,
+        Bytes::from(approve),
+    )
+    .await?;
+    let value = successful_value(&response, "quality-approve")?;
+    anyhow::ensure!(
+        value["status"] == "approved"
+            && value["row_version"] == "2"
+            && value["purchase_order_id"] == "00000000-0000-0000-0000-000000000303"
+            && value["purchase_order_row_version"] == "3",
+        "quality.approve_inspection returned the wrong result: {value}"
+    );
+    expected_direct_traces.push((
+        trace_id,
+        "quality_approve_inspection",
+        "client-acme-receiving:quality/approve-inspection@3.0.0",
+        OVERLAY_PACKAGE_ID,
+    ));
+
+    let removed = project
+        .execute(
+            "DELETE FROM app_system.permissions \
+             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
+            &[&TENANT, &ROUTE_CALLER_ROLE, &BASE_RECORD_RECEIPT],
+        )
+        .await
+        .context("remove only the pinned-base record_receipt permission")?;
+    anyhow::ensure!(
+        removed == 1,
+        "nested-denial setup removed {removed} permission rows instead of one"
+    );
+    let (denied_nested_trace, denied_nested_parent) = journey_trace(12);
+    let denied_nested = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        overlay_route_path("receiving_record_receipt"),
+        Some(&route.token),
+        &denied_nested_parent,
+        Bytes::from_static(
+            br#"[{"request_id":"nested-permission-denied","value":{"idempotency_key":"receipt-command-denied","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-DENIED","occurred_at":"2026-08-31T12:32:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"1.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#,
+        ),
+    )
+    .await?;
+    let denied_nested_body: Value = serde_json::from_slice(denied_nested.body())
+        .context("decode the nested permission refusal")?;
+    anyhow::ensure!(
+        denied_nested.status() == StatusCode::FORBIDDEN
+            && denied_nested_body
+                == serde_json::json!({
+                    "error": {
+                        "code": "permission-denied",
+                        "operation": BASE_RECORD_RECEIPT,
+                    }
+                }),
+        "nested permission refusal was not the exact discoverable 403 contract: status={} body={denied_nested_body}",
+        denied_nested.status()
+    );
+
+    let (unauthorized_trace, unauthorized_parent) = journey_trace(13);
     let unauthorized = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2074,7 +2866,7 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
         String::from_utf8_lossy(unauthorized.body())
     );
 
-    let (oversized_trace, oversized_parent) = journey_trace(8);
+    let (oversized_trace, oversized_parent) = journey_trace(14);
     let oversized = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2100,12 +2892,41 @@ async fn production_receiving_release_serves_all_six_pat_routes_with_correlated_
     );
 
     let spans = traces.spans();
-    let component_digest = component_digests
-        .get(COMPONENT)
-        .context("released Receiving component digest is missing")?;
-    for (trace_id, wiring_id) in expected_traces {
-        assert_route_trace(&spans, &trace_id, wiring_id, component_digest);
+    for (trace_id, wiring_id, operation, package_id) in expected_direct_traces {
+        let component_digest = component_digests
+            .get(package_id)
+            .with_context(|| format!("released {package_id} component digest is missing"))?;
+        assert_direct_route_trace(
+            &spans,
+            &trace_id,
+            wiring_id,
+            operation,
+            component_digest,
+            &caller_principal_id,
+        );
     }
+    assert_nested_record_receipt_trace(
+        &spans,
+        &nested_trace,
+        component_digests
+            .get(OVERLAY_PACKAGE_ID)
+            .context("released overlay component digest is missing")?,
+        component_digests
+            .get(BASE_PACKAGE_ID)
+            .context("released base component digest is missing")?,
+        &caller_principal_id,
+    );
+    assert_nested_permission_denial_trace(
+        &spans,
+        &denied_nested_trace,
+        component_digests
+            .get(OVERLAY_PACKAGE_ID)
+            .context("released overlay component digest is missing")?,
+        component_digests
+            .get(BASE_PACKAGE_ID)
+            .context("released base component digest is missing")?,
+        &caller_principal_id,
+    );
     assert_no_component_trace(&spans, &unauthorized_trace);
     assert_no_component_trace(&spans, &oversized_trace);
 
