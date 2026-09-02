@@ -500,7 +500,8 @@ first genuine materializer consumer. Its inline registration names the source
 package and entity; it is not route-bindable and carries no public permission
 token. The post-commit invocation preserves the receipt event's causation
 identity and carries no caller identity; CDC delivery is not an authenticated
-user invocation.
+user invocation. The exact registration binding is the delivery authority;
+handler-side caller permission checks do not apply to this materializer path.
 
 [Owner-ruling correction, 2026-09-02 (`wamn-0h0g.15.25.4`): materializer
 delivery preserves causation, while caller identity is absent rather than
