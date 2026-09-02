@@ -4,6 +4,7 @@
 //! implementations remain with their existing migration, build, gate, and
 //! publication owners and enter through [`DevStageRunner`].
 
+pub mod activation;
 pub mod config;
 
 use std::error::Error;

@@ -4857,6 +4857,7 @@ dependencies = [
  "hex",
  "oci-client",
  "ring",
+ "rustix",
  "serde",
  "serde_json",
  "tokio",
@@ -4877,6 +4878,7 @@ dependencies = [
  "wamn-schema-control",
  "wamn-schema-generator",
  "wamn-schema-introspection",
+ "wash-runtime",
  "wit-component 0.252.0",
  "wit-parser 0.252.0",
 ]

@@ -143,6 +143,7 @@ rand_core = "0.10"
 reqwest = { version = "0.13", default-features = false }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false }
+rustix = { version = "1", features = ["process"] }
 schemars = "0.8"
 serde = "1"
 serde_json = "1"

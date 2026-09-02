@@ -23,7 +23,13 @@ const DOCUMENT_KEY: &str = "$";
 const VERIFICATION_DATABASE_URL: &str = "verification_database_url";
 const TARGET_DATABASE_URL: &str = "target_database_url";
 const SYSTEM_DATABASE_URL: &str = "system_database_url";
+const IDENTITY_DATABASE_URL: &str = "identity_database_url";
+const GUEST_DATABASE_URL: &str = "guest_database_url";
+const EXECUTOR_PLATFORM_DATABASE_URL: &str = "executor_platform_database_url";
+const HTTP_ADMITTER_DATABASE_URL: &str = "http_admitter_database_url";
+const EVENT_MATERIALIZER_DATABASE_URL: &str = "event_materializer_database_url";
 const SCHEDULER_NATS_URL: &str = "scheduler_nats_url";
+const EVENT_NATS_URL: &str = "event_nats_url";
 const COMPONENT_ARTIFACT_BASE: &str = "component_artifact_base";
 const RELEASE_ARTIFACT_BASE: &str = "release_artifact_base";
 const REGISTRY_AUTH_FILE: &str = "registry_auth_file";
@@ -33,11 +39,17 @@ const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
 const ROUTE_HOST: &str = "route_host";
 const FLOW_HTTP_WORKLOAD_IMAGE: &str = "flow_http_workload_image";
 
-const CONFIG_KEYS: [&str; 12] = [
+const CONFIG_KEYS: [&str; 18] = [
     VERIFICATION_DATABASE_URL,
     TARGET_DATABASE_URL,
     SYSTEM_DATABASE_URL,
+    IDENTITY_DATABASE_URL,
+    GUEST_DATABASE_URL,
+    EXECUTOR_PLATFORM_DATABASE_URL,
+    HTTP_ADMITTER_DATABASE_URL,
+    EVENT_MATERIALIZER_DATABASE_URL,
     SCHEDULER_NATS_URL,
+    EVENT_NATS_URL,
     COMPONENT_ARTIFACT_BASE,
     RELEASE_ARTIFACT_BASE,
     REGISTRY_AUTH_FILE,
@@ -161,6 +173,17 @@ struct DatabaseIdentity {
     host: Box<str>,
     port: u16,
     database: Box<str>,
+    user: Box<str>,
+}
+
+impl DatabaseIdentity {
+    fn same_database(&self, other: &Self) -> bool {
+        self.host == other.host && self.port == other.port && self.database == other.database
+    }
+
+    fn same_credential(&self, other: &Self) -> bool {
+        self.same_database(other) && self.user == other.user
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -177,7 +200,13 @@ pub struct DevConfig {
     verification_database_url: Box<str>,
     target_database_url: Box<str>,
     system_database_url: Box<str>,
+    identity_database_url: Box<str>,
+    guest_database_url: Box<str>,
+    executor_platform_database_url: Box<str>,
+    http_admitter_database_url: Box<str>,
+    event_materializer_database_url: Box<str>,
     scheduler_nats_url: Box<str>,
+    event_nats_url: Box<str>,
     component_artifact_base: Box<str>,
     release_artifact_base: Box<str>,
     registry_auth_file: PathBuf,
@@ -206,9 +235,30 @@ impl fmt::Debug for DevConfig {
                 &self.sanitized_endpoint(SYSTEM_DATABASE_URL),
             )
             .field(
+                IDENTITY_DATABASE_URL,
+                &self.sanitized_endpoint(IDENTITY_DATABASE_URL),
+            )
+            .field(
+                GUEST_DATABASE_URL,
+                &self.sanitized_endpoint(GUEST_DATABASE_URL),
+            )
+            .field(
+                EXECUTOR_PLATFORM_DATABASE_URL,
+                &self.sanitized_endpoint(EXECUTOR_PLATFORM_DATABASE_URL),
+            )
+            .field(
+                HTTP_ADMITTER_DATABASE_URL,
+                &self.sanitized_endpoint(HTTP_ADMITTER_DATABASE_URL),
+            )
+            .field(
+                EVENT_MATERIALIZER_DATABASE_URL,
+                &self.sanitized_endpoint(EVENT_MATERIALIZER_DATABASE_URL),
+            )
+            .field(
                 SCHEDULER_NATS_URL,
                 &self.sanitized_endpoint(SCHEDULER_NATS_URL),
             )
+            .field(EVENT_NATS_URL, &self.sanitized_endpoint(EVENT_NATS_URL))
             .field(
                 COMPONENT_ARTIFACT_BASE,
                 &self.sanitized_endpoint(COMPONENT_ARTIFACT_BASE),
@@ -253,9 +303,39 @@ impl DevConfig {
         &self.system_database_url
     }
 
+    /// Identity-reader PostgreSQL URL passed to the local serving host.
+    pub fn identity_database_url(&self) -> &str {
+        &self.identity_database_url
+    }
+
+    /// Guest-SQL PostgreSQL URL passed to the local serving host.
+    pub fn guest_database_url(&self) -> &str {
+        &self.guest_database_url
+    }
+
+    /// Executor-platform PostgreSQL URL passed to the local serving host.
+    pub fn executor_platform_database_url(&self) -> &str {
+        &self.executor_platform_database_url
+    }
+
+    /// Callable-HTTP PostgreSQL URL passed to the local serving host.
+    pub fn http_admitter_database_url(&self) -> &str {
+        &self.http_admitter_database_url
+    }
+
+    /// Event-materializer PostgreSQL URL passed to the local serving host.
+    pub fn event_materializer_database_url(&self) -> &str {
+        &self.event_materializer_database_url
+    }
+
     /// Scheduler NATS endpoint used by the native workload API.
     pub fn scheduler_nats_url(&self) -> &str {
         &self.scheduler_nats_url
+    }
+
+    /// Event-plane NATS endpoint passed to the local serving host.
+    pub fn event_nats_url(&self) -> &str {
+        &self.event_nats_url
     }
 
     /// Explicit component registry and repository base.
@@ -333,7 +413,14 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let verification_database_url = required_string(&values, VERIFICATION_DATABASE_URL)?;
     let target_database_url = required_string(&values, TARGET_DATABASE_URL)?;
     let system_database_url = required_string(&values, SYSTEM_DATABASE_URL)?;
+    let identity_database_url = required_string(&values, IDENTITY_DATABASE_URL)?;
+    let guest_database_url = required_string(&values, GUEST_DATABASE_URL)?;
+    let executor_platform_database_url = required_string(&values, EXECUTOR_PLATFORM_DATABASE_URL)?;
+    let http_admitter_database_url = required_string(&values, HTTP_ADMITTER_DATABASE_URL)?;
+    let event_materializer_database_url =
+        required_string(&values, EVENT_MATERIALIZER_DATABASE_URL)?;
     let scheduler_nats_url = required_string(&values, SCHEDULER_NATS_URL)?;
+    let event_nats_url = required_string(&values, EVENT_NATS_URL)?;
     let component_artifact_base = required_string(&values, COMPONENT_ARTIFACT_BASE)?;
     let release_artifact_base = required_string(&values, RELEASE_ARTIFACT_BASE)?;
     let registry_auth_file = required_string(&values, REGISTRY_AUTH_FILE)?;
@@ -350,7 +437,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         database_probe(VERIFICATION_DATABASE_URL, &verification_database_url)?;
     let (target_probe, target_identity) =
         database_probe(TARGET_DATABASE_URL, &target_database_url)?;
-    if verification_identity == target_identity {
+    if verification_identity.same_database(&target_identity) {
         return Err(DevConfigError::endpoint(
             DevConfigErrorKind::DatabaseCollision,
             VERIFICATION_DATABASE_URL,
@@ -358,14 +445,43 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             "must name a database distinct from target_database_url",
         ));
     }
-    let (system_probe, _) = database_probe(SYSTEM_DATABASE_URL, &system_database_url)?;
+    let (system_probe, system_identity) =
+        database_probe(SYSTEM_DATABASE_URL, &system_database_url)?;
+    let (identity_probe, identity_identity) =
+        database_probe(IDENTITY_DATABASE_URL, &identity_database_url)?;
+    let (guest_probe, guest_identity) = database_probe(GUEST_DATABASE_URL, &guest_database_url)?;
+    let (executor_platform_probe, executor_platform_identity) = database_probe(
+        EXECUTOR_PLATFORM_DATABASE_URL,
+        &executor_platform_database_url,
+    )?;
+    let (http_admitter_probe, http_admitter_identity) =
+        database_probe(HTTP_ADMITTER_DATABASE_URL, &http_admitter_database_url)?;
+    let (event_materializer_probe, event_materializer_identity) = database_probe(
+        EVENT_MATERIALIZER_DATABASE_URL,
+        &event_materializer_database_url,
+    )?;
+    validate_runtime_database_credentials(
+        &[
+            (&verification_probe, &verification_identity),
+            (&target_probe, &target_identity),
+            (&system_probe, &system_identity),
+        ],
+        &[
+            (&identity_probe, &identity_identity),
+            (&guest_probe, &guest_identity),
+            (&executor_platform_probe, &executor_platform_identity),
+            (&http_admitter_probe, &http_admitter_identity),
+            (&event_materializer_probe, &event_materializer_identity),
+        ],
+    )?;
     let scheduler_probe = url_probe(
         SCHEDULER_NATS_URL,
         &scheduler_nats_url,
-        &["nats", "tls"],
+        &["nats"],
         4222,
         false,
     )?;
+    let event_probe = url_probe(EVENT_NATS_URL, &event_nats_url, &["nats"], 4222, false)?;
     let registry_port = if insecure_registry { 80 } else { 443 };
     let component_probe = artifact_base_probe(
         COMPONENT_ARTIFACT_BASE,
@@ -385,7 +501,13 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         verification_database_url,
         target_database_url,
         system_database_url,
+        identity_database_url,
+        guest_database_url,
+        executor_platform_database_url,
+        http_admitter_database_url,
+        event_materializer_database_url,
         scheduler_nats_url,
+        event_nats_url,
         component_artifact_base,
         release_artifact_base,
         registry_auth_file,
@@ -398,7 +520,13 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             verification_probe,
             target_probe,
             system_probe,
+            identity_probe,
+            guest_probe,
+            executor_platform_probe,
+            http_admitter_probe,
+            event_materializer_probe,
             scheduler_probe,
+            event_probe,
             component_probe,
             release_probe,
             gate_probe,
@@ -507,12 +635,45 @@ fn database_probe(
             "expected one explicit database name",
         ));
     }
+    let user = parsed.username();
+    if user.is_empty() {
+        return Err(DevConfigError::endpoint(
+            DevConfigErrorKind::InvalidValue,
+            key,
+            sanitized_url(&parsed, true, 5432),
+            "expected one explicit database role",
+        ));
+    }
     let identity = DatabaseIdentity {
         host: probe.host.clone(),
         port: probe.port,
         database: database.into(),
+        user: user.into(),
     };
     Ok((probe, identity))
+}
+
+fn validate_runtime_database_credentials(
+    privileged: &[(&ReachabilityProbe, &DatabaseIdentity)],
+    runtime: &[(&ReachabilityProbe, &DatabaseIdentity)],
+) -> Result<(), DevConfigError> {
+    for (index, (probe, identity)) in runtime.iter().enumerate() {
+        let collides_with_privileged = privileged
+            .iter()
+            .any(|(_, privileged)| identity.same_credential(privileged));
+        let collides_with_runtime = runtime[..index]
+            .iter()
+            .any(|(_, prior)| identity.same_credential(prior));
+        if collides_with_privileged || collides_with_runtime {
+            return Err(DevConfigError::endpoint(
+                DevConfigErrorKind::DatabaseCollision,
+                probe.key,
+                probe.sanitized_endpoint.clone(),
+                "runtime role must use its own database credential",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn url_probe(
@@ -693,20 +854,28 @@ mod tests {
     use serde_json::json;
     use tokio::net::TcpListener;
 
-    fn complete_document(addresses: &[SocketAddr; 8]) -> Value {
+    const ENDPOINT_COUNT: usize = 14;
+
+    fn complete_document(addresses: &[SocketAddr; ENDPOINT_COUNT]) -> Value {
         json!({
             (VERIFICATION_DATABASE_URL): format!("postgresql://verify:verify-secret@{}/verification", addresses[0]),
             (TARGET_DATABASE_URL): format!("postgresql://target:target-secret@{}/target", addresses[1]),
             (SYSTEM_DATABASE_URL): format!("postgresql://system:system-secret@{}/system", addresses[2]),
-            (SCHEDULER_NATS_URL): format!("nats://{}", addresses[3]),
-            (COMPONENT_ARTIFACT_BASE): format!("{}/wamn/components", addresses[4]),
-            (RELEASE_ARTIFACT_BASE): format!("{}/wamn/releases", addresses[5]),
+            (IDENTITY_DATABASE_URL): format!("postgresql://identity:identity-secret@{}/system", addresses[3]),
+            (GUEST_DATABASE_URL): format!("postgresql://guest:guest-secret@{}/target", addresses[4]),
+            (EXECUTOR_PLATFORM_DATABASE_URL): format!("postgresql://platform:platform-secret@{}/target", addresses[5]),
+            (HTTP_ADMITTER_DATABASE_URL): format!("postgresql://admitter:admitter-secret@{}/target", addresses[6]),
+            (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[7]),
+            (SCHEDULER_NATS_URL): format!("nats://{}", addresses[8]),
+            (EVENT_NATS_URL): format!("nats://{}", addresses[9]),
+            (COMPONENT_ARTIFACT_BASE): format!("{}/wamn/components", addresses[10]),
+            (RELEASE_ARTIFACT_BASE): format!("{}/wamn/releases", addresses[11]),
             (REGISTRY_AUTH_FILE): "/run/secrets/registry.json",
             (INSECURE_REGISTRY): true,
-            (GATE_URL): format!("http://{}/authoring", addresses[6]),
+            (GATE_URL): format!("http://{}/authoring", addresses[12]),
             (GATE_BEARER_TOKEN): "gate-super-secret",
             (ROUTE_HOST): "receiving.localhost",
-            (FLOW_HTTP_WORKLOAD_IMAGE): format!("{}/wamn/flow-http:dev", addresses[7]),
+            (FLOW_HTTP_WORKLOAD_IMAGE): format!("{}/wamn/flow-http:dev", addresses[13]),
         })
     }
 
@@ -723,14 +892,16 @@ mod tests {
 
     #[tokio::test]
     async fn complete_config_reaches_every_declared_endpoint_once() {
-        let mut addresses = Vec::with_capacity(8);
-        let mut accepted = Vec::with_capacity(8);
-        for _ in 0..8 {
+        let mut addresses = Vec::with_capacity(ENDPOINT_COUNT);
+        let mut accepted = Vec::with_capacity(ENDPOINT_COUNT);
+        for _ in 0..ENDPOINT_COUNT {
             let (address, task) = listener().await;
             addresses.push(address);
             accepted.push(task);
         }
-        let addresses: [SocketAddr; 8] = addresses.try_into().expect("eight endpoint addresses");
+        let addresses: [SocketAddr; ENDPOINT_COUNT] = addresses
+            .try_into()
+            .expect("all endpoint addresses are present");
         let bytes = serde_json::to_vec(&complete_document(&addresses)).expect("serialize fixture");
 
         let config = parse_config(&bytes).expect("complete strict config parses");
@@ -746,6 +917,11 @@ mod tests {
             "verify-secret",
             "target-secret",
             "system-secret",
+            "identity-secret",
+            "guest-secret",
+            "platform-secret",
+            "admitter-secret",
+            "materializer-secret",
             "gate-super-secret",
         ] {
             assert!(!debug.contains(credential), "Debug leaked {credential}");
@@ -759,7 +935,7 @@ mod tests {
             .expect("reserve refused endpoint");
         let address = listener.local_addr().expect("read refused endpoint");
         drop(listener);
-        let addresses = [address; 8];
+        let addresses = [address; ENDPOINT_COUNT];
         let bytes = serde_json::to_vec(&complete_document(&addresses)).expect("serialize fixture");
         let config = parse_config(&bytes).expect("endpoint syntax is valid");
 
@@ -781,7 +957,7 @@ mod tests {
 
     #[test]
     fn malformed_unknown_and_missing_inputs_refuse_at_their_exact_key() {
-        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); 8];
+        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         let mut malformed = complete_document(&addresses);
         malformed[VERIFICATION_DATABASE_URL] = json!("postgresql://user:secret@[");
         let error = parse_config(&serde_json::to_vec(&malformed).expect("serialize malformed"))
@@ -822,11 +998,32 @@ mod tests {
         .expect_err("missing workload image must refuse");
         assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
         assert_eq!(error.key(), FLOW_HTTP_WORKLOAD_IMAGE);
+
+        let mut missing_runtime_role = complete_document(&addresses);
+        missing_runtime_role
+            .as_object_mut()
+            .expect("fixture object")
+            .remove(EVENT_MATERIALIZER_DATABASE_URL);
+        let error = parse_config(
+            &serde_json::to_vec(&missing_runtime_role).expect("serialize missing runtime role"),
+        )
+        .expect_err("missing role-exact credential must refuse");
+        assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+        assert_eq!(error.key(), EVENT_MATERIALIZER_DATABASE_URL);
+
+        let mut tls_scheduler = complete_document(&addresses);
+        tls_scheduler[SCHEDULER_NATS_URL] = json!("tls://scheduler.invalid:4222");
+        let error = parse_config(
+            &serde_json::to_vec(&tls_scheduler).expect("serialize unsupported TLS endpoint"),
+        )
+        .expect_err("TLS without trust configuration must refuse");
+        assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        assert_eq!(error.key(), SCHEDULER_NATS_URL);
     }
 
     #[test]
     fn verification_and_target_database_roles_cannot_share_one_database() {
-        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); 8];
+        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         let mut document = complete_document(&addresses);
         document[VERIFICATION_DATABASE_URL] =
             json!("postgresql://verifier:first-secret@127.0.0.1:41000/shared");
@@ -845,6 +1042,32 @@ mod tests {
         let message = error.to_string();
         assert!(!message.contains("first-secret"));
         assert!(!message.contains("second-secret"));
+    }
+
+    #[test]
+    fn runtime_database_roles_refuse_privileged_or_sibling_credentials() {
+        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
+
+        let mut privileged_reuse = complete_document(&addresses);
+        let verification_credential = privileged_reuse[VERIFICATION_DATABASE_URL].clone();
+        privileged_reuse[GUEST_DATABASE_URL] = verification_credential;
+        let error = parse_config(
+            &serde_json::to_vec(&privileged_reuse).expect("serialize privileged reuse"),
+        )
+        .expect_err("a runtime role must not reuse the verification credential");
+        assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
+        assert_eq!(error.key(), GUEST_DATABASE_URL);
+        assert!(!error.to_string().contains("verify-secret"));
+
+        let mut sibling_reuse = complete_document(&addresses);
+        let platform_credential = sibling_reuse[EXECUTOR_PLATFORM_DATABASE_URL].clone();
+        sibling_reuse[EVENT_MATERIALIZER_DATABASE_URL] = platform_credential;
+        let error =
+            parse_config(&serde_json::to_vec(&sibling_reuse).expect("serialize sibling reuse"))
+                .expect_err("runtime roles must not share one credential");
+        assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
+        assert_eq!(error.key(), EVENT_MATERIALIZER_DATABASE_URL);
+        assert!(!error.to_string().contains("platform-secret"));
     }
 
     #[test]

@@ -8,8 +8,6 @@ license.workspace = true
 [features]
 default = []
 ops = [
-    "dep:async-nats",
-    "dep:futures-util",
     "dep:wamn-event-wire",
     "wamn-control-provision/ops",
 ]
@@ -30,7 +28,7 @@ anyhow = { workspace = true }
 # closed WorkloadRoleFamily vocabulary, so arg ids and long names are computed
 # `String`s rather than typed-out literals.
 clap = { workspace = true, features = ["derive", "env", "string"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "process", "time"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -44,8 +42,9 @@ tracing = { workspace = true }
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 oci-client = { workspace = true }
-async-nats = { workspace = true, features = ["jetstream"], optional = true }
-futures-util = { workspace = true, optional = true }
+async-nats = { workspace = true, features = ["jetstream"] }
+futures-util = { workspace = true }
+rustix = { workspace = true }
 wamn-event-wire = { workspace = true, optional = true }
 wamn-event-reg = { workspace = true }
 # Release authoring parses and validates immutable execution graphs.
@@ -68,6 +67,7 @@ wamn-pg-core = { workspace = true }
 # push-component is the sole production caller of byte admission and shares
 # the immutable OCI media/reference contract with the runtime pull side.
 wamn-runtime = { workspace = true }
+wash-runtime = { workspace = true, features = ["washlet"] }
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and its live gate share.
 wamn-run-state = { workspace = true }
