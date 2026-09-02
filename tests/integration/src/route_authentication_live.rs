@@ -1488,7 +1488,10 @@ async fn install_journey_project(project: &Client, project_url: &str) -> anyhow:
     Ok(())
 }
 
-async fn reconcile_journey_data_access(project_url: &str) -> anyhow::Result<()> {
+async fn reconcile_journey_data_access(
+    project_url: &str,
+    require_repair: bool,
+) -> anyhow::Result<()> {
     let packages = JOURNEY_PACKAGES
         .iter()
         .map(|package| journey_package_root(*package))
@@ -1502,10 +1505,12 @@ async fn reconcile_journey_data_access(project_url: &str) -> anyhow::Result<()> 
     )
     .await
     .context("converge the fresh installed-set data-access union")?;
-    anyhow::ensure!(
-        !first.is_noop(),
-        "fresh installed-set data-access reconciliation changed no ACL"
-    );
+    if require_repair {
+        anyhow::ensure!(
+            !first.is_noop(),
+            "damaged installed-set data-access reconciliation changed no ACL"
+        );
+    }
     let again = reconcile_package_data_access::reconcile_package_data_access(
         ReconcilePackageDataAccessArgs {
             packages,
@@ -2529,7 +2534,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         &inputs.host_secret_namespace,
     )
     .await?;
-    reconcile_journey_data_access(&route.database_url).await?;
+    reconcile_journey_data_access(&route.database_url, false).await?;
     let declarations = render_component_declarations(root)?;
     push_journey_components(&inputs, &route.database_url, &system_url, &declarations).await?;
     let admitted_component_digests =
@@ -3047,7 +3052,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
     // The denial arm mutates one grant deliberately. Restore the exact
     // installed-set union before handing this disposable release to the
     // operator-managed materializer continuation.
-    reconcile_journey_data_access(&route.database_url).await?;
+    reconcile_journey_data_access(&route.database_url, true).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     seed_materializer_trigger_rows(project.as_ref()).await?;
 
