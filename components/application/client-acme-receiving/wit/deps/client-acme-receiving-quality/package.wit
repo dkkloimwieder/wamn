@@ -1,0 +1,19 @@
+package client-acme-receiving:quality@3.0.0;
+
+interface load-purchase-order-detail {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface approve-inspection {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface create-inspection {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}

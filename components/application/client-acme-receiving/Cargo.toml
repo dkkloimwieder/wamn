@@ -1,0 +1,19 @@
+[package]
+name = "client-acme-receiving"
+version.workspace = true
+edition.workspace = true
+description = "Package-grain Acme Receiving overlay operation component"
+license = "Apache-2.0"
+
+[dependencies]
+futures-executor = "0.3"
+wamn-client-acme-receiving-data-access = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+test = false
+bench = false
+
+[lints]
+workspace = true

@@ -8,10 +8,12 @@ resolver = "2"
 # guest-supplied `#[panic_handler]`. They live in the second workspace at
 # `no-std/`, whose manifest carries the full reason (wamn-0h0g.11.56).
 members = [
+    "application/client-acme-receiving",
     "application/receiving",
     "ingress/http-route",
     "execution/materializer",
     "data/postgres-sqlx",
+    "data/client-acme-receiving-data",
     "data/receiving-data",
     "fixtures/busyloop",
     "fixtures/connection-http-standard",
@@ -74,6 +76,7 @@ wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
 wamn-execution-contract = { path = "../crates/execution/contract", version = "0.1.0" }
 wamn-materializer = { path = "../crates/events/materializer", version = "0.1.0" }
 wamn-postgres-sqlx = { path = "data/postgres-sqlx", version = "0.1.0" }
+wamn-client-acme-receiving-data-access = { path = "data/client-acme-receiving-data", version = "0.1.0" }
 wamn-receiving-data-access = { path = "data/receiving-data", version = "0.1.0" }
 wamn-run-state = { path = "../crates/execution/run-state", version = "0.1.0" }
 
