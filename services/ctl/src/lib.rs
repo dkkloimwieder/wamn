@@ -15,6 +15,7 @@ pub mod copy_project_env;
 #[cfg(feature = "ops")]
 pub mod dead_letters;
 pub mod dev;
+pub mod dev_gate;
 #[cfg(feature = "ops")]
 pub mod dump_project_env;
 pub mod enable_cdc_project_env;
