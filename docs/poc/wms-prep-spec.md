@@ -114,15 +114,26 @@ allowlist. Replace the heuristic with declaration:
 ### 2b. Blobstore capability integration
 
 - **Contract: `wasmcloud:blobstore@0.1.0`** (async shape; exact, single).
-  Upstream v2.8 provides the interfaces and implementation patterns;
-  **WAMN's build currently disables them** (`wash-runtime`
-  `default-features = false` omits `wasi-blobstore` and
-  `wasm_component_model_implements`). Enabling both is a deliberate
-  feature-set change with its own ledger row. Naming note: the
-  `wasi-blobstore` cargo feature enables the upstream implementation/
-  type machinery the runtime needs to host the wamn-implemented
-  `wasmcloud:blobstore@0.1.0` interface — feature name is plumbing,
-  contract name is the surface; they are not in conflict.
+  Upstream v2.8 provides the interfaces and implementation patterns.
+
+  **NO FORK FEATURE-SET CHANGE — measured unnecessary, owner ruling
+  2026-09-02, superseding this bullet's original claim** that WAMN's build
+  disables `wasi-blobstore` and `wasm_component_model_implements` and that
+  enabling both is a deliberate change with its own ledger row. Neither half
+  held. `wasm_component_model_implements` was already ON —
+  `services/host`, `services/executor` and `crates/execution/host` all enable
+  it, and `runtime_inventory.rs`'s feature policy requires it. And
+  `wasi-blobstore` is not needed at all: the plugin follows the
+  `wamn_postgres` pattern — vendored WIT plus its own `bindgen!` — so it
+  needs nothing from upstream's `wasi_blobstore` module. Proven by compiling
+  a `bindgen!` of the full 16-method async contract with the feature off,
+  with the probe itself proven live by a deliberate world-name break.
+
+  The outcome is stronger than the plan: upstream's blobstore backends never
+  compile, so **"never a second registered runtime" becomes a structural
+  impossibility** rather than a convention about not calling
+  `multiplexed_plugins()`, and the reviewed `wash-runtime` feature allowlist
+  is untouched. There is no deviation, so there is no ledger row.
 - Connection vocabulary: `ComponentConnectionType` gains `Blobstore`;
   `push_component` maps it to a `blobstore_v1()` descriptor;
   reuses the connection **framework** (requirement → instance →
