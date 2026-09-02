@@ -681,7 +681,7 @@ fn rejects_decorative_required_gate_mutant() {
 }
 
 #[test]
-fn causation_gates_are_parked_with_a_false_coverage_note() {
+fn causation_gates_are_required_with_complete_coverage() {
     let (_, registry, _) = fixtures();
     for source in ["H5-CAUSATION", "H5-CAUSATION-E2E"] {
         let entry = registry
@@ -691,23 +691,19 @@ fn causation_gates_are_parked_with_a_false_coverage_note() {
             .unwrap_or_else(|| panic!("{source} remains registered"));
         assert_eq!(
             entry.classification,
-            Classification::ParkedGate,
-            "{source} passes on a run context its own SQL supplies, so it cannot be required"
+            Classification::RequiredGate,
+            "{source} has production-fed causation and must remain required"
         );
-        // Parking withdraws the coverage claim, not the subject: the gate still
-        // runs, can still fail, and still names the decisions it is about.
         assert!(entry.can_fail);
-        assert!(entry.decision_ids.iter().any(|id| id == "D3"));
-        assert!(entry.decision_ids.iter().any(|id| id == "D19"));
-        let note = entry.coverage_exclusions.join(" ");
-        assert!(
-            note.contains("set_current_run"),
-            "{source} must name the dormant producer: {note}"
+        assert_eq!(
+            entry
+                .decision_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["D3", "D19"])
         );
-        assert!(
-            note.contains("emit-with-attribution"),
-            "{source} must name the re-open trigger: {note}"
-        );
+        assert!(entry.coverage_exclusions.is_empty());
     }
 }
 
@@ -717,8 +713,9 @@ fn rejects_parked_gate_without_coverage_note_mutant() {
     let entry = registry
         .entries
         .iter_mut()
-        .find(|entry| entry.classification == Classification::ParkedGate)
-        .expect("registry must contain a parked gate");
+        .find(|entry| entry.classification == Classification::RequiredGate)
+        .expect("registry must contain a required gate");
+    entry.classification = Classification::ParkedGate;
     entry.coverage_exclusions.clear();
     let error = validate_registry(&registry, &manifests, &root)
     .expect_err("a parked gate with no coverage note must fail");

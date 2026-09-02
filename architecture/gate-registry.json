@@ -757,7 +757,7 @@
     {
       "source_kind": "recipe",
       "source": "H5-CAUSATION",
-      "classification": "parked-gate",
+      "classification": "required-gate",
       "decision_ids": [
         "D3",
         "D19"
@@ -767,10 +767,7 @@
       "expected_outcome": "pass",
       "can_fail": true,
       "allowed_skips": [],
-      "coverage_exclusions": [
-        "the production causation stamp is dormant: the wamn-p94i plugin-seam deletion left set_current_run with no production caller, so this gate passes on a run context its own SQL supplies rather than one the platform wrote (bd:wamn-g0f0)",
-        "parked until the first production emit-with-attribution consumer wires a set_current_run producer; the gate returns to required-gate then"
-      ],
+      "coverage_exclusions": [],
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
@@ -783,7 +780,7 @@
     {
       "source_kind": "recipe",
       "source": "H5-CAUSATION-E2E",
-      "classification": "parked-gate",
+      "classification": "required-gate",
       "decision_ids": [
         "D3",
         "D19"
@@ -793,10 +790,7 @@
       "expected_outcome": "pass",
       "can_fail": true,
       "allowed_skips": [],
-      "coverage_exclusions": [
-        "the production causation stamp is dormant: the wamn-p94i plugin-seam deletion left set_current_run with no production caller, so the end-to-end stitch this gate observes starts from a run context its own SQL supplies rather than one the platform wrote (bd:wamn-g0f0)",
-        "parked until the first production emit-with-attribution consumer wires a set_current_run producer; the gate returns to required-gate then"
-      ],
+      "coverage_exclusions": [],
       "cadence": "per-shipping-change",
       "latest_evidence": {
         "issue": "bd:wamn-ec7j",

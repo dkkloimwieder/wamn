@@ -18,6 +18,7 @@ use wamn_catalog::{
     ServingComponent, ServingComponentOperation, ServingManifest, ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
+use wamn_event_wire::Causation;
 use wamn_router::{
     ActiveWiring, CacheInsert, Delivery, ErrorDetail, Lookup, NodeError, NodeOutcome, Outcome,
     RateLimitDetail, Step, WiringCache, WiringCacheSnapshot,
@@ -738,13 +739,35 @@ impl RouterDriver {
     /// Execute one direct or queued delivery through the same router and node
     /// invoker. The caller owns acting on the terminal verdict.
     pub async fn execute(&self, request: RouterDriverRequest) -> anyhow::Result<RouterDelivery> {
+        self.execute_with_context(request, None).await
+    }
+
+    /// Execute one delivery with host-derived event provenance.
+    ///
+    /// Only the router-delivery bridge can mint this context. It is distinct
+    /// from caller identity: a post-commit registration remains callerless
+    /// while every PostgreSQL transaction it drives carries the delivery's
+    /// causation stamp.
+    pub(crate) async fn execute_with_causation(
+        &self,
+        request: RouterDriverRequest,
+        causation: Causation,
+    ) -> anyhow::Result<RouterDelivery> {
+        self.execute_with_context(request, Some(causation)).await
+    }
+
+    async fn execute_with_context(
+        &self,
+        request: RouterDriverRequest,
+        causation: Option<Causation>,
+    ) -> anyhow::Result<RouterDelivery> {
         self.validate_request_scope(&request)?;
         let active = self
             .resolve(&request)
             .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
         self.validate_wiring_closure(&request, &active)?;
-        self.execute_resolved(request, active, ExecutionClosure::Released)
+        self.execute_resolved(request, active, ExecutionClosure::Released, causation)
             .await
     }
 
@@ -787,6 +810,7 @@ impl RouterDriver {
                 binding_world: &request.binding_world,
                 component_bytes: &component_bytes,
             },
+            None,
         )
         .await
     }
@@ -796,6 +820,7 @@ impl RouterDriver {
         request: RouterDriverRequest,
         active: ActiveWiring<CatalogFacts>,
         closure: ExecutionClosure<'_>,
+        causation: Option<Causation>,
     ) -> anyhow::Result<RouterDelivery> {
         // Parse the ingress context once per delivery, not once per node on the
         // router hot path. Queue delivery deliberately carries no remote
@@ -848,7 +873,7 @@ impl RouterDriver {
                         remote_parent.as_ref(),
                     );
                     let outcome = self
-                        .invoke_node(&request, &active, &call, closure)
+                        .invoke_node(&request, &active, &call, closure, causation.as_ref())
                         .instrument(span)
                         .await
                         .with_context(|| format!("invoke wiring node {:?}", call.node))?;
@@ -1252,6 +1277,7 @@ impl RouterDriver {
         active: &ActiveWiring<CatalogFacts>,
         call: &wamn_router::NodeCall,
         closure: ExecutionClosure<'_>,
+        causation: Option<&Causation>,
     ) -> anyhow::Result<NodeOutcome> {
         let component = active
             .facts
@@ -1302,6 +1328,7 @@ impl RouterDriver {
                 component_digest: component.component_digest.clone(),
                 closure: connection_closure,
             },
+            causation: causation.cloned(),
         };
         let (candidate_bytes, compiled_components) = match closure {
             ExecutionClosure::Released => (
@@ -1368,8 +1395,13 @@ impl RouterDriver {
             .await?
         };
         instance
-            .bind_identity(&acquisition, request.caller.as_ref())
-            .with_context(|| format!("bind identity to {} instance", component.component_digest))?;
+            .bind_acquisition(&acquisition, request.caller.as_ref())
+            .with_context(|| {
+                format!(
+                    "bind delivery acquisition to {} instance",
+                    component.component_digest
+                )
+            })?;
         let deadline_ms = bounded_node_deadline_ms(call.deadline_ms);
         let context = node_context(request, active.version, call, deadline_ms)?;
         let input = serde_json::to_string(&call.payload).context("encode node input")?;
@@ -1455,6 +1487,18 @@ fn synchronous_request_kind(kind: AttachmentKind) -> bool {
 struct NodeAcquisition {
     claims: SessionClaims,
     invocation: ConnectionInvocation,
+    /// Event provenance for every transaction opened during this acquisition.
+    /// This is intentionally independent of `caller`: post-commit delivery has
+    /// causation but no caller identity.
+    causation: Option<Causation>,
+}
+
+impl NodeAcquisition {
+    fn retarget(mut self, package_id: &str, component_digest: &str) -> Self {
+        self.invocation.package_id = package_id.to_owned();
+        self.invocation.component_digest = component_digest.to_owned();
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1466,8 +1510,9 @@ struct BoundNestedInvocation {
 
 /// The exact released closure and originating authority available to imports.
 ///
-/// Linker construction installs no identity. [`NodeInstance::bind_identity`]
-/// populates the slot only after every host capability is bound, and
+/// Linker construction installs no acquisition context.
+/// [`NodeInstance::bind_acquisition`] populates the slot only after every host
+/// capability is bound, and
 /// [`NodeInstance::run`] names the one export currently allowed to use its
 /// admission-declared dependencies.
 struct NestedOperationHost {
@@ -1689,10 +1734,10 @@ impl NestedOperationHost {
             &target,
         )
         .await?;
-        let mut acquisition = bound.acquisition;
-        acquisition.invocation.package_id = target.scope.package_id.clone();
-        acquisition.invocation.component_digest = target.component_digest.clone();
-        child.bind_identity(&acquisition, bound.caller.as_ref())?;
+        let acquisition = bound
+            .acquisition
+            .retarget(&target.scope.package_id, &target.component_digest);
+        child.bind_acquisition(&acquisition, bound.caller.as_ref())?;
         let span = tracing::info_span!(
             "wamn.component.invoke",
             wamn.tenant = %self.tenant_id,
@@ -1982,7 +2027,8 @@ impl NodeInstance {
             // Linker setup is not an identity bind. In particular WamnLogging's
             // plugin hook seeds even an empty claim. Clear every registry before
             // component instantiation so start functions cannot exercise tenant
-            // authority; `bind_identity` is the sole identity installation point.
+            // authority; `bind_acquisition` is the sole identity and provenance
+            // installation point.
             postgres.revoke_session_claims(&scope);
             logging.clear_claim(&scope);
             connection_http.revoke_invocation(&scope);
@@ -2062,23 +2108,26 @@ impl NodeInstance {
         Ok(outcome)
     }
 
-    /// Bind EVERY identity-derived registry entry of this instance.
+    /// Bind every identity and provenance entry of this instance.
     ///
     /// Called once, before the guest runs, so no instance is ever invoked under
-    /// an identity other than the one acquiring it. An element that is
-    /// identity-derived and not bound here is a cross-tenant leak channel; add
-    /// it to [`revoke_identity`](Self::revoke_identity) in the same change.
-    fn bind_identity(
+    /// context other than the one acquiring it. Causation remains provenance,
+    /// independent of the optional caller identity. Add every newly bound
+    /// registry to [`revoke_acquisition`](Self::revoke_acquisition) in the same
+    /// change.
+    fn bind_acquisition(
         &mut self,
-        identity: &NodeAcquisition,
+        acquisition: &NodeAcquisition,
         caller: Option<&AuthenticatedCaller>,
     ) -> anyhow::Result<()> {
         self.postgres
-            .bind_session_claims(&self.scope, &identity.claims)?;
+            .bind_session_claims(&self.scope, &acquisition.claims)?;
+        self.postgres
+            .set_current_run(&self.scope, acquisition.causation.clone());
         self.logging.set_claim(
             &self.scope,
-            &identity.claims.tenant,
-            identity
+            &acquisition.claims.tenant,
+            acquisition
                 .claims
                 .project
                 .as_deref()
@@ -2086,22 +2135,22 @@ impl NodeInstance {
         );
         if let Err(error) = self
             .connection_http
-            .bind_invocation(&self.scope, identity.invocation.clone())
+            .bind_invocation(&self.scope, acquisition.invocation.clone())
         {
             self.logging.clear_claim(&self.scope);
             self.postgres.revoke_session_claims(&self.scope);
             return Err(error);
         }
-        self.nested.bind(identity, caller);
+        self.nested.bind(acquisition, caller);
         Ok(())
     }
 
-    /// Clear every element [`bind_identity`](Self::bind_identity) installed.
+    /// Clear every element [`bind_acquisition`](Self::bind_acquisition) installed.
     ///
     /// Each call is a scope-keyed removal that `instantiate` already makes with
     /// nothing bound, so this is safe on an unbound instance and runs from
     /// `Drop` on every path that ends an invocation, cancellation included.
-    fn revoke_identity(&mut self) {
+    fn revoke_acquisition(&mut self) {
         self.nested.revoke();
         self.connection_http.revoke_invocation(&self.scope);
         self.logging.clear_claim(&self.scope);
@@ -2111,7 +2160,7 @@ impl NodeInstance {
 
 impl Drop for NodeInstance {
     fn drop(&mut self) {
-        self.revoke_identity();
+        self.revoke_acquisition();
     }
 }
 
@@ -2379,6 +2428,42 @@ mod tests {
         let denial = authorize_registered_operation(None, Some(operation))
             .expect_err("a registered invocation without an originating caller is denied");
         assert_eq!(denial.operation(), operation);
+    }
+
+    #[test]
+    fn nested_acquisition_preserves_causation_without_minting_a_caller() {
+        let causation = Causation {
+            run: "registration:delivery:9".to_owned(),
+            root: "attachment:delivery:1".to_owned(),
+            depth: 2,
+        };
+        let bound = BoundNestedInvocation {
+            caller: None,
+            acquisition: NodeAcquisition {
+                claims: SessionClaims {
+                    tenant: "tenant-a".to_owned(),
+                    ..SessionClaims::default()
+                },
+                invocation: ConnectionInvocation {
+                    package_id: "client_acme_receiving".to_owned(),
+                    wiring_id: "record-receipt".to_owned(),
+                    wiring_version: 1,
+                    node_id: "base-command".to_owned(),
+                    occurrence: 0,
+                    component_digest: "sha256:overlay".to_owned(),
+                    closure: ConnectionExecutionClosure::Released,
+                },
+                causation: Some(causation.clone()),
+            },
+            active_operation: Some("client-acme-receiving:receiving/record-receipt@1.0.0".into()),
+        };
+
+        assert!(bound.caller.is_none(), "provenance is not caller identity");
+        let child = bound.acquisition.retarget("wamn_receiving", "sha256:base");
+        assert_eq!(child.causation.as_ref(), Some(&causation));
+        assert_eq!(child.invocation.package_id, "wamn_receiving");
+        assert_eq!(child.invocation.component_digest, "sha256:base");
+        assert_eq!(child.invocation.wiring_id, "record-receipt");
     }
 
     #[tokio::test]

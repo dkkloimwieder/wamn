@@ -183,7 +183,11 @@ impl RouterDeliveryBridge {
             Some(_) => delivery_attributes(source, &request.wiring_id, request.wiring_version),
             None => Vec::new(),
         };
-        match self.driver.execute(request).await {
+        match self
+            .driver
+            .execute_with_causation(request, causation.clone())
+            .await
+        {
             Ok(delivery) => {
                 self.record(&attributes, DeliveryClass::Delivered);
                 let (outcome, result) = settled_preview(&delivery.outcome);
