@@ -1454,7 +1454,7 @@ async fn publish_journey_release(
         run_schema: "wamn_run".to_owned(),
         packages: vec![PackageCoordinate::new(PACKAGE_ID, PACKAGE_VERSION)?],
         wirings,
-        attachments: publication_root().join("attachments.json"),
+        attachments: vec![publication_root().join("attachments.json")],
         route_host: Some(inputs.route_host.clone()),
         package_manifests: vec![package_root().join("wamn.json")],
     })

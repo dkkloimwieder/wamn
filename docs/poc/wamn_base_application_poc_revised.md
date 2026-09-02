@@ -119,13 +119,28 @@ quality.approve_inspection
 quality.load_purchase_order_detail
 ```
 
-Operation names are transport-independent. HTTP may map:
+Operation names are transport-independent. The POC HTTP boundary maps each
+registered operation to an authenticated `POST` array envelope. The Acme
+overlay binds exactly:
 
 ```text
-POST   /purchase_order      → purchase_order.create
-PATCH  /purchase_order/:id  → purchase_order.update
-DELETE /purchase_order/:id  → purchase_order.delete
+POST /acme/purchase_order/get
+  → client-acme-receiving:purchase-order/get@3.0.0
+POST /acme/purchase_order/update
+  → client-acme-receiving:purchase-order/update@3.0.0
+POST /acme/receiving/record_receipt
+  → client-acme-receiving:receiving/record-receipt@3.0.0
+POST /acme/quality/load_purchase_order_detail
+  → client-acme-receiving:quality/load-purchase-order-detail@3.0.0
+POST /acme/quality/approve_inspection
+  → client-acme-receiving:quality/approve-inspection@3.0.0
 ```
+
+[Owner-ruling correction, 2026-09-02 (`wamn-10yt.4.9`): these five PAT
+`POST` attachments supersede the stale REST-shaped route examples.]
+
+The `/acme` prefix is publication-attachment/effective-release overlay data and
+is absent from the transport-independent package declarations in `wamn.json`.
 
 ### 2.3 Technical naming
 
@@ -135,7 +150,7 @@ WAMN-owned wire and schema identifiers use singular `snake_case`:
 purchase_order
 purchase_order_line
 receiving.record_receipt
-/acme/purchase_order/:id/quality
+/acme/purchase_order/get
 ```
 
 This applies to data model, operation, package-local identifier, route segment, event identifier, JSON property, SQL relation/field, and generated function name. Generated language types may follow language convention:
@@ -515,7 +530,8 @@ Not every data model exposes every action. Operational records may expose only `
 
 #### `update`
 
-The WAMN operation is `update`; an HTTP route may use `PATCH`.
+The WAMN operation is `update`; its POC HTTP attachment remains the authenticated
+`POST /acme/purchase_order/update` array envelope.
 
 ```text
 field absent             → unchanged

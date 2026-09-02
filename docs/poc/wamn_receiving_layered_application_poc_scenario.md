@@ -14,7 +14,7 @@ Every wire-level technical identifier uses a **singular noun** and **`snake_case
 purchase_order
 purchase_order_line
 receiving.record_receipt
-/acme/purchase_order/:id/quality
+/acme/purchase_order/get
 ```
 
 This applies to data model, operation, route segment, event, package-local identifier, JSON property, SQL relation, and generated function name. Collection behavior is represented by an array or by an action such as `query`, never by pluralizing the data model.
@@ -108,13 +108,9 @@ purchase_order.update
 purchase_order.delete
 ```
 
-An HTTP binding may map them as:
-
-```text
-POST   /purchase_order      → purchase_order.create
-PATCH  /purchase_order/:id  → purchase_order.update
-DELETE /purchase_order/:id  → purchase_order.delete
-```
+The POC HTTP binding uses authenticated `POST` array envelopes; the five exact
+Acme routes are declared in the client-overlay scenario below. Transport
+independence does not create a second REST-shaped route grammar.
 
 `update` has partial-update semantics for the POC:
 
@@ -380,15 +376,23 @@ client-acme-receiving:purchase-order/get@3.0.0
 client-acme-receiving:purchase-order/update@3.0.0
 ```
 
-With HTTP bindings such as:
+With exactly these authenticated PAT bindings:
 
 ```text
-GET   /acme/purchase_order/:id/quality
+POST /acme/purchase_order/get
   → client-acme-receiving:purchase-order/get@3.0.0
-
-PATCH /acme/purchase_order/:id/quality
+POST /acme/purchase_order/update
   → client-acme-receiving:purchase-order/update@3.0.0
+POST /acme/receiving/record_receipt
+  → client-acme-receiving:receiving/record-receipt@3.0.0
+POST /acme/quality/load_purchase_order_detail
+  → client-acme-receiving:quality/load-purchase-order-detail@3.0.0
+POST /acme/quality/approve_inspection
+  → client-acme-receiving:quality/approve-inspection@3.0.0
 ```
+
+[Owner-ruling correction, 2026-09-02 (`wamn-10yt.4.9`): these five PAT
+`POST` attachments supersede the stale REST-shaped examples.]
 
 The generated client mutation is restricted to the client-owned field surface. For example:
 
@@ -494,7 +498,13 @@ wamn-receiving:receiving/record-receipt@1.0.0
 `quality.create_inspection` is private to the installed application and is the
 first genuine materializer consumer. Its inline registration names the source
 package and entity; it is not route-bindable and carries no public permission
-token. The originating caller identity remains preserved at invocation.
+token. The post-commit invocation preserves the receipt event's causation
+identity and carries no caller identity; CDC delivery is not an authenticated
+user invocation.
+
+[Owner-ruling correction, 2026-09-02 (`wamn-0h0g.15.25.4`): materializer
+delivery preserves causation, while caller identity is absent rather than
+fabricated.]
 
 ERP synchronization is deferred because the POC has no ERP consumer. The same
 post-commit model remains the direction for a later real integration demand.

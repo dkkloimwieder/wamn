@@ -1,0 +1,185 @@
+{
+  "client-acme-receiving-purchase-order-get-http": {
+    "kind": "http",
+    "package-id": "client_acme_receiving",
+    "wiring-id": "purchase_order_get",
+    "wiring-version": 1,
+    "definition-hash": "sha256:155964d242ac6a831e67a57af5a0e9a6d7a48184c886f29ec2589f563ebda715",
+    "definition": {
+      "id": "client-acme-receiving-purchase-order-get-http",
+      "kind": "http",
+      "route": {"path": "/acme/purchase_order/get", "method": "POST"},
+      "raw-body-bytes": {"maximum": 1048576},
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": ["request_id", "id"],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {"type": "string", "minLength": 1},
+            "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+          }
+        }
+      }
+    },
+    "auth-policy": {"mode": "pat"},
+    "registered-operation": "client-acme-receiving:purchase-order/get@3.0.0"
+  },
+  "client-acme-receiving-purchase-order-update-http": {
+    "kind": "http",
+    "package-id": "client_acme_receiving",
+    "wiring-id": "purchase_order_update",
+    "wiring-version": 1,
+    "definition-hash": "sha256:077fe760dc3c65136ca31e9642f671cf5e5ce02b88a0a05108d56a2178c7f8b9",
+    "definition": {
+      "id": "client-acme-receiving-purchase-order-update-http",
+      "kind": "http",
+      "route": {"path": "/acme/purchase_order/update", "method": "POST"},
+      "raw-body-bytes": {"maximum": 1048576},
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": ["request_id", "id", "expected_row_version", "change"],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {"type": "string", "minLength": 1},
+            "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+            "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
+            "change": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "acme_inspection_required": {
+                  "type": ["boolean", "null"],
+                  "x-wamn-explicit-null": "invalid_input"
+                },
+                "acme_quality_status": {
+                  "type": ["string", "null"],
+                  "enum": ["not_required", "pending", "approved", null],
+                  "x-wamn-explicit-null": "invalid_input"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {"mode": "pat"},
+    "registered-operation": "client-acme-receiving:purchase-order/update@3.0.0"
+  },
+  "client-acme-receiving-receiving-record-receipt-http": {
+    "kind": "http",
+    "package-id": "client_acme_receiving",
+    "wiring-id": "receiving_record_receipt",
+    "wiring-version": 1,
+    "definition-hash": "sha256:2e0c1a505b894b406fdfd8114ffae32fbf130813bb0de11487930a0e53e00c60",
+    "definition": {
+      "id": "client-acme-receiving-receiving-record-receipt-http",
+      "kind": "http",
+      "route": {"path": "/acme/receiving/record_receipt", "method": "POST"},
+      "raw-body-bytes": {"maximum": 1048576},
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": ["request_id", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {"type": "string", "minLength": 1},
+            "value": {
+              "type": "object",
+              "required": ["idempotency_key", "purchase_order_id", "receipt_reference", "occurred_at", "line"],
+              "additionalProperties": false,
+              "properties": {
+                "idempotency_key": {"type": "string", "minLength": 1},
+                "purchase_order_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+                "receipt_reference": {"type": "string", "minLength": 1},
+                "occurred_at": {"type": "string"},
+                "line": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "items": {
+                    "type": "object",
+                    "required": ["purchase_order_line_id", "quantity", "location_id"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "purchase_order_line_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+                      "quantity": {"type": "string"},
+                      "location_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {"mode": "pat"},
+    "registered-operation": "client-acme-receiving:receiving/record-receipt@3.0.0"
+  },
+  "client-acme-receiving-quality-load-purchase-order-detail-http": {
+    "kind": "http",
+    "package-id": "client_acme_receiving",
+    "wiring-id": "quality_load_purchase_order_detail",
+    "wiring-version": 1,
+    "definition-hash": "sha256:33599e76765546c3df9918386a2909862a97b06481787f4f2b463d1327c4deb6",
+    "definition": {
+      "id": "client-acme-receiving-quality-load-purchase-order-detail-http",
+      "kind": "http",
+      "route": {"path": "/acme/quality/load_purchase_order_detail", "method": "POST"},
+      "raw-body-bytes": {"maximum": 1048576},
+      "input-schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["request_id", "purchase_order_id"],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {"type": "string", "minLength": 1},
+            "purchase_order_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+          }
+        }
+      }
+    },
+    "auth-policy": {"mode": "pat"},
+    "registered-operation": "client-acme-receiving:quality/load-purchase-order-detail@3.0.0"
+  },
+  "client-acme-receiving-quality-approve-inspection-http": {
+    "kind": "http",
+    "package-id": "client_acme_receiving",
+    "wiring-id": "quality_approve_inspection",
+    "wiring-version": 1,
+    "definition-hash": "sha256:82b9ee17eb2657d800eaf8024b3fba6b4b8b1384ad0dd5afd1281d759cf8a05f",
+    "definition": {
+      "id": "client-acme-receiving-quality-approve-inspection-http",
+      "kind": "http",
+      "route": {"path": "/acme/quality/approve_inspection", "method": "POST"},
+      "raw-body-bytes": {"maximum": 1048576},
+      "input-schema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["request_id", "receipt_id", "expected_row_version"],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {"type": "string", "minLength": 1},
+            "receipt_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+            "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"}
+          }
+        }
+      }
+    },
+    "auth-policy": {"mode": "pat"},
+    "registered-operation": "client-acme-receiving:quality/approve-inspection@3.0.0"
+  }
+}

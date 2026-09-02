@@ -7,7 +7,7 @@
 //! deployment attestation can reference it.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 use clap::Args;
@@ -189,6 +189,7 @@ pub enum MintManifestErrorKind {
     Registration,
     ClosureConflict,
     Document,
+    DuplicateAttachmentId,
     RouteHostUnbound,
     EnvironmentPolicyAbsent,
     EnvironmentPolicyMismatch,
@@ -209,6 +210,7 @@ impl MintManifestErrorKind {
             Self::Registration => "registration",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
+            Self::DuplicateAttachmentId => "duplicate-attachment-id",
             Self::RouteHostUnbound => "route-host-unbound",
             Self::EnvironmentPolicyAbsent => "environment-policy-not-converged",
             Self::EnvironmentPolicyMismatch => "environment-policy-environment-mismatch",
@@ -313,8 +315,9 @@ pub struct PublishReleaseArgs {
         required = true
     )]
     pub wirings: Vec<ReleaseWiringTarget>,
-    #[arg(long)]
-    pub attachments: PathBuf,
+    /// Package-owned attachment documents; repeat once per package.
+    #[arg(long = "attachments", value_name = "PATH", required = true)]
+    pub attachments: Vec<PathBuf>,
     /// Deployment-owned hostname applied to every HTTP route.
     #[arg(long)]
     pub route_host: Option<String>,
@@ -354,7 +357,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         !args.verified_publisher_principal.is_empty(),
         "verified-publisher-principal must not be empty"
     );
-    let authored_attachments = read_document(&args.attachments, "attachments")?;
+    let authored_attachments = read_package_attachments(&args.attachments)?;
     let attachments =
         resolve_route_host_overlay(&authored_attachments, args.route_host.as_deref())?;
     let (package_manifests, package_manifest_hashes) =
@@ -642,11 +645,60 @@ pub async fn attest_deployment(
     .await
 }
 
-fn read_document<T: DeserializeOwned>(path: &Path, field: &'static str) -> anyhow::Result<T> {
-    let bytes =
-        std::fs::read(path).with_context(|| format!("read release {field} {}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse release {field} {}", path.display()))
+fn read_package_attachments(
+    paths: &[PathBuf],
+) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+    if paths.is_empty() {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::Document,
+            "publish-release requires at least one package-owned --attachments document",
+        ));
+    }
+    let documents = paths
+        .iter()
+        .map(|path| {
+            let bytes = std::fs::read(path).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::Document,
+                    format!("read package attachments {}", path.display()),
+                    error,
+                )
+            })?;
+            let attachments = serde_json::from_slice(&bytes).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::Document,
+                    format!("parse package attachments {}", path.display()),
+                    error,
+                )
+            })?;
+            Ok((path.clone(), attachments))
+        })
+        .collect::<Result<Vec<_>, MintManifestError>>()?;
+    merge_package_attachment_documents(documents)
+}
+
+fn merge_package_attachment_documents(
+    documents: Vec<(PathBuf, BTreeMap<String, ServingAttachment>)>,
+) -> Result<BTreeMap<String, ServingAttachment>, MintManifestError> {
+    let mut merged = BTreeMap::new();
+    let mut sources = BTreeMap::<String, PathBuf>::new();
+    for (path, attachments) in documents {
+        for (attachment_id, attachment) in attachments {
+            if let Some(first_path) = sources.get(&attachment_id) {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::DuplicateAttachmentId,
+                    format!(
+                        "attachment {attachment_id:?} occurs in package documents {} and {}; keep exactly one package owner",
+                        first_path.display(),
+                        path.display(),
+                    ),
+                ));
+            }
+            sources.insert(attachment_id.clone(), path.clone());
+            merged.insert(attachment_id, attachment);
+        }
+    }
+    Ok(merged)
 }
 
 fn read_package_manifests(
@@ -2067,6 +2119,147 @@ mod tests {
             wamn_execution_contract::canonical_json_sha256(&attachment.definition),
         )
         .expect("the canonicalizer emits a valid definition hash");
+    }
+
+    fn package_http_attachment(
+        attachment_id: &str,
+        package_id: &str,
+        wiring_id: &str,
+        operation: &str,
+        path: &str,
+    ) -> ServingAttachment {
+        let definition = serde_json::json!({
+            "id": attachment_id,
+            "kind": "http",
+            "route": {"path": path, "method": "POST"},
+        });
+        let definition_hash = wamn_execution_contract::canonical_json_sha256(&definition);
+        ServingAttachment {
+            kind: wamn_catalog::AttachmentKind::Http,
+            package_id: package_id.to_owned(),
+            wiring_id: wiring_id.to_owned(),
+            wiring_version: 1,
+            definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
+                .expect("the canonicalizer emits a valid definition hash"),
+            definition,
+            auth_policy: serde_json::json!({"mode": "pat"}),
+            registered_operation: Some(operation.to_owned()),
+        }
+    }
+
+    #[test]
+    fn real_package_attachment_documents_merge_into_one_release() {
+        let base: BTreeMap<String, ServingAttachment> = serde_json::from_slice(include_bytes!(
+            "../../../packages/receiving/publication/attachments.json"
+        ))
+        .expect("the Receiving package attachments have the serving wire shape");
+        let overlay: BTreeMap<String, ServingAttachment> = serde_json::from_slice(include_bytes!(
+            "../../../packages/client_acme_receiving/publication/attachments.json"
+        ))
+        .expect("the Acme package attachments have the serving wire shape");
+        let authored = merge_package_attachment_documents(vec![
+            (
+                PathBuf::from("packages/receiving/publication/attachments.json"),
+                base,
+            ),
+            (
+                PathBuf::from("packages/client_acme_receiving/publication/attachments.json"),
+                overlay,
+            ),
+        ])
+        .expect("distinct package attachment identities merge");
+
+        assert_eq!(authored.len(), 11);
+        assert_eq!(
+            authored
+                .values()
+                .filter(|attachment| attachment.package_id == "wamn_receiving")
+                .count(),
+            6
+        );
+        assert_eq!(
+            authored
+                .values()
+                .filter(|attachment| attachment.package_id == "client_acme_receiving")
+                .count(),
+            5
+        );
+        let resolved = resolve_route_host_overlay(&authored, Some("Receiving.Localhost"))
+            .expect("the merged package routes retain deployment-owned host binding");
+        assert!(
+            resolved.values().all(|attachment| {
+                attachment.definition["route"]["host"] == "receiving.localhost"
+            })
+        );
+    }
+
+    #[test]
+    fn package_attachment_documents_refuse_duplicate_identity() {
+        let base = package_http_attachment(
+            "receiving-http",
+            "wamn_receiving",
+            "receiving_record_receipt",
+            "wamn-receiving:receiving/record-receipt@1.0.0",
+            "/receiving/record_receipt",
+        );
+        let overlay = package_http_attachment(
+            "receiving-http",
+            "client_acme_receiving",
+            "receiving_record_receipt",
+            "client-acme-receiving:receiving/record-receipt@3.0.0",
+            "/acme/receiving/record_receipt",
+        );
+        let error = merge_package_attachment_documents(vec![
+            (
+                PathBuf::from("packages/receiving/publication/attachments.json"),
+                BTreeMap::from([("receiving-http".to_owned(), base)]),
+            ),
+            (
+                PathBuf::from("packages/client_acme_receiving/publication/attachments.json"),
+                BTreeMap::from([("receiving-http".to_owned(), overlay)]),
+            ),
+        ])
+        .expect_err("one attachment identity cannot have two package owners");
+
+        assert_eq!(error.kind(), MintManifestErrorKind::DuplicateAttachmentId);
+        assert_eq!(error.kind().as_str(), "duplicate-attachment-id");
+        assert!(error.detail().contains("receiving-http"));
+        assert!(error.detail().contains("packages/receiving"));
+        assert!(error.detail().contains("packages/client_acme_receiving"));
+    }
+
+    #[test]
+    fn package_attachment_route_collisions_use_the_existing_governor() {
+        let first = package_http_attachment(
+            "first-http",
+            "wamn_receiving",
+            "receipt_get",
+            "wamn-receiving:receipt/get@1.0.0",
+            "/receipt/{id}",
+        );
+        let second = package_http_attachment(
+            "second-http",
+            "client_acme_receiving",
+            "quality_load_purchase_order_detail",
+            "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+            "/receipt/{receipt_id}",
+        );
+        let authored = merge_package_attachment_documents(vec![
+            (
+                PathBuf::from("packages/receiving/publication/attachments.json"),
+                BTreeMap::from([("first-http".to_owned(), first)]),
+            ),
+            (
+                PathBuf::from("packages/client_acme_receiving/publication/attachments.json"),
+                BTreeMap::from([("second-http".to_owned(), second)]),
+            ),
+        ])
+        .expect("distinct attachment identities merge before route validation");
+        let error = resolve_route_host_overlay(&authored, Some("receiving.localhost"))
+            .expect_err("canonical route collisions remain refused after package merging");
+
+        assert_eq!(error.kind(), MintManifestErrorKind::Document);
+        assert!(error.detail().contains("canonical path and method"));
     }
 
     #[test]
