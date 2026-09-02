@@ -4,6 +4,8 @@
 //! implementations remain with their existing migration, build, gate, and
 //! publication owners and enter through [`DevStageRunner`].
 
+pub mod config;
+
 use std::error::Error;
 use std::fmt;
 
