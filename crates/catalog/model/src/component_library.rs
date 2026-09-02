@@ -614,7 +614,9 @@ fn normalize_effects(
             continue;
         }
         let package = wamn_component_policy::import_pkg(import);
-        if !wamn_component_policy::is_effect_package(package) {
+        if wamn_component_policy::import_posture(import)
+            != Some(wamn_component_policy::Posture::Effect)
+        {
             continue;
         }
         if !normalized.iter().any(|effect| {

@@ -270,9 +270,16 @@ fn derive_effects(
 ) -> Vec<AdmittedComponentEffect> {
     let mut grouped: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
     for name in imports.iter() {
-        let package = wamn_component_policy::import_pkg(name);
-        if wamn_component_policy::is_effect_package(package) {
-            grouped.entry(package).or_default().insert(name.to_owned());
+        // Posture comes from the registry row matched on package AND version.
+        // Grouping stays package-grain because the persisted projection is
+        // package-grain; only the classification moved.
+        if wamn_component_policy::import_posture(name)
+            == Some(wamn_component_policy::Posture::Effect)
+        {
+            grouped
+                .entry(wamn_component_policy::import_pkg(name))
+                .or_default()
+                .insert(name.to_owned());
         }
     }
     grouped
@@ -313,7 +320,7 @@ mod tests {
     const DEPENDENCY_WITS: [(&str, &str); 5] = [
         (
             "wasi-clocks.wit",
-            "package wasi:clocks@0.2.3; interface monotonic-clock { now: func() -> u64; }",
+            "package wasi:clocks@0.2.12; interface monotonic-clock { now: func() -> u64; }",
         ),
         (
             // The interface carries a function ON PURPOSE. An EMPTY interface
@@ -675,7 +682,7 @@ mod tests {
     fn effects_record_only_the_imports_that_leave_the_host() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(
-            "import wasi:clocks/monotonic-clock@0.2.3; \
+            "import wasi:clocks/monotonic-clock@0.2.12; \
              import wamn:node/types@0.1.0; \
              import wamn:postgres/client@0.1.0; \
              import wamn:connection/http@0.1.0;",

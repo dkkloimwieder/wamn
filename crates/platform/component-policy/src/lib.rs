@@ -64,32 +64,142 @@ pub fn analyze(
     Ok(PolicyReport)
 }
 
-/// The complete WASI package set tenant components may import directly.
+/// Whether importing a capability reaches outside the host.
 ///
-/// Matching is by exact `namespace:package`; this is deliberately not a
-/// `wasi:*` prefix policy. Filesystem, sockets, HTTP, CLI environment/process,
-/// and every future WASI package therefore remain denied until this list is
-/// changed deliberately.
-pub const TENANT_WASI_PACKAGES: [&str; 4] =
-    ["wasi:io", "wasi:clocks", "wasi:random", "wasi:logging"];
+/// Posture is package-grain and **declared**, never inferred from a namespace.
+/// A mixed-posture package would trigger a split ruling; none exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Posture {
+    /// Reaches nothing outside the host. Importable without a grant.
+    Ambient,
+    /// Reaches outside the host. Requires an explicit per-component grant and
+    /// is recorded in the component's effect projection.
+    Effect,
+}
 
-/// Platform packages that grant a component no authority leaving the host.
-///
-/// `wamn:node` is the router's own invocation seam — the host calls INTO the
-/// guest through it — so importing it reaches nothing outside the host. It is
-/// the only platform package with that shape, which is what keeps the
-/// complement rule in [`is_effect_package`] fail-safe: a platform package added
-/// later is classified as an effect until it is listed here deliberately.
-pub const NON_EFFECT_PLATFORM_PACKAGES: [&str; 1] = ["wamn:node"];
+/// One admitted capability, keyed on exact `namespace:package` AND exact
+/// version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapabilityRow {
+    /// Exact WIT `namespace:package`.
+    pub package: &'static str,
+    /// Exact package version. No normalization, no ranges.
+    pub version: &'static str,
+    /// Whether importing it leaves the host.
+    pub posture: Posture,
+}
 
-/// Whether importing this exact `namespace:package` reaches outside the host.
+/// The closed capability registry: the complete set of packages a tenant
+/// component may import, each with its declared posture.
 ///
-/// This is the complement of the two authority-free lists over an inventory
-/// [`analyze_tenant`] has already accepted: every package left is an admitted
-/// platform capability, and an admitted platform capability is an effect
-/// surface unless [`NON_EFFECT_PLATFORM_PACKAGES`] says otherwise.
-pub fn is_effect_package(package: &str) -> bool {
-    !TENANT_WASI_PACKAGES.contains(&package) && !NON_EFFECT_PLATFORM_PACKAGES.contains(&package)
+/// This replaces two implicit classifiers — a `wamn:`-prefix shape check and a
+/// namespace complement rule — with one declared table. Three properties are
+/// deliberate:
+///
+/// * **Closed, and fail-closed.** An import with no exact row here is refused
+///   by ABSENCE, not by a namespace opinion. Expansion is a ruled change.
+/// * **Exact version.** Admission requires the imported version to equal the
+///   row's version. No normalization, no ranges; compatible-range rules are
+///   lifecycle machinery parked on `.7`.
+/// * **Code, not catalog.** Posture is a security classification that must be
+///   byte-identical on every host and must move only through code review plus
+///   a ledger row. A database row would let an operator reclassify an effect
+///   as ambient.
+///
+/// The registry governs the TENANT path ([`analyze_tenant`]) only. `wash push`
+/// workloads are platform-authored and admitted by us, so their imports are the
+/// platform's own responsibility; that path re-converges at the first
+/// non-platform-authored pushed workload.
+///
+/// Rows record what the host **offers**, not what a guest currently imports.
+/// `wasi:logging` is host-implemented (`plugins/wamn_logging.rs`) with zero
+/// importers today: a registry keyed on imports would drop a live capability
+/// the moment its last importer churned, then refuse the next guest to want it.
+///
+/// # Two provenance classes
+///
+/// The `wamn:*` rows and `wasi:logging` carry versions WE author. The remaining
+/// `wasi:*` rows do not: measured on `receiving`, the authored WIT says
+/// `0.2.12`, the raw build imports `0.2.9`, and the virtualized artifact that
+/// admission actually sees imports `0.2.12` — the virtualizer rewrites it. Those
+/// rows are pinned to the WASI-Virt revision and adapter digest of
+/// `docs/architecture/native-alignment-ledger.md` row 5, and a bump there
+/// without a matching edit here would silently refuse every std guest.
+/// `capability_registry_wasi_rows_match_the_vendored_wit` in the conformance
+/// suite is what makes that fail at the gate instead.
+pub const CAPABILITY_REGISTRY: [CapabilityRow; 8] = [
+    // Versions we author.
+    CapabilityRow {
+        package: "wamn:node",
+        version: "0.1.0",
+        posture: Posture::Ambient,
+    },
+    CapabilityRow {
+        package: "wamn:postgres",
+        version: "0.1.0",
+        posture: Posture::Effect,
+    },
+    CapabilityRow {
+        package: "wamn:connection",
+        version: "0.1.0",
+        posture: Posture::Effect,
+    },
+    CapabilityRow {
+        package: "wasmcloud:blobstore",
+        version: "0.1.0",
+        posture: Posture::Effect,
+    },
+    CapabilityRow {
+        package: "wasi:logging",
+        version: "0.1.0-draft",
+        posture: Posture::Ambient,
+    },
+    // Versions the virtualizer authors. See the provenance note above.
+    CapabilityRow {
+        package: "wasi:io",
+        version: "0.2.12",
+        posture: Posture::Ambient,
+    },
+    CapabilityRow {
+        package: "wasi:clocks",
+        version: "0.2.12",
+        posture: Posture::Ambient,
+    },
+    CapabilityRow {
+        package: "wasi:random",
+        version: "0.2.12",
+        posture: Posture::Ambient,
+    },
+];
+
+/// The registry row for one full import name, matched on package AND version.
+///
+/// `None` means refuse: either the package is unregistered, or it is registered
+/// at a different version, or the import carries no version at all.
+pub fn capability_row(import_name: &str) -> Option<&'static CapabilityRow> {
+    let package = import_pkg(import_name);
+    let version = import_version(import_name)?;
+    CAPABILITY_REGISTRY
+        .iter()
+        .find(|row| row.package == package && row.version == version)
+}
+
+/// The declared posture of one full import name, or `None` if unregistered.
+pub fn import_posture(import_name: &str) -> Option<Posture> {
+    capability_row(import_name).map(|row| row.posture)
+}
+
+/// The exact version of a full import name.
+///
+/// Import names carry the version last in both shapes an inventory contains —
+/// `wamn:postgres/client@0.1.0` (an interface) and `wasi:clocks@0.2.12` (a bare
+/// package) — so the last `@` separates it. `None` for an unversioned name,
+/// which the registry then refuses.
+pub fn import_version(import_name: &str) -> Option<&str> {
+    import_name
+        .rsplit_once('@')
+        .map(|(_, version)| version)
+        .filter(|version| !version.is_empty())
 }
 
 /// Stable classification for a refused tenant import inventory.
@@ -140,18 +250,22 @@ impl std::error::Error for TenantImportError {}
 
 /// Enforce the closed tenant import policy.
 ///
-/// `admitted_platform_packages` is the caller's closed platform registry
-/// projection for this component. Its entries must be exact unversioned
-/// `wamn:<package>` names. An import is accepted only when its package is one
-/// of those exact entries or one of [`TENANT_WASI_PACKAGES`].
+/// `admitted_platform_packages` is the caller's per-component grant: exact
+/// unversioned package names, each of which must appear in
+/// [`CAPABILITY_REGISTRY`]. An import is accepted when it matches a registry
+/// row on package AND version, and — if that row is [`Posture::Effect`] — when
+/// its package is also in the grant. Ambient rows need no grant.
 pub fn analyze_tenant(
     imports: &ComponentImports,
     admitted_platform_packages: &BTreeSet<String>,
     label: &str,
 ) -> Result<PolicyReport, TenantImportError> {
+    // A grant may only name a registered package. This replaces the old
+    // `wamn:`-prefix shape check: the registry, not a namespace rule, decides
+    // what a grant is allowed to say.
     let invalid_registry: Vec<_> = admitted_platform_packages
         .iter()
-        .filter(|package| !valid_platform_package(package))
+        .filter(|package| !CAPABILITY_REGISTRY.iter().any(|row| row.package == *package))
         .cloned()
         .collect();
     if !invalid_registry.is_empty() {
@@ -162,12 +276,16 @@ pub fn analyze_tenant(
         });
     }
 
+    // Fail-closed by ABSENCE: an import with no exact row is refused because
+    // nothing declares it, not because its namespace looks wrong. An effect
+    // additionally needs the per-component grant — deleting the shape check
+    // widens no one's grant, because the two layers stay separate.
     let denied: Vec<_> = imports
         .iter()
-        .filter(|name| {
-            let package = import_pkg(name);
-            !TENANT_WASI_PACKAGES.contains(&package)
-                && !admitted_platform_packages.contains(package)
+        .filter(|name| match import_posture(name) {
+            None => true,
+            Some(Posture::Ambient) => false,
+            Some(Posture::Effect) => !admitted_platform_packages.contains(import_pkg(name)),
         })
         .map(str::to_owned)
         .collect();
@@ -180,12 +298,6 @@ pub fn analyze_tenant(
             imports: denied.into_boxed_slice(),
         })
     }
-}
-
-fn valid_platform_package(package: &str) -> bool {
-    package
-        .strip_prefix("wamn:")
-        .is_some_and(|name| !name.is_empty() && !name.contains(['/', '@', '*']))
 }
 
 /// The denied WIT `namespace:package`. A component importing ANY interface of
@@ -348,18 +460,31 @@ mod tests {
         );
     }
 
+    /// The whole registered vocabulary at its REGISTERED versions passes.
+    ///
+    /// These versions are load-bearing, not decoration: this fixture read
+    /// `@0.2.3` before the registry landed, and exact matching correctly
+    /// refuses that now. A WASI version bump breaks this test, which is the
+    /// point — see the provenance note on [`CAPABILITY_REGISTRY`].
     #[test]
     fn tenant_policy_is_exact_and_has_no_namespace_wildcard() {
         let admitted = BTreeSet::from(["wamn:postgres".to_string()]);
         let imports = ComponentImports::new([
-            "wasi:io/streams@0.2.3".to_string(),
-            "wasi:clocks/monotonic-clock@0.2.3".to_string(),
-            "wasi:random/random@0.2.3".to_string(),
+            "wasi:io/streams@0.2.12".to_string(),
+            "wasi:clocks/monotonic-clock@0.2.12".to_string(),
+            "wasi:random/random@0.2.12".to_string(),
             "wasi:logging/logging@0.1.0-draft".to_string(),
             "wamn:postgres/client@0.1.0".to_string(),
+            "wamn:node/types@0.1.0".to_string(),
         ]);
 
         assert!(analyze_tenant(&imports, &admitted, "tenant-node").is_ok());
+
+        // Same inventory, one version off: refused.
+        let drifted = ComponentImports::new(["wasi:io/streams@0.2.9".to_string()]);
+        let error = analyze_tenant(&drifted, &admitted, "tenant-node")
+            .expect_err("a drifted WASI version must refuse");
+        assert_eq!(error.kind(), TenantImportErrorKind::UnadmittedImport);
     }
 
     #[test]
@@ -379,32 +504,106 @@ mod tests {
         assert_eq!(error.imports().len(), 6);
     }
 
-    /// The whole admitted vocabulary, classified. Every package the tenant
-    /// policy can accept is either authority-free or an effect, and an
-    /// unrecognized platform package falls to the effect side rather than
-    /// disappearing from a component's recorded authority.
+    /// Posture is DECLARED, not inferred. The old complement rule classified an
+    /// unknown `wamn:*` package as an effect; the registry refuses it outright,
+    /// which is the whole behaviour change.
     #[test]
-    fn effect_classification_is_the_complement_of_the_authority_free_lists() {
-        for authority_free in TENANT_WASI_PACKAGES
-            .iter()
-            .chain(NON_EFFECT_PLATFORM_PACKAGES.iter())
-        {
-            assert!(
-                !is_effect_package(authority_free),
-                "{authority_free:?} must not be recorded as an effect"
-            );
-        }
-        for effect in [
-            "wamn:postgres",
-            "wamn:connection",
-            "wamn:jetstream",
-            "wamn:not-yet-invented",
+    fn posture_is_declared_and_an_unregistered_package_has_none() {
+        assert_eq!(
+            import_posture("wamn:node/types@0.1.0"),
+            Some(Posture::Ambient)
+        );
+        assert_eq!(
+            import_posture("wasi:logging/logging@0.1.0-draft"),
+            Some(Posture::Ambient)
+        );
+        assert_eq!(
+            import_posture("wamn:postgres/client@0.1.0"),
+            Some(Posture::Effect)
+        );
+        assert_eq!(
+            import_posture("wasmcloud:blobstore/blobstore@0.1.0"),
+            Some(Posture::Effect)
+        );
+        for unregistered in [
+            "wamn:jetstream/consumer@0.1.0",
+            "wamn:not-yet-invented/thing@0.1.0",
+            "wasi:filesystem/types@0.2.12",
         ] {
-            assert!(
-                is_effect_package(effect),
-                "{effect:?} must be recorded as an effect"
+            assert_eq!(
+                import_posture(unregistered),
+                None,
+                "{unregistered:?} must be refused by absence, not classified"
             );
         }
+    }
+
+    /// Exact version, no ranges. The registry carries `wasi:io@0.2.12`; the
+    /// same package at any other version is a different capability and is
+    /// refused. This is the mutant target for the version half of the key.
+    #[test]
+    fn version_matching_is_exact() {
+        assert_eq!(import_posture("wasi:io/streams@0.2.12"), Some(Posture::Ambient));
+        for wrong in [
+            "wasi:io/streams@0.2.9",
+            "wasi:io/streams@0.2.13",
+            "wasi:io/streams@0.2",
+            "wasi:io/streams",
+        ] {
+            assert_eq!(
+                import_posture(wrong),
+                None,
+                "{wrong:?} must not match the registered 0.2.12 row"
+            );
+        }
+        assert_eq!(import_version("wamn:postgres/client@0.1.0"), Some("0.1.0"));
+        assert_eq!(import_version("wasi:clocks@0.2.12"), Some("0.2.12"));
+        assert_eq!(
+            import_version("wasi:logging/logging@0.1.0-draft"),
+            Some("0.1.0-draft")
+        );
+        assert_eq!(import_version("wasi:clocks"), None);
+    }
+
+    /// The registry is a closed set with unique keys; a duplicate row would let
+    /// one package carry two postures and make the lookup order-dependent.
+    #[test]
+    fn registry_keys_are_unique() {
+        let mut keys: Vec<(&str, &str)> = CAPABILITY_REGISTRY
+            .iter()
+            .map(|row| (row.package, row.version))
+            .collect();
+        let total = keys.len();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), total, "duplicate registry key");
+        let mut packages: Vec<&str> = CAPABILITY_REGISTRY.iter().map(|row| row.package).collect();
+        packages.sort_unstable();
+        packages.dedup();
+        assert_eq!(
+            packages.len(),
+            total,
+            "a package appears at two versions; posture is package-grain"
+        );
+    }
+
+    /// An effect still needs its per-component grant. Deleting the shape check
+    /// must not widen anyone's grant — this is the test that says so.
+    #[test]
+    fn an_effect_without_a_grant_is_refused_but_an_ambient_is_not() {
+        let effect = ComponentImports::new(["wamn:postgres/client@0.1.0".to_string()]);
+        let error = analyze_tenant(&effect, &BTreeSet::new(), "tenant-node")
+            .expect_err("an ungranted effect must refuse");
+        assert_eq!(error.kind(), TenantImportErrorKind::UnadmittedImport);
+
+        let granted = BTreeSet::from(["wamn:postgres".to_string()]);
+        assert!(analyze_tenant(&effect, &granted, "tenant-node").is_ok());
+
+        let ambient = ComponentImports::new(["wamn:node/types@0.1.0".to_string()]);
+        assert!(
+            analyze_tenant(&ambient, &BTreeSet::new(), "tenant-node").is_ok(),
+            "an ambient row needs no grant"
+        );
     }
 
     #[test]
