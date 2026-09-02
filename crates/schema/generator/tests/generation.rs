@@ -8,7 +8,7 @@ use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, GenerateErrorKind,
     GeneratedPackage, GenerationInput, GenerationProvenance, OperationVisibility, PackageManifest,
-    canonical_operation_identity, canonical_operation_prefix, corpus_sha256, generate,
+    PackageWeld, canonical_operation_identity, canonical_operation_prefix, corpus_sha256, generate,
     validate_operation_vocabulary, validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
@@ -1827,6 +1827,41 @@ fn weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables() {
         "blocked_unsatisfied_policy_contract"
     );
     assert!(!base.weld().promotion_eligible());
+}
+
+#[test]
+fn generated_weld_has_one_strict_canonical_reader() {
+    let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
+    let bytes = package
+        .file("generated/package-weld.json")
+        .expect("the generated package carries its weld")
+        .bytes();
+    assert_eq!(&PackageWeld::from_slice(bytes).unwrap(), package.weld());
+
+    let mut alternate = bytes.to_vec();
+    alternate.push(b'\n');
+    assert_eq!(
+        PackageWeld::from_slice(&alternate).unwrap_err().kind(),
+        GenerateErrorKind::InvalidManifest
+    );
+
+    let mut unknown: Value = serde_json::from_slice(bytes).unwrap();
+    unknown["extra"] = json!(true);
+    assert_eq!(
+        PackageWeld::from_slice(&canonical_json_bytes(&unknown))
+            .unwrap_err()
+            .kind(),
+        GenerateErrorKind::InvalidManifest
+    );
+
+    let mut contradictory: Value = serde_json::from_slice(bytes).unwrap();
+    contradictory["promotion_state"] = json!("eligible");
+    assert_eq!(
+        PackageWeld::from_slice(&canonical_json_bytes(&contradictory))
+            .unwrap_err()
+            .kind(),
+        GenerateErrorKind::InvalidManifest
+    );
 }
 
 #[test]

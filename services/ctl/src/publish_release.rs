@@ -44,6 +44,9 @@ SELECT package_id, package_version \
   FROM catalog.effective_release_packages \
  WHERE tenant_id = $1 AND effective_release_id = $2 \
  ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\" FOR SHARE";
+const SELECT_APPLIED_PACKAGE_MANIFEST_SQL: &str = "\
+SELECT manifest_sha256 FROM catalog.packages \
+ WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 FOR SHARE";
 const SELECT_COMPONENT_FACTS_SQL: &str = "\
 SELECT component, interface_version, operations::text, component_digest, \
        imports::text, imports_fingerprint, effects::text \
@@ -176,6 +179,9 @@ pub const RELEASE_MANIFEST_MINT_REFUSAL: &str = "release-manifest-mint-refused";
 pub enum MintManifestErrorKind {
     Storage,
     Release,
+    PackageManifest,
+    PackageWeld,
+    PolicyContractUnsatisfied,
     Wiring,
     Component,
     OperationDependency,
@@ -193,6 +199,9 @@ impl MintManifestErrorKind {
         match self {
             Self::Storage => "storage",
             Self::Release => "release",
+            Self::PackageManifest => "package-manifest",
+            Self::PackageWeld => "package-weld",
+            Self::PolicyContractUnsatisfied => "policy-contract-unsatisfied",
             Self::Wiring => "wiring",
             Self::Component => "component",
             Self::OperationDependency => "operation-dependency",
@@ -348,7 +357,8 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
     let authored_attachments = read_document(&args.attachments, "attachments")?;
     let attachments =
         resolve_route_host_overlay(&authored_attachments, args.route_host.as_deref())?;
-    let package_manifests = read_package_manifests(&args.package_manifests)?;
+    let (package_manifests, package_manifest_hashes) =
+        read_package_manifests(&args.package_manifests)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
         packages.len() == args.packages.len(),
@@ -400,7 +410,14 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         .await
         .context("connect to the release project environment")?;
     let connection_task = tokio::spawn(connection);
-    let minted = mint_in_transaction(&mut client, &request, &package_manifests, &run_schema).await;
+    let minted = mint_in_transaction(
+        &mut client,
+        &request,
+        &package_manifests,
+        &package_manifest_hashes,
+        &run_schema,
+    )
+    .await;
     match minted {
         Ok(minted) => {
             drop(client);
@@ -425,15 +442,20 @@ async fn mint_in_transaction(
     client: &mut Client,
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifest_hashes: &BTreeMap<String, String>,
     run_schema: &BareSchemaName,
 ) -> anyhow::Result<MintedReleaseManifest> {
     let transaction = client
         .transaction()
         .await
         .context("begin the release mint")?;
-    let minted =
-        mint_release_manifest_with_package_manifests(&transaction, request, package_manifests)
-            .await?;
+    let minted = mint_release_manifest_with_package_manifests(
+        &transaction,
+        request,
+        package_manifests,
+        package_manifest_hashes,
+    )
+    .await?;
     let expected = read_expected_environment(&transaction, run_schema, request.tenant_id).await?;
     verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
     transaction
@@ -629,22 +651,113 @@ fn read_document<T: DeserializeOwned>(path: &Path, field: &'static str) -> anyho
 
 fn read_package_manifests(
     paths: &[PathBuf],
-) -> anyhow::Result<BTreeMap<String, wamn_schema_generator::PackageManifest>> {
+) -> Result<
+    (
+        BTreeMap<String, wamn_schema_generator::PackageManifest>,
+        BTreeMap<String, String>,
+    ),
+    MintManifestError,
+> {
     let mut manifests = BTreeMap::new();
+    let mut hashes = BTreeMap::new();
     for path in paths {
-        let bytes = std::fs::read(path)
-            .with_context(|| format!("read package manifest {}", path.display()))?;
-        let manifest = wamn_schema_generator::PackageManifest::from_slice(&bytes)
-            .with_context(|| format!("parse package manifest {}", path.display()))?;
-        wamn_schema_generator::validate_operation_vocabulary(&manifest)
-            .with_context(|| format!("validate package manifest {}", path.display()))?;
+        let bytes = std::fs::read(path).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::PackageManifest,
+                format!("read package manifest {}", path.display()),
+                error,
+            )
+        })?;
+        let manifest =
+            wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
+                MintManifestError::with_source(
+                    MintManifestErrorKind::PackageManifest,
+                    format!("parse package manifest {}", path.display()),
+                    error,
+                )
+            })?;
+        wamn_schema_generator::validate_operation_vocabulary(&manifest).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::PackageManifest,
+                format!("validate package manifest {}", path.display()),
+                error,
+            )
+        })?;
+        let root = path.parent().ok_or_else(|| {
+            MintManifestError::new(
+                MintManifestErrorKind::PackageWeld,
+                format!(
+                    "package manifest {} has no package directory; pass package-owned wamn.json",
+                    path.display()
+                ),
+            )
+        })?;
+        let weld_path = root.join("generated/package-weld.json");
+        let weld_bytes = std::fs::read(&weld_path).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::PackageWeld,
+                format!(
+                    "package {}@{} requires generated/package-weld.json at {}; regenerate the package evidence",
+                    manifest.package.id,
+                    manifest.package.version,
+                    weld_path.display()
+                ),
+                error,
+            )
+        })?;
+        let weld = wamn_schema_generator::PackageWeld::from_slice(&weld_bytes).map_err(|error| {
+            MintManifestError::with_source(
+                MintManifestErrorKind::PackageWeld,
+                format!(
+                    "package {}@{} carries an invalid generated/package-weld.json; regenerate the package evidence",
+                    manifest.package.id, manifest.package.version
+                ),
+                error,
+            )
+        })?;
+        validate_package_weld(&manifest, &weld)?;
         let package_id = manifest.package.id.clone();
-        ensure!(
-            manifests.insert(package_id.clone(), manifest).is_none(),
-            "more than one package manifest names {package_id:?}"
-        );
+        if manifests.insert(package_id.clone(), manifest).is_some() {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::PackageManifest,
+                format!("more than one package manifest names {package_id:?}"),
+            ));
+        }
+        hashes.insert(package_id, sha256(&bytes));
     }
-    Ok(manifests)
+    Ok((manifests, hashes))
+}
+
+fn validate_package_weld(
+    manifest: &wamn_schema_generator::PackageManifest,
+    weld: &wamn_schema_generator::PackageWeld,
+) -> Result<(), MintManifestError> {
+    let coordinate = format!("{}@{}", manifest.package.id, manifest.package.version);
+    if weld.required_platform_policy_contract() != &manifest.required_platform_policy_contract {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::PackageWeld,
+            format!(
+                "package {coordinate} manifest and generated weld disagree on the required platform policy contract; regenerate the package evidence"
+            ),
+        ));
+    }
+    if !weld.promotion_eligible() {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::PolicyContractUnsatisfied,
+            format!(
+                "package {coordinate} requires platform policy contract {:?} in state unsatisfied; reconcile its generated policy and regenerate with state satisfied",
+                manifest.required_platform_policy_contract.id
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
+    )
 }
 
 pub async fn mint_promoted_release_manifest(
@@ -657,6 +770,7 @@ pub async fn mint_promoted_release_manifest(
         transaction,
         request,
         &package_manifests,
+        None,
         Some(registrations),
     )
     .await
@@ -666,14 +780,23 @@ async fn mint_release_manifest_with_package_manifests(
     transaction: &Transaction<'_>,
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifest_hashes: &BTreeMap<String, String>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
-    mint_release_manifest_from_sources(transaction, request, package_manifests, None).await
+    mint_release_manifest_from_sources(
+        transaction,
+        request,
+        package_manifests,
+        Some(package_manifest_hashes),
+        None,
+    )
+    .await
 }
 
 async fn mint_release_manifest_from_sources(
     transaction: &Transaction<'_>,
     request: &MintReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifest_hashes: Option<&BTreeMap<String, String>>,
     promoted_registrations: Option<&BTreeMap<String, ServingRegistration>>,
 ) -> Result<MintedReleaseManifest, MintManifestError> {
     transaction
@@ -681,6 +804,15 @@ async fn mint_release_manifest_from_sources(
         .await
         .map_err(|error| storage("claim the release tenant", error))?;
     validate_request(request)?;
+    if let Some(package_manifest_hashes) = package_manifest_hashes {
+        validate_release_package_manifests(
+            transaction,
+            request,
+            package_manifests,
+            package_manifest_hashes,
+        )
+        .await?;
+    }
     establish_release(transaction, request).await?;
 
     let mut components = BTreeSet::new();
@@ -815,6 +947,100 @@ fn validate_request(request: &MintReleaseManifest<'_>) -> Result<(), MintManifes
         ));
     }
     validate_attachment_definition_hashes(request.attachments)?;
+    Ok(())
+}
+
+/// Bind the release's behavior and ownership inputs to the exact package bytes
+/// already admitted by `apply-package`.
+async fn validate_release_package_manifests(
+    transaction: &Transaction<'_>,
+    request: &MintReleaseManifest<'_>,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifest_hashes: &BTreeMap<String, String>,
+) -> Result<(), MintManifestError> {
+    let expected_package_ids = request
+        .packages
+        .iter()
+        .map(PackageCoordinate::package_id)
+        .collect::<BTreeSet<_>>();
+    let presented_package_ids = package_manifests
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let hashed_package_ids = package_manifest_hashes
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if presented_package_ids != expected_package_ids || hashed_package_ids != expected_package_ids {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::PackageManifest,
+            format!(
+                "release package manifests must exactly match membership; expected={expected_package_ids:?}, presented={presented_package_ids:?}, hashed={hashed_package_ids:?}; supply one exact wamn.json per release package"
+            ),
+        ));
+    }
+    for package in request.packages {
+        let coordinate = format!("{}@{}", package.package_id(), package.package_version());
+        let manifest = package_manifests
+            .get(package.package_id())
+            .ok_or_else(|| {
+                MintManifestError::new(
+                    MintManifestErrorKind::PackageManifest,
+                    format!(
+                        "package {coordinate} has no presented manifest; supply the exact wamn.json applied by apply-package"
+                    ),
+                )
+            })?;
+        if manifest.package.id != package.package_id()
+            || manifest.package.version != package.package_version()
+        {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::PackageManifest,
+                format!(
+                    "package {coordinate} is paired with manifest {}@{}; supply the exact wamn.json applied by apply-package",
+                    manifest.package.id, manifest.package.version
+                ),
+            ));
+        }
+        let presented_hash = package_manifest_hashes
+            .get(package.package_id())
+            .ok_or_else(|| {
+                MintManifestError::new(
+                    MintManifestErrorKind::PackageManifest,
+                    format!(
+                        "package {coordinate} has no presented manifest hash; supply the exact wamn.json applied by apply-package"
+                    ),
+                )
+            })?;
+        let Some(row) = transaction
+            .query_opt(
+                SELECT_APPLIED_PACKAGE_MANIFEST_SQL,
+                &[
+                    &request.tenant_id,
+                    &package.package_id(),
+                    &package.package_version(),
+                ],
+            )
+            .await
+            .map_err(|error| storage("read the applied package manifest identity", error))?
+        else {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::PackageManifest,
+                format!(
+                    "package {coordinate} is not applied; run apply-package against the target project environment"
+                ),
+            ));
+        };
+        let applied_hash: String = row.get(0);
+        if applied_hash != *presented_hash {
+            return Err(MintManifestError::new(
+                MintManifestErrorKind::PackageManifest,
+                format!(
+                    "package {coordinate} presented manifest hash {presented_hash} differs from applied hash {applied_hash}; use the exact wamn.json recorded by apply-package"
+                ),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1828,6 +2054,9 @@ fn storage(context: &'static str, error: tokio_postgres::Error) -> MintManifestE
 }
 
 #[cfg(test)]
+mod effective_release_live;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2076,6 +2305,55 @@ mod tests {
             }
         });
         serde_json::from_value(document).expect("the dependency fixture manifest parses")
+    }
+
+    #[test]
+    fn release_mint_consumes_the_package_owned_weld_and_refuses_unsatisfied_policy() {
+        let manifest_bytes = include_bytes!("../../../packages/receiving/wamn.json");
+        let manifest = wamn_schema_generator::PackageManifest::from_slice(manifest_bytes)
+            .expect("the Receiving manifest is valid");
+        let weld_bytes = include_bytes!("../../../packages/receiving/generated/package-weld.json");
+        let weld = wamn_schema_generator::PackageWeld::from_slice(weld_bytes)
+            .expect("the Receiving weld is canonical");
+        validate_package_weld(&manifest, &weld)
+            .expect("the Receiving manifest and weld carry one satisfied policy fact");
+
+        let mut unsatisfied_manifest: serde_json::Value =
+            serde_json::from_slice(manifest_bytes).unwrap();
+        unsatisfied_manifest["required_platform_policy_contract"]["state"] =
+            serde_json::json!("unsatisfied");
+        let unsatisfied_manifest = wamn_schema_generator::PackageManifest::from_slice(
+            &serde_json::to_vec(&unsatisfied_manifest).unwrap(),
+        )
+        .unwrap();
+        let mut unsatisfied_weld: serde_json::Value = serde_json::from_slice(weld_bytes).unwrap();
+        unsatisfied_weld["required_platform_policy_contract"]["state"] =
+            serde_json::json!("unsatisfied");
+        unsatisfied_weld["promotion_state"] =
+            serde_json::json!("blocked_unsatisfied_policy_contract");
+        let unsatisfied_weld = wamn_schema_generator::PackageWeld::from_slice(
+            &wamn_execution_contract::canonical_json_bytes(&unsatisfied_weld),
+        )
+        .unwrap();
+        let refusal = validate_package_weld(&unsatisfied_manifest, &unsatisfied_weld)
+            .expect_err("an unsatisfied generated weld cannot enter a release");
+        assert_eq!(
+            refusal.kind(),
+            MintManifestErrorKind::PolicyContractUnsatisfied
+        );
+        assert!(refusal.detail().contains("receiving_data_access"));
+        assert!(refusal.detail().contains("regenerate"));
+
+        let mut mismatched_weld: serde_json::Value = serde_json::from_slice(weld_bytes).unwrap();
+        mismatched_weld["required_platform_policy_contract"]["id"] =
+            serde_json::json!("different_policy");
+        let mismatched_weld = wamn_schema_generator::PackageWeld::from_slice(
+            &wamn_execution_contract::canonical_json_bytes(&mismatched_weld),
+        )
+        .unwrap();
+        let refusal = validate_package_weld(&manifest, &mismatched_weld)
+            .expect_err("a weld cannot restate the manifest policy requirement");
+        assert_eq!(refusal.kind(), MintManifestErrorKind::PackageWeld);
     }
 
     fn handler_manifest() -> wamn_schema_generator::PackageManifest {

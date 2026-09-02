@@ -303,6 +303,85 @@ receiving_gate_cleanup
 trap - EXIT
 ```
 
+### `[EFFECTIVE-RELEASE-POC]` — fresh base + Acme overlay release
+
+This proof applies both package migration streams to one fresh project
+database, admits the exact built components, authors every package wiring, and
+mints the same format-3 closure twice. It requires byte-identical canonical
+bytes and digest on replay, one stored snapshot, exact component dependencies
+and event ownership, plus typed refusals for manifest-hash drift and an
+unsatisfied generated package weld. The two databases are disposable siblings
+on one PostgreSQL 18 server; no upgrade or lineage arm runs. Wiring setup seeds
+only the already-ruled steady-state verdict under each document's derived hash;
+the production journey remains the proof that the gate writes its first report.
+
+```bash
+set -euo pipefail
+EFFECTIVE_RELEASE_CONTAINER=wamn-effective-release-pg18
+EFFECTIVE_RELEASE_PORT=54334
+EFFECTIVE_RELEASE_BASE_COMPONENT=components/target/virtualized/std-empty-environment/receiving.wasm
+EFFECTIVE_RELEASE_BASE_DIGEST=c10453c58e992b45a82af3b25b8f843ec8263b5d846a19cab8964cad6e910b2d
+if docker container inspect "$EFFECTIVE_RELEASE_CONTAINER" >/dev/null 2>&1; then
+  echo "$EFFECTIVE_RELEASE_CONTAINER already exists" >&2
+  exit 1
+fi
+if ss -ltnH | awk '{print $4}' | grep -Eq ":${EFFECTIVE_RELEASE_PORT}$"; then
+  echo "port $EFFECTIVE_RELEASE_PORT is already in use" >&2
+  exit 1
+fi
+EFFECTIVE_RELEASE_SCRATCH="$(mktemp -d /tmp/wamn-effective-release.XXXXXX)"
+EFFECTIVE_RELEASE_CONTAINER_STARTED=0
+effective_release_cleanup() {
+  if [ "$EFFECTIVE_RELEASE_CONTAINER_STARTED" -eq 1 ]; then
+    docker rm --force "$EFFECTIVE_RELEASE_CONTAINER" >/dev/null 2>&1 || true
+    EFFECTIVE_RELEASE_CONTAINER_STARTED=0
+  fi
+  case "$EFFECTIVE_RELEASE_SCRATCH" in
+    /tmp/wamn-effective-release.*) rm -rf -- "$EFFECTIVE_RELEASE_SCRATCH" ;;
+  esac
+}
+trap effective_release_cleanup EXIT
+
+test "$(sha256sum "$EFFECTIVE_RELEASE_BASE_COMPONENT" | cut -d ' ' -f 1)" = \
+  "$EFFECTIVE_RELEASE_BASE_DIGEST"
+cargo build --manifest-path components/Cargo.toml --locked --offline \
+  --target wasm32-wasip2 -p client-acme-receiving
+cargo run -p wamn-component-virtualizer --locked --offline -- \
+  --input components/target/wasm32-wasip2/debug/client_acme_receiving.wasm \
+  --output "$EFFECTIVE_RELEASE_SCRATCH/client_acme_receiving.wasm"
+
+docker run --detach --name "$EFFECTIVE_RELEASE_CONTAINER" \
+  -e POSTGRES_PASSWORD=probe \
+  -p "127.0.0.1:${EFFECTIVE_RELEASE_PORT}:5432" postgres:18
+EFFECTIVE_RELEASE_CONTAINER_STARTED=1
+EFFECTIVE_RELEASE_PG_READY=0
+for EFFECTIVE_RELEASE_PG_ATTEMPT in {1..60}; do
+  if PGPASSWORD=probe psql \
+      "postgresql://postgres@127.0.0.1:${EFFECTIVE_RELEASE_PORT}/postgres" \
+      -Atqc 'select 1' >/dev/null 2>&1; then
+    EFFECTIVE_RELEASE_PG_READY=1
+    break
+  fi
+  sleep 1
+done
+test "$EFFECTIVE_RELEASE_PG_READY" -eq 1
+PGPASSWORD=probe createdb \
+  -h 127.0.0.1 -p "$EFFECTIVE_RELEASE_PORT" -U postgres effective_release_project
+PGPASSWORD=probe createdb \
+  -h 127.0.0.1 -p "$EFFECTIVE_RELEASE_PORT" -U postgres effective_release_control
+
+WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL="postgresql://postgres:probe@127.0.0.1:${EFFECTIVE_RELEASE_PORT}/effective_release_project" \
+WAMN_EFFECTIVE_RELEASE_CONTROL_PG_URL="postgresql://postgres:probe@127.0.0.1:${EFFECTIVE_RELEASE_PORT}/effective_release_control" \
+WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM="$EFFECTIVE_RELEASE_BASE_COMPONENT" \
+WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM="$EFFECTIVE_RELEASE_SCRATCH/client_acme_receiving.wasm" \
+  cargo test -p wamn-ctl --lib --locked --offline \
+  publish_release::effective_release_live::fresh_base_and_overlay_mint_byte_identically_and_refuse_drift \
+  -- --ignored --exact --nocapture --test-threads=1
+
+effective_release_cleanup
+trap - EXIT
+```
+
 The `deploy/platform` bill of materials (`wamn-0h0g.10.5`) is a static
 structural proof of the same kind, but it lives in `wamn-proof-system` — it
 belongs beside the conformance guards and was kept out of that package only so

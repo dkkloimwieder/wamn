@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
@@ -114,7 +114,8 @@ impl GeneratedFile {
 }
 
 /// Canonical immutable package weld emitted as `generated/package-weld.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageWeld {
     verified_schema_state_id: Box<str>,
     required_schema_contract: RequiredSchemaContract,
@@ -125,6 +126,51 @@ pub struct PackageWeld {
 }
 
 impl PackageWeld {
+    /// Parse the exact canonical generated weld, refusing alternate spellings.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
+        let weld: Self = serde_json::from_slice(bytes).map_err(|source| {
+            GenerateError::with_source(
+                GenerateErrorKind::InvalidManifest,
+                "package-weld.json does not match the closed weld vocabulary",
+                source,
+            )
+        })?;
+        let canonical = canonical_json_bytes(
+            &serde_json::to_value(&weld).expect("a package weld always serializes"),
+        );
+        if canonical != bytes {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                "package-weld.json is not canonical compact JSON",
+            ));
+        }
+        for (field, value) in [
+            ("verified_schema_state_id", weld.verified_schema_state_id()),
+            (
+                "application_sql_corpus_identity",
+                weld.application_sql_corpus_identity(),
+            ),
+        ] {
+            if !valid_sha256(value) {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidManifest,
+                    format!("package-weld.json {field} is not sha256:<64 lowercase hex>"),
+                ));
+            }
+        }
+        let expected_promotion_state = match weld.required_platform_policy_contract.state {
+            PolicyContractState::Unsatisfied => PromotionState::BlockedUnsatisfiedPolicyContract,
+            PolicyContractState::Satisfied => PromotionState::Eligible,
+        };
+        if weld.promotion_state != expected_promotion_state {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidManifest,
+                "package-weld.json promotion_state disagrees with required_platform_policy_contract.state",
+            ));
+        }
+        Ok(weld)
+    }
+
     /// Digest of the complete normalized catalog IR used for generation.
     pub fn verified_schema_state_id(&self) -> &str {
         &self.verified_schema_state_id
@@ -173,12 +219,14 @@ impl GeneratedPackage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RequiredSchemaContract {
     tables: Box<[RequiredTable]>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RequiredTable {
     schema: Box<str>,
     table: Box<str>,
@@ -186,7 +234,8 @@ struct RequiredTable {
     constraints: Box<[RequiredConstraint]>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RequiredField {
     name: Box<str>,
     #[serde(rename = "type")]
@@ -194,24 +243,35 @@ struct RequiredField {
     nullable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RequiredConstraint {
     name: Box<str>,
     definition: Value,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OwnedProvenance {
     source_commit: Box<str>,
     generator: Box<str>,
     toolchain: Box<str>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum PromotionState {
     BlockedUnsatisfiedPolicyContract,
     Eligible,
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|digest| {
+        digest.len() == 64
+            && digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 /// Generate a package without filesystem, database, clock, or environment I/O.
