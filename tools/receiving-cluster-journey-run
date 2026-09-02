@@ -442,11 +442,14 @@ component_artifact_base=$registry_authority/wamn/components
 release_artifact_base=$registry_authority/wamn/releases
 host_secret_directory=$work_dir/host-secrets
 install -d -m 0700 "$host_secret_directory"
+compilation_cache_directory=$work_dir/wasmtime-cache
+install -d -m 0700 "$compilation_cache_directory"
 route_caller_secret=$work_dir/route-caller-pat.json
 record_command cargo test production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces \
   '<disposable PostgreSQL and OCI inputs redacted>'
 WAMN_RECEIVING_ROUTE_PG18_URL="$system_url" \
 WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY="$component_directory" \
+WAMN_RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY="$compilation_cache_directory" \
 WAMN_RECEIVING_ROUTE_FLOW_HTTP_WASM="$flow_http_wasm" \
 WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE="$component_artifact_base" \
 WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE="$release_artifact_base" \

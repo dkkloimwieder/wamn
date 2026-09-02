@@ -52,7 +52,9 @@ use wamn_platform_identity::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::engine::build_engine;
+use wamn_runtime::engine::{
+    build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets,
+};
 use wamn_runtime::plugins::WamnJetstream;
 use wamn_runtime::plugins::flow_http_routing::{
     FLOW_HTTP_ROUTING_ID, FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,
@@ -1062,6 +1064,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
 
 struct JourneyInputs {
     component_directory: PathBuf,
+    compilation_cache_directory: PathBuf,
     flow_http_wasm: PathBuf,
     component_artifact_base: String,
     release_artifact_base: String,
@@ -1076,6 +1079,9 @@ impl JourneyInputs {
     fn required() -> anyhow::Result<Self> {
         Ok(Self {
             component_directory: required_journey_path("WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY")?,
+            compilation_cache_directory: required_journey_path(
+                "WAMN_RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY",
+            )?,
             flow_http_wasm: required_journey_path("WAMN_RECEIVING_ROUTE_FLOW_HTTP_WASM")?,
             component_artifact_base: required_journey(
                 "WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE",
@@ -1347,6 +1353,55 @@ fn assert_nested_record_receipt_trace(
     );
     assert_postgres_descendants(spans, trace_id, base);
     assert_postgres_descendants(spans, trace_id, overlay);
+}
+
+fn assert_cold_nested_acquisition(
+    spans: &[SpanData],
+    trace_id: &str,
+    overlay_digest: &str,
+    base_digest: &str,
+) {
+    let mut evidence = Vec::new();
+    for phase in [
+        "wamn.component.pull",
+        "wamn.component.compile",
+        "wamn.component.linker_setup",
+        "wamn.component.link",
+        "wamn.component.instantiate",
+    ] {
+        let observed = spans
+            .iter()
+            .filter(|span| {
+                span.name == phase && span.span_context.trace_id().to_string() == trace_id
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            observed.len(),
+            2,
+            "cold nested trace {trace_id} must prepare both exact components during {phase}"
+        );
+        let elapsed_ms = observed
+            .iter()
+            .filter_map(|span| span.end_time.duration_since(span.start_time).ok())
+            .map(|duration| duration.as_millis())
+            .sum::<u128>();
+        evidence.push(format!("{phase}={elapsed_ms}ms"));
+    }
+    for phase in ["wamn.component.pull", "wamn.component.compile"] {
+        let digests = spans
+            .iter()
+            .filter(|span| {
+                span.name == phase && span.span_context.trace_id().to_string() == trace_id
+            })
+            .filter_map(|span| span_attribute(span, "wamn.component_digest"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            digests,
+            BTreeSet::from([overlay_digest.to_owned(), base_digest.to_owned()]),
+            "cold nested trace {trace_id} prepared the wrong component during {phase}"
+        );
+    }
+    println!("RECEIVING_COLD_NESTED_PHASES {}", evidence.join(" "));
 }
 
 fn assert_nested_permission_denial_trace(
@@ -2112,6 +2167,18 @@ async fn build_journey_runtime(
     Arc<RouterDeliveryBridge>,
     tokio::task::JoinHandle<()>,
 )> {
+    anyhow::ensure!(
+        std::fs::read_dir(&inputs.compilation_cache_directory)
+            .with_context(|| {
+                format!(
+                    "read cold compilation cache {}",
+                    inputs.compilation_cache_directory.display()
+                )
+            })?
+            .next()
+            .is_none(),
+        "Receiving journey compilation cache must be empty before runtime construction"
+    );
     let postgres = journey_postgres(credentials)?;
     let source = ComponentArtifactSource::new(
         ComponentArtifactSourceConfig::new(
@@ -2121,7 +2188,14 @@ async fn build_journey_runtime(
         )?
         .with_registry_auth_file(&inputs.registry_auth_file)?,
     );
-    let engine = Arc::new(build_engine(&[]).context("build the Receiving router engine")?);
+    let engine = Arc::new(
+        build_engine_with_host_memory_and_compilation_cache(
+            &[],
+            default_host_memory_budgets(),
+            &inputs.compilation_cache_directory,
+        )
+        .context("build the cached Receiving router engine")?,
+    );
     let driver = Arc::new(RouterDriver::new(
         Arc::clone(&engine),
         Arc::clone(&postgres),
@@ -2486,7 +2560,31 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         build_journey_runtime(&inputs, &credentials, release).await?;
     let mut expected_direct_traces = Vec::new();
 
-    let (trace_id, traceparent) = journey_trace(1);
+    let (cold_nested_trace, traceparent) = journey_trace(1);
+    let response = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        overlay_route_path("receiving_record_receipt"),
+        Some(&route.token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"acme-record-receipt","value":{"idempotency_key":"receipt-command-2","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-2","occurred_at":"2026-08-31T12:31:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"7.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#,
+        ),
+    )
+    .await?;
+    let value = successful_value(&response, "acme-record-receipt")?;
+    anyhow::ensure!(
+        value["purchase_order_status"] == "complete"
+            && value["row_version"] == "2"
+            && value["acme_inspection_required"] == false
+            && value["acme_quality_status"] == "not_required",
+        "cold Acme receiving.record_receipt returned the wrong result: {value}"
+    );
+
+    let (trace_id, traceparent) = journey_trace(2);
     let response = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2513,7 +2611,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         BASE_PACKAGE_ID,
     ));
 
-    let (trace_id, traceparent) = journey_trace(2);
+    let (trace_id, traceparent) = journey_trace(3);
     let response = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2542,7 +2640,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         BASE_PACKAGE_ID,
     ));
 
-    let (trace_id, traceparent) = journey_trace(3);
+    let (trace_id, traceparent) = journey_trace(4);
     let response = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2570,7 +2668,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         BASE_PACKAGE_ID,
     ));
 
-    let (trace_id, traceparent) = journey_trace(4);
+    let (trace_id, traceparent) = journey_trace(5);
     let response = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2601,7 +2699,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         BASE_PACKAGE_ID,
     ));
 
-    let (trace_id, traceparent) = journey_trace(5);
+    let (trace_id, traceparent) = journey_trace(6);
     let receipt_get = serde_json::to_vec(&serde_json::json!([{
         "request_id": "receipt-get",
         "id": receipt_id,
@@ -2630,7 +2728,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         BASE_PACKAGE_ID,
     ));
 
-    let (trace_id, traceparent) = journey_trace(6);
+    let (trace_id, traceparent) = journey_trace(7);
     let response = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2646,7 +2744,13 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
     let value = successful_value(&response, "receipt-query")?;
     anyhow::ensure!(
         value["item"].as_array().is_some_and(|items| {
-            items.len() == 1 && items[0]["receipt_reference"] == "RECEIPT-1"
+            items.len() == 2
+                && items
+                    .iter()
+                    .any(|item| item["receipt_reference"] == "RECEIPT-1")
+                && items
+                    .iter()
+                    .any(|item| item["receipt_reference"] == "RECEIPT-2")
         }),
         "receipt.query returned the wrong page: {value}"
     );
@@ -2658,7 +2762,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
     ));
     seed_preexisting_quality_fixture(project.as_ref()).await?;
 
-    let (trace_id, traceparent) = journey_trace(7);
+    let (trace_id, traceparent) = journey_trace(8);
     let response = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2676,7 +2780,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
     let value = successful_value(&response, "acme-purchase-order-get")?;
     anyhow::ensure!(
         value["id"] == "00000000-0000-0000-0000-000000000302"
-            && value["row_version"] == "1"
+            && value["row_version"] == "2"
             && value["acme_inspection_required"] == false
             && value["acme_quality_status"] == "not_required",
         "Acme purchase_order.get returned the wrong row: {value}"
@@ -2688,7 +2792,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         OVERLAY_PACKAGE_ID,
     ));
 
-    let (trace_id, traceparent) = journey_trace(8);
+    let (trace_id, traceparent) = journey_trace(9);
     let response = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2699,13 +2803,13 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         Some(&route.token),
         &traceparent,
         Bytes::from_static(
-            br#"[{"request_id":"acme-purchase-order-update","id":"00000000-0000-0000-0000-000000000302","expected_row_version":"1","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]"#,
+            br#"[{"request_id":"acme-purchase-order-update","id":"00000000-0000-0000-0000-000000000302","expected_row_version":"2","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]"#,
         ),
     )
     .await?;
     let value = successful_value(&response, "acme-purchase-order-update")?;
     anyhow::ensure!(
-        value["row_version"] == "2"
+        value["row_version"] == "3"
             && value["acme_inspection_required"] == true
             && value["acme_quality_status"] == "pending",
         "Acme purchase_order.update returned the wrong row: {value}"
@@ -2717,7 +2821,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         OVERLAY_PACKAGE_ID,
     ));
 
-    let (trace_id, traceparent) = journey_trace(9);
+    let (trace_id, traceparent) = journey_trace(10);
     let response = invoke_journey_route(
         &engine,
         &flow_http,
@@ -2735,7 +2839,7 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
     let value = successful_value(&response, "quality-load-detail")?;
     anyhow::ensure!(
         value["id"] == "00000000-0000-0000-0000-000000000302"
-            && value["row_version"] == "2"
+            && value["row_version"] == "3"
             && value["acme_quality_status"] == "pending",
         "quality.load_purchase_order_detail returned the wrong row: {value}"
     );
@@ -2746,29 +2850,6 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
         OVERLAY_PACKAGE_ID,
     ));
 
-    let (nested_trace, traceparent) = journey_trace(10);
-    let response = invoke_journey_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
-        &inputs.route_host,
-        overlay_route_path("receiving_record_receipt"),
-        Some(&route.token),
-        &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"acme-record-receipt","value":{"idempotency_key":"receipt-command-2","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-2","occurred_at":"2026-08-31T12:31:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"7.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#,
-        ),
-    )
-    .await?;
-    let value = successful_value(&response, "acme-record-receipt")?;
-    anyhow::ensure!(
-        value["purchase_order_status"] == "complete"
-            && value["row_version"] == "3"
-            && value["acme_inspection_required"] == true
-            && value["acme_quality_status"] == "pending",
-        "Acme receiving.record_receipt returned the wrong result: {value}"
-    );
     let (trace_id, traceparent) = journey_trace(11);
     let approve = serde_json::to_vec(&serde_json::json!([{
         "request_id": "quality-approve",
@@ -2905,26 +2986,25 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
             &caller_principal_id,
         );
     }
+    let overlay_digest = component_digests
+        .get(OVERLAY_PACKAGE_ID)
+        .context("released overlay component digest is missing")?;
+    let base_digest = component_digests
+        .get(BASE_PACKAGE_ID)
+        .context("released base component digest is missing")?;
     assert_nested_record_receipt_trace(
         &spans,
-        &nested_trace,
-        component_digests
-            .get(OVERLAY_PACKAGE_ID)
-            .context("released overlay component digest is missing")?,
-        component_digests
-            .get(BASE_PACKAGE_ID)
-            .context("released base component digest is missing")?,
+        &cold_nested_trace,
+        overlay_digest,
+        base_digest,
         &caller_principal_id,
     );
+    assert_cold_nested_acquisition(&spans, &cold_nested_trace, overlay_digest, base_digest);
     assert_nested_permission_denial_trace(
         &spans,
         &denied_nested_trace,
-        component_digests
-            .get(OVERLAY_PACKAGE_ID)
-            .context("released overlay component digest is missing")?,
-        component_digests
-            .get(BASE_PACKAGE_ID)
-            .context("released base component digest is missing")?,
+        overlay_digest,
+        base_digest,
         &caller_principal_id,
     );
     assert_no_component_trace(&spans, &unauthorized_trace);

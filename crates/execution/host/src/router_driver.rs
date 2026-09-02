@@ -85,13 +85,12 @@ pub const DEFAULT_WIRING_CACHE_CAPACITY: usize = 1_024;
 /// (`wamn-k9ea`), which is what makes the next sync notice.
 const MANUAL_STORE_EPOCH_TICK: Duration = Duration::from_millis(10);
 
-/// Cold-preload compiler workers per serving process.
+/// Component compiler workers per serving process.
 ///
 /// Both shipped serving groups have two CPU cores. Two workers use that
-/// capacity without making six large Cranelift compilations or six live Stores
-/// contend at once. Instantiation remains serial below, preserving the
-/// readiness proof's original one-component resource grain.
-const PRELOAD_COMPILATION_CONCURRENCY: usize = 2;
+/// capacity without making a release's large Cranelift compilations contend at
+/// once. Instantiation remains serial at the owning call sites.
+const COMPONENT_COMPILATION_CONCURRENCY: usize = 2;
 
 /// A non-zero wiring cache bound, parsed once at process construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -686,10 +685,14 @@ impl RouterDriver {
                 anyhow::Ok((component, compiled, component_started))
             }
         });
-        let mut pipelines = stream::iter(pipelines).buffered(PRELOAD_COMPILATION_CONCURRENCY);
+        let mut pipelines = stream::iter(pipelines).buffered(COMPONENT_COMPILATION_CONCURRENCY);
         while let Some(result) = pipelines.next().await {
             let (component, compiled, component_started) = result?;
             let instantiate_started = Instant::now();
+            let compiled_components = Arc::new(BTreeMap::from([(
+                component.component_digest.clone(),
+                compiled.clone(),
+            )]));
             NodeInstance::instantiate_compiled(
                 &self.engine,
                 compiled,
@@ -698,7 +701,7 @@ impl RouterDriver {
                 Arc::clone(&self.logging),
                 Arc::clone(&self.allowed_hosts),
                 Arc::clone(&self.release),
-                self.source.clone(),
+                compiled_components,
                 Arc::clone(&components),
                 &self.config,
                 &manifest.release.tenant_id,
@@ -1194,6 +1197,55 @@ impl RouterDriver {
         validate_component_in_release(&self.release, component)
     }
 
+    /// Pull and compile only the selected export's exact transitive closure.
+    ///
+    /// This demand-triggered work completes before the parent store's execution
+    /// deadline starts. Compiled handles are request-local; every actual nested
+    /// call still receives a fresh ephemeral store and instance.
+    async fn prepare_released_operation_components(
+        &self,
+        tenant_id: &str,
+        components: &[AdmittedComponent],
+        root: &AdmittedComponent,
+        operation: &str,
+    ) -> anyhow::Result<Arc<BTreeMap<String, Component>>> {
+        let required = released_operation_component_facts(tenant_id, components, root, operation)?;
+        for component in required.values() {
+            self.validate_release_component(component)?;
+        }
+
+        let pipelines = required.into_values().map(|component| {
+            let source = self.source.clone();
+            let engine = Arc::clone(&self.engine);
+            async move {
+                let bytes = source
+                    .pull_verified(&component)
+                    .instrument(tracing::info_span!(
+                        "wamn.component.pull",
+                        wamn.component_digest = %component.component_digest,
+                    ))
+                    .await?;
+                let component_digest = component.component_digest;
+                let compiled =
+                    tokio::task::spawn_blocking(move || NodeInstance::compile(&engine, &bytes))
+                        .instrument(tracing::info_span!(
+                            "wamn.component.compile",
+                            wamn.component_digest = %component_digest,
+                        ))
+                        .await
+                        .context("join released operation component compilation task")??;
+                anyhow::Ok((component_digest, compiled))
+            }
+        });
+        let mut pipelines = stream::iter(pipelines).buffered(COMPONENT_COMPILATION_CONCURRENCY);
+        let mut compiled = BTreeMap::new();
+        while let Some(result) = pipelines.next().await {
+            let (digest, component) = result?;
+            compiled.insert(digest, component);
+        }
+        Ok(Arc::new(compiled))
+    }
+
     async fn invoke_node(
         &self,
         request: &RouterDriverRequest,
@@ -1251,48 +1303,70 @@ impl RouterDriver {
                 closure: connection_closure,
             },
         };
-        let candidate_bytes = match closure {
-            ExecutionClosure::Released => None,
+        let (candidate_bytes, compiled_components) = match closure {
+            ExecutionClosure::Released => (
+                None,
+                self.prepare_released_operation_components(
+                    &request.tenant_id,
+                    &active.facts.components,
+                    component,
+                    &call.operation,
+                )
+                .await?,
+            ),
             ExecutionClosure::Candidate {
                 component_bytes, ..
-            } => Some(
-                component_bytes
-                    .get(&component.component_digest)
-                    .ok_or_else(|| {
-                        CandidateExecutionRefusal::new(
-                            CandidateExecutionRefusalKind::Artifact,
-                            "candidate-component-bytes-missing",
-                        )
-                    })?,
+            } => (
+                Some(
+                    component_bytes
+                        .get(&component.component_digest)
+                        .ok_or_else(|| {
+                            CandidateExecutionRefusal::new(
+                                CandidateExecutionRefusalKind::Artifact,
+                                "candidate-component-bytes-missing",
+                            )
+                        })?,
+                ),
+                Arc::new(BTreeMap::new()),
             ),
         };
-        let pulled_bytes;
-        let bytes = match candidate_bytes {
-            Some(bytes) => bytes.as_slice(),
-            None => {
-                pulled_bytes = self
-                    .source
-                    .pull_verified(component)
-                    .instrument(tracing::info_span!("wamn.component.pull"))
-                    .await?;
-                pulled_bytes.as_slice()
-            }
+        let mut instance = if let Some(bytes) = candidate_bytes {
+            NodeInstance::instantiate(
+                &self.engine,
+                bytes,
+                Arc::clone(&self.postgres),
+                Arc::clone(&self.credentials),
+                Arc::clone(&self.logging),
+                Arc::clone(&self.allowed_hosts),
+                Arc::clone(&self.release),
+                Arc::clone(&compiled_components),
+                Arc::clone(&active.facts.components),
+                &self.config,
+                &request.tenant_id,
+                component,
+            )
+            .await?
+        } else {
+            let compiled = compiled_components
+                .get(&component.component_digest)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("released-operation-component-unprepared"))?;
+            NodeInstance::instantiate_compiled(
+                &self.engine,
+                compiled,
+                Arc::clone(&self.postgres),
+                Arc::clone(&self.credentials),
+                Arc::clone(&self.logging),
+                Arc::clone(&self.allowed_hosts),
+                Arc::clone(&self.release),
+                Arc::clone(&compiled_components),
+                Arc::clone(&active.facts.components),
+                &self.config,
+                &request.tenant_id,
+                component,
+            )
+            .await?
         };
-        let mut instance = NodeInstance::instantiate(
-            &self.engine,
-            bytes,
-            Arc::clone(&self.postgres),
-            Arc::clone(&self.credentials),
-            Arc::clone(&self.logging),
-            Arc::clone(&self.allowed_hosts),
-            Arc::clone(&self.release),
-            self.source.clone(),
-            Arc::clone(&active.facts.components),
-            &self.config,
-            &request.tenant_id,
-            component,
-        )
-        .await?;
         instance
             .bind_identity(&acquisition, request.caller.as_ref())
             .with_context(|| format!("bind identity to {} instance", component.component_digest))?;
@@ -1403,7 +1477,7 @@ struct NestedOperationHost {
     logging: Arc<WamnLogging>,
     allowed_hosts: Arc<[AllowedHost]>,
     release: Arc<ReleaseManifestWeld>,
-    source: ComponentArtifactSource,
+    compiled_components: Arc<BTreeMap<String, Component>>,
     config: RouterDriverConfig,
     tenant_id: Box<str>,
     components: Arc<[AdmittedComponent]>,
@@ -1590,24 +1664,25 @@ impl NestedOperationHost {
         )?;
         validate_component_in_release(&self.release, &target)?;
 
-        let bytes = self
-            .source
-            .pull_verified(&target)
-            .instrument(tracing::info_span!(
-                "wamn.component.pull",
-                wamn.operation = %dependency.operation,
-                wamn.component_digest = %dependency.digest,
-            ))
-            .await?;
-        let mut child = NodeInstance::instantiate(
+        let compiled = self
+            .compiled_components
+            .get(&target.component_digest)
+            .cloned()
+            .ok_or_else(|| {
+                NestedOperationRefusal::new(
+                    NestedOperationRefusalKind::ReleaseClosureUnavailable,
+                    &dependency.operation,
+                )
+            })?;
+        let mut child = NodeInstance::instantiate_compiled(
             &self.engine,
-            &bytes,
+            compiled,
             Arc::clone(&self.postgres),
             Arc::clone(&self.credentials),
             Arc::clone(&self.logging),
             Arc::clone(&self.allowed_hosts),
             Arc::clone(&self.release),
-            self.source.clone(),
+            Arc::clone(&self.compiled_components),
             Arc::clone(&self.components),
             &self.config,
             &self.tenant_id,
@@ -1642,6 +1717,49 @@ impl NestedOperationHost {
             .instrument(span)
             .await
     }
+}
+
+fn released_operation_component_facts(
+    tenant_id: &str,
+    components: &[AdmittedComponent],
+    root: &AdmittedComponent,
+    operation: &str,
+) -> anyhow::Result<BTreeMap<String, AdmittedComponent>> {
+    let root_operation = root
+        .operation(operation)
+        .ok_or_else(|| anyhow::anyhow!("router-node-operation-fact-missing"))?;
+    let mut required = BTreeMap::from([(root.component_digest.clone(), root.clone())]);
+    let mut pending = root_operation.dependencies.clone();
+    let mut visited = BTreeSet::new();
+
+    while let Some(dependency) = pending.pop() {
+        let identity = (
+            dependency.package.clone(),
+            dependency.version.clone(),
+            dependency.digest.clone(),
+            dependency.operation.clone(),
+        );
+        if !visited.insert(identity) {
+            continue;
+        }
+        let target = resolve_nested_target(tenant_id, components, &dependency)
+            .cloned()
+            .ok_or_else(|| {
+                NestedOperationRefusal::new(
+                    NestedOperationRefusalKind::ReleaseClosureUnavailable,
+                    &dependency.operation,
+                )
+            })?;
+        let target_operation = target
+            .operation(&dependency.operation)
+            .expect("resolve_nested_target proves the exact operation exists");
+        pending.extend(target_operation.dependencies.iter().cloned());
+        required
+            .entry(target.component_digest.clone())
+            .or_insert(target);
+    }
+
+    Ok(required)
 }
 
 fn resolve_nested_target<'a>(
@@ -1743,7 +1861,7 @@ impl NodeInstance {
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<ReleaseManifestWeld>,
-        source: ComponentArtifactSource,
+        compiled_components: Arc<BTreeMap<String, Component>>,
         components: Arc<[AdmittedComponent]>,
         config: &RouterDriverConfig,
         tenant_id: &str,
@@ -1759,7 +1877,7 @@ impl NodeInstance {
             logging,
             allowed_hosts,
             release,
-            source,
+            compiled_components,
             components,
             config,
             tenant_id,
@@ -1780,7 +1898,7 @@ impl NodeInstance {
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<ReleaseManifestWeld>,
-        source: ComponentArtifactSource,
+        compiled_components: Arc<BTreeMap<String, Component>>,
         components: Arc<[AdmittedComponent]>,
         config: &RouterDriverConfig,
         tenant_id: &str,
@@ -1808,7 +1926,7 @@ impl NodeInstance {
                 logging: Arc::clone(&logging),
                 allowed_hosts: Arc::clone(&allowed_hosts),
                 release: Arc::clone(&release),
-                source,
+                compiled_components,
                 config: config.clone(),
                 tenant_id: tenant_id.into(),
                 components,
@@ -2320,6 +2438,67 @@ mod tests {
         assert!(
             resolve_nested_target("tenant-a", std::slice::from_ref(&target), &mismatched).is_none(),
             "a package/version match may not substitute another digest"
+        );
+
+        let leaf_operation = "inventory:stock/reserve@1.0.0";
+        let leaf_digest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+        let mut leaf = target.clone();
+        leaf.scope.package_id = "inventory".to_owned();
+        leaf.component = "inventory".to_owned();
+        leaf.component_digest = leaf_digest.to_owned();
+        leaf.operations = BTreeMap::from([(
+            leaf_operation.to_owned(),
+            AdmittedComponentOperation {
+                registered_operation: Some(leaf_operation.to_owned()),
+                dependencies: Vec::new(),
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                parameters: Vec::new(),
+            },
+        )]);
+        let mut middle = target.clone();
+        middle
+            .operations
+            .get_mut(operation)
+            .expect("middle operation exists")
+            .dependencies = vec![ComponentOperationDependency {
+            package: leaf.scope.package_id.clone(),
+            version: leaf.scope.package_version.clone(),
+            digest: leaf.component_digest.clone(),
+            operation: leaf_operation.to_owned(),
+        }];
+        let root_operation = "client-acme-receiving:receiving/record-receipt@3.0.0";
+        let mut root = target.clone();
+        root.scope.package_id = "client_acme_receiving".to_owned();
+        root.scope.package_version = "3.0.0".to_owned();
+        root.component = "client_acme_receiving".to_owned();
+        root.component_digest =
+            "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_owned();
+        root.operations = BTreeMap::from([(
+            root_operation.to_owned(),
+            AdmittedComponentOperation {
+                registered_operation: Some(root_operation.to_owned()),
+                dependencies: vec![dependency.clone()],
+                input_ports: Vec::new(),
+                output_ports: Vec::new(),
+                parameters: Vec::new(),
+            },
+        )]);
+        let mut unrelated = leaf.clone();
+        unrelated.scope.package_id = "billing".to_owned();
+        unrelated.component = "billing".to_owned();
+        unrelated.component_digest =
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_owned();
+        let required = released_operation_component_facts(
+            "tenant-a",
+            &[root.clone(), middle, leaf, unrelated],
+            &root,
+            root_operation,
+        )
+        .expect("the exact transitive operation closure resolves");
+        assert_eq!(
+            required.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+            BTreeSet::from([root.component_digest.as_str(), digest, leaf_digest])
         );
 
         let declaration = AdmittedComponentOperation {

@@ -953,12 +953,14 @@ reconciliation, push, twelve wiring gates/authorships, one exact two-package
 release mint/attestation/load, eleven PAT routes, and PostgreSQL effects. It
 asserts the overlay registration's exact owner/source/entity/operation set and
 proves the overlay `record_receipt` span invokes its pinned base digest with the
-same originating principal. The deferred CDC/materializer leg is not part of
-this route journey. Its PostgreSQL 18 server and authenticated plain-HTTP
+same originating principal. That nested route is the first package invocation
+against an empty disposable Wasmtime cache; the gate proves both exact
+components are pulled and compiled before the parent execution clock, then
+fresh-linked and instantiated. The deferred CDC/materializer leg is not part
+of this route journey. Its PostgreSQL 18 server and authenticated plain-HTTP
 registry are disposable and loopback-only. The Docker auth document must carry
 explicit non-empty `username` and `password` fields for the exact registry
-authority; credentials exist only in the scratch directory and are not
-printed.
+authority; credentials exist only in the scratch directory and are not printed.
 
 The focused real-boundary guard keeps nested authorization on the same refusal
 grammar as a direct invocation:
@@ -988,8 +990,10 @@ RECEIVING_ROUTE_CURL_AUTH="$RECEIVING_ROUTE_SCRATCH/curl.conf"
 RECEIVING_ROUTE_HOST=receiving.localhost
 RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$RECEIVING_ROUTE_SCRATCH/host-secrets"
 RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$RECEIVING_ROUTE_SCRATCH/route-caller-pat.json"
+RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY="$RECEIVING_ROUTE_SCRATCH/wasmtime-cache"
 RECEIVING_ROUTE_SECRET_NAMESPACE=wamn-receiving-route
-install -d -m 0700 "$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY"
+install -d -m 0700 "$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY" \
+  "$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY"
 
 receiving_route_cleanup() {
   docker compose --profile receiving-route -p "$RECEIVING_ROUTE_PROJECT" \
@@ -1047,6 +1051,7 @@ test "$(curl --config "$RECEIVING_ROUTE_CURL_AUTH" --silent --show-error \
 
 WAMN_RECEIVING_ROUTE_PG18_URL="postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/postgres" \
 WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY="$RECEIVING_ROUTE_COMPONENTS" \
+WAMN_RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY="$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY" \
 WAMN_RECEIVING_ROUTE_FLOW_HTTP_WASM="$RECEIVING_ROUTE_FLOW_HTTP" \
 WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE="$RECEIVING_ROUTE_AUTHORITY/wamn/components" \
 WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE="$RECEIVING_ROUTE_AUTHORITY/wamn/releases" \
