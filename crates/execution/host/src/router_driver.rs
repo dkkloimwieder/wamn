@@ -14,8 +14,9 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, AttachmentKind, ComponentOperationDependency, DefinitionHash,
-    ServingComponent, ServingComponentOperation, ServingManifest, ServingWiring,
+    AdmittedComponent, ArtifactHash, AttachmentKind, ComponentOperationDependency,
+    ComponentSqlField, ComponentSqlValueType, DefinitionHash, ServingComponent,
+    ServingComponentOperation, ServingManifest, ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_event_wire::Causation;
@@ -35,7 +36,8 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
     CandidateBindingWorld, CandidateWiringResolution, ReleaseIdentity, ResolvedActiveWiring,
-    SessionClaims, WAMN_POSTGRES_ID, WamnPostgres,
+    SessionClaims, StatementField, StatementValueType, VerifiedStatement, VerifiedStatementSet,
+    WAMN_POSTGRES_ID, WamnPostgres,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
@@ -1870,6 +1872,120 @@ fn nested_operation_links(
     Ok(links)
 }
 
+fn lower_statement_value_type(value_type: ComponentSqlValueType) -> StatementValueType {
+    match value_type {
+        ComponentSqlValueType::Boolean => StatementValueType::Boolean,
+        ComponentSqlValueType::Int32 => StatementValueType::Int32,
+        ComponentSqlValueType::Int64 => StatementValueType::Int64,
+        ComponentSqlValueType::Float64 => StatementValueType::Float64,
+        ComponentSqlValueType::Text => StatementValueType::Text,
+        ComponentSqlValueType::Bytes => StatementValueType::Bytes,
+        ComponentSqlValueType::Numeric => StatementValueType::Numeric,
+        ComponentSqlValueType::Timestamptz => StatementValueType::Timestamptz,
+        ComponentSqlValueType::Json => StatementValueType::Json,
+        ComponentSqlValueType::Uuid => StatementValueType::Uuid,
+    }
+}
+
+fn lower_statement_field(field: &ComponentSqlField) -> StatementField {
+    StatementField {
+        value_type: lower_statement_value_type(field.value_type),
+        nullable: field.nullable,
+    }
+}
+
+fn lower_statement_set(
+    statements: &BTreeMap<String, wamn_catalog::ComponentSqlStatement>,
+) -> VerifiedStatementSet {
+    statements
+        .iter()
+        .map(|(digest, statement)| {
+            (
+                digest.clone(),
+                VerifiedStatement {
+                    exact_sql: statement.sql.clone().into_boxed_str(),
+                    binds: statement.binds.iter().map(lower_statement_field).collect(),
+                    columns: statement
+                        .columns
+                        .iter()
+                        .map(lower_statement_field)
+                        .collect(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// Clears a partially installed statement scope if any later instance setup
+/// step fails. Once disarmed, [`NodeInstance::drop`] owns exact-scope cleanup.
+struct PendingStatementScope {
+    postgres: Arc<WamnPostgres>,
+    scope: Box<str>,
+    armed: bool,
+}
+
+impl PendingStatementScope {
+    fn bind(
+        postgres: Arc<WamnPostgres>,
+        scope: Box<str>,
+        component: &AdmittedComponent,
+    ) -> anyhow::Result<Self> {
+        postgres.clear_statement_scope(&scope);
+        let pending = Self {
+            postgres,
+            scope,
+            armed: true,
+        };
+        for (operation, fact) in &component.operations {
+            pending
+                .postgres
+                .bind_statement_operation(
+                    &pending.scope,
+                    operation,
+                    lower_statement_set(&fact.statements),
+                )
+                .with_context(|| format!("bind verified statements for operation {operation:?}"))?;
+        }
+        Ok(pending)
+    }
+
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingStatementScope {
+    fn drop(&mut self) {
+        if self.armed {
+            self.postgres.clear_statement_scope(&self.scope);
+        }
+    }
+}
+
+/// Invocation-local authority guard. Cancellation and traps drop it, so no
+/// operation's statement set remains active between calls.
+struct ActiveStatementScope<'a> {
+    postgres: &'a WamnPostgres,
+    scope: &'a str,
+}
+
+impl<'a> ActiveStatementScope<'a> {
+    fn activate(
+        postgres: &'a WamnPostgres,
+        scope: &'a str,
+        operation: &str,
+    ) -> anyhow::Result<Self> {
+        postgres.activate_statement_operation(scope, operation)?;
+        Ok(Self { postgres, scope })
+    }
+}
+
+impl Drop for ActiveStatementScope<'_> {
+    fn drop(&mut self) {
+        self.postgres.revoke_statement_operation(self.scope);
+    }
+}
+
 struct NodeInstance {
     store: Store<SharedCtx>,
     node: Instance,
@@ -1950,7 +2066,7 @@ impl NodeInstance {
         tenant_id: &str,
         component_fact: &AdmittedComponent,
     ) -> anyhow::Result<Self> {
-        let (mut store, mut workload, connection_http, nested, scope) = async {
+        let (mut store, mut workload, connection_http, nested, statement_scope) = async {
             let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
             wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
             let local = wash_runtime::types::LocalResources {
@@ -2034,6 +2150,8 @@ impl NodeInstance {
             logging.clear_claim(&scope);
             connection_http.revoke_invocation(&scope);
             nested.revoke();
+            let pending_statement_scope =
+                PendingStatementScope::bind(Arc::clone(&postgres), scope.clone(), component_fact)?;
             let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
                 HashMap::new();
             plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
@@ -2047,10 +2165,17 @@ impl NodeInstance {
             // ceiling as a call. One tick is only 10 ms and interrupts valid
             // virtualized std components before their instance is ready.
             store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
-            Ok::<_, anyhow::Error>((store, workload, connection_http, nested, scope))
+            Ok::<_, anyhow::Error>((
+                store,
+                workload,
+                connection_http,
+                nested,
+                (scope, pending_statement_scope),
+            ))
         }
         .instrument(tracing::info_span!("wamn.component.linker_setup"))
         .await?;
+        let (scope, pending_statement_scope) = statement_scope;
         let compiled = workload.component().clone();
         let pre = tracing::info_span!("wamn.component.link")
             .in_scope(|| workload.linker().instantiate_pre(&compiled))?;
@@ -2059,6 +2184,7 @@ impl NodeInstance {
             .instrument(tracing::info_span!("wamn.component.instantiate"))
             .await
             .map_err(|error| anyhow::anyhow!("instantiate wamn:node: {error}"))?;
+        pending_statement_scope.disarm();
         Ok(Self {
             store,
             node,
@@ -2078,6 +2204,8 @@ impl NodeInstance {
         deadline_ms: u64,
     ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
         self.store.set_epoch_deadline(deadline_ticks(deadline_ms));
+        let _active_statements =
+            ActiveStatementScope::activate(&self.postgres, &self.scope, operation)?;
         let _active_operation = self.nested.activate(operation)?;
         let handler = self
             .node
@@ -2162,6 +2290,7 @@ impl NodeInstance {
 impl Drop for NodeInstance {
     fn drop(&mut self) {
         self.revoke_acquisition();
+        self.postgres.clear_statement_scope(&self.scope);
     }
 }
 
@@ -2303,6 +2432,49 @@ mod tests {
     const PARENT_SPAN_ID: &str = "00f067aa0ba902b7";
     const VALID_TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
+    fn component_with_operations(
+        operations: BTreeMap<String, AdmittedComponentOperation>,
+    ) -> AdmittedComponent {
+        AdmittedComponent {
+            scope: ComponentPackageScope {
+                tenant_id: "tenant-a".to_owned(),
+                package_id: "orders".to_owned(),
+                package_version: "1.0.0".to_owned(),
+            },
+            component: "orders".to_owned(),
+            interface_version: "0.1.0".to_owned(),
+            operations,
+            component_digest:
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            imports: Vec::new(),
+            imports_fingerprint:
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+            effects: Vec::new(),
+        }
+    }
+
+    fn operation_with_statements(
+        statements: BTreeMap<String, wamn_catalog::ComponentSqlStatement>,
+    ) -> AdmittedComponentOperation {
+        AdmittedComponentOperation {
+            registered_operation: None,
+            dependencies: Vec::new(),
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+            statements,
+        }
+    }
+
+    fn statement_plugin() -> Arc<WamnPostgres> {
+        Arc::new(WamnPostgres::with_provider(Arc::new(
+            wamn_runtime::plugins::wamn_postgres::StaticCredentialProvider::new(
+                HashMap::new(),
+                None,
+            ),
+        )))
+    }
+
     struct TraceHarness {
         exporter: InMemorySpanExporter,
         provider: SdkTracerProvider,
@@ -2408,6 +2580,110 @@ mod tests {
         assert_eq!(bounded_node_deadline_ms(Some(17)), 17);
         assert_eq!(deadline_ticks(30), 3);
         assert_eq!(deadline_ticks(1), 1);
+    }
+
+    #[test]
+    fn admitted_statement_types_lower_exhaustively_to_the_runtime_vocabulary() {
+        let cases = [
+            (ComponentSqlValueType::Boolean, StatementValueType::Boolean),
+            (ComponentSqlValueType::Int32, StatementValueType::Int32),
+            (ComponentSqlValueType::Int64, StatementValueType::Int64),
+            (ComponentSqlValueType::Float64, StatementValueType::Float64),
+            (ComponentSqlValueType::Text, StatementValueType::Text),
+            (ComponentSqlValueType::Bytes, StatementValueType::Bytes),
+            (ComponentSqlValueType::Numeric, StatementValueType::Numeric),
+            (
+                ComponentSqlValueType::Timestamptz,
+                StatementValueType::Timestamptz,
+            ),
+            (ComponentSqlValueType::Json, StatementValueType::Json),
+            (ComponentSqlValueType::Uuid, StatementValueType::Uuid),
+        ];
+
+        for (index, (admitted, runtime)) in cases.into_iter().enumerate() {
+            let field = ComponentSqlField {
+                name: format!("field-{index}"),
+                value_type: admitted,
+                nullable: index % 2 == 0,
+            };
+            assert_eq!(
+                lower_statement_field(&field),
+                StatementField {
+                    value_type: runtime,
+                    nullable: field.nullable,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn statement_scope_binds_empty_operations_and_cleans_on_drop() {
+        let postgres = statement_plugin();
+        let component = component_with_operations(BTreeMap::from([
+            (
+                "orders:get@1.0.0".to_owned(),
+                operation_with_statements(BTreeMap::new()),
+            ),
+            (
+                "orders:list@1.0.0".to_owned(),
+                operation_with_statements(BTreeMap::new()),
+            ),
+        ]));
+        let pending =
+            PendingStatementScope::bind(Arc::clone(&postgres), "scope-a".into(), &component)
+                .expect("bind every operation, including empty statement sets");
+
+        postgres
+            .activate_statement_operation("scope-a", "orders:get@1.0.0")
+            .expect("first empty operation is bound");
+        postgres.revoke_statement_operation("scope-a");
+        postgres
+            .activate_statement_operation("scope-a", "orders:list@1.0.0")
+            .expect("second empty operation is bound");
+
+        drop(pending);
+        assert!(
+            postgres
+                .activate_statement_operation("scope-a", "orders:list@1.0.0")
+                .is_err(),
+            "dropping an uncommitted scope removes every operation binding"
+        );
+    }
+
+    #[test]
+    fn partial_statement_binding_failure_cleans_earlier_operations() {
+        let postgres = statement_plugin();
+        let invalid_statement = wamn_catalog::ComponentSqlStatement {
+            name: "lookup".to_owned(),
+            path: "sql/lookup.sql".to_owned(),
+            sql: "SELECT 1".to_owned(),
+            binds: Vec::new(),
+            columns: Vec::new(),
+        };
+        let component = component_with_operations(BTreeMap::from([
+            (
+                "a-empty".to_owned(),
+                operation_with_statements(BTreeMap::new()),
+            ),
+            (
+                "b-invalid".to_owned(),
+                operation_with_statements(BTreeMap::from([(
+                    "sha256:not-the-statement-digest".to_owned(),
+                    invalid_statement,
+                )])),
+            ),
+        ]));
+
+        assert!(
+            PendingStatementScope::bind(Arc::clone(&postgres), "scope-partial".into(), &component,)
+                .is_err()
+        );
+        assert!(
+            postgres
+                .activate_statement_operation("scope-partial", "a-empty")
+                .is_err(),
+            "an operation bound before the failure must not remain available"
+        );
     }
 
     #[test]

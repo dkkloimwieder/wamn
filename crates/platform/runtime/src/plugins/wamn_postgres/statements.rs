@@ -148,6 +148,21 @@ impl WamnPostgres {
             .remove(component_id);
     }
 
+    /// Remove every verified-statement binding for one exact component scope.
+    ///
+    /// This is the instance-lifecycle counterpart to
+    /// [`bind_statement_operation`](Self::bind_statement_operation). It removes
+    /// both the immutable operation facts and any invocation-active view without
+    /// treating the component id as a prefix.
+    pub fn clear_statement_scope(&self, component_id: &str) {
+        let mut scopes = self
+            .statement_scopes
+            .write()
+            .expect("statement scopes lock poisoned");
+        scopes.bindings.remove(component_id);
+        scopes.active.remove(component_id);
+    }
+
     pub(super) fn active_statement_set(
         &self,
         component_id: &str,
@@ -476,8 +491,77 @@ mod tests {
             Err(StatementError::UnknownStatement(digest)) if digest == second_digest
         ));
 
+        plugin
+            .activate_statement_operation("component", "second/get")
+            .expect("activate second operation");
+        let active = plugin
+            .active_statement_set("component")
+            .expect("second operation is active");
+        assert!(matches!(
+            resolve_statement(Some(&active), &first_digest, &[SqlValue::Uuid("id".into())]),
+            Err(StatementError::UnknownStatement(digest)) if digest == first_digest
+        ));
+        assert!(
+            resolve_statement(
+                Some(&active),
+                &second_digest,
+                &[SqlValue::Uuid("id".into())]
+            )
+            .is_ok()
+        );
+
         plugin.revoke_statement_operation("component");
         assert!(plugin.active_statement_set("component").is_none());
+    }
+
+    #[test]
+    fn exact_scope_cleanup_preserves_a_scope_with_the_same_prefix() {
+        let plugin = plugin();
+        let first = verified("SELECT $1::uuid, 'first'::text");
+        let first_digest = statement_digest(&first.exact_sql);
+        let second = verified("SELECT $1::uuid, 'second'::text");
+        let second_digest = statement_digest(&second.exact_sql);
+        plugin
+            .bind_statement_operation(
+                "workload",
+                "orders/get",
+                BTreeMap::from([(first_digest, first)]),
+            )
+            .expect("bind exact scope");
+        plugin
+            .bind_statement_operation(
+                "workload-child",
+                "orders/get",
+                BTreeMap::from([(second_digest.clone(), second)]),
+            )
+            .expect("bind prefix-sharing scope");
+        plugin
+            .activate_statement_operation("workload", "orders/get")
+            .expect("activate exact scope");
+        plugin
+            .activate_statement_operation("workload-child", "orders/get")
+            .expect("activate prefix-sharing scope");
+
+        plugin.clear_statement_scope("workload");
+
+        assert!(plugin.active_statement_set("workload").is_none());
+        assert!(
+            plugin
+                .activate_statement_operation("workload", "orders/get")
+                .is_err(),
+            "the exact scope's immutable binding must also be gone"
+        );
+        let active = plugin
+            .active_statement_set("workload-child")
+            .expect("prefix-sharing scope remains active");
+        assert!(
+            resolve_statement(
+                Some(&active),
+                &second_digest,
+                &[SqlValue::Uuid("id".into())]
+            )
+            .is_ok()
+        );
     }
 
     #[test]
