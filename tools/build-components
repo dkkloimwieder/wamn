@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly WAMN_USAGE='usage: tools/build-components m1 | proof'
+readonly WAMN_USAGE='usage:
+  tools/build-components m1 | proof
+  tools/build-components build-only m1 | proof
+  tools/build-components virtualize-only ARTIFACT_PLAN'
 
 wamn_fail() {
   local -r exit_code="$1"
@@ -15,12 +18,38 @@ wamn_usage_error() {
   wamn_fail 64 "$*"
 }
 
-(($# == 1)) || wamn_usage_error 'exactly one component profile is required'
-readonly WAMN_PROFILE="$1"
-case "$WAMN_PROFILE" in
-  m1 | proof) ;;
-  *) wamn_usage_error "unknown component profile '$WAMN_PROFILE'" ;;
+WAMN_MODE='combined'
+WAMN_PROFILE=''
+WAMN_ARTIFACT_PLAN_PATH=''
+WAMN_SUPPLIED_ARTIFACT_PLAN=''
+case "$#:${1:-}" in
+  1:m1 | 1:proof)
+    WAMN_PROFILE="$1"
+    ;;
+  1:*)
+    wamn_usage_error "unknown component profile '$1'"
+    ;;
+  2:build-only)
+    WAMN_MODE='build-only'
+    WAMN_PROFILE="$2"
+    case "$WAMN_PROFILE" in
+      m1 | proof) ;;
+      *) wamn_usage_error "unknown component profile '$WAMN_PROFILE'" ;;
+    esac
+    ;;
+  2:virtualize-only)
+    WAMN_MODE='virtualize-only'
+    WAMN_ARTIFACT_PLAN_PATH="$2"
+    ;;
+  2:m1 | 2:proof)
+    wamn_usage_error 'exactly one component profile is required'
+    ;;
+  *)
+    wamn_usage_error 'expected a profile, build-only PROFILE, or virtualize-only ARTIFACT_PLAN'
+    ;;
 esac
+readonly WAMN_MODE
+readonly WAMN_ARTIFACT_PLAN_PATH
 
 readonly WAMN_TOOL_DIRECTORY="$(
   CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
@@ -35,6 +64,43 @@ readonly WAMN_VIRTUALIZATION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-vir
 readonly WAMN_CARGO="${CARGO:-cargo}"
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
+command -v sha256sum >/dev/null 2>&1 || wamn_fail 127 'sha256sum is required'
+if [[ "$WAMN_MODE" == virtualize-only ]]; then
+  [[ -r "$WAMN_ARTIFACT_PLAN_PATH" ]] || {
+    wamn_fail 65 "cannot read artifact plan $WAMN_ARTIFACT_PLAN_PATH"
+  }
+  WAMN_SUPPLIED_ARTIFACT_PLAN="$(
+    jq -cseS '
+      def exact_keys($expected): keys | sort == ($expected | sort);
+      select(length == 1)
+      | .[0]
+      | select(exact_keys(["build", "profile", "virtualization"]))
+      | select(.profile == "m1" or .profile == "proof")
+      | select(.build | type == "array" and length > 0)
+      | select([.build[]
+                | select((exact_keys(["manifest", "packages"]) | not)
+                         or (.manifest | type != "string" or length == 0)
+                         or (.packages | type != "array" or length == 0)
+                         or ([.packages[] | select(type != "string" or length == 0)]
+                             | length > 0))]
+               | length == 0)
+      | select(.virtualization | exact_keys(["artifacts", "profile", "tool"]))
+      | select(.virtualization.profile | type == "string" and length > 0)
+      | select(.virtualization.tool | exact_keys(["manifest", "package"]))
+      | select(.virtualization.artifacts | type == "array" and length > 0)
+      | select([.virtualization.artifacts[]
+                | select((exact_keys(["output", "package", "raw", "sha256"]) | not)
+                         or (.package | type != "string" or length == 0)
+                         or (.raw | type != "string" or length == 0)
+                         or (.output | type != "string" or length == 0)
+                         or (.sha256 | test("^[0-9a-f]{64}$") | not))]
+               | length == 0)
+    ' "$WAMN_ARTIFACT_PLAN_PATH"
+  )" || wamn_fail 65 "invalid artifact plan $WAMN_ARTIFACT_PLAN_PATH"
+  WAMN_PROFILE="$(jq -r '.profile' <<<"$WAMN_SUPPLIED_ARTIFACT_PLAN")"
+fi
+readonly WAMN_SUPPLIED_ARTIFACT_PLAN
+readonly WAMN_PROFILE
 [[ -r "$WAMN_TIER_MANIFEST" ]] || {
   wamn_fail 65 "cannot read $WAMN_TIER_MANIFEST"
 }
@@ -211,55 +277,62 @@ printf 'build-components: %s selects %s component packages across %s workspaces\
   "$WAMN_PROFILE" "$(jq -r '[.[].packages[]] | length' <<<"$WAMN_PLAN")" \
   "$WAMN_LEG_COUNT" >&2
 
-# Every leg runs: the workspaces are isolated precisely so that one workspace's
-# failure does not describe the other's state.
-WAMN_EXIT_STATUS=0
-for ((leg = 0; leg < WAMN_LEG_COUNT; leg += 1)); do
-  manifest="$(jq -r --argjson leg "$leg" '.[$leg].manifest' <<<"$WAMN_PLAN")"
-  declare -a WAMN_ARGUMENTS=(
-    build --locked --offline --target wasm32-wasip2
-    --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest"
-  )
-  while IFS= read -r package; do
-    WAMN_ARGUMENTS+=(-p "$package")
-  done < <(jq -r --argjson leg "$leg" '.[$leg].packages[]' <<<"$WAMN_PLAN")
-  leg_status=0
-  "$WAMN_CARGO" "${WAMN_ARGUMENTS[@]}" || leg_status=$?
-  if ((leg_status != 0)); then
-    printf 'build-components: FAIL: %s (exit %d)\n' "$manifest" "$leg_status" >&2
-    if ((WAMN_EXIT_STATUS == 0)); then
-      WAMN_EXIT_STATUS="$leg_status"
+wamn_build() {
+  local exit_status=0
+  local leg manifest package leg_status
+  local -a arguments
+
+  # Every leg runs: the workspaces are isolated precisely so that one
+  # workspace's failure does not describe the other's state.
+  for ((leg = 0; leg < WAMN_LEG_COUNT; leg += 1)); do
+    manifest="$(jq -r --argjson leg "$leg" '.[$leg].manifest' <<<"$WAMN_PLAN")"
+    arguments=(
+      build --locked --offline --target wasm32-wasip2
+      --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest"
+    )
+    while IFS= read -r package; do
+      arguments+=(-p "$package")
+    done < <(jq -r --argjson leg "$leg" '.[$leg].packages[]' <<<"$WAMN_PLAN")
+    leg_status=0
+    "$WAMN_CARGO" "${arguments[@]}" || leg_status=$?
+    if ((leg_status != 0)); then
+      printf 'build-components: FAIL: %s (exit %d)\n' "$manifest" "$leg_status" >&2
+      if ((exit_status == 0)); then
+        exit_status="$leg_status"
+      fi
     fi
-  fi
-done
-if ((WAMN_EXIT_STATUS != 0)); then
-  exit "$WAMN_EXIT_STATUS"
-fi
+  done
+  return "$exit_status"
+}
 
-readonly WAMN_VIRTUALIZATION_PROFILE="$(jq -r '.profile' <<<"$WAMN_VIRTUALIZATION_PLAN")"
-readonly WAMN_VIRTUALIZER_MANIFEST="$WAMN_REPOSITORY_ROOT/$(
-  jq -r '.tool.manifest' <<<"$WAMN_VIRTUALIZATION_PLAN"
-)"
-readonly WAMN_VIRTUALIZER_PACKAGE="$(jq -r '.tool.package' <<<"$WAMN_VIRTUALIZATION_PLAN")"
-readonly WAMN_VIRTUALIZATION_COUNT="$(jq -r '.artifacts | length' <<<"$WAMN_VIRTUALIZATION_PLAN")"
+wamn_artifact_plan() {
+  local virtualization_plan="$WAMN_VIRTUALIZATION_PLAN"
+  local count artifact input package digest
+  count="$(jq -r '.artifacts | length' <<<"$virtualization_plan")"
+  for ((artifact = 0; artifact < count; artifact += 1)); do
+    input="$(jq -r --argjson artifact "$artifact" \
+      '.artifacts[$artifact].raw' <<<"$virtualization_plan")"
+    package="$(jq -r --argjson artifact "$artifact" \
+      '.artifacts[$artifact].package' <<<"$virtualization_plan")"
+    [[ -s "$input" ]] || {
+      wamn_fail 65 "raw component is missing or empty for $package: $input"
+    }
+    digest="$(sha256sum -- "$input")" || {
+      wamn_fail 65 "cannot hash raw component for $package: $input"
+    }
+    digest="${digest%% *}"
+    virtualization_plan="$(
+      jq -ceS --argjson artifact "$artifact" --arg digest "$digest" \
+        '.artifacts[$artifact].sha256 = $digest' <<<"$virtualization_plan"
+    )"
+  done
 
-# The profile directory is wholly owned output. Clear it after every raw build
-# succeeds and before emitting any current artifact, so a removed allowlist row
-# cannot survive as a stale component and satisfy a later byte-level proof.
-declare -A WAMN_VIRTUALIZATION_DIRECTORIES=()
-while IFS= read -r output; do
-  directory="$(dirname -- "$output")"
-  [[ -n "$directory" && "$directory" != / \
-     && "$directory" == */virtualized/"$WAMN_VIRTUALIZATION_PROFILE" ]] || {
-    wamn_fail 65 "unsafe virtualization output directory: $directory"
-  }
-  WAMN_VIRTUALIZATION_DIRECTORIES["$directory"]=1
-done < <(jq -r '.artifacts[].output' <<<"$WAMN_VIRTUALIZATION_PLAN")
-readonly WAMN_VIRTUALIZATION_DIRECTORIES
-for directory in "${!WAMN_VIRTUALIZATION_DIRECTORIES[@]}"; do
-  rm -rf -- "$directory"
-  mkdir -p -- "$directory"
-done
+  jq -nceS \
+    --arg profile "$WAMN_PROFILE" \
+    --argjson build "$WAMN_PLAN" \
+    --argjson virtualization "$virtualization_plan" \
+    '{profile: $profile, build: $build, virtualization: $virtualization}'
+}
 
 WAMN_PENDING_OUTPUT=''
 wamn_cleanup_partial_output() {
@@ -267,36 +340,83 @@ wamn_cleanup_partial_output() {
     rm -f -- "$WAMN_PENDING_OUTPUT"
   fi
 }
-trap wamn_cleanup_partial_output EXIT
 
-printf 'build-components: %s normalizes %s declared artifacts with profile %s\n' \
-  "$WAMN_PROFILE" "$WAMN_VIRTUALIZATION_COUNT" "$WAMN_VIRTUALIZATION_PROFILE" >&2
-for ((artifact = 0; artifact < WAMN_VIRTUALIZATION_COUNT; artifact += 1)); do
-  input="$(jq -r --argjson artifact "$artifact" \
-    '.artifacts[$artifact].raw' <<<"$WAMN_VIRTUALIZATION_PLAN")"
-  output="$(jq -r --argjson artifact "$artifact" \
-    '.artifacts[$artifact].output' <<<"$WAMN_VIRTUALIZATION_PLAN")"
-  package="$(jq -r --argjson artifact "$artifact" \
-    '.artifacts[$artifact].package' <<<"$WAMN_VIRTUALIZATION_PLAN")"
+wamn_virtualize() {
+  local -r artifact_plan="$1"
+  local virtualization_profile virtualizer_manifest virtualizer_package count
+  local output directory artifact input package virtualizer_status
+  local -A directories=()
 
-  [[ -s "$input" ]] || wamn_fail 65 "raw component is missing or empty for $package: $input"
-  mkdir -p -- "$(dirname -- "$output")"
-  WAMN_PENDING_OUTPUT="${output}.partial.$$"
-  rm -f -- "$WAMN_PENDING_OUTPUT"
+  virtualization_profile="$(jq -r '.virtualization.profile' <<<"$artifact_plan")"
+  virtualizer_manifest="$WAMN_REPOSITORY_ROOT/$(
+    jq -r '.virtualization.tool.manifest' <<<"$artifact_plan"
+  )"
+  virtualizer_package="$(jq -r '.virtualization.tool.package' <<<"$artifact_plan")"
+  count="$(jq -r '.virtualization.artifacts | length' <<<"$artifact_plan")"
 
-  virtualizer_status=0
-  "$WAMN_CARGO" run --locked --offline \
-    --manifest-path "$WAMN_VIRTUALIZER_MANIFEST" \
-    -p "$WAMN_VIRTUALIZER_PACKAGE" -- \
-    --input "$input" --output "$WAMN_PENDING_OUTPUT" || virtualizer_status=$?
-  if ((virtualizer_status != 0)); then
-    wamn_fail "$virtualizer_status" \
-      "virtualization failed for $package with profile $WAMN_VIRTUALIZATION_PROFILE"
-  fi
-  [[ -s "$WAMN_PENDING_OUTPUT" ]] || {
-    wamn_fail 65 "virtualizer produced no component for $package"
-  }
-  mv -f -- "$WAMN_PENDING_OUTPUT" "$output"
-  WAMN_PENDING_OUTPUT=''
-  printf 'build-components: normalized %s -> %s\n' "$package" "$output" >&2
-done
+  # The profile directory is wholly owned output. Clear it only after the
+  # complete build plan and every raw digest have been validated, so a stale
+  # handoff cannot mutate the last known-good outputs.
+  while IFS= read -r output; do
+    directory="$(dirname -- "$output")"
+    [[ -n "$directory" && "$directory" != / \
+       && "$directory" == */virtualized/"$virtualization_profile" ]] || {
+      wamn_fail 65 "unsafe virtualization output directory: $directory"
+    }
+    directories["$directory"]=1
+  done < <(jq -r '.virtualization.artifacts[].output' <<<"$artifact_plan")
+  for directory in "${!directories[@]}"; do
+    rm -rf -- "$directory"
+    mkdir -p -- "$directory"
+  done
+
+  trap wamn_cleanup_partial_output EXIT
+  printf 'build-components: %s normalizes %s declared artifacts with profile %s\n' \
+    "$WAMN_PROFILE" "$count" "$virtualization_profile" >&2
+  for ((artifact = 0; artifact < count; artifact += 1)); do
+    input="$(jq -r --argjson artifact "$artifact" \
+      '.virtualization.artifacts[$artifact].raw' <<<"$artifact_plan")"
+    output="$(jq -r --argjson artifact "$artifact" \
+      '.virtualization.artifacts[$artifact].output' <<<"$artifact_plan")"
+    package="$(jq -r --argjson artifact "$artifact" \
+      '.virtualization.artifacts[$artifact].package' <<<"$artifact_plan")"
+
+    mkdir -p -- "$(dirname -- "$output")"
+    WAMN_PENDING_OUTPUT="${output}.partial.$$"
+    rm -f -- "$WAMN_PENDING_OUTPUT"
+
+    virtualizer_status=0
+    "$WAMN_CARGO" run --locked --offline \
+      --manifest-path "$virtualizer_manifest" \
+      -p "$virtualizer_package" -- \
+      --input "$input" --output "$WAMN_PENDING_OUTPUT" || virtualizer_status=$?
+    if ((virtualizer_status != 0)); then
+      wamn_fail "$virtualizer_status" \
+        "virtualization failed for $package with profile $virtualization_profile"
+    fi
+    [[ -s "$WAMN_PENDING_OUTPUT" ]] || {
+      wamn_fail 65 "virtualizer produced no component for $package"
+    }
+    mv -f -- "$WAMN_PENDING_OUTPUT" "$output"
+    WAMN_PENDING_OUTPUT=''
+    printf 'build-components: normalized %s -> %s\n' "$package" "$output" >&2
+  done
+  trap - EXIT
+}
+
+if [[ "$WAMN_MODE" != virtualize-only ]]; then
+  wamn_build
+fi
+
+WAMN_CURRENT_ARTIFACT_PLAN="$(wamn_artifact_plan)"
+readonly WAMN_CURRENT_ARTIFACT_PLAN
+if [[ "$WAMN_MODE" == build-only ]]; then
+  printf '%s\n' "$WAMN_CURRENT_ARTIFACT_PLAN"
+  exit 0
+fi
+if [[ "$WAMN_MODE" == virtualize-only \
+      && "$WAMN_SUPPLIED_ARTIFACT_PLAN" != "$WAMN_CURRENT_ARTIFACT_PLAN" ]]; then
+  wamn_fail 65 'artifact plan is stale or does not match the canonical component inventory'
+fi
+
+wamn_virtualize "$WAMN_CURRENT_ARTIFACT_PLAN"

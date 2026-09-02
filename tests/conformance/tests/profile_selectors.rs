@@ -852,24 +852,224 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         "successful virtualization retained an undeclared stale output"
     );
 
-    for artifact in artifacts {
+    let normalized_outputs = artifacts
+        .iter()
+        .map(|artifact| {
+            let workspace_manifest = artifact["workspace_manifest"]
+                .as_str()
+                .expect("workspace manifest must be a string");
+            let output_file = artifact["output_file"]
+                .as_str()
+                .expect("output file must be a string");
+            target_directories[workspace_manifest]
+                .join(output_subdirectory)
+                .join(output_file)
+        })
+        .collect::<Vec<_>>();
+    for (artifact, normalized) in artifacts.iter().zip(&normalized_outputs) {
         let package = artifact["package"]
             .as_str()
             .expect("package must be a string");
-        let workspace_manifest = artifact["workspace_manifest"]
-            .as_str()
-            .expect("workspace manifest must be a string");
-        let output_file = artifact["output_file"]
-            .as_str()
-            .expect("output file must be a string");
-        let normalized = target_directories[workspace_manifest]
-            .join(output_subdirectory)
-            .join(output_file);
         assert_eq!(
-            fs::read_to_string(&normalized).expect("normalized component must exist"),
+            fs::read_to_string(normalized).expect("normalized component must exist"),
             format!("raw:{package}")
         );
     }
+
+    let combined_outputs = normalized_outputs
+        .iter()
+        .map(|path| fs::read(path).expect("combined output must be readable"))
+        .collect::<Vec<_>>();
+    for normalized in &normalized_outputs {
+        fs::write(normalized, "preserved-build-only").expect("failed to seed a build-only output");
+    }
+    for stale in &stale_outputs {
+        fs::write(stale, "stale").expect("failed to reseed undeclared stale output");
+    }
+
+    let _ = fs::remove_file(&capture);
+    let build_only = Command::new(root.join(COMPONENT_TOOL))
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+        .env("WAMN_FAKE_BUILD_STATUS", "0")
+        .env("WAMN_FAKE_VIRTUALIZER_STATUS", "29")
+        .args(["build-only", "m1"])
+        .output()
+        .expect("failed to execute build-only component profile");
+    assert!(
+        build_only.status.success(),
+        "build-only component profile failed:\n{}",
+        String::from_utf8_lossy(&build_only.stderr)
+    );
+    let build_only_invocations = captured_invocations(&capture);
+    assert!(
+        build_only_invocations.iter().any(|invocation| invocation
+            .get(1)
+            .is_some_and(|argument| argument == "build")),
+        "build-only mode did not build any workspace"
+    );
+    assert!(
+        build_only_invocations
+            .iter()
+            .all(|invocation| invocation.get(1).is_none_or(|argument| argument != "run")),
+        "build-only mode invoked the virtualizer"
+    );
+    assert!(
+        normalized_outputs.iter().all(|path| {
+            fs::read_to_string(path).expect("preserved output must remain readable")
+                == "preserved-build-only"
+        }),
+        "build-only mode mutated a normalized output"
+    );
+    assert!(
+        stale_outputs.iter().all(|path| path.exists()),
+        "build-only mode cleaned the virtualization output directory"
+    );
+
+    let artifact_plan: Value = serde_json::from_slice(&build_only.stdout)
+        .expect("build-only stdout must be one machine-readable artifact plan");
+    assert_eq!(artifact_plan["profile"], "m1");
+    assert_eq!(
+        artifact_plan["virtualization"]["artifacts"]
+            .as_array()
+            .expect("artifact plan must contain virtualization artifacts")
+            .len(),
+        artifacts.len()
+    );
+    let artifact_plan_path = scratch.join("component-artifact-plan.json");
+    fs::write(&artifact_plan_path, &build_only.stdout)
+        .expect("failed to persist build-only artifact plan");
+
+    let _ = fs::remove_file(&capture);
+    let virtualize_only = Command::new(root.join(COMPONENT_TOOL))
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+        .env("WAMN_FAKE_BUILD_STATUS", "31")
+        .env("WAMN_FAKE_VIRTUALIZER_STATUS", "0")
+        .arg("virtualize-only")
+        .arg(&artifact_plan_path)
+        .output()
+        .expect("failed to execute virtualize-only component profile");
+    assert!(
+        virtualize_only.status.success(),
+        "virtualize-only component profile failed:\n{}",
+        String::from_utf8_lossy(&virtualize_only.stderr)
+    );
+    let virtualize_only_invocations = captured_invocations(&capture);
+    assert!(
+        virtualize_only_invocations
+            .iter()
+            .all(|invocation| invocation.get(1).is_none_or(|argument| argument != "build")),
+        "virtualize-only mode rebuilt a workspace"
+    );
+    assert_eq!(
+        virtualize_only_invocations
+            .iter()
+            .filter(|invocation| invocation.get(1).is_some_and(|argument| argument == "run"))
+            .count(),
+        artifacts.len()
+    );
+    assert_eq!(
+        normalized_outputs
+            .iter()
+            .map(|path| fs::read(path).expect("split output must be readable"))
+            .collect::<Vec<_>>(),
+        combined_outputs,
+        "split build and virtualization changed the combined output"
+    );
+    assert!(
+        stale_outputs.iter().all(|path| !path.exists()),
+        "virtualize-only mode retained an undeclared stale output"
+    );
+
+    fs::write(&normalized_outputs[0], "preserved-invalid")
+        .expect("failed to seed output before invalid-plan refusal");
+    let mut invalid_plan = artifact_plan.clone();
+    invalid_plan["unexpected"] = Value::Bool(true);
+    let invalid_plan_path = scratch.join("invalid-component-artifact-plan.json");
+    fs::write(
+        &invalid_plan_path,
+        serde_json::to_vec(&invalid_plan).expect("invalid plan fixture must serialize"),
+    )
+    .expect("failed to write invalid artifact plan");
+    let _ = fs::remove_file(&capture);
+    let invalid = Command::new(root.join(COMPONENT_TOOL))
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+        .arg("virtualize-only")
+        .arg(&invalid_plan_path)
+        .output()
+        .expect("failed to execute invalid-plan refusal");
+    assert_eq!(invalid.status.code(), Some(65));
+    assert!(
+        !capture.exists(),
+        "invalid artifact plan invoked Cargo before refusing"
+    );
+    assert_eq!(
+        fs::read_to_string(&normalized_outputs[0])
+            .expect("invalid-plan output must remain readable"),
+        "preserved-invalid"
+    );
+
+    let first_artifact = &artifacts[0];
+    let first_workspace = first_artifact["workspace_manifest"]
+        .as_str()
+        .expect("workspace manifest must be a string");
+    let first_raw_file = first_artifact["raw_file"]
+        .as_str()
+        .expect("raw file must be a string");
+    let first_raw = target_directories[first_workspace]
+        .join("wasm32-wasip2")
+        .join("debug")
+        .join(first_raw_file);
+    fs::write(&first_raw, "changed-after-build")
+        .expect("failed to mutate raw component after build-only");
+    fs::write(&normalized_outputs[0], "preserved-stale")
+        .expect("failed to seed output before stale-plan refusal");
+    let _ = fs::remove_file(&capture);
+    let stale = Command::new(root.join(COMPONENT_TOOL))
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+        .arg("virtualize-only")
+        .arg(&artifact_plan_path)
+        .output()
+        .expect("failed to execute stale-plan refusal");
+    assert_eq!(stale.status.code(), Some(65));
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains("artifact plan is stale"),
+        "stale-plan refusal omitted its reason:\n{}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
+    assert!(
+        captured_invocations(&capture)
+            .iter()
+            .all(|invocation| invocation
+                .get(1)
+                .is_some_and(|argument| argument == "metadata")),
+        "stale artifact plan built or virtualized before refusing"
+    );
+    assert_eq!(
+        fs::read_to_string(&normalized_outputs[0]).expect("stale-plan output must remain readable"),
+        "preserved-stale"
+    );
+    fs::write(
+        &first_raw,
+        format!(
+            "raw:{}",
+            first_artifact["package"]
+                .as_str()
+                .expect("package must be a string")
+        ),
+    )
+    .expect("failed to restore raw component after stale-plan refusal");
 
     let first = &artifacts[0];
     let first_workspace = first["workspace_manifest"]
