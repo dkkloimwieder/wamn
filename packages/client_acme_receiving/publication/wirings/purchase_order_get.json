@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "purchase_order_get",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "client_acme_receiving",
+      "interface-version": "0.1.0",
+      "operation": "client-acme-receiving:purchase-order/get@3.0.0",
+      "terminal": "respond"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "quality_create_inspection",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "client_acme_receiving",
+      "interface-version": "0.1.0",
+      "operation": "client-acme-receiving:quality/create-inspection@3.0.0"
+    }
+  }
+}
