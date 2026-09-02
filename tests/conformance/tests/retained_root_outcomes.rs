@@ -72,6 +72,7 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "wamn-schema-introspection",
         "crates/schema/introspection/src/lib.rs",
     ),
+    ("wamn-simulator", "test-support/simulator/src/lib.rs"),
     (
         "wamn-test-infrastructure",
         "test-support/infrastructure/lib.rs",

@@ -360,6 +360,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-simulator",
+      "manifest_path": "test-support/simulator/Cargo.toml",
+      "role": "test",
+      "target_class": "native",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-test-infrastructure",
       "manifest_path": "test-support/infrastructure/Cargo.toml",
       "role": "test",

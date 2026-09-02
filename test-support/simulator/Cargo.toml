@@ -1,0 +1,22 @@
+[package]
+name = "wamn-simulator"
+description = "Deterministic, seeded event-stream profiles that drive real routes and consumers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true, features = ["rustls"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+# The shared canonicalization (wms-prep-spec.md 1a: "no new serializer"). This is
+# the first test-support -> first-party edge; it is legal because the only
+# architectural rule is the reverse one,
+# `production_to_test_support_normal_and_build_edges_are_rejected`
+# (tests/conformance/tests/package_architecture.rs).
+wamn-execution-contract = { workspace = true }
+
+[lints]
+workspace = true
