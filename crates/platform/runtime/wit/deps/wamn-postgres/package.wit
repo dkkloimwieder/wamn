@@ -116,6 +116,48 @@ interface client {
   }
 }
 
+/// Execute only SQL statements admitted for the active operation.
+///
+/// The guest supplies a content digest and values, never SQL bytes. The host
+/// resolves the digest inside the active operation's verified statement set,
+/// validates the value and result shapes, and executes the admitted exact
+/// bytes through the same claim-aware runner as `client`.
+interface statements {
+  use types.{sql-value, row-set, pg-error};
+
+  enum contract-part {
+    binds,
+    columns,
+  }
+
+  record value-shape {
+    count: u32,
+    types: list<string>,
+  }
+
+  record contract-mismatch {
+    statement-digest: string,
+    part: contract-part,
+    expected: value-shape,
+    observed: value-shape,
+  }
+
+  variant statement-error {
+    unknown-statement(string),
+    statement-contract-mismatch(contract-mismatch),
+    postgres(pg-error),
+  }
+
+  resource transaction {
+    run: func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+    commit: func() -> result<_, statement-error>;
+    rollback: func() -> result<_, statement-error>;
+  }
+
+  run: func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+  begin: func() -> result<transaction, statement-error>;
+}
+
 /// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).
 /// P0 verdict (S2): that internal cache reached 20427 qps / p99 1.98 ms with
 /// NO guest-visible prepare surface, so an explicit `prepare` resource stays

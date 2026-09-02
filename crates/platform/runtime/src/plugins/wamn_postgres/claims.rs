@@ -26,9 +26,10 @@ use super::pool::{
     StaticCredentialProvider, WamnPostgresConfig, credential_exactness_hook,
     credential_generation_role, destroy_connection, standard_conforming_strings_hook,
 };
-use super::resources::{run_execute, run_query};
+use super::resources::{run_execute, run_query, run_verified_query};
+use super::statements::{StatementScopes, VerifiedStatement};
 use super::types::map_pg_error;
-use super::{DEFAULT_PROJECT, PgError, RowSet, SqlValue};
+use super::{DEFAULT_PROJECT, PgError, RowSet, SqlValue, StatementError};
 
 const OPERATION_PERMISSIONS_SQL: &str = "SELECT permission \
     FROM app_system.permissions \
@@ -95,6 +96,10 @@ pub struct WamnPostgres {
     /// plugin opens for that component, which the CDC reader (l5i9.12.1)
     /// stitches onto the txn's row events.
     current_run: std::sync::RwLock<HashMap<String, Causation>>,
+    /// Verified SQL facts bound by operation plus the one invocation-active
+    /// scope. The active scope is host-selected; a guest can only name a digest
+    /// inside it.
+    pub(super) statement_scopes: std::sync::RwLock<StatementScopes>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     pub(super) destroyed: Arc<AtomicU64>,
 }
@@ -674,6 +679,7 @@ impl WamnPostgres {
             users: std::sync::RwLock::new(HashMap::new()),
             release_identities: std::sync::RwLock::new(HashMap::new()),
             current_run: std::sync::RwLock::new(HashMap::new()),
+            statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
             destroyed: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -1222,6 +1228,9 @@ impl WamnPostgres {
         component_id: &str,
         claims: &SessionClaims,
     ) -> anyhow::Result<()> {
+        // An acquisition starts with no statement authority. The router
+        // activates the selected operation only after claims bind.
+        self.revoke_statement_operation(component_id);
         self.set_tenant(component_id, &claims.tenant)?;
         match claims.project.as_deref() {
             Some(project) => self.set_project(component_id, project)?,
@@ -1327,6 +1336,7 @@ impl WamnPostgres {
     /// a `require_tenant` failure is how an unbound instance fails closed
     /// instead of serving someone else's rows.
     pub fn revoke_session_claims(&self, component_id: &str) {
+        self.revoke_statement_operation(component_id);
         self.tenants
             .write()
             .expect("tenants lock poisoned")
@@ -1361,8 +1371,8 @@ impl WamnPostgres {
             .remove(component_id);
     }
 
-    /// Reap EVERY per-component-id claim and workload-authority registry this
-    /// plugin keeps for a workload
+    /// Reap EVERY per-component-id claim, workload-authority, and verified
+    /// statement registry this plugin keeps for a workload
     /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
     /// the caller's role / user id, the carried release identity, and the
     /// causation run context — all set at
@@ -1413,6 +1423,7 @@ impl WamnPostgres {
             .write()
             .expect("current_run lock poisoned")
             .retain(|c, _| retain(c));
+        self.clear_statement_bindings(workload_id);
     }
 
     /// Connections destroyed instead of repooled since startup.
@@ -2040,6 +2051,68 @@ impl WamnPostgres {
                     self.destroy(conn);
                 }
                 Err(pg_err)
+            }
+        }
+    }
+
+    /// Execute one admitted statement in an implicit claim-aware transaction.
+    /// Contract drift rolls the transaction back before any mutation commits.
+    pub(super) async fn one_shot_statement(
+        &self,
+        component_id: &str,
+        digest: &str,
+        statement: &VerifiedStatement,
+        binds: &[SqlValue],
+    ) -> Result<RowSet, StatementError> {
+        let project = self.project_for(component_id);
+        let tenant = self
+            .require_tenant(component_id)
+            .map_err(StatementError::Postgres)?;
+        let schema = self.schema_for(component_id);
+        let runner = self.runner_for(component_id);
+        let role = self.role_for(component_id);
+        let user_id = self.user_id_for(component_id);
+        let run = self.current_run_for(component_id);
+        let (conn, policy, authority) = self
+            .checkout_workload(component_id, &project, &tenant)
+            .await
+            .map_err(StatementError::Postgres)?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &conn,
+                authority,
+                &tenant,
+                schema.as_deref(),
+                runner.as_deref(),
+                role.as_deref(),
+                user_id.as_deref(),
+                run.as_ref(),
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(conn);
+            return Err(StatementError::Postgres(error));
+        }
+
+        let result = run_verified_query(&conn, digest, statement, binds, policy.row_limit).await;
+        match result {
+            Ok(rows) => match conn.batch_execute("COMMIT").await {
+                Ok(()) => Ok(rows),
+                Err(error) => {
+                    self.destroy(conn);
+                    Err(StatementError::Postgres(map_pg_error(&error)))
+                }
+            },
+            Err(error) => {
+                if let Err(rollback_error) = conn.batch_execute("ROLLBACK").await {
+                    tracing::warn!(
+                        error = %rollback_error,
+                        "rollback after failed verified statement also failed; destroying connection"
+                    );
+                    self.destroy(conn);
+                }
+                Err(error)
             }
         }
     }

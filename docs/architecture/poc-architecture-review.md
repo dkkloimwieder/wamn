@@ -8,7 +8,7 @@ post-slice-iv work items; triggers are recorded, not scheduled.
 
 | Finding | Evidence | Disposition |
 |---|---|---|
-| Guest weight: std+sqlx+virtualization per component (~26 MiB) | 16 s cold compile, ~1 s warm link, 10yt.8 | **P1 — SQL by reference.** Guest sends `(statement_digest, binds)`; host executes via sqlx. The two-sibling weld already pins the bytes; the driver leaves the guest. Guests become tiny (likely `no_std` again for free). |
+| Guest weight: std+sqlx+virtualization per component (~26 MiB) | 16 s cold compile, ~1 s warm link, 10yt.8 | **P1 — SQL by reference.** Guest sends `(statement_digest, binds)`; SQLx remains the native verifier, while the host resolves the pinned exact bytes and executes them through its existing claim-aware runner (owner ruling, `wamn-10yt.9.2`). The two-sibling weld already pins the bytes; the driver leaves the guest. Guests become tiny (likely `no_std` again for free). |
 | Fresh instance per request on large components | Latency floor per call | Revisit instance reuse for package operations (stateless by construction) after P1; likely moot once guests are thin. |
 | Generated CRUD `create` has no idempotency key | At-least-once delivery → duplicate rows on retry | **P3 — idempotency key on generated creates**, same semantics as commands. Before any real client. |
 | Database-per-env at thousands of tenants | Connection multiplication, CREATE DATABASE race | Pooled tier trigger already filed. No action. |

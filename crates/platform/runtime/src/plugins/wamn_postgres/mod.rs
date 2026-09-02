@@ -62,6 +62,7 @@ mod credential_exactness;
 mod pool;
 mod production_claim;
 mod resources;
+mod statements;
 mod types;
 mod wiring_resolution;
 
@@ -91,7 +92,8 @@ pub use production_claim::{
     ProductionLeaseRenewal, ProductionReapResult, ProductionRouterAction, production_router_action,
     production_router_result_action,
 };
-pub use resources::{PgCursor, PgTransaction};
+pub use resources::{PgCursor, PgStatementTransaction, PgTransaction};
+pub use statements::{StatementField, StatementValueType, VerifiedStatement, VerifiedStatementSet};
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this
 /// workspace crate cannot name a family's credential without the class, and
@@ -107,6 +109,7 @@ mod bindings {
         with: {
             "wamn:postgres/client.transaction": super::PgTransaction,
             "wamn:postgres/client.cursor": super::PgCursor,
+            "wamn:postgres/statements.transaction": super::PgStatementTransaction,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -123,6 +126,7 @@ mod bindings {
         with: {
             "wamn:postgres/client.transaction": super::PgTransaction,
             "wamn:postgres/client.cursor": super::PgCursor,
+            "wamn:postgres/statements.transaction": super::PgStatementTransaction,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -167,18 +171,21 @@ impl NamedProject {
 const NAMED_PROJECT_CONFIG_KEY: &str = "project";
 
 use bindings::wamn::postgres::client;
+use bindings::wamn::postgres::statements as statement_wit;
 use bindings::wamn::postgres::types::{Column, PgError, RowSet, SqlValue};
+use statement_wit::{ContractMismatch, ContractPart, StatementError, ValueShape};
 
 #[cfg(feature = "wasm_component_model_implements")]
 impl bindings::wamn::postgres::types::Host for wash_runtime::engine::ctx::ActiveCtx<'_> {}
 
 pub const WAMN_POSTGRES_ID: &str = "wamn-postgres";
 
-/// Wire the `wamn:postgres/client` host functions into a linker directly.
+/// Wire the `wamn:postgres` raw-client and verified-statement host functions.
 /// The host path calls this from [`HostPlugin::on_workload_item_bind`]; the
 /// `pgbench` harness calls it to link the capability into a hand-built store.
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
-    client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
+    client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+    statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
 /// Per-workload config key carrying the tenant identity (plumbed end-to-end
@@ -242,6 +249,7 @@ impl HostPlugin for WamnPostgres {
             imports: HashSet::from([
                 WitInterface::from("wamn:postgres/types@0.1.0"),
                 WitInterface::from("wamn:postgres/client@0.1.0"),
+                WitInterface::from("wamn:postgres/statements@0.1.0"),
             ]),
             exports: HashSet::new(),
         }
@@ -257,7 +265,9 @@ impl HostPlugin for WamnPostgres {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if !interfaces.contains("wamn", "postgres", &["client"]) {
+        let has_client = interfaces.contains("wamn", "postgres", &["client"]);
+        let has_statements = interfaces.contains("wamn", "postgres", &["statements"]);
+        if !has_client && !has_statements {
             return Ok(());
         }
         self.bind_configured_workload_authority(item.id(), &item.local_resources().config)?;
@@ -318,7 +328,14 @@ impl HostPlugin for WamnPostgres {
         // asserted could disagree with the manifest the same pod resolves plans
         // against.
         #[cfg(not(feature = "wasm_component_model_implements"))]
-        client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
+        {
+            if has_client {
+                client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
+            }
+            if has_statements {
+                statement_wit::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
+            }
+        }
 
         #[cfg(feature = "wasm_component_model_implements")]
         {
@@ -343,6 +360,9 @@ impl HostPlugin for WamnPostgres {
             )?;
             if has_unnamed {
                 client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+            }
+            if has_statements {
+                statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
             }
             if !named.is_empty() {
                 bindings::named_imports::wamn::postgres::client::add_to_linker::<_, SharedCtx>(

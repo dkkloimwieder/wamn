@@ -18,8 +18,15 @@ use crate::plugins::effect_span::{EffectIdentity, effect_span, record_effect_ms}
 
 use super::claims::{OneShotResult, reject_claim_mutation};
 use super::pool::destroy_connection;
+use super::statements::{
+    BoundStatementSet, VerifiedStatement, resolve_statement, validate_prepared_statement,
+    validate_statement_result,
+};
 use super::types::{PgParam, columns_of, decode_row, map_pg_error};
-use super::{PgError, RowSet, SqlValue, WAMN_POSTGRES_ID, WamnPostgres, client};
+use super::{
+    PgError, RowSet, SqlValue, StatementError, WAMN_POSTGRES_ID, WamnPostgres, client,
+    statement_wit,
+};
 
 #[cfg(feature = "wasm_component_model_implements")]
 use super::bindings;
@@ -46,6 +53,15 @@ pub struct PgTransaction {
     cursor_seq: u32,
     /// Row limit of the project this transaction's connection belongs to.
     row_limit: u64,
+}
+
+/// Host side of a `wamn:postgres/statements.transaction`.
+///
+/// The operation's statement set is snapshotted at `begin`; changing or
+/// revoking the invocation scope cannot widen an already-open transaction.
+pub struct PgStatementTransaction {
+    transaction: PgTransaction,
+    statements: Option<Arc<BoundStatementSet>>,
 }
 
 impl Drop for PgTransaction {
@@ -191,6 +207,51 @@ pub(super) async fn run_execute(
         "wamn.postgres.statement",
         db.system = "postgresql",
         db.operation = "execute",
+    ))
+    .await
+}
+
+pub(super) async fn run_verified_query(
+    conn: &Object,
+    digest: &str,
+    statement: &VerifiedStatement,
+    binds: &[SqlValue],
+    row_limit: u64,
+) -> Result<RowSet, StatementError> {
+    async {
+        reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
+        let prepared = conn
+            .prepare_cached(&statement.exact_sql)
+            .await
+            .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
+        validate_prepared_statement(digest, statement, &prepared)?;
+        let columns = columns_of(&prepared);
+        let wrapped: Vec<PgParam> = binds.iter().map(|value| PgParam(value.clone())).collect();
+        let stream = conn
+            .query_raw(&prepared, wrapped.iter().map(|value| value as &dyn ToSql))
+            .await
+            .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
+        futures_util::pin_mut!(stream);
+        let mut rows = Vec::new();
+        while let Some(row) = stream
+            .try_next()
+            .await
+            .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?
+        {
+            if rows.len() as u64 >= row_limit {
+                return Err(StatementError::Postgres(PgError::RowLimitExceeded(
+                    row_limit,
+                )));
+            }
+            rows.push(decode_row(&row).map_err(StatementError::Postgres)?);
+        }
+        validate_statement_result(digest, statement, RowSet { columns, rows })
+    }
+    .instrument(tracing::info_span!(
+        "wamn.postgres.statement",
+        db.system = "postgresql",
+        db.operation = "verified-query",
+        statement.digest = digest,
     ))
     .await
 }
@@ -809,6 +870,159 @@ impl client::HostCursor for ActiveCtx<'_> {
     async fn drop(&mut self, rep: Resource<PgCursor>) -> wash_runtime::wasmtime::Result<()> {
         cursor_drop(self, rep)
     }
+}
+
+impl statement_wit::Host for ActiveCtx<'_> {
+    async fn run(
+        &mut self,
+        statement_digest: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let active = plugin.active_statement_set(&component_id);
+        let statement = match resolve_statement(active.as_deref(), &statement_digest, &binds) {
+            Ok(statement) => statement,
+            Err(error) => return Ok(Err(error)),
+        };
+        let project = plugin.project_for(&component_id);
+        let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
+        let started = std::time::Instant::now();
+        let result = plugin
+            .one_shot_statement(&component_id, &statement_digest, &statement, &binds)
+            .instrument(span)
+            .await;
+        record_query_ms("statement.run", &project, started.elapsed());
+        Ok(result)
+    }
+
+    async fn begin(
+        &mut self,
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
+    {
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let project = plugin.project_for(&component_id);
+        let statements = plugin.active_statement_set(&component_id);
+        let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
+        let started = std::time::Instant::now();
+        let opened = begin_transaction(&plugin, &component_id, &project)
+            .instrument(span)
+            .await;
+        record_query_ms("statement.begin", &project, started.elapsed());
+        match opened {
+            Ok(transaction) => Ok(Ok(self.table.push(PgStatementTransaction {
+                transaction,
+                statements,
+            })?)),
+            Err(error) => Ok(Err(StatementError::Postgres(error))),
+        }
+    }
+}
+
+impl statement_wit::HostTransaction for ActiveCtx<'_> {
+    async fn run(
+        &mut self,
+        rep: Resource<PgStatementTransaction>,
+        statement_digest: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+        let plugin = plugin_of(self)?;
+        let component_id = self.component_id.to_string();
+        let project = plugin.project_for(&component_id);
+        let transaction = self.table.get(&rep)?;
+        let statement =
+            match resolve_statement(transaction.statements.as_deref(), &statement_digest, &binds) {
+                Ok(statement) => statement,
+                Err(error) => return Ok(Err(error)),
+            };
+        let state = Arc::clone(&transaction.transaction.state);
+        let destroyed = Arc::clone(&transaction.transaction.destroyed);
+        let row_limit = transaction.transaction.row_limit;
+        let conn = match take_conn(&state) {
+            Ok(conn) => conn,
+            Err(error) => return Ok(Err(StatementError::Postgres(error))),
+        };
+        let span = db_span_for_project(&plugin, &component_id, &project, "statement.txn.run");
+        let started = std::time::Instant::now();
+        let result = run_verified_query(&conn, &statement_digest, &statement, &binds, row_limit)
+            .instrument(span)
+            .await;
+        record_query_ms("statement.txn.run", &project, started.elapsed());
+
+        let poison = matches!(
+            &result,
+            Err(StatementError::StatementContractMismatch(_))
+                | Err(StatementError::Postgres(PgError::ConnectionUnavailable))
+        );
+        if poison {
+            if let Ok(mut transaction) = state.lock() {
+                transaction.finished = true;
+            }
+            destroy_connection(conn, &destroyed);
+        } else {
+            put_conn(&state, conn);
+        }
+        Ok(result)
+    }
+
+    async fn commit(
+        &mut self,
+        rep: Resource<PgStatementTransaction>,
+    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
+        statement_txn_finish(self, rep, "COMMIT").await
+    }
+
+    async fn rollback(
+        &mut self,
+        rep: Resource<PgStatementTransaction>,
+    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
+        statement_txn_finish(self, rep, "ROLLBACK").await
+    }
+
+    async fn drop(
+        &mut self,
+        rep: Resource<PgStatementTransaction>,
+    ) -> wash_runtime::wasmtime::Result<()> {
+        let transaction = self.table.delete(rep)?;
+        let state = Arc::clone(&transaction.transaction.state);
+        let destroyed = Arc::clone(&transaction.transaction.destroyed);
+        let already_finished = state
+            .lock()
+            .map(|transaction| transaction.finished || transaction.conn.is_none())
+            .unwrap_or(true);
+        if !already_finished {
+            let _ = finish_txn(&state, &destroyed, "ROLLBACK").await;
+        }
+        drop(transaction);
+        Ok(())
+    }
+}
+
+async fn statement_txn_finish(
+    ctx: &mut ActiveCtx<'_>,
+    rep: Resource<PgStatementTransaction>,
+    verb: &'static str,
+) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
+    let plugin = plugin_of(ctx)?;
+    let component_id = ctx.component_id.to_string();
+    let project = plugin.project_for(&component_id);
+    let operation = match verb {
+        "COMMIT" => "statement.txn.commit",
+        "ROLLBACK" => "statement.txn.rollback",
+        _ => unreachable!("transaction finish verb is fixed"),
+    };
+    let span = db_span_for_project(&plugin, &component_id, &project, operation);
+    let transaction = ctx.table.get(&rep)?;
+    let state = Arc::clone(&transaction.transaction.state);
+    let destroyed = Arc::clone(&transaction.transaction.destroyed);
+    let started = std::time::Instant::now();
+    let result = finish_txn(&state, &destroyed, verb)
+        .instrument(span)
+        .await
+        .map_err(StatementError::Postgres);
+    record_query_ms(operation, &project, started.elapsed());
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
