@@ -1103,6 +1103,7 @@ impl JourneyInputs {
 struct JourneyCredentials {
     guest_sql: String,
     executor_platform: String,
+    event_materializer: String,
     http_admitter: String,
     identity_reader: String,
     control_author: String,
@@ -1602,6 +1603,15 @@ async fn prepare_journey_credentials(
             "executor-platform",
         )
         .await?,
+        event_materializer: prepare(
+            WorkloadRoleFamily::EventMaterializer,
+            system_url,
+            Some(project_url),
+            host_secret_directory,
+            host_secret_namespace,
+            "event-materializer",
+        )
+        .await?,
         http_admitter: prepare(
             WorkloadRoleFamily::HttpAdmitter,
             system_url,
@@ -2038,6 +2048,7 @@ fn journey_postgres(credentials: &JourneyCredentials) -> anyhow::Result<Arc<Wamn
             "credentials": {
                 (AuthorityClass::GuestSql.as_str()): credentials.guest_sql,
                 (AuthorityClass::ExecutorPlatform.as_str()): credentials.executor_platform,
+                (AuthorityClass::EventMaterializer.as_str()): credentials.event_materializer,
                 (AuthorityClass::CallableHttp.as_str()): credentials.http_admitter,
             }
         }

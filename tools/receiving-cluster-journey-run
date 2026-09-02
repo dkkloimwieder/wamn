@@ -155,9 +155,34 @@ host_image_owned=false
 run_complete=false
 
 cleanup() {
-  local status=$? cleanup_failed=false
+  local status=$? cleanup_failed=false failure_capture_errors
   trap - EXIT HUP INT TERM
   set +e
+
+  if [[ $status -ne 0 && "$cluster_owned" == true && -s "$kubeconfig" ]] &&
+     kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
+    failure_capture_errors=$evidence_dir/failure-capture-errors.log
+    record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get deployment hostgroup-default -o json
+    kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get deployment hostgroup-default -o json \
+      >"$evidence_dir/failure-host-deployment.json" 2>>"$failure_capture_errors"
+    record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get pods -o json
+    kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get pods -o json \
+      >"$evidence_dir/failure-pods.json" 2>>"$failure_capture_errors"
+    record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get events -o json
+    kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get events -o json \
+      >"$evidence_dir/failure-events.json" 2>>"$failure_capture_errors"
+    record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get secrets -o name
+    kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get secrets -o name \
+      >"$evidence_dir/failure-secret-names.txt" 2>>"$failure_capture_errors"
+  fi
 
   if [[ "$cluster_owned" == true ]] &&
      kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
@@ -519,17 +544,19 @@ manifest_digest=${digest_lines[0]#*=}
 
 guest_secret=$host_secret_directory/guest-sql.json
 executor_platform_secret=$host_secret_directory/executor-platform.json
+event_materializer_secret=$host_secret_directory/event-materializer.json
 identity_secret=$host_secret_directory/identity-reader.json
 http_secret=$host_secret_directory/http-admitter.json
 mapfile -t emitted_host_secrets < <(find "$host_secret_directory" -maxdepth 1 -type f \
   -name '*.json' -printf '%f\n' | sort)
-expected_host_secrets=(executor-platform.json guest-sql.json http-admitter.json identity-reader.json)
+expected_host_secrets=(event-materializer.json executor-platform.json guest-sql.json http-admitter.json identity-reader.json)
 if [[ "${emitted_host_secrets[*]}" != "${expected_host_secrets[*]}" ]]; then
-  echo "production journey did not emit exactly the four host credential Secrets" >&2
+  echo "production journey did not emit exactly the five host credential Secrets" >&2
   exit 1
 fi
 
-for secret in "$guest_secret" "$executor_platform_secret" "$identity_secret" "$http_secret"; do
+for secret in "$guest_secret" "$executor_platform_secret" "$event_materializer_secret" \
+    "$identity_secret" "$http_secret"; do
   jq -e --arg namespace "$namespace" --arg host "$postgres_ip" '
     .metadata.namespace == $namespace and
     (.metadata.name | type == "string" and length > 0) and
@@ -539,6 +566,7 @@ for secret in "$guest_secret" "$executor_platform_secret" "$identity_secret" "$h
 done
 guest_secret_name=$(jq -er '.metadata.name' "$guest_secret")
 executor_platform_secret_name=$(jq -er '.metadata.name' "$executor_platform_secret")
+event_materializer_secret_name=$(jq -er '.metadata.name' "$event_materializer_secret")
 identity_secret_name=$(jq -er '.metadata.name' "$identity_secret")
 http_secret_name=$(jq -er '.metadata.name' "$http_secret")
 
@@ -655,6 +683,7 @@ awk -v target_namespace="$namespace" -v component_base="$component_artifact_base
     -v release_base="$release_artifact_base" -v digest="$manifest_digest" \
     -v replicas="$host_replicas" -v trace_enabled="$measure_startup" \
     -v guest="$guest_secret_name" -v executor="$executor_platform_secret_name" \
+    -v materializer="$event_materializer_secret_name" \
     -v identity="$identity_secret_name" -v http="$http_secret_name" '
   /^      namespace: wamn-system$/ { print "      namespace: " target_namespace; next }
   /^      replicas: 3$/ { print "      replicas: " replicas; next }
@@ -667,6 +696,9 @@ awk -v target_namespace="$namespace" -v component_base="$component_artifact_base
   }
   /^              name: wamn-http-admitter-acme--receiving--dev$/ {
     print "              name: " http; next
+  }
+  /^              name: wamn-event-materializer-acme--receiving--dev$/ {
+    print "              name: " materializer; next
   }
   /name: WAMN_WASMTIME_CACHE_DIR/ {
     print
@@ -692,7 +724,7 @@ awk -v target_namespace="$namespace" -v component_base="$component_artifact_base
 ' "$repo_root/deploy/platform/values-host-receiving-pat.yaml" >"$host_overlay"
 for expected in "$namespace" "$component_artifact_base" "$release_artifact_base" \
     "$manifest_digest" "$guest_secret_name" "$executor_platform_secret_name" \
-    "$identity_secret_name" "$http_secret_name"; do
+    "$event_materializer_secret_name" "$identity_secret_name" "$http_secret_name"; do
   grep -F -- "$expected" "$host_overlay" >/dev/null || {
     echo "rendered host overlay omitted $expected" >&2
     exit 1
