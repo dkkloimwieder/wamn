@@ -73,8 +73,34 @@ allowlist. Replace the heuristic with declaration:
   triggers a split ruling if one ever appears. **Version matching is
   exact**: admission requires the imported package version to equal the
   registry row's version — no normalization, no ranges (compatible-range
-  rules are lifecycle machinery, parked on .7). `wasi:clocks/io/random/logging: ambient`;
-  `wamn:postgres`, `wasmcloud:blobstore`: `effect`.
+  rules are lifecycle machinery, parked on .7).
+
+  **Row set superseded 2026-09-02 by measurement** (owner ruling; see
+  `docs/architecture/2a-capability-registry.md`). This line previously read
+  `wasi:clocks/io/random/logging: ambient`; `wamn:postgres`,
+  `wasmcloud:blobstore`: `effect` — six rows. The measured tenant surface is
+  **seven existing plus one new**: it omitted `wamn:node` and
+  `wamn:connection`, both really granted today
+  (`components/no-std/publish.sh` grants `wamn:connection` to
+  `http-request`). The basis also changes: rows record what the host
+  **offers**, not what a guest currently imports, because a registry keyed on
+  imports drops a live capability the moment its last importer churns —
+  `wasi:logging` is host-implemented (`plugins/wamn_logging.rs`) with zero
+  importers today.
+
+  Ambient: `wamn:node@0.1.0`, `wasi:logging@0.1.0-draft`, `wasi:io@0.2.12`,
+  `wasi:clocks@0.2.12`, `wasi:random@0.2.12`. Effect:
+  `wamn:postgres@0.1.0`, `wamn:connection@0.1.0`,
+  `wasmcloud:blobstore@0.1.0` (new, 2b).
+
+  The `wasi:*` versions are **not authored by us**: measured on `receiving`,
+  the authored WIT says `0.2.12`, the raw build imports `0.2.9`, and the
+  virtualized artifact admission actually sees imports `0.2.12`. Those rows
+  are pinned to the WASI-Virt rev and adapter sha of ledger row 5, and a
+  conformance test asserting them against virtualized output is required, not
+  optional. Scope is the tenant path (`analyze_tenant`) only, deliberately;
+  the `wash push` workload path re-converges at the first
+  non-platform-authored pushed workload.
 - Admission reads the registry; `is_effect_package()`'s namespace
   heuristic deletes. Interfaces then carry name, shape, AND posture —
   no second classifier.
