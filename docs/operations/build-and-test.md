@@ -315,7 +315,7 @@ set -euo pipefail
 EFFECTIVE_RELEASE_CONTAINER=wamn-effective-release-pg18
 EFFECTIVE_RELEASE_PORT=54334
 EFFECTIVE_RELEASE_BASE_COMPONENT=components/target/virtualized/std-empty-environment/receiving.wasm
-EFFECTIVE_RELEASE_BASE_DIGEST=c10453c58e992b45a82af3b25b8f843ec8263b5d846a19cab8964cad6e910b2d
+EFFECTIVE_RELEASE_BASE_DIGEST=68d81d2d0b895aaafbe7cd952974377c65801dcf0ab68db42b9298e94adaef3e
 if docker container inspect "$EFFECTIVE_RELEASE_CONTAINER" >/dev/null 2>&1; then
   echo "$EFFECTIVE_RELEASE_CONTAINER already exists" >&2
   exit 1

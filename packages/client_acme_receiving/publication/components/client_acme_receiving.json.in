@@ -72,7 +72,7 @@
       "dependencies": [{
         "package": "wamn_receiving",
         "version": "1.0.0",
-        "digest": "sha256:c10453c58e992b45a82af3b25b8f843ec8263b5d846a19cab8964cad6e910b2d",
+        "digest": "sha256:68d81d2d0b895aaafbe7cd952974377c65801dcf0ab68db42b9298e94adaef3e",
         "operation": "wamn-receiving:receiving/record-receipt@1.0.0"
       }],
       "input-ports": [{
