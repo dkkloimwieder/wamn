@@ -1,10 +1,10 @@
 SELECT
+    purchase_order.created_at,
     purchase_order.id,
     purchase_order.purchase_order_number,
-    purchase_order.supplier_id,
-    purchase_order.status,
     purchase_order.row_version,
-    purchase_order.created_at,
+    purchase_order.status,
+    purchase_order.supplier_id,
     purchase_order.updated_at
 FROM purchase_order AS purchase_order
 WHERE

@@ -27,12 +27,12 @@ pub struct PurchaseOrderUpdateRow {
 }
 
 pub(crate) const GET_DIGEST: &str = "sha256:2eb6a5c78c23fe93f83c17877b291b537411cce8c055b38b252a17a11dd52873";
-pub(crate) const QUERY_0_DIGEST: &str = "sha256:2616468fa644ab572c2ab3d74311dce067b663bffd09fae7907ba29cbbfe3e91";
-pub(crate) const QUERY_1_DIGEST: &str = "sha256:8a7ce5edefaed70996ac4182ad191cf892ddcd3178981b249e0511182200c950";
-pub(crate) const QUERY_2_DIGEST: &str = "sha256:4b1f38c061676e4b8bd4fc44c01577bea443c38eb1632cbf6a02f1f4aca2369b";
-pub(crate) const QUERY_3_DIGEST: &str = "sha256:448b7ddc5b5f2e2dc37ac6db2bdfc320cb2a79e85d98114b23b6146c06aa964d";
-pub(crate) const QUERY_4_DIGEST: &str = "sha256:986271d6c6fac8f4e5c0e4d021134926e12ad4387a470e7092efdd675044dfc3";
-pub(crate) const QUERY_5_DIGEST: &str = "sha256:18ed39e10175923001444a85136dfe8debfd23d87239c173adc2514953dd4bf1";
+pub(crate) const QUERY_0_DIGEST: &str = "sha256:47a7f14532525b24ebee265ee292d2d94be43b489d485bbac0e85266c7802a54";
+pub(crate) const QUERY_1_DIGEST: &str = "sha256:aa601d2ee46c27f2639aa2293fff212b90ad4ffb35ee35e820ff0d72aa2aa7ff";
+pub(crate) const QUERY_2_DIGEST: &str = "sha256:b896cab6620a3ff895611111659791d505cf7f9518b12eba53f5873655c4ae07";
+pub(crate) const QUERY_3_DIGEST: &str = "sha256:4ca93e4ff637cb3d9da2719d7bf4c509e05618438645195e3fbb653729177d3b";
+pub(crate) const QUERY_4_DIGEST: &str = "sha256:61505031f82c3e321f1ba595f393e1dd4b24ce81543992687e77ca1df4e37fe4";
+pub(crate) const QUERY_5_DIGEST: &str = "sha256:eca2e9c5412c8137418e3703ec957fa59cfa10232143eab50f2d489de98b4368";
 pub(crate) const UPDATE_DIGEST: &str = "sha256:ae9bc70de2245821b2776e694c9f169e7bd6dde8895767adeafc42f36f00e71f";
 
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
