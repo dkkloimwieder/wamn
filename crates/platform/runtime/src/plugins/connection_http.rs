@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tracing::Instrument as _;
-use wamn_catalog::{ArtifactHash, DefinitionHash, ServingManifest, ServingWiring};
+use wamn_catalog::{
+    ArtifactHash, ConnectionTypeDescriptor, DefinitionHash, ServingManifest, ServingWiring,
+};
 use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -308,7 +310,7 @@ impl ConnectionHttp {
             }
             _ => return Err(ConnectionError::AttestationInvalid),
         }
-        authorize_snapshot(&snapshot)?;
+        authorize_snapshot(&snapshot, &HTTP_DESCRIPTOR)?;
 
         let definition = snapshot
             .definition
@@ -452,7 +454,32 @@ fn authorize_candidate_closure(
     Ok(())
 }
 
-fn authorize_snapshot(snapshot: &ConnectionEffectSnapshot) -> Result<(), ConnectionError> {
+/// The HTTP connection's own descriptor, built once.
+///
+/// Its `requirement_type`/`contract` pair is what [`authorize_snapshot`]
+/// compares against, so the pair can never drift from the one component
+/// admission minted the requirement with.
+static HTTP_DESCRIPTOR: std::sync::LazyLock<ConnectionTypeDescriptor> =
+    std::sync::LazyLock::new(ConnectionTypeDescriptor::http_v1);
+
+/// Authorize one connection effect against the descriptor for its type.
+///
+/// PARAMETERIZED, not copied (wamn-jpxo). The type and contract used to be
+/// four hardcoded `"http"`/`HTTP_CONTRACT` literals here. A second capability
+/// needs the same authorization, and a forked copy would mint a THIRD reader
+/// of one row shape — which is precisely the live defect `wamn-0h0g.21.9`
+/// records, where `promote.rs` read the wrapped record and this file
+/// pointer-read the top level, so a row satisfying either refused the other.
+/// The authorization logic therefore stays one copy with one reader, and the
+/// capability arrives as an argument.
+///
+/// Taking the whole descriptor rather than a `(type, contract)` pair means a
+/// caller cannot supply a mismatched pair: there is no way to name HTTP's type
+/// beside blobstore's contract.
+pub(crate) fn authorize_snapshot(
+    snapshot: &ConnectionEffectSnapshot,
+    descriptor: &ConnectionTypeDescriptor,
+) -> Result<(), ConnectionError> {
     if !snapshot.node_permitted {
         return Err(ConnectionError::AttestationInvalid);
     }
@@ -472,16 +499,18 @@ fn authorize_snapshot(snapshot: &ConnectionEffectSnapshot) -> Result<(), Connect
     // minted — `{component-digest, store-alias, requirement}` — because that is
     // the value `requirement_hash` is the SHA-256 of. The connection SEMANTICS
     // therefore sit one level down, under `requirement`.
-    if snapshot.requirement_type.as_deref() != Some("http")
-        || snapshot.contract.as_deref() != Some(HTTP_CONTRACT)
+    let expected_type = descriptor.requirement_type.as_str();
+    let expected_contract = descriptor.contract.as_str();
+    if snapshot.requirement_type.as_deref() != Some(expected_type)
+        || snapshot.contract.as_deref() != Some(expected_contract)
         || requirement
             .pointer("/requirement/requirement-type")
             .and_then(serde_json::Value::as_str)
-            != Some("http")
+            != Some(expected_type)
         || requirement
             .pointer("/requirement/contract")
             .and_then(serde_json::Value::as_str)
-            != Some(HTTP_CONTRACT)
+            != Some(expected_contract)
     {
         return Err(ConnectionError::Incompatible);
     }
@@ -940,36 +969,63 @@ mod tests {
         ));
     }
 
+    /// `HTTP_CONTRACT` is pinned by conformance as an exact source line, while
+    /// `authorize_snapshot` now compares against the descriptor. If those two
+    /// spellings ever drift, authorization would silently start demanding a
+    /// contract nothing mints.
+    #[test]
+    fn the_pinned_contract_literal_matches_the_descriptor() {
+        assert_eq!(HTTP_DESCRIPTOR.contract, HTTP_CONTRACT);
+        assert_eq!(HTTP_DESCRIPTOR.requirement_type, "http");
+    }
+
+    /// The parameter must actually discriminate. A snapshot carrying a valid
+    /// HTTP authority chain is still refused when authorized against another
+    /// capability's descriptor — otherwise the argument is decoration, and one
+    /// capability could authorize another's binding.
+    #[test]
+    fn a_valid_http_snapshot_is_refused_against_another_capabilitys_descriptor() {
+        let valid = snapshot();
+        authorize_snapshot(&valid, &HTTP_DESCRIPTOR).expect("valid against its own descriptor");
+        assert!(
+            matches!(
+                authorize_snapshot(&valid, &ConnectionTypeDescriptor::blobstore_v1()),
+                Err(ConnectionError::Incompatible)
+            ),
+            "an HTTP binding must not authorize as blobstore"
+        );
+    }
+
     #[test]
     fn component_grain_snapshot_refuses_each_missing_authority_layer() {
         let valid = snapshot();
-        authorize_snapshot(&valid).expect("the fixture snapshot carries every authority layer");
+        authorize_snapshot(&valid, &HTTP_DESCRIPTOR).expect("the fixture snapshot carries every authority layer");
 
         let mut missing_node = valid.clone();
         missing_node.node_permitted = false;
         assert!(matches!(
-            authorize_snapshot(&missing_node),
+            authorize_snapshot(&missing_node, &HTTP_DESCRIPTOR),
             Err(ConnectionError::AttestationInvalid)
         ));
 
         let mut inactive_binding = valid.clone();
         inactive_binding.binding_active = false;
         assert!(matches!(
-            authorize_snapshot(&inactive_binding),
+            authorize_snapshot(&inactive_binding, &HTTP_DESCRIPTOR),
             Err(ConnectionError::Unbound)
         ));
 
         let mut stale_generation = valid.clone();
         stale_generation.generation = Some(6);
         assert!(matches!(
-            authorize_snapshot(&stale_generation),
+            authorize_snapshot(&stale_generation, &HTTP_DESCRIPTOR),
             Err(ConnectionError::CredentialUnavailable)
         ));
 
         let mut wrong_contract = valid;
         wrong_contract.contract = Some("wamn:connection/postgres@0.1.0".to_string());
         assert!(matches!(
-            authorize_snapshot(&wrong_contract),
+            authorize_snapshot(&wrong_contract, &HTTP_DESCRIPTOR),
             Err(ConnectionError::Incompatible)
         ));
     }
