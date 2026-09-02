@@ -58,15 +58,29 @@ pub struct PrintReleaseEnvArgs {
     pub artifact_base: String,
 }
 
-/// Print the release lines for one minted release.
-pub async fn run(args: PrintReleaseEnvArgs) -> anyhow::Result<()> {
-    let effective_release_id = i32::try_from(args.effective_release_id)
+/// Exact release identity carried into one workload deployment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReleaseCarrier {
+    /// Registry repository holding the immutable release artifact.
+    pub artifact_base: String,
+    /// Digest re-derived from the release snapshot's canonical bytes.
+    pub manifest_digest: ManifestDigest,
+}
+
+/// Read and derive the exact carrier for one minted release.
+pub async fn lookup_release_carrier(
+    database_url: &str,
+    tenant: &str,
+    effective_release_id: u32,
+    artifact_base: &str,
+) -> anyhow::Result<ReleaseCarrier> {
+    let effective_release_id = i32::try_from(effective_release_id)
         .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
-    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to the release snapshot database")?;
     let connection_task = tokio::spawn(connection);
-    let read = select_snapshot(&mut client, &args.tenant, effective_release_id).await;
+    let read = select_snapshot(&mut client, tenant, effective_release_id).await;
     let canonical_bytes = match read {
         Ok(canonical_bytes) => {
             drop(client);
@@ -85,12 +99,32 @@ pub async fn run(args: PrintReleaseEnvArgs) -> anyhow::Result<()> {
     // column, exactly as the publisher does: one carrier of release identity.
     let (_, manifest_digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)
         .context("the frozen release snapshot is not a canonical format-3 manifest")?;
-    print!("{}", release_lines(&args.artifact_base, &manifest_digest));
+
+    Ok(ReleaseCarrier {
+        artifact_base: artifact_base.to_owned(),
+        manifest_digest,
+    })
+}
+
+/// Print the release lines for one minted release.
+pub async fn run(args: PrintReleaseEnvArgs) -> anyhow::Result<()> {
+    let carrier = lookup_release_carrier(
+        &args.database_url,
+        &args.tenant,
+        args.effective_release_id,
+        &args.artifact_base,
+    )
+    .await?;
+    print!("{}", release_lines(&carrier));
     Ok(())
 }
 
 /// Render the release lines each carrier takes, labelled by carrier file.
-fn release_lines(artifact_base: &str, manifest_digest: &ManifestDigest) -> String {
+fn release_lines(carrier: &ReleaseCarrier) -> String {
+    let ReleaseCarrier {
+        artifact_base,
+        manifest_digest,
+    } = carrier;
     format!(
         "# {EXECUTOR_CARRIER} env:\n\
          {ARTIFACT_BASE_ENV}={artifact_base}\n\
@@ -129,9 +163,13 @@ mod tests {
         ManifestDigest::parse(format!("sha256:{}", "7".repeat(64)))
             .expect("the fixture digest is canonical")
     }
+
     #[test]
     fn one_release_prints_both_carriers_and_nothing_else() {
-        let printed = release_lines("registry.example/wamn/releases", &digest());
+        let printed = release_lines(&ReleaseCarrier {
+            artifact_base: "registry.example/wamn/releases".to_owned(),
+            manifest_digest: digest(),
+        });
         assert_eq!(
             printed,
             format!(
