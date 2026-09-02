@@ -343,22 +343,22 @@ fn type_mapping(postgres: &str) -> Option<TypeMapping> {
         "numeric" => TypeMapping {
             wamn_sql_value: "numeric",
             native_rust: "rust_decimal::Decimal",
-            wamn_rust: "wamn_postgres_sqlx::Numeric",
+            wamn_rust: "wamn_postgres_statements::Numeric",
         },
         "timestamptz" => TypeMapping {
             wamn_sql_value: "timestamptz",
             native_rust: "chrono::DateTime<chrono::Utc>",
-            wamn_rust: "wamn_postgres_sqlx::TimestampTz",
+            wamn_rust: "wamn_postgres_statements::TimestampTz",
         },
         "jsonb" => TypeMapping {
             wamn_sql_value: "json",
             native_rust: "serde_json::Value",
-            wamn_rust: "wamn_postgres_sqlx::Json",
+            wamn_rust: "wamn_postgres_statements::Json",
         },
         "uuid" => TypeMapping {
             wamn_sql_value: "uuid",
             native_rust: "uuid::Uuid",
-            wamn_rust: "wamn_postgres_sqlx::Uuid",
+            wamn_rust: "wamn_postgres_statements::Uuid",
         },
         _ => return None,
     };

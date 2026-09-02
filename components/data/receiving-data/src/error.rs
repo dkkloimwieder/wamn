@@ -1,8 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use sqlx_core::error::Error as SqlxError;
-use wamn_postgres_sqlx::{WamnDatabaseError, WamnPgError};
+use wamn_postgres_statements::{StatementError, StatementErrorKind};
 
 /// Exact named constraints an operation contract permits callers to observe.
 #[derive(Clone, Copy, Debug)]
@@ -163,12 +162,12 @@ impl AccessError {
         Self::new(AccessErrorKind::InternalError, context)
     }
 
-    pub(crate) fn from_sqlx(
+    pub(crate) fn from_statement(
         context: impl Into<Box<str>>,
-        source: &SqlxError,
+        source: &StatementError,
         allowed_constraints: AllowedConstraints,
     ) -> Self {
-        let (kind, constraint) = classify(source, allowed_constraints);
+        let (kind, constraint) = classify(source.kind(), source.constraint(), allowed_constraints);
         Self {
             kind,
             context: context.into(),
@@ -209,49 +208,48 @@ impl fmt::Display for AccessError {
 impl Error for AccessError {}
 
 fn classify(
-    error: &SqlxError,
+    kind: StatementErrorKind,
+    constraint: Option<&str>,
     allowed_constraints: AllowedConstraints,
 ) -> (AccessErrorKind, Option<Box<str>>) {
-    let SqlxError::Database(database) = error else {
-        return (AccessErrorKind::InternalError, None);
-    };
-    let Some(database) = database.as_error().downcast_ref::<WamnDatabaseError>() else {
-        return (AccessErrorKind::InternalError, None);
-    };
-    classify_pg_error(database.pg_error(), allowed_constraints)
-}
-
-fn classify_pg_error(
-    error: &WamnPgError,
-    allowed_constraints: AllowedConstraints,
-) -> (AccessErrorKind, Option<Box<str>>) {
-    match error {
-        WamnPgError::SerializationFailure | WamnPgError::ConnectionUnavailable => {
+    match kind {
+        StatementErrorKind::SerializationFailure | StatementErrorKind::ConnectionUnavailable => {
             (AccessErrorKind::Retry, None)
         }
-        WamnPgError::StatementTimeout => (AccessErrorKind::Timeout, None),
-        WamnPgError::UniqueViolation(constraint)
-            if allowed_constraints.permits_unique(constraint) =>
+        StatementErrorKind::StatementTimeout => (AccessErrorKind::Timeout, None),
+        StatementErrorKind::UniqueViolation
+            if constraint.is_some_and(|name| allowed_constraints.permits_unique(name)) =>
         {
-            named_violation(AccessErrorKind::UniqueViolation, constraint)
+            named_violation(
+                AccessErrorKind::UniqueViolation,
+                constraint.expect("guarded"),
+            )
         }
-        WamnPgError::ForeignKeyViolation(constraint)
-            if allowed_constraints.permits_foreign_key(constraint) =>
+        StatementErrorKind::ForeignKeyViolation
+            if constraint.is_some_and(|name| allowed_constraints.permits_foreign_key(name)) =>
         {
-            named_violation(AccessErrorKind::ForeignKeyViolation, constraint)
+            named_violation(
+                AccessErrorKind::ForeignKeyViolation,
+                constraint.expect("guarded"),
+            )
         }
-        WamnPgError::CheckViolation(constraint)
-            if allowed_constraints.permits_check(constraint) =>
+        StatementErrorKind::CheckViolation
+            if constraint.is_some_and(|name| allowed_constraints.permits_check(name)) =>
         {
-            named_violation(AccessErrorKind::CheckViolation, constraint)
+            named_violation(
+                AccessErrorKind::CheckViolation,
+                constraint.expect("guarded"),
+            )
         }
-        WamnPgError::UniqueViolation(_)
-        | WamnPgError::ForeignKeyViolation(_)
-        | WamnPgError::CheckViolation(_) => (AccessErrorKind::InternalError, None),
-        WamnPgError::PermissionDenied => (AccessErrorKind::PermissionDenied, None),
-        WamnPgError::RowLimitExceeded(_) | WamnPgError::QueryError { .. } => {
-            (AccessErrorKind::InternalError, None)
-        }
+        StatementErrorKind::UniqueViolation
+        | StatementErrorKind::ForeignKeyViolation
+        | StatementErrorKind::CheckViolation => (AccessErrorKind::InternalError, None),
+        StatementErrorKind::PermissionDenied => (AccessErrorKind::PermissionDenied, None),
+        StatementErrorKind::UnknownStatement
+        | StatementErrorKind::StatementContractMismatch
+        | StatementErrorKind::RowLimitExceeded
+        | StatementErrorKind::QueryError
+        | StatementErrorKind::InvalidResult => (AccessErrorKind::InternalError, None),
     }
 }
 
@@ -261,8 +259,8 @@ fn named_violation(kind: AccessErrorKind, constraint: &str) -> (AccessErrorKind,
 
 #[cfg(test)]
 mod tests {
-    use super::{AccessErrorKind, AllowedConstraints, classify_pg_error};
-    use wamn_postgres_sqlx::WamnPgError;
+    use super::{AccessErrorKind, AllowedConstraints, classify};
+    use wamn_postgres_statements::StatementErrorKind;
 
     const UPDATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints {
         unique: &["allowed_unique"],
@@ -273,14 +271,17 @@ mod tests {
     #[test]
     fn reads_hide_all_named_constraint_violations() {
         let errors = [
-            WamnPgError::UniqueViolation("hidden_unique".to_owned()),
-            WamnPgError::ForeignKeyViolation("hidden_foreign_key".to_owned()),
-            WamnPgError::CheckViolation("hidden_check".to_owned()),
+            (StatementErrorKind::UniqueViolation, "hidden_unique"),
+            (
+                StatementErrorKind::ForeignKeyViolation,
+                "hidden_foreign_key",
+            ),
+            (StatementErrorKind::CheckViolation, "hidden_check"),
         ];
 
-        for error in errors {
+        for (kind, constraint) in errors {
             assert_eq!(
-                classify_pg_error(&error, AllowedConstraints::NONE),
+                classify(kind, Some(constraint), AllowedConstraints::NONE),
                 (AccessErrorKind::InternalError, None)
             );
         }
@@ -290,41 +291,41 @@ mod tests {
     fn operation_contract_exposes_only_exact_names_of_the_expected_kind() {
         let accepted = [
             (
-                WamnPgError::UniqueViolation("allowed_unique".to_owned()),
+                (StatementErrorKind::UniqueViolation, "allowed_unique"),
                 AccessErrorKind::UniqueViolation,
             ),
             (
-                WamnPgError::ForeignKeyViolation("allowed_foreign_key".to_owned()),
+                (
+                    StatementErrorKind::ForeignKeyViolation,
+                    "allowed_foreign_key",
+                ),
                 AccessErrorKind::ForeignKeyViolation,
             ),
             (
-                WamnPgError::CheckViolation("allowed_check".to_owned()),
+                (StatementErrorKind::CheckViolation, "allowed_check"),
                 AccessErrorKind::CheckViolation,
             ),
         ];
 
-        for (error, expected_kind) in accepted {
-            let expected_constraint = match &error {
-                WamnPgError::UniqueViolation(name)
-                | WamnPgError::ForeignKeyViolation(name)
-                | WamnPgError::CheckViolation(name) => name.as_str(),
-                _ => unreachable!("fixture contains only named violations"),
-            };
-            let (kind, constraint) = classify_pg_error(&error, UPDATE_CONSTRAINTS);
+        for ((error, expected_constraint), expected_kind) in accepted {
+            let (kind, constraint) = classify(error, Some(expected_constraint), UPDATE_CONSTRAINTS);
             assert_eq!(kind, expected_kind);
             assert_eq!(constraint.as_deref(), Some(expected_constraint));
         }
 
         let rejected = [
-            WamnPgError::UniqueViolation("unknown_unique".to_owned()),
-            WamnPgError::ForeignKeyViolation("unknown_foreign_key".to_owned()),
-            WamnPgError::CheckViolation("unknown_check".to_owned()),
-            WamnPgError::CheckViolation("allowed_unique".to_owned()),
+            (StatementErrorKind::UniqueViolation, "unknown_unique"),
+            (
+                StatementErrorKind::ForeignKeyViolation,
+                "unknown_foreign_key",
+            ),
+            (StatementErrorKind::CheckViolation, "unknown_check"),
+            (StatementErrorKind::CheckViolation, "allowed_unique"),
         ];
 
-        for error in rejected {
+        for (kind, constraint) in rejected {
             assert_eq!(
-                classify_pg_error(&error, UPDATE_CONSTRAINTS),
+                classify(kind, Some(constraint), UPDATE_CONSTRAINTS),
                 (AccessErrorKind::InternalError, None)
             );
         }
@@ -333,29 +334,35 @@ mod tests {
     #[test]
     fn non_constraint_transport_meanings_are_preserved() {
         let cases = [
-            (WamnPgError::SerializationFailure, AccessErrorKind::Retry),
-            (WamnPgError::ConnectionUnavailable, AccessErrorKind::Retry),
-            (WamnPgError::StatementTimeout, AccessErrorKind::Timeout),
             (
-                WamnPgError::PermissionDenied,
+                StatementErrorKind::SerializationFailure,
+                AccessErrorKind::Retry,
+            ),
+            (
+                StatementErrorKind::ConnectionUnavailable,
+                AccessErrorKind::Retry,
+            ),
+            (
+                StatementErrorKind::StatementTimeout,
+                AccessErrorKind::Timeout,
+            ),
+            (
+                StatementErrorKind::PermissionDenied,
                 AccessErrorKind::PermissionDenied,
             ),
             (
-                WamnPgError::RowLimitExceeded(100),
+                StatementErrorKind::RowLimitExceeded,
                 AccessErrorKind::InternalError,
             ),
             (
-                WamnPgError::QueryError {
-                    sqlstate: "XX000".to_owned(),
-                    message: "opaque".to_owned(),
-                },
+                StatementErrorKind::QueryError,
                 AccessErrorKind::InternalError,
             ),
         ];
 
-        for (error, expected_kind) in cases {
+        for (kind, expected_kind) in cases {
             assert_eq!(
-                classify_pg_error(&error, AllowedConstraints::NONE),
+                classify(kind, None, AllowedConstraints::NONE),
                 (expected_kind, None)
             );
         }

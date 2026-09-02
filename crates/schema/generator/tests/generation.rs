@@ -711,6 +711,10 @@ fn artifact_json(package: &GeneratedPackage, path: &str) -> Value {
     serde_json::from_slice(package.file(path).unwrap().bytes()).unwrap()
 }
 
+fn statement_digest(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
 fn wamn_accessor<'a>(source_map: &'a Value, name: &str) -> &'a Value {
     source_map["wamn_api"]["accessors"]
         .as_array()
@@ -970,10 +974,18 @@ fn dependency_composition_may_add_one_declared_post_call_projection() {
         &generated,
         "generated/contracts/receiving/record_receipt.operation.json",
     );
+    let statements = contract["statements"].as_array().unwrap();
+    assert_eq!(statements.len(), 1);
     assert_eq!(
-        contract["sql_files"],
-        json!(["query/quality_purchase_order_detail.sql"])
+        statements[0]["path"],
+        "query/quality_purchase_order_detail.sql"
     );
+    assert_eq!(statements[0]["name"], "load_purchase_order_detail");
+    let source = generic_operation_sources()
+        .into_iter()
+        .find(|source| source.path() == "query/quality_purchase_order_detail.sql")
+        .unwrap();
+    assert_eq!(statements[0]["digest"], statement_digest(source.bytes()));
     assert_eq!(contract["dependency"]["alias"], "base_receiving");
     let source_map = artifact_json(
         &generated,
@@ -1625,9 +1637,36 @@ fn generation_is_byte_stable_and_emits_both_projection_siblings() {
 #[test]
 fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
+    let get_contract = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/get.operation.json",
+    );
+    assert!(get_contract.get("sql_files").is_none());
+    let get_statement = &get_contract["statements"][0];
+    assert_eq!(get_statement["name"], "get");
+    let get_path = get_statement["path"].as_str().unwrap();
+    assert_eq!(
+        get_statement["digest"],
+        statement_digest(package.file(get_path).unwrap().bytes())
+    );
+    assert_eq!(
+        get_statement["binds"],
+        json!([{"name": "id", "type": "uuid", "nullable": false}])
+    );
+    assert_eq!(
+        get_statement["columns"],
+        json!([
+            {"name": "created_at", "type": "timestamptz", "nullable": false},
+            {"name": "id", "type": "uuid", "nullable": false},
+            {"name": "purchase_order_number", "type": "text", "nullable": false},
+            {"name": "row_version", "type": "int64", "nullable": false},
+            {"name": "status", "type": "text", "nullable": false},
+            {"name": "supplier_id", "type": "uuid", "nullable": false}
+        ])
+    );
     let source_map = artifact_json(&package, "generated/source-map/purchase_order.json");
     let api = &source_map["wamn_api"];
-    assert_eq!(api["sql_constant_visibility"], "crate");
+    assert_eq!(api["statement_digest_visibility"], "crate");
     assert_eq!(
         api["mutation_constraints"],
         json!([{
@@ -1656,7 +1695,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "name": "get",
             "visibility": "crate",
             "operation": "get",
-            "sql_constant": "GET_SQL",
+            "statement_digest_constant": "GET_DIGEST",
             "row": "PurchaseOrderRow",
             "fetch": "optional",
             "binds": [
@@ -1665,54 +1704,54 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
                     "uuid",
                     false,
                     "uuid::Uuid",
-                    "wamn_postgres_sqlx::Uuid"
+                    "wamn_postgres_statements::Uuid"
                 )
             ]
         })
     );
 
-    for (name, sql_constant, cursor_postgres, native_cursor, wamn_cursor) in [
+    for (name, digest_constant, cursor_postgres, native_cursor, wamn_cursor) in [
         (
             "query_purchase_order_number_ascending",
-            "QUERY_0_SQL",
+            "QUERY_0_DIGEST",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
             "query_purchase_order_number_descending",
-            "QUERY_1_SQL",
+            "QUERY_1_DIGEST",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
             "query_status_ascending",
-            "QUERY_2_SQL",
+            "QUERY_2_DIGEST",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
             "query_status_descending",
-            "QUERY_3_SQL",
+            "QUERY_3_DIGEST",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
             "query_created_at_ascending",
-            "QUERY_4_SQL",
+            "QUERY_4_DIGEST",
             "timestamptz",
             "Option<chrono::DateTime<chrono::Utc>>",
-            "Option<wamn_postgres_sqlx::TimestampTz>",
+            "Option<wamn_postgres_statements::TimestampTz>",
         ),
         (
             "query_created_at_descending",
-            "QUERY_5_SQL",
+            "QUERY_5_DIGEST",
             "timestamptz",
             "Option<chrono::DateTime<chrono::Utc>>",
-            "Option<wamn_postgres_sqlx::TimestampTz>",
+            "Option<wamn_postgres_statements::TimestampTz>",
         ),
     ] {
         assert_eq!(
@@ -1721,7 +1760,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
                 "name": name,
                 "visibility": "crate",
                 "operation": "query",
-                "sql_constant": sql_constant,
+                "statement_digest_constant": digest_constant,
                 "row": "PurchaseOrderRow",
                 "fetch": "all",
                 "binds": [
@@ -1730,14 +1769,14 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
                         "jsonb",
                         true,
                         "Option<serde_json::Value>",
-                        "Option<wamn_postgres_sqlx::Json>"
+                        "Option<wamn_postgres_statements::Json>"
                     ),
                     accessor_bind(
                         "status_filter",
                         "jsonb",
                         true,
                         "Option<serde_json::Value>",
-                        "Option<wamn_postgres_sqlx::Json>"
+                        "Option<wamn_postgres_statements::Json>"
                     ),
                     accessor_bind("cursor_key", cursor_postgres, true, native_cursor, wamn_cursor),
                     accessor_bind(
@@ -1745,7 +1784,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
                         "uuid",
                         true,
                         "Option<uuid::Uuid>",
-                        "Option<wamn_postgres_sqlx::Uuid>"
+                        "Option<wamn_postgres_statements::Uuid>"
                     ),
                     accessor_bind("limit", "int8", false, "i64", "i64")
                 ]
@@ -1759,11 +1798,11 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "name": "update",
             "visibility": "crate",
             "operation": "update",
-            "sql_constant": "UPDATE_SQL",
+            "statement_digest_constant": "UPDATE_DIGEST",
             "row": "PurchaseOrderUpdateRow",
             "fetch": "one",
             "binds": [
-                accessor_bind("id", "uuid", false, "uuid::Uuid", "wamn_postgres_sqlx::Uuid"),
+                accessor_bind("id", "uuid", false, "uuid::Uuid", "wamn_postgres_statements::Uuid"),
                 accessor_bind("expected_row_version", "int8", false, "i64", "i64"),
                 accessor_bind("supplier_id_present", "boolean", false, "bool", "bool"),
                 accessor_bind(
@@ -1771,7 +1810,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
                     "uuid",
                     true,
                     "Option<uuid::Uuid>",
-                    "Option<wamn_postgres_sqlx::Uuid>"
+                    "Option<wamn_postgres_statements::Uuid>"
                 )
             ]
         })
@@ -1784,12 +1823,12 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "fields": [
                 {"name": "outcome", "type": "Option<String>"},
                 {"name": "observed_row_version", "type": "Option<i64>"},
-                {"name": "created_at", "type": "Option<wamn_postgres_sqlx::TimestampTz>"},
-                {"name": "id", "type": "Option<wamn_postgres_sqlx::Uuid>"},
+                {"name": "created_at", "type": "Option<wamn_postgres_statements::TimestampTz>"},
+                {"name": "id", "type": "Option<wamn_postgres_statements::Uuid>"},
                 {"name": "purchase_order_number", "type": "Option<String>"},
                 {"name": "row_version", "type": "Option<i64>"},
                 {"name": "status", "type": "Option<String>"},
-                {"name": "supplier_id", "type": "Option<wamn_postgres_sqlx::Uuid>"}
+                {"name": "supplier_id", "type": "Option<wamn_postgres_statements::Uuid>"}
             ]
         }])
     );
@@ -2039,11 +2078,11 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
         &package,
         "generated/contracts/purchase_order/query.operation.json",
     );
-    assert_eq!(purchase_query["sql_files"].as_array().unwrap().len(), 6);
+    assert_eq!(purchase_query["statements"].as_array().unwrap().len(), 6);
     let receipt_query = artifact_json(&package, "generated/contracts/receipt/query.operation.json");
     assert_eq!(
-        receipt_query["sql_files"],
-        json!(["generated/sql/receipt/query_created_at_ascending.sql"])
+        receipt_query["statements"][0]["path"],
+        "generated/sql/receipt/query_created_at_ascending.sql"
     );
     package
         .file("generated/sql/receipt/query_created_at_ascending.sql")
@@ -2060,7 +2099,7 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
     );
     assert_eq!(command["transaction"], "explicit_per_input");
     assert_eq!(command["automatic_retry"], false);
-    assert_eq!(command["sql_files"].as_array().unwrap().len(), 9);
+    assert_eq!(command["statements"].as_array().unwrap().len(), 9);
     let errors = artifact_json(
         &package,
         "generated/contracts/receiving/record_receipt.errors.json",
@@ -2106,7 +2145,7 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
     assert_eq!(
         receipt_source_map["wamn_api"],
         json!({
-            "sql_constant_visibility": "crate",
+            "statement_digest_visibility": "crate",
             "mutation_constraints": [],
             "operation_rows": [],
             "accessors": [
@@ -2114,7 +2153,7 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
                     "name": "get",
                     "visibility": "crate",
                     "operation": "get",
-                    "sql_constant": "GET_SQL",
+                    "statement_digest_constant": "GET_DIGEST",
                     "row": "ReceiptRow",
                     "fetch": "optional",
                     "binds": [
@@ -2123,7 +2162,7 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
                             "uuid",
                             false,
                             "uuid::Uuid",
-                            "wamn_postgres_sqlx::Uuid"
+                            "wamn_postgres_statements::Uuid"
                         )
                     ]
                 },
@@ -2131,7 +2170,7 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
                     "name": "query_created_at_ascending",
                     "visibility": "crate",
                     "operation": "query",
-                    "sql_constant": "QUERY_SQL",
+                    "statement_digest_constant": "QUERY_DIGEST",
                     "row": "ReceiptRow",
                     "fetch": "all",
                     "binds": [
@@ -2140,14 +2179,14 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
                             "timestamptz",
                             true,
                             "Option<chrono::DateTime<chrono::Utc>>",
-                            "Option<wamn_postgres_sqlx::TimestampTz>"
+                            "Option<wamn_postgres_statements::TimestampTz>"
                         ),
                         accessor_bind(
                             "cursor_id",
                             "uuid",
                             true,
                             "Option<uuid::Uuid>",
-                            "Option<wamn_postgres_sqlx::Uuid>"
+                            "Option<wamn_postgres_statements::Uuid>"
                         ),
                         accessor_bind("limit", "int8", false, "i64", "i64")
                     ]
@@ -2438,7 +2477,15 @@ fn shipped_command_source_map_parity_and_bind_fixtures_align_structurally() {
         .values()
         .map(|statement| statement["path"].clone())
         .collect::<Vec<_>>();
-    assert_eq!(operation["sql_files"], Value::Array(sql_files.clone()));
+    let operation_statements = operation["statements"].as_array().unwrap();
+    assert_eq!(operation_statements.len(), sql_files.len());
+    assert_eq!(
+        operation_statements
+            .iter()
+            .map(|statement| statement["path"].clone())
+            .collect::<Vec<_>>(),
+        sql_files
+    );
     assert_eq!(
         sql_files
             .iter()
@@ -2458,9 +2505,22 @@ fn shipped_command_source_map_parity_and_bind_fixtures_align_structurally() {
         assert_eq!(accessor["name"], statement_name.as_str());
         assert_eq!(accessor["fetch"], statement["fetch"]);
         assert_eq!(
-            accessor["sql_constant"],
-            format!("{}_SQL", statement_name.to_ascii_uppercase())
+            accessor["statement_digest_constant"],
+            format!("{}_DIGEST", statement_name.to_ascii_uppercase())
         );
+        let contract = operation_statements
+            .iter()
+            .find(|contract| contract["name"] == statement_name.as_str())
+            .unwrap();
+        assert_eq!(contract["path"], statement["path"]);
+        let path = statement["path"].as_str().unwrap();
+        let source = RECEIVING_SOURCES
+            .iter()
+            .find(|source| source.path() == path)
+            .unwrap();
+        assert_eq!(contract["digest"], statement_digest(source.bytes()));
+        assert_eq!(contract["binds"], statement["parameters"]);
+        assert_eq!(contract["columns"], statement["row"]);
         assert_eq!(native_row["name"], accessor["row"]);
         assert_eq!(wamn_row["name"], accessor["row"]);
         assert_eq!(native_row["visibility"], "crate");

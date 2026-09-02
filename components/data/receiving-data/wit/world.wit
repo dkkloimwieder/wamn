@@ -2,7 +2,7 @@ package wamn:receiving-component@0.1.0;
 
 world receiving {
   import wamn:postgres/types@0.1.0;
-  import wamn:postgres/client@0.1.0;
+  import wamn:postgres/statements@0.1.0;
   export wamn-receiving:purchase-order/get@1.0.0;
   export wamn-receiving:purchase-order/query@1.0.0;
   export wamn-receiving:purchase-order/update@1.0.0;

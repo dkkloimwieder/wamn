@@ -1,0 +1,6 @@
+package wamn:postgres-statements@0.1.0;
+
+world postgres-statements {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/statements@0.1.0;
+}

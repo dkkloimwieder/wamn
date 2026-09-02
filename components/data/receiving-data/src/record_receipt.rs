@@ -6,12 +6,10 @@ use std::fmt;
 
 use chrono::{DateTime, SecondsFormat};
 use serde_json::{Value, json};
-use sqlx_core::error::Error as SqlxError;
-use sqlx_core::transaction::Transaction;
 use uuid::Uuid;
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_postgres_sqlx::{
-    Json, TimestampTz, Uuid as WamnUuid, WamnConnection, WamnPostgres, run_transaction,
+use wamn_postgres_statements::{
+    Connection, Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid, run_transaction,
 };
 
 use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
@@ -244,19 +242,19 @@ impl RecordReceiptError {
         Self::new(RecordReceiptErrorKind::InternalError, context)
     }
 
-    fn from_sqlx(
+    fn from_statement(
         context: &'static str,
-        source: SqlxError,
+        source: StatementError,
         allowed_constraints: AllowedConstraints,
     ) -> Self {
-        let classified = AccessError::from_sqlx(context, &source, allowed_constraints);
-        Self::from_classified_sqlx(classified.kind(), context, source)
+        let classified = AccessError::from_statement(context, &source, allowed_constraints);
+        Self::from_classified_statement(classified.kind(), context, source)
     }
 
-    fn from_classified_sqlx(
+    fn from_classified_statement(
         classified: AccessErrorKind,
         context: &'static str,
-        source: SqlxError,
+        source: StatementError,
     ) -> Self {
         let kind = match classified {
             AccessErrorKind::Retry => RecordReceiptErrorKind::Retry,
@@ -285,7 +283,7 @@ impl RecordReceiptError {
         kind: RecordReceiptErrorKind,
         context: &'static str,
         constraint: &'static str,
-        source: SqlxError,
+        source: StatementError,
     ) -> Self {
         Self {
             kind,
@@ -334,9 +332,9 @@ impl Error for RecordReceiptError {
     }
 }
 
-impl From<SqlxError> for RecordReceiptError {
-    fn from(source: SqlxError) -> Self {
-        Self::from_sqlx(
+impl From<StatementError> for RecordReceiptError {
+    fn from(source: StatementError) -> Self {
+        Self::from_statement(
             "run record_receipt transaction",
             source,
             AllowedConstraints::NONE,
@@ -346,7 +344,7 @@ impl From<SqlxError> for RecordReceiptError {
 
 /// Execute each array item independently after enforcing the outer count bound.
 pub async fn record_receipt(
-    connection: &mut WamnConnection,
+    connection: &mut Connection,
     input: &[RecordReceiptInput],
 ) -> Result<Box<[RecordReceiptItemOutcome]>, RecordReceiptError> {
     validate_count(
@@ -376,7 +374,7 @@ fn with_request_id(
 
 /// Execute one item in exactly one transaction with no automatic retry.
 async fn record_receipt_item(
-    connection: &mut WamnConnection,
+    connection: &mut Connection,
     command: &RecordReceiptInput,
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
     let prepared = prepare(command)?;
@@ -469,7 +467,7 @@ fn prepare(command: &RecordReceiptInput) -> Result<PreparedCommand, RecordReceip
 }
 
 async fn record_receipt_in(
-    transaction: &mut Transaction<'_, WamnPostgres>,
+    transaction: &mut Transaction,
     command: PreparedCommand,
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
     if let Some(replay) = generated::find_replay(transaction, command.idempotency_key.clone())
@@ -525,7 +523,9 @@ async fn record_receipt_in(
     .map_err(|source| sql_error("validate record_receipt lines", source))?;
     refuse_line_outcome(
         validation.outcome.as_deref().ok_or_else(|| {
-            RecordReceiptError::internal("line validator returned a null outcome")
+            RecordReceiptError::internal(
+                "receiving.record_receipt line validator returned a null outcome",
+            )
         })?,
         validation.id,
     )?;
@@ -546,7 +546,7 @@ async fn record_receipt_in(
     )
     .await
     .map_err(|source| {
-        let error = AccessError::from_sqlx("insert receipt", &source, receipt_constraints);
+        let error = AccessError::from_statement("insert receipt", &source, receipt_constraints);
         if error.kind() == AccessErrorKind::UniqueViolation
             && error.constraint() == Some("receipt_purchase_order_id_receipt_reference_key")
         {
@@ -557,7 +557,7 @@ async fn record_receipt_in(
                 source,
             )
         } else {
-            RecordReceiptError::from_classified_sqlx(error.kind(), "insert receipt", source)
+            RecordReceiptError::from_classified_statement(error.kind(), "insert receipt", source)
         }
     })?;
     if inserted_receipt.id.0 != receipt_id {
@@ -670,7 +670,7 @@ fn refuse_line_outcome(outcome: &str, id: Option<WamnUuid>) -> Result<(), Record
         ),
         _ => {
             return Err(RecordReceiptError::internal(
-                "line validator returned an undeclared outcome",
+                "receiving.record_receipt line validator returned an undeclared outcome",
             ));
         }
     };
@@ -680,8 +680,8 @@ fn refuse_line_outcome(outcome: &str, id: Option<WamnUuid>) -> Result<(), Record
     Err(RecordReceiptError::domain_id(kind, outcome, field, id.0))
 }
 
-fn sql_error(context: &'static str, source: SqlxError) -> RecordReceiptError {
-    RecordReceiptError::from_sqlx(context, source, AllowedConstraints::NONE)
+fn sql_error(context: &'static str, source: StatementError) -> RecordReceiptError {
+    RecordReceiptError::from_statement(context, source, AllowedConstraints::NONE)
 }
 
 fn require_distinct_ids<'a>(
@@ -856,9 +856,10 @@ mod tests {
 
     #[test]
     fn database_source_is_retained_but_not_exposed_by_the_operation_error() {
-        let error = RecordReceiptError::from(SqlxError::Protocol(
-            "private database diagnostic".to_owned(),
-        ));
+        let mut error = RecordReceiptError::internal("run record_receipt transaction");
+        error.source = Some(Box::new(std::io::Error::other(
+            "private database diagnostic",
+        )));
 
         assert_eq!(error.kind(), RecordReceiptErrorKind::InternalError);
         assert!(error.source().is_some());

@@ -1,6 +1,6 @@
 //! Typed Receiving accessors over the frozen `wamn:postgres` capability.
 //!
-//! Runtime access uses [`wamn_postgres_sqlx::WamnPostgres`] and the generated
+//! Runtime access uses content-addressed [`wamn_postgres_statements`] accessors and the generated
 //! Wamn projections. The conformance verifier consumes native sibling
 //! projections and the same physical SQL files; this crate authors no SQL.
 

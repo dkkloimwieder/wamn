@@ -8,10 +8,8 @@ license = "Apache-2.0"
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-sqlx = { version = "=0.9.0", default-features = false, features = ["derive"] }
-sqlx-core.workspace = true
 uuid = "1"
-wamn-postgres-sqlx = { workspace = true }
+wamn-postgres-statements = { workspace = true }
 
 [dev-dependencies]
 futures-executor = "0.3"

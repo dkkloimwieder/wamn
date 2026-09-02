@@ -1,4 +1,4 @@
-//! Package-generator output consumed without an authored SQL copy.
+//! Package-generator output carrying only admitted statement digests.
 
 pub(crate) mod purchase_order {
     include!(concat!(

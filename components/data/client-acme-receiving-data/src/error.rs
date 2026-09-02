@@ -1,8 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use sqlx_core::error::Error as SqlxError;
-use wamn_postgres_sqlx::{WamnDatabaseError, WamnPgError};
+use wamn_postgres_statements::{StatementError, StatementErrorKind};
 
 /// Stable operation-level failure class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,8 +89,8 @@ impl AccessError {
         Self::new(AccessErrorKind::InternalError, context)
     }
 
-    pub(crate) fn from_sqlx(context: impl Into<Box<str>>, source: &SqlxError) -> Self {
-        Self::new(classify(source), context)
+    pub(crate) fn from_statement(context: impl Into<Box<str>>, source: &StatementError) -> Self {
+        Self::new(classify(source.kind()), context)
     }
 
     fn new(kind: AccessErrorKind, context: impl Into<Box<str>>) -> Self {
@@ -112,52 +111,54 @@ impl fmt::Display for AccessError {
 
 impl Error for AccessError {}
 
-fn classify(error: &SqlxError) -> AccessErrorKind {
-    let SqlxError::Database(database) = error else {
-        return AccessErrorKind::InternalError;
-    };
-    let Some(database) = database.as_error().downcast_ref::<WamnDatabaseError>() else {
-        return AccessErrorKind::InternalError;
-    };
-    classify_pg_error(database.pg_error())
-}
-
-fn classify_pg_error(error: &WamnPgError) -> AccessErrorKind {
-    match error {
-        WamnPgError::SerializationFailure | WamnPgError::ConnectionUnavailable => {
+fn classify(kind: StatementErrorKind) -> AccessErrorKind {
+    match kind {
+        StatementErrorKind::SerializationFailure | StatementErrorKind::ConnectionUnavailable => {
             AccessErrorKind::Retry
         }
-        WamnPgError::StatementTimeout => AccessErrorKind::Timeout,
-        WamnPgError::PermissionDenied => AccessErrorKind::PermissionDenied,
-        WamnPgError::RowLimitExceeded(_)
-        | WamnPgError::UniqueViolation(_)
-        | WamnPgError::ForeignKeyViolation(_)
-        | WamnPgError::CheckViolation(_)
-        | WamnPgError::QueryError { .. } => AccessErrorKind::InternalError,
+        StatementErrorKind::StatementTimeout => AccessErrorKind::Timeout,
+        StatementErrorKind::PermissionDenied => AccessErrorKind::PermissionDenied,
+        StatementErrorKind::UnknownStatement
+        | StatementErrorKind::StatementContractMismatch
+        | StatementErrorKind::RowLimitExceeded
+        | StatementErrorKind::UniqueViolation
+        | StatementErrorKind::ForeignKeyViolation
+        | StatementErrorKind::CheckViolation
+        | StatementErrorKind::QueryError
+        | StatementErrorKind::InvalidResult => AccessErrorKind::InternalError,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AccessErrorKind, classify_pg_error};
-    use wamn_postgres_sqlx::WamnPgError;
+    use super::{AccessErrorKind, classify};
+    use wamn_postgres_statements::StatementErrorKind;
 
     #[test]
     fn only_contractual_database_classes_cross_the_boundary() {
         for (source, expected) in [
-            (WamnPgError::SerializationFailure, AccessErrorKind::Retry),
-            (WamnPgError::ConnectionUnavailable, AccessErrorKind::Retry),
-            (WamnPgError::StatementTimeout, AccessErrorKind::Timeout),
             (
-                WamnPgError::PermissionDenied,
+                StatementErrorKind::SerializationFailure,
+                AccessErrorKind::Retry,
+            ),
+            (
+                StatementErrorKind::ConnectionUnavailable,
+                AccessErrorKind::Retry,
+            ),
+            (
+                StatementErrorKind::StatementTimeout,
+                AccessErrorKind::Timeout,
+            ),
+            (
+                StatementErrorKind::PermissionDenied,
                 AccessErrorKind::PermissionDenied,
             ),
             (
-                WamnPgError::CheckViolation("undeclared".to_owned()),
+                StatementErrorKind::CheckViolation,
                 AccessErrorKind::InternalError,
             ),
         ] {
-            assert_eq!(classify_pg_error(&source), expected);
+            assert_eq!(classify(source), expected);
         }
     }
 }

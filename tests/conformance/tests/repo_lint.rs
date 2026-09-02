@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const TOOL: &str = "tools/repo-lint";
 const ROOT_MEMBER_COUNT: usize = 36;
-const COMPONENT_MEMBER_COUNT: usize = 12;
+const COMPONENT_MEMBER_COUNT: usize = 13;
 const NO_STD_MEMBER_COUNT: usize = 4;
 const LEG_LABELS: [&str; 10] = [
     "connection HTTP per-invocation client",

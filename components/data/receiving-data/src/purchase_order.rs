@@ -1,7 +1,7 @@
 //! Runtime-checked `purchase_order` operations.
 
 use chrono::{DateTime, SecondsFormat, Utc};
-use wamn_postgres_sqlx::{Json, TimestampTz, Uuid as WamnUuid, WamnConnection};
+use wamn_postgres_statements::{Connection, Json, TimestampTz, Uuid as WamnUuid};
 
 use crate::cursor::{CursorDirection, CursorKey, DecodedCursor, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
@@ -95,24 +95,18 @@ pub enum SupplierIdUpdate {
 }
 
 /// Load one purchase order by canonical UUID.
-pub async fn get(
-    connection: &mut WamnConnection,
-    id: &str,
-) -> Result<PurchaseOrderRow, AccessError> {
+pub async fn get(connection: &mut Connection, id: &str) -> Result<PurchaseOrderRow, AccessError> {
     let id = canonical_uuid(id, "purchase_order id", "id")?;
     generated::get(connection, WamnUuid(id))
         .await
         .map_err(|source| {
-            AccessError::from_sqlx("load purchase_order", &source, AllowedConstraints::NONE)
+            AccessError::from_statement("load purchase_order", &source, AllowedConstraints::NONE)
         })?
         .ok_or_else(|| AccessError::not_found("purchase_order does not exist"))
 }
 
 /// Query one bounded page using a finite generated SQL variant.
-pub async fn query(
-    connection: &mut WamnConnection,
-    input: &QueryInput,
-) -> Result<Page, AccessError> {
+pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Page, AccessError> {
     let prepared = prepare_query(input)?;
     let mut rows = match (input.sort, prepared.cursor) {
         (PurchaseOrderSort::PurchaseOrderNumberAscending, QueryCursor::Text(cursor)) => {
@@ -190,14 +184,14 @@ pub async fn query(
         _ => unreachable!("sort selects exactly one cursor key type"),
     }
     .map_err(|source| {
-        AccessError::from_sqlx("query purchase_order", &source, AllowedConstraints::NONE)
+        AccessError::from_statement("query purchase_order", &source, AllowedConstraints::NONE)
     })?;
     finish_page(&mut rows, prepared.page_limit, input.sort)
 }
 
 /// Apply one optimistic update without retrying serialization failures.
 pub async fn update(
-    connection: &mut WamnConnection,
+    connection: &mut Connection,
     id: &str,
     expected_row_version: i64,
     supplier_id: SupplierIdUpdate,
@@ -213,7 +207,7 @@ pub async fn update(
     )
     .await
     .map_err(|source| {
-        AccessError::from_sqlx("update purchase_order", &source, UPDATE_CONSTRAINTS)
+        AccessError::from_statement("update purchase_order", &source, UPDATE_CONSTRAINTS)
     })?;
     update_result(row, expected_row_version)
 }
@@ -507,7 +501,7 @@ fn update_result(
             )),
         },
         _ => Err(AccessError::internal(
-            "purchase_order update returned an unknown outcome",
+            "purchase_order.update returned a null or unknown outcome",
         )),
     }
 }

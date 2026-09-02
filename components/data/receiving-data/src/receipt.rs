@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use uuid::Uuid;
-use wamn_postgres_sqlx::{TimestampTz, Uuid as WamnUuid, WamnConnection};
+use wamn_postgres_statements::{Connection, TimestampTz, Uuid as WamnUuid};
 
 use crate::cursor::{CursorDirection, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
@@ -28,21 +28,18 @@ pub struct Page {
 }
 
 /// Load one immutable receipt by canonical UUID.
-pub async fn get(connection: &mut WamnConnection, id: &str) -> Result<ReceiptRow, AccessError> {
+pub async fn get(connection: &mut Connection, id: &str) -> Result<ReceiptRow, AccessError> {
     let id = parse_input_uuid(id, "receipt id")?;
     generated::get(connection, WamnUuid(id.hyphenated().to_string()))
         .await
         .map_err(|source| {
-            AccessError::from_sqlx("load receipt", &source, AllowedConstraints::NONE)
+            AccessError::from_statement("load receipt", &source, AllowedConstraints::NONE)
         })?
         .ok_or_else(|| AccessError::not_found("receipt does not exist"))
 }
 
 /// Query one bounded page in generated `created_at, id` order.
-pub async fn query(
-    connection: &mut WamnConnection,
-    input: &QueryInput,
-) -> Result<Page, AccessError> {
+pub async fn query(connection: &mut Connection, input: &QueryInput) -> Result<Page, AccessError> {
     let cursor = input
         .cursor
         .as_deref()
@@ -65,7 +62,7 @@ pub async fn query(
         generated::query_created_at_ascending(connection, cursor_created_at, cursor_id, limit + 1)
             .await
             .map_err(|source| {
-                AccessError::from_sqlx("query receipt", &source, AllowedConstraints::NONE)
+                AccessError::from_statement("query receipt", &source, AllowedConstraints::NONE)
             })?;
     page_from_rows(rows, page_size)
 }

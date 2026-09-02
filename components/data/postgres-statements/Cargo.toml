@@ -1,0 +1,12 @@
+[package]
+name = "wamn-postgres-statements"
+version.workspace = true
+edition.workspace = true
+description = "Thin typed binding for content-addressed wamn:postgres statements"
+license = "Apache-2.0"
+
+[dependencies]
+wit-bindgen = { workspace = true }
+
+[lints]
+workspace = true

@@ -16,7 +16,7 @@
       {
         "workspace": "components",
         "manifest": "components/Cargo.toml",
-        "package_count": 12
+        "package_count": 13
       },
       {
         "workspace": "components-no-std",
@@ -147,11 +147,12 @@
         "std-virtualization-probe",
         "transform",
         "wamn-client-acme-receiving-data-access",
+        "wamn-postgres-statements",
         "wamn-postgres-sqlx",
         "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 16 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 17 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -185,6 +186,7 @@
         "std-virtualization-probe",
         "transform",
         "wamn-client-acme-receiving-data-access",
+        "wamn-postgres-statements",
         "wamn-postgres-sqlx",
         "wamn-receiving-data-access"
       ],
@@ -256,7 +258,7 @@
       "proof_inventory_tier": "full_ci",
       "expected_package_counts": {
         "m1": 7,
-        "proof": 16
+        "proof": 17
       }
     }
   },
@@ -278,7 +280,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "the 12 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
+      "selected_packages": "the 13 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     },
     {

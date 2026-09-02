@@ -22,7 +22,7 @@ wit_bindgen::generate!({
 
         world client-acme-receiving {
           import wamn:postgres/types@0.1.0;
-          import wamn:postgres/client@0.1.0;
+          import wamn:postgres/statements@0.1.0;
           import wamn-receiving:receiving/record-receipt@1.0.0;
           export client-acme-receiving:purchase-order/get@3.0.0;
           export client-acme-receiving:purchase-order/update@3.0.0;

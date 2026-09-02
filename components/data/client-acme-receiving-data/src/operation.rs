@@ -3,8 +3,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use sqlx_core::connection::Connection as _;
-use wamn_postgres_sqlx::{Uuid as WamnUuid, WamnConnection};
+use wamn_postgres_statements::{Connection, Uuid as WamnUuid};
 
 use crate::error::{AccessError, AccessErrorKind};
 use crate::generated::{
@@ -439,7 +438,7 @@ fn purchase_order_update_value(
             )),
         },
         _ => Err(AccessError::internal(
-            "purchase_order update returned an unknown outcome",
+            "purchase_order.update returned a null or unknown outcome",
         )),
     }
 }
@@ -492,7 +491,7 @@ fn approve_inspection_value(
             )),
         },
         _ => Err(AccessError::internal(
-            "quality_inspection approval returned an unknown outcome",
+            "quality.approve_inspection returned a null or unknown outcome",
         )),
     }
 }
@@ -500,7 +499,7 @@ fn approve_inspection_value(
 /// Execute `purchase_order.get` against generated Acme SQL.
 pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<PurchaseOrderValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<GetInput>(&item) {
@@ -513,7 +512,7 @@ pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> 
         let result = match parse_uuid(&parsed.id, "id") {
             Ok(id) => purchase_order_sql::get(&mut connection, id)
                 .await
-                .map_err(|source| AccessError::from_sqlx("load purchase_order", &source))
+                .map_err(|source| AccessError::from_statement("load purchase_order", &source))
                 .and_then(|row| {
                     row.ok_or_else(|| AccessError::not_found("purchase_order does not exist"))
                 }),
@@ -536,7 +535,7 @@ pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> 
 /// Execute `purchase_order.update` against generated Acme SQL.
 pub async fn purchase_order_update(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<PurchaseOrderValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<PurchaseOrderUpdateInput>(&item) {
@@ -570,7 +569,7 @@ pub async fn purchase_order_update(input: &str) -> Result<String, InvocationErro
                 quality_value,
             )
             .await
-            .map_err(|source| AccessError::from_sqlx("update purchase_order", &source))?;
+            .map_err(|source| AccessError::from_statement("update purchase_order", &source))?;
             purchase_order_update_value(row, expected_row_version)
         }
         .await;
@@ -597,7 +596,7 @@ pub async fn purchase_order_update(input: &str) -> Result<String, InvocationErro
 /// Execute `quality.load_purchase_order_detail` against its verified projection.
 pub async fn quality_load_purchase_order_detail(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<PurchaseOrderDetailValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<LoadPurchaseOrderDetailInput>(&item) {
@@ -609,15 +608,16 @@ pub async fn quality_load_purchase_order_detail(input: &str) -> Result<String, I
         };
         let result = async {
             let id = parse_uuid(&parsed.purchase_order_id, "purchase_order_id")?;
-            let mut transaction = connection
-                .begin()
-                .await
-                .map_err(|source| AccessError::from_sqlx("begin purchase_order detail", &source))?;
+            let mut transaction = connection.begin().await.map_err(|source| {
+                AccessError::from_statement("begin purchase_order detail", &source)
+            })?;
             let row = detail_sql::load_purchase_order_detail(&mut transaction, id)
                 .await
-                .map_err(|source| AccessError::from_sqlx("load purchase_order detail", &source))?;
+                .map_err(|source| {
+                    AccessError::from_statement("load purchase_order detail", &source)
+                })?;
             transaction.commit().await.map_err(|source| {
-                AccessError::from_sqlx("commit purchase_order detail", &source)
+                AccessError::from_statement("commit purchase_order detail", &source)
             })?;
             row.map(Into::into)
                 .ok_or_else(|| AccessError::not_found("purchase_order does not exist"))
@@ -645,7 +645,7 @@ pub async fn quality_load_purchase_order_detail(input: &str) -> Result<String, I
 /// Execute `quality.approve_inspection` as one transaction per input item.
 pub async fn quality_approve_inspection(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<ApproveInspectionValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<ApproveInspectionInput>(&item) {
@@ -659,21 +659,19 @@ pub async fn quality_approve_inspection(input: &str) -> Result<String, Invocatio
             let receipt_id = parse_uuid(&parsed.receipt_id, "receipt_id")?;
             let expected_row_version =
                 parse_int64(&parsed.expected_row_version, "expected_row_version")?;
-            let mut transaction = connection
-                .begin()
-                .await
-                .map_err(|source| AccessError::from_sqlx("begin inspection approval", &source))?;
+            let mut transaction = connection.begin().await.map_err(|source| {
+                AccessError::from_statement("begin inspection approval", &source)
+            })?;
             let row =
                 approve_sql::approve_inspection(&mut transaction, receipt_id, expected_row_version)
                     .await
                     .map_err(|source| {
-                        AccessError::from_sqlx("approve quality_inspection", &source)
+                        AccessError::from_statement("approve quality_inspection", &source)
                     })?;
             let value = approve_inspection_value(row, expected_row_version)?;
-            transaction
-                .commit()
-                .await
-                .map_err(|source| AccessError::from_sqlx("commit inspection approval", &source))?;
+            transaction.commit().await.map_err(|source| {
+                AccessError::from_statement("commit inspection approval", &source)
+            })?;
             Ok::<_, AccessError>(value)
         }
         .await;
@@ -703,21 +701,21 @@ pub async fn quality_create_inspection(input: &str) -> Result<String, AccessErro
         .map_err(|_| AccessError::invalid("event input does not match its contract", "input"))?;
     let InsertEvent::Insert = parsed.event;
     let receipt_id = parse_uuid(&parsed.new.id, "new.id")?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut transaction = connection
         .begin()
         .await
-        .map_err(|source| AccessError::from_sqlx("begin inspection creation", &source))?;
+        .map_err(|source| AccessError::from_statement("begin inspection creation", &source))?;
     let inserted = create_sql::insert_inspection(&mut transaction, receipt_id.clone())
         .await
-        .map_err(|source| AccessError::from_sqlx("insert quality_inspection", &source))?;
+        .map_err(|source| AccessError::from_statement("insert quality_inspection", &source))?;
     let persisted_id = match inserted {
         Some(row) => row.receipt_id,
         None => {
             create_sql::load_inspection(&mut transaction, receipt_id.clone())
                 .await
                 .map_err(|source| {
-                    AccessError::from_sqlx("load quality_inspection replay", &source)
+                    AccessError::from_statement("load quality_inspection replay", &source)
                 })?
                 .ok_or_else(|| {
                     AccessError::internal(
@@ -735,7 +733,7 @@ pub async fn quality_create_inspection(input: &str) -> Result<String, AccessErro
     transaction
         .commit()
         .await
-        .map_err(|source| AccessError::from_sqlx("commit inspection creation", &source))?;
+        .map_err(|source| AccessError::from_statement("commit inspection creation", &source))?;
     Ok(input.to_owned())
 }
 
@@ -748,7 +746,7 @@ pub async fn receiving_record_receipt_result(input: &str) -> Result<String, Acce
             "base record_receipt result is not an array",
         ));
     };
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     for item in &mut items {
         let object = item.as_object_mut().ok_or_else(|| {
             AccessError::internal("base record_receipt result item is not an object")
@@ -789,7 +787,7 @@ pub async fn receiving_record_receipt_result(input: &str) -> Result<String, Acce
                     Ok(id) => {
                         async {
                             let mut transaction = connection.begin().await.map_err(|source| {
-                                AccessError::from_sqlx(
+                                AccessError::from_statement(
                                     "begin Acme record_receipt confirmation",
                                     &source,
                                 )
@@ -800,13 +798,13 @@ pub async fn receiving_record_receipt_result(input: &str) -> Result<String, Acce
                             )
                             .await
                             .map_err(|source| {
-                                AccessError::from_sqlx(
+                                AccessError::from_statement(
                                     "load Acme record_receipt confirmation",
                                     &source,
                                 )
                             })?;
                             transaction.commit().await.map_err(|source| {
-                                AccessError::from_sqlx(
+                                AccessError::from_statement(
                                     "commit Acme record_receipt confirmation",
                                     &source,
                                 )

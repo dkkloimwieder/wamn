@@ -12,6 +12,7 @@ members = [
     "application/receiving",
     "ingress/http-route",
     "execution/materializer",
+    "data/postgres-statements",
     "data/postgres-sqlx",
     "data/client-acme-receiving-data",
     "data/receiving-data",
@@ -75,6 +76,7 @@ wamn-event-reg = { path = "../crates/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
 wamn-execution-contract = { path = "../crates/execution/contract", version = "0.1.0" }
 wamn-materializer = { path = "../crates/events/materializer", version = "0.1.0" }
+wamn-postgres-statements = { path = "data/postgres-statements", version = "0.1.0" }
 wamn-postgres-sqlx = { path = "data/postgres-sqlx", version = "0.1.0" }
 wamn-client-acme-receiving-data-access = { path = "data/client-acme-receiving-data", version = "0.1.0" }
 wamn-receiving-data-access = { path = "data/receiving-data", version = "0.1.0" }

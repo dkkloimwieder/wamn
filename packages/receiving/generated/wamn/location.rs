@@ -1,10 +1,9 @@
 // @generated from migration IR; do not edit.
 
-use sqlx_core::query_as::query_as;
-use wamn_postgres_sqlx::{WamnConnection, WamnPostgres};
+use wamn_postgres_statements::Connection;
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 pub struct LocationRow {
-    pub id: wamn_postgres_sqlx::Uuid,
+    pub id: wamn_postgres_statements::Uuid,
     pub location_code: String,
 }

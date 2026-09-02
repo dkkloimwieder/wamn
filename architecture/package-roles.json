@@ -440,6 +440,15 @@
     },
     {
       "workspace": "components",
+      "name": "wamn-postgres-statements",
+      "manifest_path": "components/data/postgres-statements/Cargo.toml",
+      "role": "adapter",
+      "target_class": "guest",
+      "bounded_context": "data",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
       "name": "wamn-postgres-sqlx",
       "manifest_path": "components/data/postgres-sqlx/Cargo.toml",
       "role": "adapter",

@@ -84,6 +84,10 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "components/execution/materializer/src/main.rs",
     ),
     (
+        "wamn-postgres-statements",
+        "components/data/postgres-statements/src/lib.rs",
+    ),
+    (
         "wamn-postgres-sqlx",
         "components/data/postgres-sqlx/src/lib.rs",
     ),

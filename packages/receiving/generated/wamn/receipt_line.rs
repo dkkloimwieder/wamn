@@ -1,13 +1,12 @@
 // @generated from migration IR; do not edit.
 
-use sqlx_core::query_as::query_as;
-use wamn_postgres_sqlx::{WamnConnection, WamnPostgres};
+use wamn_postgres_statements::Connection;
 
-#[derive(Debug, sqlx::FromRow)]
+#[derive(Debug)]
 pub struct ReceiptLineRow {
-    pub id: wamn_postgres_sqlx::Uuid,
-    pub location_id: wamn_postgres_sqlx::Uuid,
-    pub purchase_order_line_id: wamn_postgres_sqlx::Uuid,
-    pub quantity: wamn_postgres_sqlx::Numeric,
-    pub receipt_id: wamn_postgres_sqlx::Uuid,
+    pub id: wamn_postgres_statements::Uuid,
+    pub location_id: wamn_postgres_statements::Uuid,
+    pub purchase_order_line_id: wamn_postgres_statements::Uuid,
+    pub quantity: wamn_postgres_statements::Numeric,
+    pub receipt_id: wamn_postgres_statements::Uuid,
 }

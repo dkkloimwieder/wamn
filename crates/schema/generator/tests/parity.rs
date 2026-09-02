@@ -59,7 +59,7 @@ fn matrix() -> Value {
                 "postgres": "numeric",
                 "wamn_sql_value": "numeric",
                 "native_rust": "rust_decimal::Decimal",
-                "wamn_rust": "wamn_postgres_sqlx::Numeric",
+                "wamn_rust": "wamn_postgres_statements::Numeric",
                 "nullable": false
             },
             {
@@ -67,7 +67,7 @@ fn matrix() -> Value {
                 "postgres": "timestamptz",
                 "wamn_sql_value": "timestamptz",
                 "native_rust": "chrono::DateTime<chrono::Utc>",
-                "wamn_rust": "wamn_postgres_sqlx::TimestampTz",
+                "wamn_rust": "wamn_postgres_statements::TimestampTz",
                 "nullable": false
             },
             {
@@ -75,7 +75,7 @@ fn matrix() -> Value {
                 "postgres": "jsonb",
                 "wamn_sql_value": "json",
                 "native_rust": "serde_json::Value",
-                "wamn_rust": "wamn_postgres_sqlx::Json",
+                "wamn_rust": "wamn_postgres_statements::Json",
                 "nullable": false
             },
             {
@@ -83,7 +83,7 @@ fn matrix() -> Value {
                 "postgres": "uuid",
                 "wamn_sql_value": "uuid",
                 "native_rust": "uuid::Uuid",
-                "wamn_rust": "wamn_postgres_sqlx::Uuid",
+                "wamn_rust": "wamn_postgres_statements::Uuid",
                 "nullable": false
             }
         ],
@@ -94,7 +94,7 @@ fn matrix() -> Value {
                 "postgres": "uuid",
                 "nullable": false,
                 "native_rust": "uuid::Uuid",
-                "wamn_rust": "wamn_postgres_sqlx::Uuid"
+                "wamn_rust": "wamn_postgres_statements::Uuid"
             },
             {
                 "accessor": "query_created_at_ascending",
@@ -102,7 +102,7 @@ fn matrix() -> Value {
                 "postgres": "timestamptz",
                 "nullable": true,
                 "native_rust": "Option<chrono::DateTime<chrono::Utc>>",
-                "wamn_rust": "Option<wamn_postgres_sqlx::TimestampTz>"
+                "wamn_rust": "Option<wamn_postgres_statements::TimestampTz>"
             },
             {
                 "accessor": "update",

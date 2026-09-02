@@ -1,8 +1,8 @@
 //! Migration-IR projections materialized in the Receiving package.
 
-/// Runtime projections and exact SQL references for `WamnPostgres`.
+/// Runtime projections carrying only admitted statement digests.
 pub(crate) mod wamn {
-    /// Generated `purchase_order` projection and SQL references.
+    /// Generated `purchase_order` projection and statement digests.
     pub(crate) mod purchase_order {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -10,7 +10,7 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `receipt` projection and SQL references.
+    /// Generated `receipt` projection and statement digests.
     pub(crate) mod receipt {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

@@ -3,7 +3,7 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use wamn_postgres_sqlx::WamnConnection;
+use wamn_postgres_statements::Connection;
 
 use crate::error::{AccessError, AccessErrorKind};
 use crate::record_receipt::{RecordReceiptError, RecordReceiptErrorKind};
@@ -627,7 +627,7 @@ fn serialized<T: Serialize>(output: &[ItemResult<T>]) -> String {
 /// Execute only `purchase_order.get`.
 pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<PurchaseOrderValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<GetInput>(&item) {
@@ -655,7 +655,7 @@ pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> 
 /// Execute only `purchase_order.query`.
 pub async fn purchase_order_query(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<PageValue<PurchaseOrderValue>>> =
         Vec::with_capacity(items.len());
     for item in items.into_vec() {
@@ -684,7 +684,7 @@ pub async fn purchase_order_query(input: &str) -> Result<String, InvocationError
 /// Execute only `purchase_order.update`.
 pub async fn purchase_order_update(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<PurchaseOrderValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<PurchaseOrderUpdateInput>(&item) {
@@ -730,7 +730,7 @@ pub async fn purchase_order_update(input: &str) -> Result<String, InvocationErro
 /// Execute only `receipt.get`.
 pub async fn receipt_get(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<ReceiptValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<GetInput>(&item) {
@@ -758,7 +758,7 @@ pub async fn receipt_get(input: &str) -> Result<String, InvocationError> {
 /// Execute only `receipt.query`.
 pub async fn receipt_query(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<PageValue<ReceiptValue>>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<ReceiptQueryInput>(&item) {
@@ -786,7 +786,7 @@ pub async fn receipt_query(input: &str) -> Result<String, InvocationError> {
 /// Execute only `receiving.record_receipt`.
 pub async fn receiving_record_receipt(input: &str) -> Result<String, InvocationError> {
     let items = prepare_envelope(input)?;
-    let mut connection = WamnConnection::new();
+    let mut connection = Connection::new();
     let mut output: Vec<ItemResult<RecordReceiptResultValue>> = Vec::with_capacity(items.len());
     for item in items.into_vec() {
         let parsed = match parse_item::<RecordReceiptInput>(&item) {
@@ -826,7 +826,7 @@ pub async fn receiving_record_receipt(input: &str) -> Result<String, InvocationE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_postgres_sqlx::{TimestampTz, Uuid};
+    use wamn_postgres_statements::{TimestampTz, Uuid};
 
     #[test]
     fn envelope_requires_all_request_ids_before_item_processing() {

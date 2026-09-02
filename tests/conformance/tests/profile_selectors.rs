@@ -292,7 +292,7 @@ fn profile_contract_matches_locked_metadata() {
     }
 
     assert_eq!(root_members.len(), 36);
-    assert_eq!(component_members.len(), 16);
+    assert_eq!(component_members.len(), 17);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -438,13 +438,14 @@ fn profile_contract_matches_locked_metadata() {
             "std-virtualization-probe",
             "transform",
             "wamn-client-acme-receiving-data-access",
+            "wamn-postgres-statements",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
     assert_eq!(component_m1.len(), 7);
-    assert_eq!(component_proof.len(), 16);
+    assert_eq!(component_proof.len(), 17);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(
@@ -460,6 +461,7 @@ fn profile_contract_matches_locked_metadata() {
             "sqlx-command",
             "std-virtualization-probe",
             "wamn-client-acme-receiving-data-access",
+            "wamn-postgres-statements",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
         ]
