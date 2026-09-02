@@ -32,3 +32,4 @@ pub mod drain;
 pub mod confinement;
 pub mod intake;
 pub mod store;
+pub mod wit_error;
