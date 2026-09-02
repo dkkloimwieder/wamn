@@ -23,7 +23,7 @@ migrations. The IR is a release artifact, not a schema-editing surface.
 
 | Layer | Checking | Notes |
 |---|---|---|
-| **Application SQL corpus** — generated CRUD/lock/mutation SQL **plus authored named query/projection SQL** (`query/*.sql`) | **Compile-time, two-sibling**: native verifier runs `query_file!`/`query_file_as!` against `sqlx::Postgres` on the exact effective schema, `cargo sqlx prepare --check` in CI; the wasm artifact executes the **same files** via the `WamnPostgres` custom Database over `wamn:postgres` | Corpus identity welded into the package record |
+| **Application SQL corpus** — generated CRUD/lock/mutation SQL **plus authored named query/projection SQL** (`query/*.sql`) | **Compile-time, two-sibling**: the native verifier runs `query_file!`/`query_file_as!` against `sqlx::Postgres` on the exact effective schema and `cargo sqlx prepare --check` in CI; the wasm artifact sends a statement digest and binds, and the host resolves the pinned exact bytes through its existing claim-aware `WamnPostgres` runner (`wamn-10yt.9.2`) | Corpus identity welded into the package record |
 | Tenant/developer + workflow-editor arbitrary SQL | **Runtime-checked** over `WamnPostgres`; gate + bounded execution | `.22.13` unchanged |
 | External consumers | Generated routes → registered operations | CallerIdentity → permission check; host-selected DB identity → privileges/RLS |
 

@@ -26,7 +26,7 @@ use super::pool::{
     StaticCredentialProvider, WamnPostgresConfig, credential_exactness_hook,
     credential_generation_role, destroy_connection, standard_conforming_strings_hook,
 };
-use super::resources::{run_execute, run_query, run_verified_query};
+use super::resources::{StatementConnectionGuard, run_execute, run_query, run_verified_query};
 use super::statements::{StatementScopes, VerifiedStatement};
 use super::types::map_pg_error;
 use super::{DEFAULT_PROJECT, PgError, RowSet, SqlValue, StatementError};
@@ -2073,13 +2073,14 @@ impl WamnPostgres {
         let role = self.role_for(component_id);
         let user_id = self.user_id_for(component_id);
         let run = self.current_run_for(component_id);
-        let (conn, policy, authority) = self
+        let (connection, policy, authority) = self
             .checkout_workload(component_id, &project, &tenant)
             .await
             .map_err(StatementError::Postgres)?;
+        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         if let Err(error) = self
             .begin_with_claims(
-                &conn,
+                connection.connection(),
                 authority,
                 &tenant,
                 schema.as_deref(),
@@ -2091,26 +2092,34 @@ impl WamnPostgres {
             )
             .await
         {
-            self.destroy(conn);
             return Err(StatementError::Postgres(error));
         }
 
-        let result = run_verified_query(&conn, digest, statement, binds, policy.row_limit).await;
+        let result = run_verified_query(
+            connection.connection(),
+            digest,
+            statement,
+            binds,
+            policy.row_limit,
+        )
+        .await;
         match result {
-            Ok(rows) => match conn.batch_execute("COMMIT").await {
-                Ok(()) => Ok(rows),
-                Err(error) => {
-                    self.destroy(conn);
-                    Err(StatementError::Postgres(map_pg_error(&error)))
+            Ok(rows) => match connection.connection().batch_execute("COMMIT").await {
+                Ok(()) => {
+                    connection.repool();
+                    Ok(rows)
                 }
+                Err(error) => Err(StatementError::Postgres(map_pg_error(&error))),
             },
             Err(error) => {
-                if let Err(rollback_error) = conn.batch_execute("ROLLBACK").await {
+                if let Err(rollback_error) = connection.connection().batch_execute("ROLLBACK").await
+                {
                     tracing::warn!(
                         error = %rollback_error,
                         "rollback after failed verified statement also failed; destroying connection"
                     );
-                    self.destroy(conn);
+                } else {
+                    connection.repool();
                 }
                 Err(error)
             }

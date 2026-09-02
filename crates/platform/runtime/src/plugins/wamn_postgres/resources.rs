@@ -41,6 +41,55 @@ struct TxnState {
 
 type SharedTxnState = Arc<std::sync::Mutex<TxnState>>;
 
+/// Owns a checked-out connection across an await.
+///
+/// Dropping an armed guard destroys the connection, so cancellation cannot
+/// fast-repool a session whose claim transaction may still be open.
+pub(super) struct StatementConnectionGuard {
+    connection: Option<Object>,
+    destroyed: Arc<AtomicU64>,
+}
+
+impl StatementConnectionGuard {
+    pub(super) fn new(connection: Object, destroyed: Arc<AtomicU64>) -> Self {
+        Self {
+            connection: Some(connection),
+            destroyed,
+        }
+    }
+
+    pub(super) fn connection(&self) -> &Object {
+        self.connection
+            .as_ref()
+            .expect("armed statement connection guard has a connection")
+    }
+
+    pub(super) fn into_connection(mut self) -> Object {
+        self.connection
+            .take()
+            .expect("armed statement connection guard has a connection")
+    }
+
+    pub(super) fn repool(mut self) {
+        drop(self.connection.take());
+    }
+
+    fn restore(mut self, state: &SharedTxnState) {
+        let Ok(mut transaction) = state.lock() else {
+            return;
+        };
+        transaction.conn = self.connection.take();
+    }
+}
+
+impl Drop for StatementConnectionGuard {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.take() {
+            destroy_connection(connection, &self.destroyed);
+        }
+    }
+}
+
 /// Host side of a `wamn:postgres/client.transaction`.
 ///
 /// The [`Drop`] impl is the crash-safety guarantee: if the resource dies
@@ -370,6 +419,45 @@ async fn begin_transaction(
         destroyed: plugin.destroyed.clone(),
         cursor_seq: 0,
         row_limit: pp.row_limit,
+    })
+}
+
+async fn begin_statement_transaction(
+    plugin: &WamnPostgres,
+    component_id: &str,
+    project: &str,
+) -> Result<PgTransaction, PgError> {
+    let tenant = plugin.require_tenant(component_id)?;
+    let schema = plugin.schema_for(component_id);
+    let runner = plugin.runner_for(component_id);
+    let role = plugin.role_for(component_id);
+    let user_id = plugin.user_id_for(component_id);
+    let run = plugin.current_run_for(component_id);
+    let (connection, policy, authority) = plugin
+        .checkout_workload(component_id, project, &tenant)
+        .await?;
+    let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
+    plugin
+        .begin_with_claims(
+            connection.connection(),
+            authority,
+            &tenant,
+            schema.as_deref(),
+            runner.as_deref(),
+            role.as_deref(),
+            user_id.as_deref(),
+            run.as_ref(),
+            policy.statement_timeout_ms,
+        )
+        .await?;
+    Ok(PgTransaction {
+        state: Arc::new(std::sync::Mutex::new(TxnState {
+            conn: Some(connection.into_connection()),
+            finished: false,
+        })),
+        destroyed: Arc::clone(&plugin.destroyed),
+        cursor_seq: 0,
+        row_limit: policy.row_limit,
     })
 }
 
@@ -914,7 +1002,7 @@ impl statement_wit::Host for ActiveCtx<'_> {
         let statements = plugin.active_statement_set(&component_id);
         let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
         let started = std::time::Instant::now();
-        let opened = begin_transaction(&plugin, &component_id, &project)
+        let opened = begin_statement_transaction(&plugin, &component_id, &project)
             .instrument(span)
             .await;
         record_query_ms("statement.begin", &project, started.elapsed());
@@ -947,29 +1035,30 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
         let state = Arc::clone(&transaction.transaction.state);
         let destroyed = Arc::clone(&transaction.transaction.destroyed);
         let row_limit = transaction.transaction.row_limit;
-        let conn = match take_conn(&state) {
-            Ok(conn) => conn,
+        let connection = match take_conn(&state) {
+            Ok(connection) => StatementConnectionGuard::new(connection, Arc::clone(&destroyed)),
             Err(error) => return Ok(Err(StatementError::Postgres(error))),
         };
         let span = db_span_for_project(&plugin, &component_id, &project, "statement.txn.run");
         let started = std::time::Instant::now();
-        let result = run_verified_query(&conn, &statement_digest, &statement, &binds, row_limit)
-            .instrument(span)
-            .await;
+        let result = run_verified_query(
+            connection.connection(),
+            &statement_digest,
+            &statement,
+            &binds,
+            row_limit,
+        )
+        .instrument(span)
+        .await;
         record_query_ms("statement.txn.run", &project, started.elapsed());
 
-        let poison = matches!(
-            &result,
-            Err(StatementError::StatementContractMismatch(_))
-                | Err(StatementError::Postgres(PgError::ConnectionUnavailable))
-        );
-        if poison {
+        if statement_run_disposition(&result) == StatementRunDisposition::Destroy {
             if let Ok(mut transaction) = state.lock() {
                 transaction.finished = true;
             }
-            destroy_connection(conn, &destroyed);
+            drop(connection);
         } else {
-            put_conn(&state, conn);
+            connection.restore(&state);
         }
         Ok(result)
     }
@@ -1000,7 +1089,7 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
             .map(|transaction| transaction.finished || transaction.conn.is_none())
             .unwrap_or(true);
         if !already_finished {
-            let _ = finish_txn(&state, &destroyed, "ROLLBACK").await;
+            let _ = finish_statement_txn(&state, &destroyed, "ROLLBACK").await;
         }
         drop(transaction);
         Ok(())
@@ -1025,7 +1114,7 @@ async fn statement_txn_finish(
     let state = Arc::clone(&transaction.transaction.state);
     let destroyed = Arc::clone(&transaction.transaction.destroyed);
     let started = std::time::Instant::now();
-    let result = finish_txn(&state, &destroyed, verb)
+    let result = finish_statement_txn(&state, &destroyed, verb)
         .instrument(span)
         .await
         .map_err(StatementError::Postgres);
@@ -1033,6 +1122,87 @@ async fn statement_txn_finish(
     Ok(result)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatementRunDisposition {
+    Restore,
+    Destroy,
+}
+
+fn statement_run_disposition<T>(result: &Result<T, StatementError>) -> StatementRunDisposition {
+    if result.is_ok() {
+        StatementRunDisposition::Restore
+    } else {
+        StatementRunDisposition::Destroy
+    }
+}
+
+async fn finish_statement_txn(
+    state: &SharedTxnState,
+    destroyed: &Arc<AtomicU64>,
+    verb: &str,
+) -> Result<(), PgError> {
+    let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
+    match connection.connection().batch_execute(verb).await {
+        Ok(()) => {
+            if let Ok(mut transaction) = state.lock() {
+                transaction.finished = true;
+            }
+            connection.repool();
+            Ok(())
+        }
+        Err(error) => {
+            if let Ok(mut transaction) = state.lock() {
+                transaction.finished = true;
+            }
+            Err(map_pg_error(&error))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::wamn_postgres::{
+        ContractMismatch, ContractPart, StatementError, ValueShape,
+    };
+
+    fn mismatch() -> StatementError {
+        StatementError::StatementContractMismatch(ContractMismatch {
+            statement_digest: "sha256:digest".into(),
+            part: ContractPart::Columns,
+            expected: ValueShape {
+                count: 1,
+                types: vec!["text".into()],
+            },
+            observed: ValueShape {
+                count: 1,
+                types: vec!["null".into()],
+            },
+        })
+    }
+
+    #[test]
+    fn explicit_statement_run_restores_only_after_success() {
+        assert_eq!(
+            statement_run_disposition(&Ok::<_, StatementError>(())),
+            StatementRunDisposition::Restore
+        );
+        for error in [
+            mismatch(),
+            StatementError::Postgres(PgError::RowLimitExceeded(100)),
+            StatementError::Postgres(PgError::QueryError((
+                "WAMN1".into(),
+                "result decode failed".into(),
+            ))),
+        ] {
+            assert_eq!(
+                statement_run_disposition(&Err::<(), _>(error)),
+                StatementRunDisposition::Destroy
+            );
+        }
+    }
+}
