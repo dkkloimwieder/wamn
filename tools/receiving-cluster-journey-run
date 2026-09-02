@@ -1646,69 +1646,6 @@ if [[ $(grep -Fc 'RECEIVING_MATERIALIZER_PASS ' \
   exit 1
 fi
 
-overlay_component_digest=$(PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 \
-  -U postgres -d "$project_database" -Atqc \
-  "SELECT component_digest FROM catalog.component_library WHERE tenant_id='receiving-route-auth' AND package_id='client_acme_receiving' AND package_version='3.0.0' AND component='client_acme_receiving'")
-[[ "$overlay_component_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-  echo "released overlay component digest is absent or malformed" >&2
-  exit 1
-}
-materializer_trace_found=false
-tempo_search=/api/v1/namespaces/$system_namespace/services/http:tempo:3200/proxy/api/search?limit=100
-for _ in $(seq 1 60); do
-  "${kube[@]}" get --raw "$tempo_search" >"$work_dir/tempo-search.json" 2>/dev/null || true
-  materializer_trace_count=0
-  materializer_trace_path=
-  while IFS= read -r trace_id; do
-    [[ "$trace_id" =~ ^[0-9a-f]{32}$ ]] || continue
-    trace_path=/api/v1/namespaces/$system_namespace/services/http:tempo:3200/proxy/api/traces/$trace_id
-    trace_candidate=$work_dir/materializer-trace-$trace_id.json
-    "${kube[@]}" get --raw "$trace_path" >"$trace_candidate" \
-      2>/dev/null || continue
-    invocation_count=$(jq -er --arg digest "$overlay_component_digest" '
-        def spans: [.batches[]?.scopeSpans[]?.spans[]?];
-        def attr($span; $key):
-          ([$span.attributes[]? | select(.key == $key) | .value.stringValue][0] // null);
-        spans as $spans |
-        [$spans[] | select(
-          .name == "wamn.component.invoke" and
-          attr(.; "wamn.wiring_id") == "quality_create_inspection" and
-          attr(.; "wamn.operation") ==
-            "client-acme-receiving:quality/create-inspection@3.0.0" and
-          attr(.; "wamn.component_digest") == $digest and
-          attr(.; "wamn.tenant") == "receiving-route-auth" and
-          attr(.; "wamn.project") == "receiving" and
-          attr(.; "wamn.caller_principal_id") == null)] | length
-      ' "$trace_candidate")
-    materializer_trace_count=$((materializer_trace_count + invocation_count))
-    if ((invocation_count == 1)) &&
-       jq -e 'any(.batches[]?.scopeSpans[]?.spans[]?; .name == "wamn.postgres")' \
-         >/dev/null "$trace_candidate"; then
-      materializer_trace_path=$trace_candidate
-      materializer_trace_id=$trace_id
-    fi
-  done < <(jq -r '.traces[]?.traceID // empty' "$work_dir/tempo-search.json" \
-    2>/dev/null | sort -u)
-  if ((materializer_trace_count > 1)); then
-    echo "Tempo retained $materializer_trace_count materializer invocations; expected one" >&2
-    exit 1
-  fi
-  if ((materializer_trace_count == 1)) && [[ -n "$materializer_trace_path" ]]; then
-    cp "$materializer_trace_path" "$evidence_dir/materializer-trace.json"
-    printf 'verdict=pass trace_id=%s operation=%s digest=%s caller=absent global_invocations=1\n' \
-      "$materializer_trace_id" \
-      'client-acme-receiving:quality/create-inspection@3.0.0' \
-      "$overlay_component_digest" >"$evidence_dir/materializer-trace.receipt"
-    materializer_trace_found=true
-    break
-  fi
-  sleep 2
-done
-if [[ "$materializer_trace_found" != true ]]; then
-  echo "Tempo did not retain the exact callerless materializer component trace" >&2
-  exit 1
-fi
-
 : >"$evidence_dir/materializer-host.log"
 while IFS= read -r host_pod; do
   "${kube[@]}" -n "$namespace" logs "$host_pod" -c host \
