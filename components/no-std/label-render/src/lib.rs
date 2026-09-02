@@ -54,7 +54,10 @@ impl Guest for Component {
         let fields = serde_json::from_str::<serde_json::Value>(&input)
             .map_err(|_| invalid_input("input_not_json", "input is not JSON"))?;
         if !fields.is_object() {
-            return Err(invalid_input("input_not_object", "input must be a JSON object"));
+            return Err(invalid_input(
+                "input_not_object",
+                "input must be a JSON object",
+            ));
         }
 
         // The one translation of the implementation error into the WIT

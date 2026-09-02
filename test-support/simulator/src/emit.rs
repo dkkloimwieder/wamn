@@ -71,7 +71,11 @@ impl HttpRouteTarget {
     /// Mint the PAT with `wamn_platform_identity::issue_pat` against a subject
     /// from `route_caller_subject`; do not hand-assemble a token.
     #[must_use]
-    pub fn new(client: reqwest::Client, route_url: impl Into<String>, pat: impl Into<String>) -> Self {
+    pub fn new(
+        client: reqwest::Client,
+        route_url: impl Into<String>,
+        pat: impl Into<String>,
+    ) -> Self {
         Self {
             client,
             route_url: route_url.into(),
@@ -97,7 +101,10 @@ impl HttpRouteTarget {
                         wrapper
                     }
                 };
-                item.insert("request_id".to_owned(), Value::String(event.event_id.clone()));
+                item.insert(
+                    "request_id".to_owned(),
+                    Value::String(event.event_id.clone()),
+                );
                 Value::Object(item)
             })
             .collect();
@@ -123,7 +130,9 @@ impl EmissionTarget for HttpRouteTarget {
             if !status.is_success() {
                 let route = &self.route_url;
                 let items = batch.len();
-                anyhow::bail!("route {route} refused a {items}-item envelope with {status}: {body}");
+                anyhow::bail!(
+                    "route {route} refused a {items}-item envelope with {status}: {body}"
+                );
             }
             outcomes.extend(serde_json::from_str::<Vec<ItemOutcome>>(&body)?);
         }

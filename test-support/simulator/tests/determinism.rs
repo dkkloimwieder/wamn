@@ -30,7 +30,8 @@ fn same_seed_yields_byte_identical_streams() {
         let second = profile(0x5EED).canonical_stream_bytes(kind, COUNT);
 
         assert_eq!(
-            first, second,
+            first,
+            second,
             "{} is not byte-stable across two runs of one seed",
             kind.as_str()
         );
@@ -68,7 +69,12 @@ fn the_seed_reaches_generated_ids_and_bodies() {
 
         let left_ids: Vec<&str> = left.iter().map(|e| e.event_id.as_str()).collect();
         let right_ids: Vec<&str> = right.iter().map(|e| e.event_id.as_str()).collect();
-        assert_ne!(left_ids, right_ids, "{}: ids ignore the seed", kind.as_str());
+        assert_ne!(
+            left_ids,
+            right_ids,
+            "{}: ids ignore the seed",
+            kind.as_str()
+        );
 
         let left_bodies: Vec<&serde_json::Value> = left.iter().map(|e| &e.body).collect();
         let right_bodies: Vec<&serde_json::Value> = right.iter().map(|e| &e.body).collect();
@@ -111,7 +117,11 @@ fn duplicates_repeat_an_identity_rather_than_minting_a_new_one() {
     for event in &events {
         *seen.entry(event.event_id.as_str()).or_default() += 1;
     }
-    assert_eq!(seen.len(), 20, "duplicates minted fresh ids instead of repeating");
+    assert_eq!(
+        seen.len(),
+        20,
+        "duplicates minted fresh ids instead of repeating"
+    );
     assert!(
         seen.values().all(|count| *count == 2),
         "each identity should appear exactly twice"
@@ -128,7 +138,10 @@ fn a_closed_reorder_window_preserves_order() {
     let mut sorted = sequences.clone();
     sorted.sort_unstable();
 
-    assert_eq!(sequences, sorted, "a zero reorder window still displaced events");
+    assert_eq!(
+        sequences, sorted,
+        "a zero reorder window still displaced events"
+    );
 }
 
 /// An open reorder window must actually displace something, or the knob is
@@ -159,7 +172,9 @@ fn timestamps_are_generated_in_stream() {
     let stamps: Vec<u64> = events.iter().map(|event| event.occurred_at_ms).collect();
     assert_eq!(
         stamps,
-        (0..8).map(|i| 1_767_225_600_000 + i * 250).collect::<Vec<_>>(),
+        (0..8)
+            .map(|i| 1_767_225_600_000 + i * 250)
+            .collect::<Vec<_>>(),
         "in-stream clock drifted from the fixed epoch and tick"
     );
 }
