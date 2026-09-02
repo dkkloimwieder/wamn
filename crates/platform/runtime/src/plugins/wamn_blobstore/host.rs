@@ -17,10 +17,23 @@
 //!   A different name reports `no-such-container` / `false` rather than
 //!   `access-denied`, because "that exists but is not yours" is itself a leak:
 //!   it tells a guest what else lives in the store.
-//! * `copy-object` and `move-object` are refused (owner ruling). Their
-//!   `object-id` arguments carry no backend or binding discriminator, so
-//!   confinement cannot hold across them. If demand appears they return as
-//!   binding-scoped variants, never these signatures.
+//! # Three verbs never succeed, in TWO categories
+//!
+//! The distinction is recorded because the remedies differ (owner ruling):
+//!
+//! * **Refused by policy** — `copy-object`, `move-object`. Their `object-id`
+//!   arguments are bare strings carrying no backend or binding discriminator,
+//!   so confinement cannot hold across them. A policy change brings them back,
+//!   as binding-scoped variants, never these signatures.
+//! * **Unsatisfiable by backend** — `info`. The object-store surface carries
+//!   no container creation time, and `container-metadata` requires one.
+//!   Fabricating a `0` would be a timestamp a guest could act on, which is the
+//!   fabricated-evidence rule at data grain. This one returns if `object_store`
+//!   grows the capability; no policy decision is involved.
+//!
+//! `create-container` and `delete-container` are neither: they are refused
+//! because the environment owns the container, which is the ordinary operation
+//! of the ownership split rather than a deviation from the contract.
 
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::component::{Accessor, Resource};
@@ -187,6 +200,11 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
     /// An object store keeps no separate creation time, and `put` is an
     /// overwrite, so for the version being described the two coincide. The
     /// approximation is named here rather than left for a reader to infer.
+    ///
+    /// **This holds only while `put` is the sole writer.** A multipart or
+    /// append path would let an object be modified after creation, at which
+    /// point last-modified stops being its creation time and this must change
+    /// with it.
     async fn object_info(
         accessor: &Accessor<T, Self>,
         handle: Resource<Container>,

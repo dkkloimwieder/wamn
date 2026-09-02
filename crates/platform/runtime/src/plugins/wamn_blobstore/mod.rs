@@ -27,6 +27,7 @@
 //! overwrite rule §2c depends on. Both prefix spellings resolve identically,
 //! and a test says so.
 
+pub mod binding;
 pub mod bindings;
 pub mod drain;
 pub mod host;
