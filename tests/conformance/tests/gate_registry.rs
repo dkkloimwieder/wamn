@@ -541,12 +541,11 @@ fn fixtures() -> (PathBuf, Registry, BTreeSet<String>) {
 #[test]
 fn canonical_registry_covers_every_live_gate_source() {
     let (root, registry, manifests) = fixtures();
-    // m1-gate-job.yaml, socketguard-job.yaml, traceproof-job.yaml. The literal
-    // is a tripwire on the inventory's size; `validate_registry` separately
-    // proves the registry and the directory name the same Jobs.
-    assert_eq!(manifests.len(), 3, "the retained Job inventory changed");
-    validate_registry(&registry, &manifests, &root)
-    .unwrap_or_else(|error| panic!("{error}"));
+    // socketguard-job.yaml and traceproof-job.yaml. The literal is a tripwire
+    // on the inventory's size; `validate_registry` separately proves the
+    // registry and the directory name the same Jobs.
+    assert_eq!(manifests.len(), 2, "the retained Job inventory changed");
+    validate_registry(&registry, &manifests, &root).unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]
@@ -570,41 +569,38 @@ fn d24_is_retained_by_the_api_publish_recipe() {
 }
 
 #[test]
-fn m1_gate_claims_completed_checks_9_and_10() {
-    let (root, registry, _) = fixtures();
+fn d19_is_owned_by_the_receiving_materializer_journey() {
+    let (_, registry, _) = fixtures();
+    let decision = registry
+        .decisions
+        .iter()
+        .find(|decision| decision.id == "D19")
+        .expect("D19 remains inventoried");
+    assert_eq!(decision.status, "shipped");
+    assert_eq!(decision.primary_source.source_kind, SourceKind::Recipe);
+    assert_eq!(
+        decision.primary_source.source,
+        "RECEIVING-MATERIALIZER-JOURNEY"
+    );
+
     let entry = registry
         .entries
         .iter()
-        .find(|entry| entry.source == "deploy/gates/m1-gate-job.yaml")
-        .expect("M1 gate must be registered");
-    assert_eq!(entry.bead_owner, "bd:wamn-0h0g.11.10");
-    assert_eq!(entry.expected_outcome, "pass-checks-9-and-10");
+        .find(|entry| entry.source == "RECEIVING-MATERIALIZER-JOURNEY")
+        .expect("router-era materializer journey must be registered");
+    assert_eq!(entry.classification, Classification::RequiredGate);
+    assert_eq!(entry.bead_owner, "bd:wamn-0h0g.15.25.4");
+    assert_eq!(entry.expected_outcome, "pass");
+    assert_eq!(
+        entry
+            .decision_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["D3", "D19"])
+    );
+    assert!(entry.can_fail);
     assert!(entry.coverage_exclusions.is_empty());
-
-    let manifest = fs::read_to_string(root.join(&entry.source)).expect("read M1 manifest");
-    let sidecar = fs::read_to_string(root.join("deploy/gates/m1-postgres.Dockerfile"))
-        .expect("read derived M1 PostgreSQL recipe");
-    assert!(manifest.contains("wamn.dev/m1-checks: \"9,10\""));
-    assert!(!manifest.contains("m1-pending-checks"));
-    assert!(manifest.contains("M1 PASS — checks 9 and 10 passed"));
-    assert!(manifest.contains("wamn-gates --log-level error m1 --timeout-secs 120"));
-    assert!(manifest.contains("restartPolicy: Always"));
-    assert!(manifest.contains("image: wamn-postgres:m1-pg18-720c455e"));
-    assert!(!manifest.contains("m1-pg18-720c455e@sha256:"));
-    assert!(manifest.contains("imagePullPolicy: Never"));
-    assert!(manifest.contains("--sidecar-preflight-record"));
-    assert!(!manifest.contains("ctr -n k8s.io images tag"));
-    assert!(manifest.contains("emptyDir: {}"));
-    assert!(manifest.contains("postgres://postgres@127.0.0.1:5432/postgres"));
-    assert!(manifest.contains("sha256:POST_BUILD_MAIN_IMAGE_ID"));
-    assert!(manifest.contains("claim_log_prefix\":\"M1_MAIN_IMAGE_ID="));
-    assert!(sidecar.contains("FROM --platform=linux/amd64 postgres:18.6-trixie@sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a"));
-    assert!(sidecar.contains("wamn.dev/upstream-index=\"sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a\""));
-    assert!(sidecar.contains("wamn.dev/upstream-child=\"sha256:cd78ca58eb75f929698e117a589488ccb2bd45107247fe02400b50ff6c418324\""));
-    assert!(!manifest.contains("secretKeyRef"));
-    assert!(!manifest.contains("wamn-pg"));
-    assert!(!manifest.contains("wamn-sysdb"));
-    assert!(!manifest.contains("error causation-e2e --timeout-secs"));
 }
 
 #[test]
@@ -617,7 +613,7 @@ fn rejects_unregistered_manifest_mutant() {
         .expect("registry must contain a manifest");
     registry.entries.remove(index);
     let error = validate_registry(&registry, &manifests, &root)
-    .expect_err("an unregistered manifest must fail");
+        .expect_err("an unregistered manifest must fail");
     assert!(error.contains("manifest registry drift"), "{error}");
 }
 
@@ -631,7 +627,7 @@ fn rejects_removed_decision_mapping_mutant() {
         .expect("registry must contain a shipped decision");
     entry.decision_ids.clear();
     let error = validate_registry(&registry, &manifests, &root)
-    .expect_err("a missing decision mapping must fail");
+        .expect_err("a missing decision mapping must fail");
     assert!(error.contains("no shipped-decision mapping"), "{error}");
 }
 
@@ -641,7 +637,7 @@ fn rejects_duplicate_decision_ownership_mutant() {
     let duplicate = registry.decisions[0].clone();
     registry.decisions.push(duplicate);
     let error = validate_registry(&registry, &manifests, &root)
-    .expect_err("duplicate decision ownership must fail");
+        .expect_err("duplicate decision ownership must fail");
     assert!(
         error.contains("duplicate canonical decision owner"),
         "{error}"
@@ -662,7 +658,7 @@ fn rejects_retired_primary_without_live_support_mutant() {
         }
     }
     let error = validate_registry(&registry, &manifests, &root)
-    .expect_err("a retired primary without live support must fail");
+        .expect_err("a retired primary without live support must fail");
     assert!(error.contains("no live supporting gate mapping"), "{error}");
 }
 
@@ -676,7 +672,7 @@ fn rejects_decorative_required_gate_mutant() {
         .expect("registry must contain a required gate");
     entry.can_fail = false;
     let error = validate_registry(&registry, &manifests, &root)
-    .expect_err("a decorative required gate must fail");
+        .expect_err("a decorative required gate must fail");
     assert!(error.contains("decorative required gate"), "{error}");
 }
 
@@ -718,7 +714,7 @@ fn rejects_parked_gate_without_coverage_note_mutant() {
     entry.classification = Classification::ParkedGate;
     entry.coverage_exclusions.clear();
     let error = validate_registry(&registry, &manifests, &root)
-    .expect_err("a parked gate with no coverage note must fail");
+        .expect_err("a parked gate with no coverage note must fail");
     assert!(
         error.contains("parked without a recorded coverage exclusion"),
         "{error}"
@@ -739,7 +735,7 @@ fn rejects_solely_parked_decision_support_mutant() {
         }
     }
     let error = validate_registry(&registry, &manifests, &root)
-    .expect_err("a decision left with only parked support must fail");
+        .expect_err("a decision left with only parked support must fail");
     assert!(
         error.contains("supported only by parked or retired gates"),
         "{error}"

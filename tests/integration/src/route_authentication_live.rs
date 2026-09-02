@@ -150,6 +150,9 @@ const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
 const OVERLAY_RECORD_RECEIPT: &str = "client-acme-receiving:receiving/record-receipt@3.0.0";
 const PREEXISTING_QUALITY_RECEIPT_ID: &str = "00000000-0000-0000-0000-000000000603";
+const MATERIALIZER_STREAM: &str = "EVT_acme_dev";
+const MATERIALIZER_DURABLE: &str =
+    "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection";
 
 #[derive(Clone, Copy)]
 struct JourneyAttachment {
@@ -2441,6 +2444,26 @@ async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow::Result<()
         .context("seed the distinct pre-existing quality approval fixture")
 }
 
+async fn seed_materializer_trigger_rows(project: &Client) -> anyhow::Result<()> {
+    project
+        .batch_execute(
+            "INSERT INTO receiving.purchase_order \
+               (id, purchase_order_number, supplier_id, status, row_version, created_at, updated_at) \
+             VALUES \
+               ('00000000-0000-0000-0000-000000000304', 'PO-304', \
+                '00000000-0000-0000-0000-000000000404', 'open', 1, \
+                '2026-08-31T12:03:00.000000Z', '2026-08-31T12:03:00.000000Z'); \
+             INSERT INTO receiving.purchase_order_line \
+               (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) \
+             VALUES \
+               ('00000000-0000-0000-0000-000000000504', \
+                '00000000-0000-0000-0000-000000000304', 1, \
+                '00000000-0000-0000-0000-000000000101', 9.0000, 0.0000);",
+        )
+        .await
+        .context("seed the untouched materializer journey purchase order")
+}
+
 #[tokio::test]
 #[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts"]
 async fn production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces()
@@ -3021,9 +3044,178 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
     assert_no_component_trace(&spans, &unauthorized_trace);
     assert_no_component_trace(&spans, &oversized_trace);
 
+    // The denial arm mutates one grant deliberately. Restore the exact
+    // installed-set union before handing this disposable release to the
+    // operator-managed materializer continuation.
+    reconcile_journey_data_access(&route.database_url).await?;
+    verify_journey_operation_grants(project.as_ref()).await?;
+    seed_materializer_trigger_rows(project.as_ref()).await?;
+
     management_server.abort();
     identity_task.abort();
     project_task.abort();
     admin_task.abort();
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable Receiving journey after its production materializer settles"]
+async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> anyhow::Result<()> {
+    let project_url = required_journey("WAMN_RECEIVING_MATERIALIZER_PG_URL")?;
+    let nats_url = required_journey("WAMN_RECEIVING_MATERIALIZER_NATS_URL")?;
+    let receipt_id = required_journey("WAMN_RECEIVING_MATERIALIZER_RECEIPT_ID")?;
+    let (project, project_task) = connect(&project_url).await?;
+
+    let registrations = project
+        .query(
+            "SELECT package_id, entity_id, registration::text FROM catalog.event_registrations \
+             WHERE tenant_id = $1 ORDER BY package_id COLLATE \"C\", registration_id COLLATE \"C\"",
+            &[&TENANT],
+        )
+        .await
+        .context("read the installed event-registration set")?;
+    anyhow::ensure!(
+        registrations.len() == 1,
+        "Receiving release installed {} registrations instead of one",
+        registrations.len()
+    );
+    let registration = &registrations[0];
+    let registration_document: Value = serde_json::from_str(&registration.get::<_, String>(2))
+        .context("parse the installed event registration")?;
+    anyhow::ensure!(
+        registration.get::<_, String>(0) == OVERLAY_PACKAGE_ID
+            && registration.get::<_, String>(1) == "receipt"
+            && registration_document["registration-id"] == "quality.create_inspection"
+            && registration_document["package-id"] == OVERLAY_PACKAGE_ID
+            && registration_document["source-package-id"] == BASE_PACKAGE_ID
+            && registration_document["entity"] == "receipt"
+            && registration_document["ops"] == serde_json::json!(["insert"]),
+        "installed event registration is not the exact Acme receipt binding: {registration_document}"
+    );
+
+    let jetstream = async_nats::jetstream::new(
+        async_nats::connect(&nats_url)
+            .await
+            .context("connect to the disposable event plane")?,
+    );
+    let mut stream = jetstream
+        .get_stream(MATERIALIZER_STREAM)
+        .await
+        .context("read the production reader's event stream")?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    let (receipt_sequence, receipt_causation, inspection_causation) = loop {
+        let info = stream.info().await.context("read event-stream state")?;
+        let mut receipt = None;
+        let mut inspection = None;
+        if info.state.messages > 0 {
+            for sequence in info.state.first_sequence..=info.state.last_sequence {
+                let message = stream
+                    .get_raw_message(sequence)
+                    .await
+                    .with_context(|| format!("read stored event sequence {sequence}"))?;
+                let Ok(envelope) =
+                    serde_json::from_slice::<wamn_event_wire::Envelope>(&message.payload)
+                else {
+                    continue;
+                };
+                if envelope.op == wamn_event_wire::Op::Insert
+                    && envelope.package_id == BASE_PACKAGE_ID
+                    && envelope.entity == "receipt"
+                    && envelope
+                        .new
+                        .as_ref()
+                        .and_then(|row| row.get("id"))
+                        .and_then(Value::as_str)
+                        == Some(receipt_id.as_str())
+                {
+                    receipt = envelope.causation.map(|causation| (sequence, causation));
+                } else if envelope.op == wamn_event_wire::Op::Insert
+                    && envelope.package_id == OVERLAY_PACKAGE_ID
+                    && envelope.entity == "quality_inspection"
+                    && envelope
+                        .new
+                        .as_ref()
+                        .and_then(|row| row.get("receipt_id"))
+                        .and_then(Value::as_str)
+                        == Some(receipt_id.as_str())
+                {
+                    inspection = envelope.causation;
+                }
+            }
+        }
+        if let (Some((sequence, receipt)), Some(inspection)) = (receipt, inspection) {
+            break (sequence, receipt, inspection);
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "causal receipt and inspection events did not both reach {MATERIALIZER_STREAM}"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    };
+    anyhow::ensure!(
+        receipt_causation.run == receipt_causation.root && receipt_causation.depth == 0,
+        "route-origin receipt causation is not a root delivery: {receipt_causation:?}"
+    );
+    anyhow::ensure!(
+        inspection_causation.run != receipt_causation.run
+            && inspection_causation.root == receipt_causation.root
+            && inspection_causation.depth == receipt_causation.depth + 1,
+        "materializer-to-handler causation did not preserve root and advance depth: \
+         receipt={receipt_causation:?} inspection={inspection_causation:?}"
+    );
+
+    let inspection_rows = project
+        .query(
+            "SELECT status, row_version FROM receiving.quality_inspection WHERE receipt_id = $1::uuid",
+            &[&receipt_id],
+        )
+        .await
+        .context("read the materialized quality inspection")?;
+    anyhow::ensure!(
+        inspection_rows.len() == 1
+            && inspection_rows[0].get::<_, String>(0) == "pending"
+            && inspection_rows[0].get::<_, i64>(1) == 1,
+        "receipt {receipt_id} did not materialize to exactly one pending revision-1 inspection"
+    );
+
+    let settled_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let consumer = loop {
+        let consumer = stream
+            .consumer_info(MATERIALIZER_DURABLE)
+            .await
+            .context("read the exact materializer durable")?;
+        if consumer.name == MATERIALIZER_DURABLE
+            && consumer.delivered.consumer_sequence == 1
+            && consumer.delivered.stream_sequence == receipt_sequence
+            && consumer.ack_floor.consumer_sequence == 1
+            && consumer.ack_floor.stream_sequence == receipt_sequence
+            && consumer.num_ack_pending == 0
+            && consumer.num_pending == 0
+            && consumer.num_redelivered == 0
+        {
+            break consumer;
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < settled_deadline,
+            "materializer durable did not settle exactly once: {consumer:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let mut dead_letters = jetstream
+        .get_stream(wamn_event_wire::DEAD_LETTER_STREAM)
+        .await
+        .context("read the production reader's dead-letter stream")?;
+    anyhow::ensure!(
+        dead_letters.info().await?.state.messages == 0,
+        "successful materialization emitted a dead letter"
+    );
+
+    println!(
+        "RECEIVING_MATERIALIZER_PASS receipt_id={receipt_id} source_sequence={receipt_sequence} \
+         consumer_sequence={} root={} depth={}",
+        consumer.ack_floor.consumer_sequence, receipt_causation.root, inspection_causation.depth
+    );
+    drop(project);
+    project_task.abort();
     Ok(())
 }

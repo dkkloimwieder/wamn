@@ -63,14 +63,6 @@ pub struct JobVerdictRecord {
     pub expectation: Expectation,
     pub expected_exit_code: i32,
     pub expected_image: String,
-    pub sidecar: Option<String>,
-    pub expected_sidecar_image: Option<String>,
-    pub expected_sidecar_image_id: Option<String>,
-    pub preflight_sidecar_config_id: Option<String>,
-    pub sidecar_upstream_index: Option<String>,
-    pub sidecar_upstream_child: Option<String>,
-    pub sidecar_preflight_sha256: Option<String>,
-    pub claimed_image_id: Option<String>,
     pub observed: ObservedJob,
     pub verdict: Verdict,
     pub failure_classes: Vec<String>,
@@ -85,7 +77,6 @@ pub struct ObservedJob {
     pub created_at: String,
     pub condition: String,
     pub condition_transition_at: String,
-    pub claimed_image_id: Option<String>,
     pub logs_sha256: String,
     pub pods: Vec<PodObservation>,
 }
@@ -103,8 +94,6 @@ pub struct PodObservation {
     pub init_exit_codes: Vec<Option<i32>>,
     pub container_exit_code: Option<i32>,
     pub image_id: String,
-    pub sidecar_exit_code: Option<i32>,
-    pub sidecar_image_id: Option<String>,
 }
 
 /// Exact executable/argv probe and its before/after stdout identities.

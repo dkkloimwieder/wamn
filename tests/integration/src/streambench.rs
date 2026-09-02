@@ -422,7 +422,7 @@ async fn txn_distinctness_phase(
     // (b) server-side (the load-bearing one): the stream grew by EXACTLY n. A
     //     duplicate Nats-Msg-Id inside the batch would have been silently deduped
     //     and this delta would come up short — it catches the fault even if (a)
-    //     were blind (see the M1 mutant, which neuters (a) to isolate this check).
+    //     were blind (the paired client-side mutant neuters (a) to isolate this check).
     let (after, _l2, _p2, _r2) = stream_state(js, &name).await?;
     let delta = after.saturating_sub(before);
     check(

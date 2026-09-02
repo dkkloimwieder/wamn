@@ -81,6 +81,8 @@ admission freezes it in `runs.durability_class`, and claims read only that carri
 
 ## Data, identity and generated APIs
 
+Package application rows are tenant-scoped by database residency, not by column.
+
 - `wamn:postgres` remains the unchanged credential-hiding WIT boundary: guests
   receive no socket or credential, and `WamnPostgres` is not aliased to a built-in
   sqlx driver. The complete application SQL corpus—generated CRUD, lock and

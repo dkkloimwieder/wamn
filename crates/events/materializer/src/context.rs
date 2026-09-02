@@ -11,6 +11,17 @@
 use serde_json::{Map, Value, json};
 use wamn_event_wire::{DerivedEvent, Envelope, Op};
 
+/// Row-level tenancy carried by one CDC image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowTenant<'a> {
+    /// The image is present and has no `tenant_id`; database residency governs.
+    Absent,
+    /// The image carries a string tenant identity.
+    Tenant(&'a str),
+    /// The image is absent or carries a non-string tenant identity.
+    Unscopable,
+}
+
 /// Build the condition context from one envelope:
 /// `{"op": "<insert|update|delete>", "old": {…}|null, "new": {…}|null}`.
 ///
@@ -43,27 +54,36 @@ pub fn derived_event_context(event: &DerivedEvent) -> Value {
     })
 }
 
-/// The tenant an event belongs to, from the image that carries it. `None` =
-/// the event cannot be tenant-scoped:
+/// The row-level tenant carried by an event image. [`RowTenant::Absent`] means
+/// the package row relies on its separately verified database-residency scope:
 ///
 /// - a DELETE under REPLICA IDENTITY DEFAULT — the old image carries the key
 ///   column (`id`) ONLY, not `tenant_id` (the .17 design contract); or
-/// - a table with no `tenant_id` column at all (hand-created, auto-included by
-///   the schema-scoped publication).
+/// - a package application table with no `tenant_id` column.
 ///
-/// The caller REFUSES such an event (alertable) rather than enqueue it under
-/// the workload's own tenant — old-absent is cannot-evaluate, and a
-/// cannot-scope enqueue would be a cross-tenant leak.
-pub fn tenant_of(envelope: &Envelope) -> Option<&str> {
+/// The caller may accept `Absent` only after the tenant-scoped catalog
+/// credential has proven the package's database residency. A present string
+/// remains an additional equality guard; any other carrier is unscopable.
+pub fn row_tenant(envelope: &Envelope) -> RowTenant<'_> {
     let image: &Map<String, Value> = match envelope.op {
-        Op::Insert | Op::Update => envelope.new.as_ref()?,
+        Op::Insert | Op::Update => match envelope.new.as_ref() {
+            Some(image) => image,
+            None => return RowTenant::Unscopable,
+        },
         // A DELETE's only image is the old key columns; under DEFAULT that is
         // never tenant-bearing, but read it anyway — if the entity later runs
         // REPLICA IDENTITY FULL (l5i9.31) the old image carries tenant_id and
         // deletes become scopable with zero change here.
-        Op::Delete => envelope.old.as_ref()?,
+        Op::Delete => match envelope.old.as_ref() {
+            Some(image) => image,
+            None => return RowTenant::Unscopable,
+        },
     };
-    image.get("tenant_id")?.as_str()
+    match image.get("tenant_id") {
+        None => RowTenant::Absent,
+        Some(Value::String(tenant)) => RowTenant::Tenant(tenant),
+        Some(_) => RowTenant::Unscopable,
+    }
 }
 
 #[cfg(test)]
@@ -130,15 +150,15 @@ mod tests {
             None,
             Some(json!({"id": "7", "tenant_id": "t1"})),
         );
-        assert_eq!(tenant_of(&env), Some("t1"));
+        assert_eq!(row_tenant(&env), RowTenant::Tenant("t1"));
     }
 
     #[test]
-    fn delete_under_default_identity_is_not_tenant_scopable() {
+    fn delete_under_default_identity_has_no_row_tenant() {
         // The old image of a DELETE carries the PK only (REPLICA IDENTITY
-        // DEFAULT) — no tenant_id, so the event cannot be scoped.
+        // DEFAULT), so database residency must supply the scope.
         let env = envelope(Op::Delete, Some(json!({"id": "7"})), None);
-        assert_eq!(tenant_of(&env), None);
+        assert_eq!(row_tenant(&env), RowTenant::Absent);
     }
 
     #[test]
@@ -150,13 +170,13 @@ mod tests {
             Some(json!({"id": "7", "tenant_id": "t1"})),
             None,
         );
-        assert_eq!(tenant_of(&env), Some("t1"));
+        assert_eq!(row_tenant(&env), RowTenant::Tenant("t1"));
     }
 
     #[test]
-    fn a_table_without_tenant_id_is_not_scopable() {
+    fn a_package_row_may_omit_a_row_tenant() {
         let env = envelope(Op::Insert, None, Some(json!({"id": "7"})));
-        assert_eq!(tenant_of(&env), None);
+        assert_eq!(row_tenant(&env), RowTenant::Absent);
     }
 
     #[test]

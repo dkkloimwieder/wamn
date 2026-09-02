@@ -58,7 +58,7 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
         &["busybox:1.36", "wamn-dispatcher:dev"]),
     // A ServiceAccount with zero grants and no Deployment of its own: the
     // reader's Deployment example went at 2099d754 and the identity is consumed
-    // by deploy/gates/m1-gate-job.yaml. Retained deliberately, not stranded.
+    // by the Receiving materializer journey. Retained deliberately, not stranded.
     ("event-reader-rbac.yaml",
         &[("ServiceAccount", "event-reader")],
         &[]),

@@ -7,7 +7,7 @@ use wamn_event_reg::EventRegistration;
 use wamn_event_wire::{Causation, DerivedEvent, Envelope};
 
 use crate::condition::{CompiledCondition, ConditionOutcome, compile_condition};
-use crate::context::{derived_event_context, event_context, tenant_of};
+use crate::context::{RowTenant, derived_event_context, event_context, row_tenant};
 use crate::input::{derived_event_input, event_input};
 
 /// A source-event coordinate proven to match the delivered NATS identity.
@@ -110,12 +110,18 @@ pub fn serviceable(
 }
 
 /// Decide whether one envelope reaches the registration's wiring.
+///
+/// `resident_tenant` is the tenant read through the tenant-scoped catalog
+/// credential after the event's stream identity has verified. Package rows
+/// without a `tenant_id` use that trusted database-residency scope; a missing
+/// or disagreeing scope remains unserviceable.
 pub fn decide(
     registration: &EventRegistration,
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
     known_packages: &BTreeSet<String>,
     tenant: &str,
+    resident_tenant: Option<&str>,
     max_depth: u32,
 ) -> Verdict {
     match envelope.package_id.as_str() {
@@ -135,12 +141,16 @@ pub fn decide(
     if !registration.ops.contains(&envelope.op) {
         return Verdict::Skip(SkipReason::OpMismatch);
     }
-    match tenant_of(envelope) {
-        None => return Verdict::Refuse(RefuseReason::TenantUnscopable),
-        Some(event_tenant) if event_tenant != tenant => {
+    if resident_tenant != Some(tenant) {
+        return Verdict::Refuse(RefuseReason::TenantUnscopable);
+    }
+    match row_tenant(envelope) {
+        RowTenant::Absent => {}
+        RowTenant::Tenant(event_tenant) if event_tenant != tenant => {
             return Verdict::Skip(SkipReason::ForeignTenant);
         }
-        Some(_) => {}
+        RowTenant::Tenant(_) => {}
+        RowTenant::Unscopable => return Verdict::Refuse(RefuseReason::TenantUnscopable),
     }
     if registration.condition.is_some() {
         let Some(condition) = condition else {
@@ -258,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn matching_event_delivers_business_input_without_flow_or_run_identity() {
+    fn matching_row_tenant_delivers_business_input_without_flow_or_run_identity() {
         assert_eq!(
             decide(
                 &registration(None),
@@ -266,6 +276,7 @@ mod tests {
                 &envelope(),
                 &known_packages(),
                 "t1",
+                Some("t1"),
                 16,
             ),
             Verdict::Deliver(json!({
@@ -273,6 +284,98 @@ mod tests {
                 "new": {"tenant_id": "t1", "status": "ready"}
             }))
         );
+    }
+
+    #[test]
+    fn tenantless_package_row_delivers_under_verified_database_residency() {
+        let mut tenantless = envelope();
+        tenantless
+            .new
+            .as_mut()
+            .expect("insert carries a new image")
+            .remove("tenant_id");
+        assert!(matches!(
+            decide(
+                &registration(None),
+                None,
+                &tenantless,
+                &known_packages(),
+                "t1",
+                Some("t1"),
+                16,
+            ),
+            Verdict::Deliver(_)
+        ));
+    }
+
+    #[test]
+    fn foreign_row_tenant_is_normal_filtration() {
+        let mut foreign = envelope();
+        foreign
+            .new
+            .as_mut()
+            .expect("insert carries a new image")
+            .insert("tenant_id".into(), Value::String("other".into()));
+        assert_eq!(
+            decide(
+                &registration(None),
+                None,
+                &foreign,
+                &known_packages(),
+                "t1",
+                Some("t1"),
+                16,
+            ),
+            Verdict::Skip(SkipReason::ForeignTenant)
+        );
+    }
+
+    #[test]
+    fn unresolved_or_disagreeing_database_residency_refuses() {
+        let mut tenantless = envelope();
+        tenantless
+            .new
+            .as_mut()
+            .expect("insert carries a new image")
+            .remove("tenant_id");
+        for resident_tenant in [None, Some("other")] {
+            assert_eq!(
+                decide(
+                    &registration(None),
+                    None,
+                    &tenantless,
+                    &known_packages(),
+                    "t1",
+                    resident_tenant,
+                    16,
+                ),
+                Verdict::Refuse(RefuseReason::TenantUnscopable)
+            );
+        }
+    }
+
+    #[test]
+    fn present_non_string_row_tenant_refuses_instead_of_using_residency() {
+        for value in [Value::Null, json!(7)] {
+            let mut invalid = envelope();
+            invalid
+                .new
+                .as_mut()
+                .expect("insert carries a new image")
+                .insert("tenant_id".into(), value);
+            assert_eq!(
+                decide(
+                    &registration(None),
+                    None,
+                    &invalid,
+                    &known_packages(),
+                    "t1",
+                    Some("t1"),
+                    16,
+                ),
+                Verdict::Refuse(RefuseReason::TenantUnscopable)
+            );
+        }
     }
 
     #[test]
@@ -286,6 +389,7 @@ mod tests {
                 &envelope(),
                 &known_packages(),
                 "other",
+                Some("other"),
                 16,
             ),
             Verdict::Skip(SkipReason::ForeignTenant)
@@ -307,6 +411,7 @@ mod tests {
                 &envelope,
                 &known_packages(),
                 "t1",
+                Some("t1"),
                 16,
             ),
             Verdict::Refuse(RefuseReason::DepthExceeded { .. })
@@ -452,21 +557,29 @@ mod tests {
         let mut other = envelope();
         other.package_id = "other".into();
         assert_eq!(
-            decide(&registration, None, &other, &known, "t1", 16),
+            decide(&registration, None, &other, &known, "t1", Some("t1"), 16,),
             Verdict::Skip(SkipReason::SourcePackageMismatch)
         );
 
         let mut unknown = envelope();
         unknown.package_id = "unknown".into();
         assert_eq!(
-            decide(&registration, None, &unknown, &known, "t1", 16),
+            decide(&registration, None, &unknown, &known, "t1", Some("t1"), 16,),
             Verdict::Refuse(RefuseReason::SourcePackageIdentityUnknown {
                 source_package_id: "unknown".into(),
             })
         );
 
         assert!(matches!(
-            decide(&registration, None, &envelope(), &known, "t1", 16),
+            decide(
+                &registration,
+                None,
+                &envelope(),
+                &known,
+                "t1",
+                Some("t1"),
+                16,
+            ),
             Verdict::Deliver(_)
         ));
     }

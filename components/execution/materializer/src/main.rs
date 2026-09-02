@@ -162,6 +162,7 @@ fn pg_name(error: &PgError) -> String {
 struct Serving {
     registration: EventRegistration,
     condition: Option<wamn_materializer::CompiledCondition>,
+    resident_tenant: String,
 }
 
 struct LoadedServings {
@@ -217,7 +218,8 @@ fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String> {
             Some(SqlValue::Text(registration_id)),
             Some(SqlValue::Text(package_id)),
             Some(document),
-        ) = (row.first(), row.get(1), row.get(2))
+            Some(SqlValue::Text(resident_tenant)),
+        ) = (row.first(), row.get(1), row.get(2), row.get(3))
         else {
             return Err("registration row shape".into());
         };
@@ -257,6 +259,7 @@ fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String> {
         servings.push(Serving {
             registration,
             condition,
+            resident_tenant: resident_tenant.clone(),
         });
     }
     Ok(LoadedServings {
@@ -409,17 +412,22 @@ fn prepare_message(
     let headers = message.headers();
     let message_ids = nats_message_ids(&headers);
     let (source_event_id, verdict) = match &source {
-        SourceEvent::Cdc(envelope) => (
-            verified_source_event_id(&config.project, &config.env, envelope, &message_ids),
-            decide(
+        SourceEvent::Cdc(envelope) => {
+            let source_event_id =
+                verified_source_event_id(&config.project, &config.env, envelope, &message_ids);
+            let verdict = decide(
                 &serving.registration,
                 serving.condition.as_ref(),
                 envelope,
                 known_packages,
                 &config.tenant,
+                source_event_id
+                    .as_ref()
+                    .map(|_| serving.resident_tenant.as_str()),
                 config.max_depth,
-            ),
-        ),
+            );
+            (source_event_id, verdict)
+        }
         SourceEvent::Derived(event) => (
             verified_derived_source_event_id(
                 &config.tenant,
@@ -862,6 +870,7 @@ mod tests {
                 condition: None,
             },
             condition: None,
+            resident_tenant: "tenant".into(),
         }
     }
 
@@ -991,6 +1000,7 @@ mod tests {
             &event,
             &known_packages,
             "tenant",
+            Some("tenant"),
             MAX_CAUSATION_DEPTH,
         ) else {
             panic!("a known foreign package must be normal filtration");

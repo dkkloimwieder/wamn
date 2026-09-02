@@ -2,7 +2,7 @@
 
 /// Read registration documents and durable identities; no flow or plan lookup remains.
 pub fn select_registrations_sql() -> String {
-    "SELECT registration_id, package_id, registration::text AS registration \
+    "SELECT registration_id, package_id, registration::text AS registration, tenant_id \
        FROM catalog.event_registrations \
       WHERE tenant_id = current_setting('app.tenant', true) \
       ORDER BY package_id, registration_id"

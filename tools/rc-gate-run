@@ -57,7 +57,7 @@ if [[ "$apply" != true ]]; then
   printf '  cluster/context: %s / %s\n' "$cluster" "$context"
   printf '  environment namespace: %s\n' "$namespace"
   printf '  images: %s, %s, %s\n' "$gate_image" "$host_image" "$sidecar_image"
-  printf '  order: setup -> bootstrap -> M2 receipt -> socketguard -> traceproof -> M1 -> exact teardown\n'
+  printf '  order: setup -> bootstrap -> M2 receipt -> socketguard -> traceproof -> exact teardown\n'
   printf '  deferred: wamn-0h0g.15.153 (post-merge; not claimed)\n'
   exit 0
 fi
@@ -170,12 +170,10 @@ cleanup() {
         "$evidence_dir"/host-pods.json "$evidence_dir"/m2.receipt \
         "$evidence_dir"/socketguard.log "$evidence_dir"/socketguard-verdict.json \
         "$evidence_dir"/traceproof.log "$evidence_dir"/traceproof-verdict.json \
-        "$evidence_dir"/m0-verdict.json "$evidence_dir"/m1.log \
-        "$evidence_dir"/m1-sidecar-preflight.json \
-        "$evidence_dir"/m1-verdict.json >"$evidence_dir/evidence.sha256"; then
+        "$evidence_dir"/m0-verdict.json >"$evidence_dir/evidence.sha256"; then
       cleanup_failed=true
     else
-      printf 'RC PASS source=%s namespace=%s order=bootstrap,M2,socketguard,traceproof,M1 deferred=wamn-0h0g.15.153\n' \
+      printf 'RC PASS source=%s namespace=%s order=bootstrap,M2,socketguard,traceproof deferred=wamn-0h0g.15.153\n' \
         "$head" "$namespace" >"$evidence_dir/rc.receipt"
     fi
   fi
@@ -244,34 +242,13 @@ COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
 COPY deploy ./deploy
-COPY components ./components
 RUN --mount=type=cache,id=wamn-rc-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \\
     --mount=type=cache,id=wamn-rc-cargo-git,target=/usr/local/cargo/git,sharing=locked \\
     --mount=type=cache,id=wamn-rc-debug-target,target=/build/target,sharing=locked \\
-    RUSTC_WRAPPER= cargo build --locked \\
-      -p wamn-gates -p wamn-cdc-reader -p wamn-host -p wamn-ctl -p wamn-dispatcher \\
- && RUSTC_WRAPPER= cargo build --locked -p wamn-ctl --features ops --bin wamn-ctl-ops \\
+    RUSTC_WRAPPER= cargo build --locked -p wamn-gates -p wamn-host -p wamn-ctl \\
  && install -D -m 0755 target/debug/wamn-host /native-output/wamn-host \\
  && install -D -m 0755 target/debug/wamn-gates /native-output/wamn-gates \\
- && install -D -m 0755 target/debug/wamn-ctl /native-output/wamn-ctl \\
- && install -D -m 0755 target/debug/wamn-ctl-ops /native-output/wamn-ctl-ops \\
- && install -D -m 0755 target/debug/wamn-cdc-reader /native-output/wamn-cdc-reader \\
- && install -D -m 0755 target/debug/wamn-dispatcher /native-output/wamn-dispatcher
-
-FROM native AS components
-RUN rustup toolchain install 1.97.0 --profile minimal --target wasm32-wasip2
-RUN --mount=type=cache,id=wamn-rc-component-registry,target=/usr/local/cargo/registry,sharing=locked \\
-    --mount=type=cache,id=wamn-rc-component-git,target=/usr/local/cargo/git,sharing=locked \\
-    --mount=type=cache,id=wamn-rc-component-target,target=/build/components/target,sharing=locked \\
-    RUSTC_WRAPPER= cargo +1.97.0 build --locked --manifest-path components/Cargo.toml \\
-      --target wasm32-wasip2 -p http-route -p materializer -p busyloop \\
-      -p connection-http-standard -p sockprobe \\
- && install -d /component-output \\
- && install -m 0644 components/target/wasm32-wasip2/debug/busyloop.wasm /component-output/busyloop.wasm \\
- && install -m 0644 components/target/wasm32-wasip2/debug/sockprobe.wasm /component-output/sockprobe.wasm \\
- && install -m 0644 components/target/wasm32-wasip2/debug/http_route.wasm /component-output/http-route.wasm \\
- && install -m 0644 components/target/wasm32-wasip2/debug/materializer.wasm /component-output/materializer.wasm \\
- && install -m 0644 components/target/wasm32-wasip2/debug/connection_http_standard.wasm /component-output/connection-http-standard.wasm
+ && install -D -m 0755 target/debug/wamn-ctl /native-output/wamn-ctl
 
 FROM debian:trixie-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \\
@@ -285,14 +262,6 @@ ENTRYPOINT ["/usr/local/bin/wamn-host"]
 FROM host AS gates
 COPY --from=native /native-output/wamn-gates /usr/local/bin/wamn-gates
 COPY --from=native /native-output/wamn-ctl /usr/local/bin/wamn-ctl
-COPY --from=native /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
-COPY --from=native /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
-COPY --from=native /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
-COPY --from=components /component-output/busyloop.wasm /bench/busyloop.wasm
-COPY --from=components /component-output/sockprobe.wasm /bench/sockprobe.wasm
-COPY --from=components /component-output/http-route.wasm /bench/http-route.wasm
-COPY --from=components /component-output/materializer.wasm /bench/materializer.wasm
-COPY --from=components /component-output/connection-http-standard.wasm /bench/connection-http-standard.wasm
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
 EOF
 
@@ -318,19 +287,11 @@ done
 
 artifact_container_owned=true
 run docker create --name "$artifact_container" "$gate_image"
-mkdir -- "$work_dir/gate-bin" "$work_dir/gate-bench"
+mkdir -- "$work_dir/gate-bin"
 run docker cp "$artifact_container:/usr/local/bin/." "$work_dir/gate-bin"
-run docker cp "$artifact_container:/bench/." "$work_dir/gate-bench"
-for binary in wamn-gates wamn-ctl wamn-ctl-ops wamn-cdc-reader wamn-dispatcher; do
+for binary in wamn-gates wamn-ctl; do
   [[ -x "$work_dir/gate-bin/$binary" ]] || {
     echo "debug gate image is missing executable $binary" >&2
-    exit 1
-  }
-done
-for asset in busyloop.wasm sockprobe.wasm http-route.wasm materializer.wasm \
-    connection-http-standard.wasm; do
-  [[ -s "$work_dir/gate-bench/$asset" ]] || {
-    echo "debug gate image is missing asset $asset" >&2
     exit 1
   }
 done
@@ -343,7 +304,6 @@ run kind create cluster --name "$cluster" --config "$kind_config" \
   --kubeconfig "$kubeconfig"
 run kind load docker-image "$gate_image" --name "$cluster"
 run kind load docker-image "$host_image" --name "$cluster"
-run kind load docker-image "$sidecar_image" --name "$cluster"
 
 image_tuple() {
   local image=$1 node inspect runtime_id config_id first=
@@ -366,9 +326,7 @@ image_tuple() {
   printf '%s\n' "$first"
 }
 
-read -r main_image_id _ < <(image_tuple "$gate_image")
 read -r host_image_id _ < <(image_tuple "$host_image")
-read -r sidecar_image_id sidecar_config_id < <(image_tuple "$sidecar_image")
 
 kubectl_path=$(command -v kubectl)
 kubectl_wrapper=$work_dir/kubectl-wamn-rc
@@ -492,15 +450,6 @@ jq -e --arg image "$host_image" --arg image_id "$host_image_id" '
        .name == $container and .ready == true and
        ((.imageID // "") | endswith($image_id)))))
 ' >/dev/null "$evidence_dir/host-pods.json"
-
-# M1 uses only the event-plane NATS documents; the later WAMN_TAP documents are
-# a separate feature and are deliberately excluded from this RC setup render.
-event_nats=$work_dir/event-nats.yaml
-awk '/^# WAMN_TAP / { exit } { print }' \
-  "$repo_root/deploy/infra/nats-jetstream.yaml" >"$event_nats"
-run "${kube[@]}" apply -f "$event_nats"
-run "${kube[@]}" -n "$system_namespace" rollout status \
-  statefulset/evt-nats --timeout=180s
 
 otel=$work_dir/otel-collector.yaml
 serve_echo=$work_dir/serve-echo.yaml
@@ -711,52 +660,4 @@ jq -e '.verdict == "pass" and .failure_classes == [] and
        .scope.deferred == ["wamn-0h0g.15.153"]' \
   >/dev/null "$evidence_dir/m0-verdict.json"
 
-event_reader=$work_dir/event-reader-rbac.yaml
-sed "s/wamn-system/$namespace/g" \
-  "$repo_root/deploy/platform/event-reader-rbac.yaml" >"$event_reader"
-run "${kube[@]}" apply -f "$event_reader"
-
-m1_manifest=$work_dir/m1-gate-job.yaml
-sed -e "s/wamn-gates:m1-01ca7afa-debug/$gate_image/g" \
-  -e "s/wamn-postgres:m1-pg18-720c455e/$sidecar_image/g" \
-  -e "s/sha256:POST_BUILD_MAIN_IMAGE_ID/$main_image_id/g" \
-  -e "s/^  namespace: wamn-system$/  namespace: $namespace/" \
-  "$repo_root/deploy/gates/m1-gate-job.yaml" >"$m1_manifest"
-if grep -q 'POST_BUILD_MAIN_IMAGE_ID\|m1-01ca7afa-debug\|m1-pg18-720c455e' \
-    "$m1_manifest"; then
-  echo "M1 manifest rendering left a stale image placeholder" >&2
-  exit 2
-fi
-
-upstream_index=$(sed -nE \
-  's/.*wamn.dev\/upstream-index="(sha256:[0-9a-f]{64})".*/\1/p' \
-  "$repo_root/deploy/gates/m1-postgres.Dockerfile")
-upstream_child=$(sed -nE \
-  's/.*wamn.dev\/upstream-child="(sha256:[0-9a-f]{64})".*/\1/p' \
-  "$repo_root/deploy/gates/m1-postgres.Dockerfile")
-job_spec=$(jq -cn --arg image "$gate_image" --arg main "$main_image_id" \
-  --arg sidecar "$sidecar_image" --arg sidecar_id "$sidecar_image_id" \
-  --arg config_id "$sidecar_config_id" --arg upstream_index "$upstream_index" \
-  --arg upstream_child "$upstream_child" \
-  '{name:"m1-gate-",container:"m1-gate",expectation:"positive",exit_code:0,
-    image:$image,claimed_image_id:$main,claim_log_prefix:"M1_MAIN_IMAGE_ID=",
-    sidecar:"m1-postgres",sidecar_image:$sidecar,sidecar_image_id:$sidecar_id,
-    sidecar_config_id:$config_id,sidecar_upstream_index:$upstream_index,
-    sidecar_upstream_child:$upstream_child,
-    log_contains:"M1 PASS — checks 9 and 10 passed"}')
-record_command env WAMN_RC_KUBECTL_LOG_RECORD="$evidence_dir/m1.log" \
-  KUBECTL="$kubectl_wrapper" DOCKER=docker \
-  tools/kubernetes-gate-run --namespace "$namespace" --manifest "$m1_manifest" \
-  --generated-name-prefix m1-gate- --require-final-cleanup \
-  --sidecar-preflight-record "$evidence_dir/m1-sidecar-preflight.json" \
-  --verdict-record "$evidence_dir/m1-verdict.json" --job "$job_spec"
-WAMN_RC_KUBECTL_LOG_RECORD="$evidence_dir/m1.log" \
-  KUBECTL="$kubectl_wrapper" DOCKER=docker \
-  "$repo_root/tools/kubernetes-gate-run" --namespace "$namespace" \
-  --manifest "$m1_manifest" --generated-name-prefix m1-gate- \
-  --require-final-cleanup \
-  --sidecar-preflight-record "$evidence_dir/m1-sidecar-preflight.json" \
-  --verdict-record "$evidence_dir/m1-verdict.json" --job "$job_spec"
-jq -e '.verdict == "pass" and .failure_classes == []' \
-  >/dev/null "$evidence_dir/m1-verdict.json"
 run_complete=true

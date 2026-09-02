@@ -50,6 +50,7 @@ host_tag=receiving-${short_head}-${run_id}-debug
 host_image=wamn-host:${host_tag}
 postgres_container=wamn-receiving-pg18-${short_head}-${run_id}
 registry_container=wamn-receiving-registry-${short_head}-${run_id}
+nats_container=wamn-receiving-nats-${short_head}-${run_id}
 cargo_target_dir=${CARGO_TARGET_DIR:-$repo_root/target}
 
 if [[ "$apply" != true ]]; then
@@ -61,7 +62,7 @@ if [[ "$apply" != true ]]; then
   if [[ "$measure_startup" == true ]]; then
     printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> exact teardown\n'
   else
-    printf '  order: build -> production mint/attest -> operator 2.8.0 -> host 2.8.0 -> schedule -> EndpointSlice -> HTTP -> cross-environment refusal -> exact teardown\n'
+    printf '  order: build -> production mint/attest -> CDC + JetStream -> operator 2.8.0 -> host + materializer ready -> HTTP receipt -> causal inspection + ACK -> cross-environment refusal -> exact teardown\n'
   fi
   exit 0
 fi
@@ -72,7 +73,7 @@ if [[ -z "$evidence_dir" ]]; then
 fi
 # A sibling worktree may refresh Beads' passive export; it is not build input.
 if [[ -n $(git status --porcelain --untracked-files=normal -- . \
-    ':(exclude).beads/issues.jsonl') ]]; then
+    ':(exclude).beads/issues.jsonl' ':(exclude).beads/interactions.jsonl') ]]; then
   echo "refusing to build a non-clean source tree; commit the final tip first" >&2
   exit 2
 fi
@@ -151,6 +152,9 @@ kind_config=$work_dir/kind-config.yaml
 cluster_owned=false
 postgres_owned=false
 registry_owned=false
+nats_owned=false
+reader_owned=false
+reader_pid=
 host_image_owned=false
 run_complete=false
 
@@ -158,6 +162,23 @@ cleanup() {
   local status=$? cleanup_failed=false failure_capture_errors
   trap - EXIT HUP INT TERM
   set +e
+
+  if [[ "$reader_owned" == true && -n "$reader_pid" ]]; then
+    if kill -0 "$reader_pid" 2>/dev/null; then
+      record_command kill -TERM "$reader_pid"
+      kill -TERM "$reader_pid" >/dev/null 2>&1 || cleanup_failed=true
+      for _ in $(seq 1 50); do
+        kill -0 "$reader_pid" 2>/dev/null || break
+        sleep 0.1
+      done
+      if kill -0 "$reader_pid" 2>/dev/null; then
+        kill -KILL "$reader_pid" >/dev/null 2>&1 || true
+        cleanup_failed=true
+      fi
+    fi
+    wait "$reader_pid" >/dev/null 2>&1 || true
+    kill -0 "$reader_pid" 2>/dev/null && cleanup_failed=true
+  fi
 
   if [[ $status -ne 0 && "$cluster_owned" == true && -s "$kubeconfig" ]] &&
      kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
@@ -199,6 +220,11 @@ cleanup() {
     record_command docker rm --force --volumes "$registry_container"
     docker rm --force --volumes "$registry_container" >/dev/null 2>&1 || cleanup_failed=true
   fi
+  if [[ "$nats_owned" == true ]] &&
+     docker container inspect "$nats_container" >/dev/null 2>&1; then
+    record_command docker rm --force --volumes "$nats_container"
+    docker rm --force --volumes "$nats_container" >/dev/null 2>&1 || cleanup_failed=true
+  fi
   if [[ "$host_image_owned" == true ]] &&
      docker image inspect "$host_image" >/dev/null 2>&1; then
     record_command docker image rm "$host_image"
@@ -214,6 +240,9 @@ cleanup() {
   if docker container inspect "$registry_container" >/dev/null 2>&1; then
     cleanup_failed=true
   fi
+  if docker container inspect "$nats_container" >/dev/null 2>&1; then
+    cleanup_failed=true
+  fi
   if docker image inspect "$host_image" >/dev/null 2>&1; then
     cleanup_failed=true
   fi
@@ -222,12 +251,14 @@ cleanup() {
   [[ ! -e "$work_dir" ]] || cleanup_failed=true
 
   if [[ "$cleanup_failed" == false ]]; then
-    printf 'verdict=pass cluster=%s containers=%s,%s image=%s\n' \
-      "$cluster" "$postgres_container" "$registry_container" "$host_image" \
+    printf 'verdict=pass cluster=%s containers=%s,%s,%s reader_pid=%s image=%s\n' \
+      "$cluster" "$postgres_container" "$registry_container" "$nats_container" \
+      "$reader_pid" "$host_image" \
       >"$evidence_dir/cleanup.receipt"
   else
-    printf 'verdict=fail cluster=%s containers=%s,%s image=%s\n' \
-      "$cluster" "$postgres_container" "$registry_container" "$host_image" \
+    printf 'verdict=fail cluster=%s containers=%s,%s,%s reader_pid=%s image=%s\n' \
+      "$cluster" "$postgres_container" "$registry_container" "$nats_container" \
+      "$reader_pid" "$host_image" \
       >"$evidence_dir/cleanup.receipt"
     [[ $status -ne 0 ]] || status=1
   fi
@@ -237,7 +268,7 @@ cleanup() {
       printf 'RECEIVING STARTUP MEASUREMENT PASS source=%s namespace=%s\n' \
         "$head" "$namespace" >"$evidence_dir/startup-measurement.receipt"
     else
-      printf 'RECEIVING CLUSTER JOURNEY PASS source=%s namespace=%s host=%s\n' \
+      printf 'RECEIVING CLUSTER JOURNEY PASS source=%s namespace=%s host=%s cited=RC-851acb80:bootstrap,M2-supersession,socketguard,traceproof,scoped-RegistryReader rerun=materializer-journey,native-scheduling,exact-cleanup\n' \
         "$head" "$namespace" "$route_host" >"$evidence_dir/journey.receipt"
     fi
     (
@@ -264,7 +295,7 @@ if kind get clusters | grep -Fx -- "$cluster" >/dev/null; then
   echo "refusing pre-existing kind cluster: $cluster" >&2
   exit 2
 fi
-for container in "$postgres_container" "$registry_container"; do
+for container in "$postgres_container" "$registry_container" "$nats_container"; do
   if docker container inspect "$container" >/dev/null 2>&1; then
     echo "refusing pre-existing container: $container" >&2
     exit 2
@@ -289,9 +320,10 @@ fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   "$repo_root/tools/build-components" m1
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo build --locked -p wamn-host -p wamn-ctl
+  cargo build --locked -p wamn-host -p wamn-ctl -p wamn-cdc-reader
 
 flow_http_wasm=$cargo_target_dir/wasm32-wasip2/debug/http_route.wasm
+materializer_wasm=$cargo_target_dir/wasm32-wasip2/debug/materializer.wasm
 component_directory=$cargo_target_dir/virtualized/std-empty-environment
 components=(receiving client_acme_receiving)
 for component in "${components[@]}"; do
@@ -304,8 +336,13 @@ done
   echo "missing built flow-http component: $flow_http_wasm" >&2
   exit 1
 }
+[[ -s "$materializer_wasm" ]] || {
+  echo "missing built materializer component: $materializer_wasm" >&2
+  exit 1
+}
 : >"$evidence_dir/component-bytes.sha256"
 sha256sum "$flow_http_wasm" >>"$evidence_dir/component-bytes.sha256"
+sha256sum "$materializer_wasm" >>"$evidence_dir/component-bytes.sha256"
 for component in "${components[@]}"; do
   sha256sum "$component_directory/$component.wasm" \
     >>"$evidence_dir/component-bytes.sha256"
@@ -383,13 +420,16 @@ run_sensitive postgres docker run --detach --name "$postgres_container" --networ
   --env POSTGRES_PASSWORD=probe \
   --publish 127.0.0.1::5432 \
   --volume "$repo_root/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro" \
-  postgres:18
+  postgres:18 -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
 registry_owned=true
 run docker run --detach --name "$registry_container" --network kind \
   --env REGISTRY_AUTH=htpasswd \
   --env 'REGISTRY_AUTH_HTPASSWD_REALM=WAMN Receiving cluster journey' \
   --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
   --volume "$htpasswd_file:/auth/htpasswd:ro" registry:2
+nats_owned=true
+run docker run --detach --name "$nats_container" --network kind \
+  nats:2.10-alpine --jetstream --store_dir /data --http_port 8222
 
 postgres_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$postgres_container")
@@ -397,14 +437,32 @@ postgres_host_port=$(docker port "$postgres_container" 5432/tcp)
 postgres_host_port=${postgres_host_port##*:}
 registry_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$registry_container")
-for address in "$postgres_ip" "$registry_ip"; do
+nats_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
+  "$nats_container")
+for address in "$postgres_ip" "$registry_ip" "$nats_ip"; do
   if [[ ! "$address" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "owned container has no kind-network IPv4 address: $address" >&2
     exit 1
   fi
 done
-if [[ "$postgres_ip" == "$registry_ip" ]]; then
-  echo "owned PostgreSQL and registry containers share one address" >&2
+if [[ "$postgres_ip" == "$registry_ip" || "$postgres_ip" == "$nats_ip" ||
+      "$registry_ip" == "$nats_ip" ]]; then
+  echo "owned PostgreSQL, registry, and NATS containers must have distinct addresses" >&2
+  exit 1
+fi
+
+nats_ready=false
+for _ in $(seq 1 60); do
+  if curl --silent --show-error --connect-timeout 2 --max-time 5 \
+      "http://$nats_ip:8222/healthz?js-enabled-only=true" \
+      | jq -e '.status == "ok"' >/dev/null; then
+    nats_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$nats_ready" != true ]]; then
+  echo "owned NATS JetStream did not become healthy" >&2
   exit 1
 fi
 if [[ ! "$postgres_host_port" =~ ^[1-9][0-9]*$ ]]; then
@@ -465,6 +523,7 @@ test "$(curl --config "$curl_config" --silent --show-error --connect-timeout 2 \
   "http://$registry_authority/v2/")" = 200
 
 system_url=postgresql://postgres:probe@$postgres_ip:5432/postgres
+nats_url=nats://$nats_ip:4222
 component_artifact_base=$registry_authority/wamn/components
 release_artifact_base=$registry_authority/wamn/releases
 host_secret_directory=$work_dir/host-secrets
@@ -508,17 +567,29 @@ route_caller_secret_name=$(jq -er '.metadata.name' "$route_caller_kube_secret")
 run "${kube[@]}" apply -f "$route_caller_kube_secret"
 
 flow_http_push_ref=$registry_authority/wamn/flow-http:$host_tag
+materializer_push_ref=$registry_authority/wamn/materializer:$host_tag
 record_command env WASH_REG_USER='<redacted>' WASH_REG_PASSWORD='<redacted>' wash push \
   --insecure --allow-latest --output json "$flow_http_push_ref" "$flow_http_wasm"
 WASH_REG_USER="$registry_username" WASH_REG_PASSWORD="$registry_password" \
   wash push --insecure --allow-latest --output json \
   "$flow_http_push_ref" "$flow_http_wasm" \
   >"$evidence_dir/flow-http-push.json"
+record_command env WASH_REG_USER='<redacted>' WASH_REG_PASSWORD='<redacted>' wash push \
+  --insecure --allow-latest --output json "$materializer_push_ref" "$materializer_wasm"
+WASH_REG_USER="$registry_username" WASH_REG_PASSWORD="$registry_password" \
+  wash push --insecure --allow-latest --output json \
+  "$materializer_push_ref" "$materializer_wasm" \
+  >"$evidence_dir/materializer-push.json"
 unset registry_password
-jq -e '.success == true and (.digest | test("^sha256:[0-9a-f]{64}$"))' \
-  >/dev/null "$evidence_dir/flow-http-push.json"
+for push_receipt in "$evidence_dir/flow-http-push.json" \
+    "$evidence_dir/materializer-push.json"; do
+  jq -e '.success == true and (.digest | test("^sha256:[0-9a-f]{64}$"))' \
+    >/dev/null "$push_receipt"
+done
 flow_http_digest=$(jq -er '.digest' "$evidence_dir/flow-http-push.json")
 flow_http_ref=$registry_authority/wamn/flow-http@$flow_http_digest
+materializer_digest=$(jq -er '.digest' "$evidence_dir/materializer-push.json")
+materializer_ref=$registry_authority/wamn/materializer@$materializer_digest
 
 instance_suffix=$(PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres \
   -d postgres -Atqc \
@@ -530,6 +601,86 @@ fi
 project_database=wamn-db-acme--receiving--dev--$instance_suffix
 project_url=postgresql://postgres:probe@$postgres_ip:5432/$project_database
 ctl=$cargo_target_dir/debug/wamn-ctl
+
+cdc_role_sql=$work_dir/cdc-role.sql
+cdc_sql=$work_dir/cdc.sql
+cdc_secret=$work_dir/cdc-reader.json
+registry_reader_secret=$work_dir/registry-reader.json
+if [[ "$measure_startup" != true ]]; then
+cdc_password=$(openssl rand -hex 32)
+run_sensitive enable-cdc-project-env "$ctl" enable-cdc-project-env \
+  --org acme --project receiving --env dev --schema receiving \
+  --system-database-url "$system_url" --cluster route-auth-pg18 \
+  --replication-password "$cdc_password" --db-host "$postgres_ip" --db-port 5432 \
+  --namespace "$namespace" --secret-namespace "$namespace" \
+  --emit-role-sql "$cdc_role_sql" --emit-cdc-sql "$cdc_sql" --emit-secret "$cdc_secret"
+run_sensitive apply-cdc-role env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 \
+  -h "$postgres_ip" -p 5432 -U postgres -d postgres -f "$cdc_role_sql"
+run_sensitive apply-cdc-stream env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 \
+  -h "$postgres_ip" -p 5432 -U postgres -d "$project_database" -f "$cdc_sql"
+unset cdc_password
+run_sensitive prepare-registry-reader "$ctl" provision-project-env \
+  --org acme --project receiving --env dev --tenant receiving-route-auth \
+  --system-database-url "$system_url" --namespace "$namespace" \
+  --prepare-registry-reader-generation a \
+  --emit-registry-reader-secret "$registry_reader_secret"
+for secret in "$cdc_secret" "$registry_reader_secret"; do
+  chmod 0600 "$secret"
+  [[ $(stat -c '%a' "$secret") == 600 ]] || {
+    echo "reader credential has unsafe mode: $secret" >&2
+    exit 1
+  }
+  jq -e --arg host "$postgres_ip" \
+    '.kind == "Secret" and .type == "Opaque" and
+     (.stringData.url | type == "string" and contains("@" + $host + ":5432/"))' \
+    >/dev/null "$secret"
+done
+cdc_url=$(jq -er '.stringData.url' "$cdc_secret")
+registry_reader_url=$(jq -er '.stringData.url' "$registry_reader_secret")
+reader_binary=$cargo_target_dir/debug/wamn-cdc-reader
+record_command env WAMN_SYSTEM_URL='<registry-reader credential redacted>' \
+  WAMN_CDC_URL='<replication credential redacted>' "$reader_binary" \
+  --log-level info --org acme --project receiving --env dev --nats-url "$nats_url" \
+  --sslmode disable --stream-replicas 1 --dup-window-secs 120 --feedback-secs 1 \
+  --stall-threshold-secs 30 --slot-poll-secs 0 --slot-safe-wal-warn-bytes 268435456
+WAMN_SYSTEM_URL="$registry_reader_url" WAMN_CDC_URL="$cdc_url" \
+  "$reader_binary" --log-level info --org acme --project receiving --env dev \
+  --nats-url "$nats_url" --sslmode disable --stream-replicas 1 \
+  --dup-window-secs 120 --feedback-secs 1 --stall-threshold-secs 30 \
+  --slot-poll-secs 0 --slot-safe-wal-warn-bytes 268435456 \
+  >"$evidence_dir/cdc-reader.log" 2>&1 &
+reader_pid=$!
+reader_owned=true
+reader_ready=false
+for _ in $(seq 1 120); do
+  if ! kill -0 "$reader_pid" 2>/dev/null; then
+    echo "production CDC reader stopped before stream readiness" >&2
+    exit 1
+  fi
+  curl --silent --show-error --connect-timeout 2 --max-time 5 \
+    "http://$nats_ip:8222/jsz?streams=true&config=true" \
+    >"$work_dir/nats-jsz.json"
+  if jq -e '
+      [.. | objects | .name? |
+       select(. == "EVT_acme_dev" or . == "WAMN_DLQ")] |
+      unique == ["EVT_acme_dev", "WAMN_DLQ"]
+    ' >/dev/null "$work_dir/nats-jsz.json" &&
+    grep -F -- 'walsender session open; draining' \
+      "$evidence_dir/cdc-reader.log" >/dev/null; then
+    reader_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$reader_ready" != true ]]; then
+  echo "production CDC reader did not open its walsender session" >&2
+  exit 1
+fi
+cp "$work_dir/nats-jsz.json" "$evidence_dir/nats-reader-ready.json"
+grep -F -- 'walsender session open; draining' "$evidence_dir/cdc-reader.log" \
+  >"$evidence_dir/cdc-reader-ready.receipt"
+fi
+
 run_sensitive print-release-env "$ctl" print-release-env \
   --database-url "$project_url" --tenant receiving-route-auth \
   --effective-release-id 1 --artifact-base "$release_artifact_base" \
@@ -645,12 +796,10 @@ jq -e --arg namespace "$namespace" --arg operator_namespace "$system_namespace" 
 ' >/dev/null "$evidence_dir/operator-events-rolebinding.json"
 operator_subject="system:serviceaccount:$system_namespace:$operator_service_account"
 
-if [[ "$measure_startup" == true ]]; then
-  run "${kube[@]}" apply -f "$repo_root/deploy/infra/tempo.yaml"
-  run "${kube[@]}" apply -f "$repo_root/deploy/infra/otel-collector.yaml"
-  run "${kube[@]}" -n "$system_namespace" wait --for=condition=Available \
-    deployment/tempo deployment/otel-collector --timeout=120s
-fi
+run "${kube[@]}" apply -f "$repo_root/deploy/infra/tempo.yaml"
+run "${kube[@]}" apply -f "$repo_root/deploy/infra/otel-collector.yaml"
+run "${kube[@]}" -n "$system_namespace" wait --for=condition=Available \
+  deployment/tempo deployment/otel-collector --timeout=120s
 
 ca_source=$work_dir/wasmcloud-ca-source.json
 ca_copy=$work_dir/wasmcloud-ca-copy.json
@@ -681,7 +830,7 @@ awk -v target_namespace="$namespace" -v tag="$host_tag" -v replicas="$host_repli
 host_overlay=$work_dir/host-receiving.yaml
 awk -v target_namespace="$namespace" -v component_base="$component_artifact_base" \
     -v release_base="$release_artifact_base" -v digest="$manifest_digest" \
-    -v replicas="$host_replicas" -v trace_enabled="$measure_startup" \
+    -v replicas="$host_replicas" -v nats_url="$nats_url" \
     -v guest="$guest_secret_name" -v executor="$executor_platform_secret_name" \
     -v materializer="$event_materializer_secret_name" \
     -v identity="$identity_secret_name" -v http="$http_secret_name" '
@@ -702,11 +851,15 @@ awk -v target_namespace="$namespace" -v component_base="$component_artifact_base
   }
   /name: WAMN_WASMTIME_CACHE_DIR/ {
     print
-    if (trace_enabled == "true") {
-      print "        - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector.wamn-system.svc.cluster.local:4317 }"
-      print "        - { name: OTEL_BSP_SCHEDULE_DELAY, value: \"1\" }"
-      print "        - { name: OTEL_BSP_MAX_EXPORT_BATCH_SIZE, value: \"1\" }"
-    }
+    print "        - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector.wamn-system.svc.cluster.local:4317 }"
+    print "        - { name: OTEL_BSP_SCHEDULE_DELAY, value: \"1\" }"
+    print "        - { name: OTEL_BSP_MAX_EXPORT_BATCH_SIZE, value: \"1\" }"
+    next
+  }
+  /^        - name: WAMN_EVT_NATS_URL$/ {
+    print
+    getline
+    print "          value: " nats_url
     next
   }
   /^          value: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/components$/ {
@@ -730,12 +883,12 @@ for expected in "$namespace" "$component_artifact_base" "$release_artifact_base"
     exit 1
   }
 done
-if [[ "$measure_startup" == true ]]; then
-  grep -F -- 'OTEL_EXPORTER_OTLP_ENDPOINT' "$host_overlay" >/dev/null || {
-    echo "rendered measurement overlay omitted OTLP export" >&2
+for expected in 'OTEL_EXPORTER_OTLP_ENDPOINT' "$nats_url"; do
+  grep -F -- "$expected" "$host_overlay" >/dev/null || {
+    echo "rendered host overlay omitted $expected" >&2
     exit 1
   }
-fi
+done
 run helm upgrade --install --kubeconfig "$kubeconfig" --kube-context "$context" \
   --namespace "$namespace" wamn-host "$chart" --version "$chart_version" \
   -f "$host_base" -f "$host_overlay" --wait --timeout 5m
@@ -1304,6 +1457,267 @@ jq -e --arg host "$route_host" '
         body:{error:{code:"route-not-found"}}}
 ' >/dev/null "$evidence_dir/flow-http-response.json"
 
+# Prepare the genuine post-commit trigger. It is applied only after the
+# production reader, released HTTP workload, and materializer are all ready.
+materializer_trigger=$work_dir/materializer-trigger.yaml
+cat >"$materializer_trigger" <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: receiving-materializer-trigger
+  namespace: $namespace
+spec:
+  activeDeadlineSeconds: 90
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: trigger
+          image: $host_image
+          imagePullPolicy: Never
+          env:
+            - name: ROUTE_CALLER_PAT
+              valueFrom:
+                secretKeyRef:
+                  name: $route_caller_secret_name
+                  key: token
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              update_status=\$(curl --silent --show-error --connect-timeout 5 --max-time 60 \
+                --output /tmp/update.json --write-out '%{http_code}' \
+                --header 'Host: $route_host' \
+                --header 'Content-Type: application/json' \
+                --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \
+                --data '[{"request_id":"materializer-order","id":"00000000-0000-0000-0000-000000000304","expected_row_version":"1","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]' \
+                'http://flow-http.$namespace.svc.cluster.local/acme/purchase_order/update')
+              test "\$update_status" = 200
+              receipt_status=\$(curl --silent --show-error --connect-timeout 5 --max-time 60 \
+                --output /tmp/receipt.json --write-out '%{http_code}' \
+                --header 'Host: $route_host' \
+                --header 'Content-Type: application/json' \
+                --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \
+                --data '[{"request_id":"materializer-receipt","value":{"idempotency_key":"materializer-receipt-command","purchase_order_id":"00000000-0000-0000-0000-000000000304","receipt_reference":"MATERIALIZER-RECEIPT","occurred_at":"2026-08-31T12:34:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000504","quantity":"9.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]' \
+                'http://flow-http.$namespace.svc.cluster.local/acme/receiving/record_receipt')
+              test "\$receipt_status" = 200
+              printf 'RECEIVING_MATERIALIZER_UPDATE '
+              tr -d '\n' </tmp/update.json
+              printf '\nRECEIVING_MATERIALIZER_RECEIPT '
+              tr -d '\n' </tmp/receipt.json
+              printf '\n'
+EOF
+materializer_manifest=$work_dir/materializer.yaml
+awk -v target_namespace="$namespace" -v image="$materializer_ref" '
+  /^  name: materializer-demo$/ { print "  name: receiving-materializer"; next }
+  /^  namespace: wamn-system$/ { print "  namespace: " target_namespace; next }
+  /^      environment: wamn-system$/ { print "      environment: " target_namespace; next }
+  /^        image: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/materializer:dev$/ {
+    print "        image: " image; next
+  }
+  /wamn\.tenant: t1$/ { print "            wamn.tenant: receiving-route-auth"; next }
+  /wamn\.project: default$/ { print "            wamn.project: receiving"; next }
+  /wamn\.environment: menv$/ { print "            wamn.environment: dev"; next }
+  /WAMN_MAT_STREAM: EVT_morg_menv$/ { print "              WAMN_MAT_STREAM: EVT_acme_dev"; next }
+  /WAMN_MAT_ORG: morg$/ { print "              WAMN_MAT_ORG: acme"; next }
+  /WAMN_MAT_PROJECT: mproj$/ { print "              WAMN_MAT_PROJECT: receiving"; next }
+  /WAMN_MAT_ENV: menv$/ { print "              WAMN_MAT_ENV: dev"; next }
+  /WAMN_MAT_TENANT: t1$/ {
+    print "              WAMN_MAT_TENANT: receiving-route-auth"
+    print "              WAMN_MAT_FETCH_MS: \"500\""
+    print "              WAMN_MAT_SWEEP_MS: \"500\""
+    next
+  }
+  { print }
+' "$repo_root/deploy/platform/materializer.example.yaml" >"$materializer_manifest"
+run "${kube[@]}" apply -f "$materializer_manifest"
+run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
+  workloaddeployment/receiving-materializer --timeout=240s
+"${kube[@]}" -n "$namespace" get workloaddeployment receiving-materializer -o json \
+  >"$evidence_dir/materializer-deployment.json"
+jq -e --arg image "$materializer_ref" --arg namespace "$namespace" '
+  .metadata.name == "receiving-materializer" and
+  .metadata.namespace == $namespace and
+  .spec.replicas == 1 and
+  .spec.template.spec.environment == $namespace and
+  .spec.template.spec.hostSelector == {hostgroup:"default"} and
+  .spec.template.spec.service.image == $image and
+  .spec.template.spec.service.localResources.config == {
+    "wamn.tenant":"receiving-route-auth",
+    "wamn.project":"receiving",
+    "wamn.environment":"dev",
+    "wamn.postgres.authority":"event-materializer"
+  } and
+  [.spec.template.spec.service.localResources.environment.config[
+    "WAMN_MAT_STREAM","WAMN_MAT_ORG","WAMN_MAT_PROJECT","WAMN_MAT_ENV",
+    "WAMN_MAT_TENANT","WAMN_MAT_FETCH_MS","WAMN_MAT_SWEEP_MS"
+  ]] == ["EVT_acme_dev","acme","receiving","dev","receiving-route-auth","500","500"] and
+  (.spec.template.spec.hostInterfaces | sort_by(.package)) == [
+    {namespace:"wamn", package:"jetstream", version:"0.1.0",
+     interfaces:["types","consumer","doorbell"]},
+    {namespace:"wamn", package:"postgres", version:"0.1.0",
+     interfaces:["types","client"]},
+    {namespace:"wamn", package:"router-delivery", version:"0.1.0",
+     interfaces:["delivery"]}
+  ] and
+  .status.currentReplicas == 1 and
+  .status.replicas.expected == 1 and .status.replicas.current == 1 and
+  .status.replicas.ready == 1 and (.status.replicas.unavailable // 0) == 0 and
+  (.status.currentReplicaSet.name | type == "string" and length > 0) and
+  any(.status.conditions[]?; .type == "Ready" and .status == "True")
+' >/dev/null "$evidence_dir/materializer-deployment.json"
+materializer_replicaset=$(jq -er '.status.currentReplicaSet.name' \
+  "$evidence_dir/materializer-deployment.json")
+"${kube[@]}" -n "$namespace" get workloadreplicaset "$materializer_replicaset" -o json \
+  >"$evidence_dir/materializer-replicaset.json"
+materializer_replicaset_uid=$(jq -er '.metadata.uid' \
+  "$evidence_dir/materializer-replicaset.json")
+for _ in $(seq 1 120); do
+  "${kube[@]}" -n "$namespace" get workloads -o json >"$work_dir/materializer-workloads.json"
+  if jq -e --arg uid "$materializer_replicaset_uid" '
+      [.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid))] | length == 1
+    ' >/dev/null "$work_dir/materializer-workloads.json"; then
+    break
+  fi
+  sleep 2
+done
+jq -e --arg uid "$materializer_replicaset_uid" '
+  [.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid))] |
+  if length == 1 then .[0] else error("materializer Workload missing or ambiguous") end
+' "$work_dir/materializer-workloads.json" >"$evidence_dir/materializer-workload.json"
+jq -e --arg namespace "$namespace" \
+  --arg host_id "$(jq -r '.status.hostId' "$evidence_dir/materializer-workload.json")" \
+  --slurpfile hosts "$evidence_dir/hosts.json" '
+  .status.conditions as $conditions |
+  .status.environment == $namespace and (.status.hostId | length > 0) and
+  .status.hostId == $host_id and any($hosts[0].items[]; .hostId == $host_id) and
+  all(["Config","HostSelection","Placement","Sync","Ready"][];
+    . as $type | any($conditions[]?; .type == $type and .status == "True"))
+' >/dev/null "$evidence_dir/materializer-workload.json"
+
+# Both production consumers are resident before this HTTP commit. The first
+# request makes the untouched order inspection-bearing; the second creates the
+# receipt whose causal CDC event the materializer consumes.
+run "${kube[@]}" apply -f "$materializer_trigger"
+run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
+  job/receiving-materializer-trigger --timeout=120s
+"${kube[@]}" -n "$namespace" logs job/receiving-materializer-trigger \
+  >"$evidence_dir/materializer-trigger.log"
+sed -n 's/^RECEIVING_MATERIALIZER_UPDATE //p' \
+  "$evidence_dir/materializer-trigger.log" >"$evidence_dir/materializer-update.json"
+sed -n 's/^RECEIVING_MATERIALIZER_RECEIPT //p' \
+  "$evidence_dir/materializer-trigger.log" >"$evidence_dir/materializer-receipt.json"
+jq -e '
+  type == "array" and length == 1 and
+  .[0].request_id == "materializer-order" and
+  .[0].value.id == "00000000-0000-0000-0000-000000000304" and
+  .[0].value.row_version == "2" and
+  .[0].value.acme_inspection_required == true and
+  .[0].value.acme_quality_status == "pending"
+' >/dev/null "$evidence_dir/materializer-update.json"
+jq -e '
+  type == "array" and length == 1 and
+  .[0].request_id == "materializer-receipt" and
+  .[0].value.purchase_order_id == "00000000-0000-0000-0000-000000000304" and
+  .[0].value.purchase_order_status == "complete" and
+  .[0].value.row_version == "3" and
+  .[0].value.acme_inspection_required == true and
+  .[0].value.acme_quality_status == "pending" and
+  (.[0].value.receipt_id | test("^[0-9a-f-]{36}$"))
+' >/dev/null "$evidence_dir/materializer-receipt.json"
+materializer_receipt_id=$(jq -er '.[0].value.receipt_id' \
+  "$evidence_dir/materializer-receipt.json")
+
+record_command cargo test production_materializer_consumes_the_causal_receipt_exactly_once \
+  '<disposable PostgreSQL, NATS, and receipt inputs redacted>'
+WAMN_RECEIVING_MATERIALIZER_PG_URL="$project_url" \
+WAMN_RECEIVING_MATERIALIZER_NATS_URL="$nats_url" \
+WAMN_RECEIVING_MATERIALIZER_RECEIPT_ID="$materializer_receipt_id" \
+CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+  cargo test -p wamn-proof-integration --lib --locked --offline \
+  route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once \
+  -- --ignored --exact --nocapture --test-threads=1 \
+  2>&1 | tee "$evidence_dir/production-materializer.log"
+if [[ $(grep -Fc 'RECEIVING_MATERIALIZER_PASS ' \
+    "$evidence_dir/production-materializer.log") -ne 1 ]]; then
+  echo "production materializer emitted no unique causal receipt" >&2
+  exit 1
+fi
+
+overlay_component_digest=$(PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 \
+  -U postgres -d "$project_database" -Atqc \
+  "SELECT component_digest FROM catalog.component_library WHERE tenant_id='receiving-route-auth' AND package_id='client_acme_receiving' AND package_version='3.0.0' AND component='client_acme_receiving'")
+[[ "$overlay_component_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+  echo "released overlay component digest is absent or malformed" >&2
+  exit 1
+}
+materializer_trace_found=false
+tempo_search=/api/v1/namespaces/$system_namespace/services/http:tempo:3200/proxy/api/search?limit=100
+for _ in $(seq 1 60); do
+  "${kube[@]}" get --raw "$tempo_search" >"$work_dir/tempo-search.json" 2>/dev/null || true
+  materializer_trace_count=0
+  materializer_trace_path=
+  while IFS= read -r trace_id; do
+    [[ "$trace_id" =~ ^[0-9a-f]{32}$ ]] || continue
+    trace_path=/api/v1/namespaces/$system_namespace/services/http:tempo:3200/proxy/api/traces/$trace_id
+    trace_candidate=$work_dir/materializer-trace-$trace_id.json
+    "${kube[@]}" get --raw "$trace_path" >"$trace_candidate" \
+      2>/dev/null || continue
+    invocation_count=$(jq -er --arg digest "$overlay_component_digest" '
+        def spans: [.batches[]?.scopeSpans[]?.spans[]?];
+        def attr($span; $key):
+          ([$span.attributes[]? | select(.key == $key) | .value.stringValue][0] // null);
+        spans as $spans |
+        [$spans[] | select(
+          .name == "wamn.component.invoke" and
+          attr(.; "wamn.wiring_id") == "quality_create_inspection" and
+          attr(.; "wamn.operation") ==
+            "client-acme-receiving:quality/create-inspection@3.0.0" and
+          attr(.; "wamn.component_digest") == $digest and
+          attr(.; "wamn.tenant") == "receiving-route-auth" and
+          attr(.; "wamn.project") == "receiving" and
+          attr(.; "wamn.caller_principal_id") == null)] | length
+      ' "$trace_candidate")
+    materializer_trace_count=$((materializer_trace_count + invocation_count))
+    if ((invocation_count == 1)) &&
+       jq -e 'any(.batches[]?.scopeSpans[]?.spans[]?; .name == "wamn.postgres")' \
+         >/dev/null "$trace_candidate"; then
+      materializer_trace_path=$trace_candidate
+      materializer_trace_id=$trace_id
+    fi
+  done < <(jq -r '.traces[]?.traceID // empty' "$work_dir/tempo-search.json" \
+    2>/dev/null | sort -u)
+  if ((materializer_trace_count > 1)); then
+    echo "Tempo retained $materializer_trace_count materializer invocations; expected one" >&2
+    exit 1
+  fi
+  if ((materializer_trace_count == 1)) && [[ -n "$materializer_trace_path" ]]; then
+    cp "$materializer_trace_path" "$evidence_dir/materializer-trace.json"
+    printf 'verdict=pass trace_id=%s operation=%s digest=%s caller=absent global_invocations=1\n' \
+      "$materializer_trace_id" \
+      'client-acme-receiving:quality/create-inspection@3.0.0' \
+      "$overlay_component_digest" >"$evidence_dir/materializer-trace.receipt"
+    materializer_trace_found=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$materializer_trace_found" != true ]]; then
+  echo "Tempo did not retain the exact callerless materializer component trace" >&2
+  exit 1
+fi
+
+: >"$evidence_dir/materializer-host.log"
+while IFS= read -r host_pod; do
+  "${kube[@]}" -n "$namespace" logs "$host_pod" -c host \
+    >>"$evidence_dir/materializer-host.log"
+done < <(jq -r '.items[].metadata.name' "$evidence_dir/host-pods.json")
+if grep -E 'wamn::materializer (REFUSED|.*failed)|router delivery did not settle' \
+    "$evidence_dir/materializer-host.log" >/dev/null; then
+  echo "production materializer logged a refusal or unsettled delivery" >&2
+  exit 1
+fi
+
 negative_manifest=$work_dir/cross-environment-workload.json
 jq --arg name flow-http-cross-environment --arg environment "${namespace}-denied" '
   del(.metadata.annotations, .metadata.creationTimestamp, .metadata.generateName,
@@ -1391,13 +1805,30 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
     route_host:$host,
     passing_arms:[
       "production-mint-and-attestation",
+      "production-cdc-reader-session",
       "operator-before-host-2.8.0",
       "three-ready-default-hosts",
       "flow-http-workload-ready",
+      "materializer-workload-ready",
       "operator-endpointslice",
       "exact-route-not-found-reachability",
+      "receipt-root-causation",
+      "inspection-derived-causation",
+      "exactly-one-pending-inspection",
+      "exact-materializer-durable-ack",
+      "zero-materializer-dead-letter",
+      "single-callerless-materializer-trace",
       "cross-environment-scheduling-refusal"
     ],
+    evidence_scope:{
+      cited_immutable_rc:{
+        close:"851acb80",
+        source:"79d2ab64",
+        arms:["bootstrap","M2-supersession","socketguard","traceproof",
+              "scoped-RegistryReader"]
+      },
+      rerun:["materializer-journey","native-scheduling","exact-cleanup"]
+    },
     reachability_scope:"The exact 404 proves HTTP routing and guest execution only."
   }
 ' >"$evidence_dir/verdict.json"

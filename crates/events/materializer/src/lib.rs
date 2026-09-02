@@ -7,7 +7,7 @@ mod input;
 pub mod sql;
 
 pub use condition::{CompiledCondition, ConditionOutcome, compile_condition};
-pub use context::{derived_event_context, event_context, tenant_of};
+pub use context::{RowTenant, derived_event_context, event_context, row_tenant};
 pub use decide::{
     DecideError, RefuseReason, SkipReason, Verdict, VerifiedSourceEventId, decide, decide_derived,
     serviceable, verified_derived_source_event_id, verified_source_event_id,

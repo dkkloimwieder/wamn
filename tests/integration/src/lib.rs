@@ -6,13 +6,10 @@ pub use wamn_test_infrastructure::ctl_process;
 
 #[cfg(test)]
 mod acme_overlay_publication;
-pub mod causation_e2e;
 mod cdc_reader_process;
 pub mod cdcbench;
 pub mod dashproof;
-mod dispatcher_process;
 mod hot_route_trace;
-pub mod m1;
 mod measurement_schema;
 pub mod provisionbench;
 pub mod readerbench;
@@ -20,7 +17,6 @@ pub mod readerbench;
 mod receiving_data_access;
 #[cfg(test)]
 mod receiving_publication;
-mod release_fixture;
 pub mod retention;
 #[cfg(test)]
 mod route_authentication_live;

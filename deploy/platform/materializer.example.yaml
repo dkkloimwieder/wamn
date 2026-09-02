@@ -11,7 +11,7 @@
 #
 # SERVICE-FIRST (E11/D21 + E12): this is a wasmCloud SERVICE workload —
 # `spec.service`, a wasi:cli/run command component the host runs in its
-# restart loop — NOT a hand-rolled Deployment. The washlet host provides both
+# restart loop — NOT a hand-rolled Deployment. The washlet host provides all
 # imports as plugins; `hostInterfaces` is the host-plugin ALLOWLIST
 # (bind_plugins binds only what is declared here).
 #
@@ -20,8 +20,8 @@
 # drives the doorbell subject; `wamn.project` selects the per-project pool;
 # `wamn.postgres.authority` selects the closed event-materializer credential
 # class. The WAMN_MAT_* environment is guest-side SUBSCRIPTION config only
-# (stream name + subject segments + the tenant label for the event tenant-guard
-# compare) — RLS holds regardless of what the env claims.
+# (stream name + subject segments + the tenant label checked against the
+# credential-scoped catalog row) — RLS holds regardless of what the env claims.
 #
 # THE DOORBELL SEGMENT IS AN EXECUTION TARGET, NOT A TENANT —
 # `wamn.doorbell.<execution-target-id>` — and THIS WORKLOAD CARRIES NO KEY THAT
@@ -70,9 +70,10 @@ spec:
       # `HostSelection=False` condition.
       environment: wamn-system
       hostInterfaces:
-        # The host's hostInterfaces are the ALLOWLIST for host plugins — the
-        # materializer imports wamn:postgres AND wamn:jetstream; both must be
-        # listed or the component fails to instantiate.
+        # The host's hostInterfaces are the ALLOWLIST for host plugins. The
+        # materializer imports PostgreSQL, JetStream, and the production
+        # router-delivery bridge; all three must be listed or the component
+        # fails to instantiate.
         - namespace: wamn
           package: postgres
           version: "0.1.0"
@@ -81,6 +82,10 @@ spec:
           package: jetstream
           version: "0.1.0"
           interfaces: [types, consumer, doorbell]
+        - namespace: wamn
+          package: router-delivery
+          version: "0.1.0"
+          interfaces: [delivery]
       service:
         image: registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev
         # Mutable :dev tag — always re-pull so a re-pushed component is picked
@@ -95,6 +100,7 @@ spec:
           config:
             wamn.tenant: t1
             wamn.project: default
+            wamn.environment: menv
             wamn.postgres.authority: event-materializer
           environment:
             config:

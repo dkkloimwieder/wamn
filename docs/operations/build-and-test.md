@@ -31,9 +31,9 @@ record.** `architecture/workspace-tiers.json` says the same thing in its
 `deployed_system_proof.command_semantics`.
 
 The gate Job manifests are `deploy/gates/*-job.yaml`, applied per run and
-deleted after (`deploy/README.md`). At `1bffa614` there are three:
-`m1-gate-job.yaml`, `socketguard-job.yaml`, `traceproof-job.yaml`, plus the
-`serve-echo.yaml` support Deployment that `traceproof` reads back from.
+deleted after (`deploy/README.md`). The two live Job manifests are
+`socketguard-job.yaml` and `traceproof-job.yaml`; `serve-echo.yaml` is the
+support Deployment that `traceproof` reads back from.
 
 ```bash
 kubectl -n wamn-system apply -f deploy/gates/socketguard-job.yaml
@@ -42,10 +42,8 @@ kubectl -n wamn-system logs -f job/socketguard
 
 `tools/kubernetes-gate-run` is the runner that turns a manifest into a
 machine-decidable verdict (`--manifest`, `--verdict-record`, one `--job` JSON
-per Job; `--help` prints the full option set). `deploy/gates/m1-gate-job.yaml`
-carries its own complete invocation in its header comment — build the sidecar,
-render the manifest, then `tools/kubernetes-gate-run`. Do not paraphrase it;
-read it.
+per Job; `--help` prints the full option set). Each live Job manifest carries
+its complete invocation in its header comment. Do not paraphrase it; read it.
 
 `tools/kind-gate-build --image REF --cache-ref REF` builds a `--target gates`
 image with a caller-owned registry cache and loads it into kind. It refuses the
@@ -54,10 +52,7 @@ protected tags `dev`, `latest`, and `callable-flow-base-*`.
 ## Build
 
 **Debug by default.** `cargo build` / `cargo test`. Use `--release` only when a
-named gate needs it — the `Dockerfile` stages do, and
-`deploy/gates/m1-gate-job.yaml` explicitly does *not* ("Build the gate binary
-and materializer with the debug-only SR-MVP recipe; do not use the repository
-Dockerfile's release stages for this gate receipt").
+named gate needs it — the `Dockerfile` stages do.
 
 **Do not build to verify a config or manifest edit.** `cargo metadata
 --no-deps` proves a manifest parses in seconds and compiles nothing.
@@ -522,14 +517,11 @@ the duration.** Measured on that bead: unarmed `finished in 0.00s` with
 with no skip line and a `wamn-db-acme--receiving--dev--k3m9x2p7` database plus
 three minted generation logins left on the server.
 
-Two things are arranged so they cannot go unarmed.
-`deploy/gates/m1-gate-job.yaml` sets `WAMN_PG_ADMIN_URL`,
-`WAMN_SYSTEM_ADMIN_URL`, and `WAMN_EVT_NATS_URL` for its own Pod, pointing at a
-self-contained sidecar in that Pod. M1 derives and prepares its job-scoped App
-generation after provisioning, then constructs its credentialed loopback URL
-in-process. The benches take their substrate as arguments
-(`--admin-database-url`, `--nats-url`) rather than from the environment, so a
-missing one is a parse error.
+Two things are arranged so they cannot go unarmed. The
+`[RECEIVING-MATERIALIZER-JOURNEY]` helper owns and supplies its disposable
+PostgreSQL, NATS, and authenticated OCI inputs. The benches take their
+substrate as arguments (`--admin-database-url`, `--nats-url`) rather than from
+the environment, so a missing one is a parse error.
 
 **Every `wamn-ctl` live gate shares one variable and one lock.**
 `services/ctl/tests/support/mod.rs` builds the name as
@@ -679,14 +671,14 @@ plus `all` (which excludes `switchover`). It needs a superuser
 `--admin-database-url` at path `/postgres` on a `wal_level=logical` server and a
 JetStream `--nats-url`.
 
-**No runnable invocation is recorded here, because none exists at `1bffa614`.**
+**No runnable invocation is recorded here.**
 `cdcbench` is a `pub mod` of `wamn-proof-integration`, which has a **lib target
 only** (`cargo metadata`), and the `wamn-gates` binary
-(`tests/orchestrator/src/main.rs`) exposes exactly eight subcommands —
-`retention`, `readerbench`, `m1`, `m1-cleanup`, `serve-echo`, `socketguard`,
-`traceproof`, `dashproof` — and `cdcbench` is not among them. The same is true
-of `provisionbench`, `streambench`, `walbench`, `causation_e2e`,
-`exposure_live`, and `trusted_http_route`. This is exactly the
+(`tests/orchestrator/src/main.rs`) exposes exactly six subcommands —
+`retention`, `readerbench`, `serve-echo`, `socketguard`, `traceproof`, and
+`dashproof` — and `cdcbench` is not among them. The same is true of
+`provisionbench`, `streambench`, `walbench`, `exposure_live`, and
+`trusted_http_route`. This is exactly the
 shape `wamn-0h0g.15.137` exists to inventory: a verification artifact with no
 runner of record.
 
@@ -1076,19 +1068,42 @@ registry services unchanged and stopped. Cleanup removes only this Compose
 project, its volumes, and its validated scratch path. Never substitute shared
 infrastructure or the frozen cluster.
 
+### `[RECEIVING-MATERIALIZER-JOURNEY]` — router-era causation and materialization
+
+This is the D19 primary gate and the production-fed source for
+`H5-CAUSATION` and `H5-CAUSATION-E2E`. The disposable cluster runner starts the
+production CDC reader, schedules the released EventMaterializer, and issues a
+real receipt through the published Receiving route. It proves the receipt
+event carries route-derived root causation, the handler-created inspection
+preserves that root while advancing depth, and exactly one pending inspection
+is committed. The durable must settle with no pending or redelivered messages
+and no dead letter. The materializer invocation trace must name the released
+overlay operation and digest, include its PostgreSQL effect, and carry no
+caller identity: post-commit causation is provenance, not identity.
+
+```bash
+tools/receiving-cluster-journey-run --apply \
+  --evidence-dir /tmp/wamn-receiving-materializer-evidence
+```
+
+This run re-proves the materializer journey, native scheduling, and exact
+cleanup. It cites the immutable RC bootstrap, M2-supersession, socketguard,
+traceproof, and scoped RegistryReader receipts; it does not rerun those
+unchanged mechanisms.
+
 ### `[RECEIVING-CLUSTER-JOURNEY]` — released flow-http scheduling and reachability
 
-This gate wraps the production Receiving route journey above, then installs the
-pinned operator 2.8.0 release before the pinned host 2.8.0 release on its own
-three-node kind cluster. It proves three Ready default-group Hosts, native
-Workload scheduling, the operator-managed EndpointSlice, the exact typed
-`route-not-found` response through `receiving.localhost`, and the native
-`CrossEnvironmentSchedulingDenied` refusal. The runner applies the WAMN-owned
-per-environment modern-Event Role and RoleBinding, proves the operator's actual
-ServiceAccount has exactly `create,patch` on `events.k8s.io/events`, and records
-both the durable condition and matching native Warning Event. The 404 proves
-only HTTP routing and guest execution; the Kubernetes objects independently
-prove the other arms.
+The same runner wraps the production Receiving route and materializer journeys
+above, then installs the pinned operator 2.8.0 release before the pinned host
+2.8.0 release on its own three-node kind cluster. It proves three Ready
+default-group Hosts, native Workload scheduling, the operator-managed
+EndpointSlice, the exact typed `route-not-found` response through
+`receiving.localhost`, and the native `CrossEnvironmentSchedulingDenied`
+refusal. The runner applies the WAMN-owned per-environment modern-Event Role
+and RoleBinding, proves the operator's actual ServiceAccount has exactly
+`create,patch` on `events.k8s.io/events`, and records both the durable condition
+and matching native Warning Event. The 404 proves only HTTP routing and guest
+execution; the Kubernetes objects independently prove the other arms.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \

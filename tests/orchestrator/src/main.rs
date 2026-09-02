@@ -10,7 +10,7 @@
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
-use wamn_proof_integration::{dashproof, m1, readerbench, retention};
+use wamn_proof_integration::{dashproof, readerbench, retention};
 use wamn_proof_system::traceproof;
 
 use std::str::FromStr as _;
@@ -34,10 +34,6 @@ enum Command {
     Retention(retention::RetentionArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
-    /// Run M1 checks 9 and 10 over one isolated event-path fixture.
-    M1(m1::M1Args),
-    /// Idempotently clean resources owned by one exact M1 Job identity.
-    M1Cleanup(m1::M1Args),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
@@ -64,8 +60,6 @@ async fn async_main() -> anyhow::Result<()> {
     let result = match cli.command {
         Command::Retention(args) => retention::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
-        Command::M1(args) => m1::run(args).await,
-        Command::M1Cleanup(args) => m1::cleanup(args).await,
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Traceproof(args) => traceproof::run(args).await,

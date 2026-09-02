@@ -1,5 +1,5 @@
 # E7 (wamn-l5i9.48) — the CDC reader's own identity, applied ONCE per cluster
-# (named today by deploy/gates/m1-gate-job.yaml and shared by the future D22
+# (consumed by the Receiving materializer journey and shared by the future D22
 # lease-sharded fleet; 2099d754 deleted the reader Deployment example).
 #
 #   kubectl -n wamn-system apply -f deploy/platform/event-reader-rbac.yaml

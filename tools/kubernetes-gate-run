@@ -3,17 +3,10 @@
 #
 # Each --job value is JSON with this schema:
 #   {"name":"gate","container":"gate","expectation":"positive",
-#    "exit_code":0,"image":"wamn-gates:dev","log_contains":"overall PASS",
-#    "claimed_image_id":"sha256:...","claim_log_prefix":"claimed-image-id=",
-#    "sidecar":"postgres","sidecar_image":"wamn-postgres:m1-pg18-build",
-#    "sidecar_image_id":"sha256:...","sidecar_config_id":"sha256:...",
-#    "sidecar_upstream_index":"sha256:...","sidecar_upstream_child":"sha256:..."}
+#    "exit_code":0,"image":"wamn-gates:dev","log_contains":"overall PASS"}
 # expectation is "positive" or "expected-negative". Exactly one
 # expected-negative Job requires --snapshot-executable; each argument is passed
 # separately with --snapshot-arg. Command strings are never evaluated.
-# Kind-local sidecars use one build-scoped named tag. Before any Job creation,
-# this runner binds that tag's root containerd manifest and CRI runtime/config/
-# provenance tuple across the exact three Ready amd64 nodes.
 
 set -uo pipefail
 
@@ -23,10 +16,6 @@ usage: kubernetes-gate-run --manifest FILE --verdict-record FILE [options]
   --namespace NAME              Kubernetes namespace (default: wamn-system)
   --timeout-secs N              Per-command and Job wait bound (default: 900)
   --job JSON                    Repeat for every Job in the aggregate
-  --generated-name-prefix NAME  Create one generateName Job and capture its exact name
-  --require-final-cleanup       Require final+external cleanup absence receipts
-  --sidecar-preflight-record FILE
-                                Write the runner-collected three-node image tuple here
   --snapshot-executable PATH    Exact negative side-effect probe executable
   --snapshot-arg VALUE          Repeat to construct the probe argv
 EOF
@@ -37,9 +26,6 @@ verdict_record=
 namespace=wamn-system
 timeout_secs=900
 snapshot_executable=
-sidecar_preflight_record=
-generated_name_prefix=
-require_final_cleanup=false
 declare -a snapshot_argv=()
 declare -a job_specs=()
 
@@ -50,9 +36,6 @@ while (($#)); do
     --namespace) namespace=${2-}; shift 2 ;;
     --timeout-secs) timeout_secs=${2-}; shift 2 ;;
     --job) job_specs+=("${2-}"); shift 2 ;;
-    --generated-name-prefix) generated_name_prefix=${2-}; shift 2 ;;
-    --require-final-cleanup) require_final_cleanup=true; shift ;;
-    --sidecar-preflight-record) sidecar_preflight_record=${2-}; shift 2 ;;
     --snapshot-executable) snapshot_executable=${2-}; shift 2 ;;
     --snapshot-arg) snapshot_argv+=("${2-}"); shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -68,20 +51,6 @@ if [[ ! "$timeout_secs" =~ ^[1-9][0-9]*$ ]]; then
   echo "--timeout-secs must be a positive integer" >&2
   exit 2
 fi
-if [[ -n "$generated_name_prefix" ]]; then
-  if [[ ${#job_specs[@]} -ne 1 || ! "$generated_name_prefix" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?-$ ]]; then
-    echo "--generated-name-prefix requires exactly one Job and a bounded DNS prefix ending in '-'" >&2
-    exit 2
-  fi
-  if ((${#generated_name_prefix} > 58)); then
-    echo "--generated-name-prefix leaves no bounded Kubernetes-generated suffix" >&2
-    exit 2
-  fi
-fi
-if [[ "$require_final_cleanup" == true && -z "$generated_name_prefix" ]]; then
-  echo "--require-final-cleanup requires --generated-name-prefix" >&2
-  exit 2
-fi
 for required in jq sha256sum timeout date; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "required executable not found: $required" >&2
@@ -90,7 +59,6 @@ for required in jq sha256sum timeout date; do
 done
 
 kubectl_executable=${KUBECTL:-kubectl}
-docker_executable=${DOCKER:-docker}
 command_timeout="${timeout_secs}s"
 run_started_at=
 overall=pass
@@ -111,212 +79,9 @@ hash_file() {
   sha256sum "$1" | awk '{print $1}'
 }
 
-cleanup_receipt_failures() {
-  local logs=$1 expected_job_name=$2 expected_job_uid=$3
-  local records="$tmp_dir/resource-records" first phase expected_suffix
-  : >"$records"
-  while IFS= read -r line; do
-    if ! jq -cS . <<<"${line#M1_RESOURCE_RECORD }" >>"$records" 2>/dev/null; then
-      printf '%s\n' resource-record-invalid
-      return
-    fi
-  done < <(grep -F 'M1_RESOURCE_RECORD ' "$logs" || true)
-  if [[ ! -s "$records" ]]; then
-    printf '%s\n' resource-record-missing
-    return
-  fi
-  first=$(head -n 1 "$records")
-  if grep -Fvx -- "$first" "$records" >/dev/null; then
-    printf '%s\n' resource-record-mismatch
-    return
-  fi
-  expected_suffix=${expected_job_uid//-/}
-  if ! jq -e --arg job_name "$expected_job_name" --arg job_uid "$expected_job_uid" \
-      --arg suffix "$expected_suffix" '
-      .job_name == $job_name and .job_uid == $job_uid and .suffix == $suffix
-    ' >/dev/null <<<"$first"; then
-    printf '%s\n' resource-record-identity-mismatch
-    return
-  fi
-  if ! jq -e '
-      all([.project_database,.system_database,.app_generation,.registry_reader_generation,
-           .cdc_role,.schema,.table,
-           .publication,.slot,.stream,.durable,.report_dir,.org,.project,
-           .environment,.tenant,.catalog,.flow,.registration,.entity,
-           .root_run,.source_run][]; type == "string" and length > 0)
-    ' >/dev/null <<<"$first"; then
-    printf '%s\n' resource-record-invalid
-    return
-  fi
-  for phase in final external; do
-    local expected="$tmp_dir/cleanup-expected-$phase" actual="$tmp_dir/cleanup-actual-$phase"
-    jq -r --arg phase "$phase" '
-      def receipt($kind; $name):
-        "M1_CLEANUP phase=\($phase) resource=\($kind) name=\($name) verdict=absent";
-      [receipt("project-database"; .project_database),
-       receipt("system-database"; .system_database),
-       receipt("app-generation"; .app_generation),
-       receipt("registry-reader-generation"; .registry_reader_generation),
-       receipt("registry-reader-generation-sessions"; .registry_reader_generation),
-       receipt("cdc-role"; .cdc_role),
-       receipt("cdc-role-login"; .cdc_role),
-       receipt("cdc-role-sessions"; .cdc_role),
-       receipt("schema"; .schema), receipt("table"; .table),
-       receipt("publication"; .publication), receipt("slot"; .slot),
-       receipt("stream"; .stream), receipt("durable"; .durable),
-       receipt("report-dir"; .report_dir), receipt("org"; .org),
-       receipt("project"; .project), receipt("environment"; .environment),
-       receipt("tenant"; .tenant), receipt("catalog"; .catalog),
-       receipt("flow"; .flow), receipt("registration"; .registration),
-       receipt("entity"; .entity), receipt("root-run"; .root_run),
-       receipt("source-run"; .source_run)] | .[]
-    ' <<<"$first" >"$expected"
-    if [[ "$phase" == final ]]; then
-      printf '%s\n' 'M1_CLEANUP phase=final resource=cdc-reader verdict=absent' >>"$expected"
-    fi
-    grep -E "^M1_CLEANUP phase=${phase} " "$logs" >"$actual" || true
-    sort -o "$expected" "$expected"
-    sort -o "$actual" "$actual"
-    if ! cmp -s "$expected" "$actual"; then
-      printf 'cleanup-%s-receipt-set-mismatch\n' "$phase"
-    fi
-  done
-}
-
 run_kubectl() {
   timeout --foreground "$command_timeout" "$kubectl_executable" -n "$namespace" "$@"
 }
-
-run_node_image() {
-  local node=$1
-  shift
-  timeout --foreground "$command_timeout" "$docker_executable" exec "$node" "$@"
-}
-
-collect_sidecar_preflight() (
-  local spec=$1 output=$2 scratch output_tmp nodes_json image image_ref normalized_image_ref
-  local node inspect_json inspect_tree complete_ref manifest_digest runtime_image_id
-  local config_id upstream_index upstream_child first
-  local -a manifest_digests config_digests
-  scratch=$(mktemp -d) || return 1
-  if ! output_tmp=$(mktemp "${output}.tmp.XXXXXX"); then
-    rm -rf "$scratch"
-    return 1
-  fi
-  trap 'rm -rf "$scratch"; rm -f "$output_tmp"' EXIT
-  rm -f "$output"
-
-  image=$(jq -r '.sidecar_image' <<<"$spec")
-  image_ref=$image
-  if [[ ! "$image_ref" =~ ^[a-z0-9]+([._-][a-z0-9]+)*:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-    echo "sidecar preflight requires a local simple-name image tag" >&2
-    return 1
-  fi
-  normalized_image_ref="docker.io/library/${image_ref}"
-  nodes_json="$scratch/nodes.json"
-  if ! run_kubectl get nodes -o json >"$nodes_json"; then
-    echo "sidecar preflight failed to enumerate Kubernetes nodes" >&2
-    return 1
-  fi
-  if ! jq -e '
-      (.items | length == 3) and
-      ([.items[].metadata.name] | unique | length == 3) and
-      all(.items[];
-        .status.nodeInfo.architecture == "amd64" and
-        any(.status.conditions[]?; .type == "Ready" and .status == "True"))
-    ' >/dev/null "$nodes_json"; then
-    echo "sidecar preflight requires exactly three distinct Ready amd64 nodes" >&2
-    return 1
-  fi
-
-  : >"$scratch/tuples.jsonl"
-  while IFS= read -r node; do
-    inspect_json="$scratch/$node-cri.json"
-    inspect_tree="$scratch/$node-ctr.txt"
-    if ! run_node_image "$node" ctr -n k8s.io images inspect "$normalized_image_ref" >"$inspect_tree"; then
-      echo "sidecar preflight containerd inspect failed on $node" >&2
-      return 1
-    fi
-    if [[ "$(head -n 1 "$inspect_tree")" != "$normalized_image_ref" ]]; then
-      echo "sidecar preflight containerd root mismatch on $node" >&2
-      return 1
-    fi
-    mapfile -t manifest_digests < <(sed -nE \
-      's/^└── application\/vnd\.oci\.image\.manifest\.v1\+json @(sha256:[0-9a-f]{64}) \([0-9]+ bytes\)$/\1/p' \
-      "$inspect_tree")
-    if [[ ${#manifest_digests[@]} -ne 1 ]]; then
-      echo "sidecar preflight containerd target manifest is missing or ambiguous on $node" >&2
-      return 1
-    fi
-    manifest_digest=${manifest_digests[0]}
-    mapfile -t config_digests < <(sed -nE \
-      's/^    [├└]── application\/vnd\.oci\.image\.config\.v1\+json @(sha256:[0-9a-f]{64}) \([0-9]+ bytes\)$/\1/p' \
-      "$inspect_tree")
-    if [[ ${#config_digests[@]} -ne 1 ]]; then
-      echo "sidecar preflight containerd config child is missing or ambiguous on $node" >&2
-      return 1
-    fi
-    if ! run_node_image "$node" crictl inspecti -o json "$image" >"$inspect_json"; then
-      echo "sidecar preflight CRI inspect failed on $node" >&2
-      return 1
-    fi
-    if ! complete_ref=$(run_node_image "$node" ctr -n k8s.io images check -q "name==$normalized_image_ref") \
-        || [[ "$complete_ref" != "$normalized_image_ref" ]]; then
-      echo "sidecar preflight image is incomplete on $node" >&2
-      return 1
-    fi
-    runtime_image_id=$(jq -er '
-      [.status.repoDigests[]?
-       | capture("@(?<digest>sha256:[0-9a-f]{64})$").digest]
-      | unique
-      | if length == 1 then .[0]
-        else error("CRI runtime digest is missing or ambiguous")
-        end
-    ' "$inspect_json") || {
-      echo "sidecar preflight CRI runtime digest is missing or ambiguous on $node" >&2
-      return 1
-    }
-    config_id=$(jq -r '.status.id // ""' "$inspect_json")
-    upstream_index=$(jq -r '.info.imageSpec.config.Labels["wamn.dev/upstream-index"] // ""' "$inspect_json")
-    upstream_child=$(jq -r '.info.imageSpec.config.Labels["wamn.dev/upstream-child"] // ""' "$inspect_json")
-    if [[ ! "$runtime_image_id" =~ ^sha256:[0-9a-f]{64}$ \
-        || ! "$config_id" =~ ^sha256:[0-9a-f]{64}$ \
-        || "$config_id" != "${config_digests[0]}" \
-        || "$(jq -r --arg expected "$normalized_image_ref" \
-          '.status.repoTags == [$expected]' "$inspect_json")" != true \
-        || "$upstream_index" != "$(jq -r '.sidecar_upstream_index' <<<"$spec")" \
-        || "$upstream_child" != "$(jq -r '.sidecar_upstream_child' <<<"$spec")" ]]; then
-      echo "sidecar preflight image tuple mismatch on $node" >&2
-      return 1
-    fi
-    if ! jq -cn --arg name "$node" --arg manifest_digest "$manifest_digest" \
-      --arg runtime_image_id "$runtime_image_id" --arg config_id "$config_id" \
-      --arg upstream_index "$upstream_index" --arg upstream_child "$upstream_child" \
-      '{name:$name,manifest_digest:$manifest_digest,runtime_image_id:$runtime_image_id,
-        config_id:$config_id,complete:true,labels:{
-          "wamn.dev/upstream-index":$upstream_index,
-          "wamn.dev/upstream-child":$upstream_child}}' >>"$scratch/tuples.jsonl"; then
-      echo "sidecar preflight tuple serialization failed on $node" >&2
-      return 1
-    fi
-  done < <(jq -r '.items[].metadata.name' "$nodes_json" | sort)
-
-  first=$(head -n 1 "$scratch/tuples.jsonl")
-  if ! jq -s --arg image "$image" \
-    --arg manifest_digest "$(jq -r '.manifest_digest' <<<"$first")" \
-    --arg runtime_image_id "$(jq -r '.runtime_image_id' <<<"$first")" \
-    --arg config_id "$(jq -r '.config_id' <<<"$first")" \
-    --arg upstream_index "$(jq -r '.labels["wamn.dev/upstream-index"]' <<<"$first")" \
-    --arg upstream_child "$(jq -r '.labels["wamn.dev/upstream-child"]' <<<"$first")" \
-    '{schema_version:"0.1",image:$image,manifest_digest:$manifest_digest,
-      runtime_image_id:$runtime_image_id,config_id:$config_id,
-      upstream_index:$upstream_index,upstream_child:$upstream_child,nodes:.}' \
-    "$scratch/tuples.jsonl" >"$output_tmp"; then
-    echo "sidecar preflight record serialization failed" >&2
-    return 1
-  fi
-  mv "$output_tmp" "$output" || return 1
-)
 
 run_probe() {
   local output=$1
@@ -356,28 +121,6 @@ for spec in "${job_specs[@]}"; do
       (.exit_code | type == "number" and floor == . and . >= 0) and
       (.image | type == "string" and length > 0) and
       ((.log_contains // "") | type == "string") and
-      ((.claimed_image_id // "") | type == "string") and
-      ((.claim_log_prefix // "") | type == "string") and
-      ((.sidecar // "") | type == "string") and
-      ((.sidecar_image // "") | type == "string") and
-      ((.sidecar_image_id // "") | type == "string") and
-      ((.sidecar_config_id // "") | type == "string") and
-      ((.sidecar_upstream_index // "") | type == "string") and
-      ((.sidecar_upstream_child // "") | type == "string") and
-      (if has("sidecar") or has("sidecar_image") or has("sidecar_image_id") or
-          has("sidecar_config_id") or has("sidecar_upstream_index") or
-          has("sidecar_upstream_child") then
-         (.sidecar | length > 0) and
-         (.sidecar_image | test("^[a-z0-9]+([._-][a-z0-9]+)*:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")) and
-         (.sidecar_image_id | test("^sha256:[0-9a-f]{64}$")) and
-         (.sidecar_config_id | test("^sha256:[0-9a-f]{64}$")) and
-         (.sidecar_upstream_index | test("^sha256:[0-9a-f]{64}$")) and
-         (.sidecar_upstream_child | test("^sha256:[0-9a-f]{64}$"))
-       else true end) and
-      (if has("claimed_image_id") or has("claim_log_prefix") then
-         (.claimed_image_id | test("^sha256:[0-9a-f]{64}$")) and
-         (.claim_log_prefix | length > 0)
-       else true end) and
       (if .expectation == "positive" then .exit_code == 0
        else .exit_code > 0 and (.log_contains | type == "string" and length > 0)
        end)
@@ -390,53 +133,6 @@ for spec in "${job_specs[@]}"; do
 done
 if [[ "$valid_specs" != true ]]; then
   exit 2
-fi
-sidecar_specs=$(printf '%s\n' "${job_specs[@]}" | jq -cs '[.[] | select(has("sidecar"))]')
-sidecar_count=$(jq 'length' <<<"$sidecar_specs")
-if ((sidecar_count == 0)); then
-  if [[ -n "$sidecar_preflight_record" ]]; then
-    echo "--sidecar-preflight-record requires one sidecar Job" >&2
-    exit 2
-  fi
-elif ((sidecar_count != 1)) || [[ -z "$sidecar_preflight_record" ]]; then
-  echo "one sidecar Job requires --sidecar-preflight-record" >&2
-  exit 2
-else
-  sidecar_spec=$(jq '.[0]' <<<"$sidecar_specs")
-  if ! command -v "$docker_executable" >/dev/null 2>&1; then
-    echo "sidecar preflight executable not found: $docker_executable" >&2
-    exit 2
-  fi
-  if ! collect_sidecar_preflight "$sidecar_spec" "$sidecar_preflight_record"; then
-    rm -f "$sidecar_preflight_record"
-    exit 2
-  fi
-  if ! jq -e --argjson spec "$sidecar_spec" '
-      . as $record |
-      .schema_version == "0.1" and
-      (.manifest_digest | test("^sha256:[0-9a-f]{64}$")) and
-      (.runtime_image_id | test("^sha256:[0-9a-f]{64}$")) and
-      (.config_id | test("^sha256:[0-9a-f]{64}$")) and
-      .image == $spec.sidecar_image and
-      .runtime_image_id == $spec.sidecar_image_id and
-      .config_id == $spec.sidecar_config_id and
-      .upstream_index == $spec.sidecar_upstream_index and
-      .upstream_child == $spec.sidecar_upstream_child and
-      (.nodes | type == "array" and length == 3) and
-      ([.nodes[].name] | all(.[]; type == "string" and length > 0)) and
-      ([.nodes[].name] | unique | length == 3) and
-      all(.nodes[];
-        .complete == true and
-        .manifest_digest == $record.manifest_digest and
-        .runtime_image_id == $record.runtime_image_id and
-        .config_id == $record.config_id and
-        .labels["wamn.dev/upstream-index"] == $record.upstream_index and
-        .labels["wamn.dev/upstream-child"] == $record.upstream_child)
-    ' >/dev/null "$sidecar_preflight_record"; then
-    echo "invalid --sidecar-preflight-record tuple" >&2
-    rm -f "$sidecar_preflight_record"
-    exit 2
-  fi
 fi
 if ((negative_count > 1)); then
   echo "at most one expected-negative Job is supported per aggregate" >&2
@@ -452,19 +148,9 @@ if ((negative_count == 0)) && [[ -n "$snapshot_executable" ]]; then
 fi
 
 tmp_dir=$(mktemp -d)
-sidecar_preflight_sha256=
-if [[ -n "$sidecar_preflight_record" ]]; then
-  sidecar_preflight_sha256=$(hash_file "$sidecar_preflight_record")
-fi
-generated_job_name=
-generated_job_active=false
 cleanup() {
   local status=$?
   trap - EXIT HUP INT TERM
-  if [[ "$generated_job_active" == true && -n "$generated_job_name" ]]; then
-    run_kubectl delete job "$generated_job_name" --ignore-not-found=true --wait=true \
-      --timeout="$command_timeout" >/dev/null 2>&1 || true
-  fi
   rm -rf -- "$tmp_dir"
   exit "$status"
 }
@@ -475,23 +161,19 @@ trap cleanup EXIT HUP INT TERM
 # recreated. This makes an unchanged repeated invocation fresh without deleting
 # shared service accounts or roles.
 declare -a old_uids=()
-if [[ -z "$generated_name_prefix" ]]; then
-  for spec in "${job_specs[@]}"; do
-    name=$(jq -r '.name' <<<"$spec")
-    old_json="$tmp_dir/old-$name.json"
-    if run_kubectl get job "$name" -o json >"$old_json" 2>/dev/null; then
-      old_uids+=("$(jq -r '.metadata.uid // ""' "$old_json")")
-    else
-      old_uids+=("")
-    fi
-    if ! run_kubectl delete job "$name" --ignore-not-found=true --wait=true \
-        --timeout="$command_timeout" >/dev/null; then
-      add_failure "delete-failed:$name"
-    fi
-  done
-else
-  old_uids+=("")
-fi
+for spec in "${job_specs[@]}"; do
+  name=$(jq -r '.name' <<<"$spec")
+  old_json="$tmp_dir/old-$name.json"
+  if run_kubectl get job "$name" -o json >"$old_json" 2>/dev/null; then
+    old_uids+=("$(jq -r '.metadata.uid // ""' "$old_json")")
+  else
+    old_uids+=("")
+  fi
+  if ! run_kubectl delete job "$name" --ignore-not-found=true --wait=true \
+      --timeout="$command_timeout" >/dev/null; then
+    add_failure "delete-failed:$name"
+  fi
+done
 
 if ((negative_count == 1)); then
   probe_before="$tmp_dir/probe-before"
@@ -505,23 +187,7 @@ if ((negative_count == 1)); then
 fi
 
 run_started_at=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
-if [[ -n "$generated_name_prefix" ]]; then
-  if ! run_kubectl create --dry-run=server -f "$manifest" -o name >/dev/null; then
-    add_failure "server-dry-run-failed"
-  elif ! generated_job_name=$(run_kubectl create -f "$manifest" -o jsonpath='{.metadata.name}'); then
-    add_failure "create-failed"
-  elif [[ ! "$generated_job_name" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ \
-      || ${#generated_job_name} -gt 63 ]]; then
-    add_failure "generated-name-invalid"
-    generated_job_name=
-  else
-    generated_job_active=true
-    job_specs[0]=$(jq -c --arg name "$generated_job_name" '.name=$name' <<<"${job_specs[0]}")
-    if [[ "$generated_job_name" != "$generated_name_prefix"* ]]; then
-      add_failure "generated-name-invalid"
-    fi
-  fi
-elif ! run_kubectl apply -f "$manifest" >/dev/null; then
+if ! run_kubectl apply -f "$manifest" >/dev/null; then
   add_failure "apply-failed"
 fi
 
@@ -534,14 +200,6 @@ for index in "${!job_specs[@]}"; do
   expected_exit=$(jq -r '.exit_code' <<<"$spec")
   expected_image=$(jq -r '.image' <<<"$spec")
   log_contains=$(jq -r '.log_contains // ""' <<<"$spec")
-  claimed_image_id=$(jq -r '.claimed_image_id // ""' <<<"$spec")
-  claim_log_prefix=$(jq -r '.claim_log_prefix // ""' <<<"$spec")
-  sidecar=$(jq -r '.sidecar // ""' <<<"$spec")
-  expected_sidecar_image=$(jq -r '.sidecar_image // ""' <<<"$spec")
-  expected_sidecar_image_id=$(jq -r '.sidecar_image_id // ""' <<<"$spec")
-  preflight_sidecar_config_id=$(jq -r '.sidecar_config_id // ""' <<<"$spec")
-  sidecar_upstream_index=$(jq -r '.sidecar_upstream_index // ""' <<<"$spec")
-  sidecar_upstream_child=$(jq -r '.sidecar_upstream_child // ""' <<<"$spec")
   condition=complete
   expected_phase=Succeeded
   if [[ "$expectation" == expected-negative ]]; then
@@ -551,9 +209,7 @@ for index in "${!job_specs[@]}"; do
 
   declare -a job_failures=()
   terminal_condition=
-  if [[ -n "$generated_name_prefix" && "$generated_job_active" != true ]]; then
-    job_failures+=("job-not-created")
-  elif ! terminal_condition=$(wait_for_job_terminal "$name"); then
+  if ! terminal_condition=$(wait_for_job_terminal "$name"); then
     job_failures+=("job-wait-timeout")
   elif [[ "$terminal_condition" != "${condition^}" ]]; then
     job_failures+=("unexpected-terminal-condition")
@@ -627,54 +283,11 @@ for index in "${!job_specs[@]}"; do
       all(.items[]; any(.status.containerStatuses[]?;
         .name == $container and (.state.terminated.finishedAt // "") >= $started))
     ' >/dev/null "$pods_json"; then job_failures+=("container-completion-invalid"); fi
-  if [[ -n "$sidecar" ]]; then
-    if ! jq -e --arg sidecar "$sidecar" --arg image "$expected_sidecar_image" '
-        all(.items[]; any(.spec.initContainers[]?;
-          .name == $sidecar and .image == $image and .restartPolicy == "Always"))
-      ' >/dev/null "$pods_json"; then job_failures+=("sidecar-wrong-image"); fi
-    if ! jq -e --arg sidecar "$sidecar" '
-        all(.items[]; any(.status.initContainerStatuses[]?;
-          .name == $sidecar and (.imageID // "") != ""))
-      ' >/dev/null "$pods_json"; then job_failures+=("sidecar-image-id-missing"); fi
-    if ! jq -e --arg sidecar "$sidecar" --arg image_id "$expected_sidecar_image_id" '
-        all(.items[]; any(.status.initContainerStatuses[]?;
-          .name == $sidecar and
-          ((.imageID // "") | capture("(?<digest>sha256:[0-9a-f]{64})$").digest) == $image_id))
-      ' >/dev/null "$pods_json"; then job_failures+=("sidecar-image-id-mismatch"); fi
-    if ! jq -e --arg sidecar "$sidecar" '
-        all(.items[]; any(.status.initContainerStatuses[]?;
-          .name == $sidecar and (.state.terminated.exitCode // -1) == 0))
-      ' >/dev/null "$pods_json"; then job_failures+=("sidecar-exit-code-mismatch"); fi
-    if ! jq -e --arg started "$run_started_at" --arg sidecar "$sidecar" '
-        all(.items[]; any(.status.initContainerStatuses[]?;
-          .name == $sidecar and (.state.terminated.finishedAt // "") >= $started))
-      ' >/dev/null "$pods_json"; then job_failures+=("sidecar-completion-invalid"); fi
-  fi
   if [[ -n "$log_contains" ]] && ! grep -Fq -- "$log_contains" "$logs"; then
     job_failures+=("expected-log-missing")
   fi
-  if [[ "$require_final_cleanup" == true ]]; then
-    mapfile -t cleanup_failures < <(cleanup_receipt_failures "$logs" "$name" "$uid")
-    job_failures+=("${cleanup_failures[@]}")
-  fi
-  observed_claimed_image_id=
-  if [[ -n "$claimed_image_id" ]]; then
-    observed_claimed_image_id=$(grep -F -- "$claim_log_prefix" "$logs" | tail -n 1 || true)
-    observed_claimed_image_id=${observed_claimed_image_id#*"$claim_log_prefix"}
-    if [[ "$observed_claimed_image_id" != "$claimed_image_id" ]]; then
-      job_failures+=("claimed-image-id-mismatch")
-    fi
-    if ! jq -e --arg container "$container" --arg image_id "$claimed_image_id" '
-        all(.items[]; any(.status.containerStatuses[]?;
-          .name == $container and
-          ((.imageID // "") | capture("(?<digest>sha256:[0-9a-f]{64})$").digest) == $image_id))
-      ' >/dev/null "$pods_json"; then
-      job_failures+=("observed-image-id-mismatch")
-    fi
-  fi
-
   log_hash=$(hash_file "$logs")
-  pod_observations=$(jq --arg container "$container" --arg sidecar "$sidecar" '[.items[] | {
+  pod_observations=$(jq --arg container "$container" '[.items[] | {
       name: (.metadata.name // ""),
       uid: (.metadata.uid // ""),
       node: (.spec.nodeName // ""),
@@ -685,13 +298,7 @@ for index in "${!job_specs[@]}"; do
       container_exit_code: ([.status.containerStatuses[]? | select(.name == $container) |
         (.state.terminated.exitCode // null)] | first // null),
       image_id: ([.status.containerStatuses[]? | select(.name == $container) |
-        (.imageID // "")] | first // ""),
-      sidecar_exit_code: (if $sidecar == "" then null else
-        ([.status.initContainerStatuses[]? | select(.name == $sidecar) |
-          (.state.terminated.exitCode // null)] | first // null) end),
-      sidecar_image_id: (if $sidecar == "" then null else
-        ([.status.initContainerStatuses[]? | select(.name == $sidecar) |
-          (.imageID // "")] | first // "") end)
+        (.imageID // "")] | first // "")
     }]' "$pods_json")
   job_verdict=pass
   if ((${#job_failures[@]} > 0)); then
@@ -704,53 +311,17 @@ for index in "${!job_specs[@]}"; do
   job_verdict_records+=("$(jq -cn \
     --arg name "$name" --arg container "$container" --arg expectation "$expectation" \
     --argjson expected_exit_code "$expected_exit" --arg expected_image "$expected_image" \
-    --arg sidecar "$sidecar" --arg expected_sidecar_image "$expected_sidecar_image" \
-    --arg expected_sidecar_image_id "$expected_sidecar_image_id" \
-    --arg preflight_sidecar_config_id "$preflight_sidecar_config_id" \
-    --arg sidecar_upstream_index "$sidecar_upstream_index" \
-    --arg sidecar_upstream_child "$sidecar_upstream_child" \
-    --arg sidecar_preflight_sha256 "$sidecar_preflight_sha256" \
-    --arg claimed_image_id "$claimed_image_id" \
     --arg uid "$uid" --arg old_uid "$old_uid" --arg created_at "$created" \
     --arg condition "$condition" --arg transition_at "$transition" \
-    --arg logs_sha256 "$log_hash" --arg observed_claimed_image_id "$observed_claimed_image_id" \
+    --arg logs_sha256 "$log_hash" \
     --arg verdict "$job_verdict" \
     --argjson pods "$pod_observations" --argjson failures "$job_failure_json" \
     '{name:$name,container:$container,expectation:$expectation,
       expected_exit_code:$expected_exit_code,expected_image:$expected_image,
-      sidecar:(if $sidecar == "" then null else $sidecar end),
-      expected_sidecar_image:(if $expected_sidecar_image == "" then null else $expected_sidecar_image end),
-      expected_sidecar_image_id:(if $expected_sidecar_image_id == "" then null else $expected_sidecar_image_id end),
-      preflight_sidecar_config_id:(if $preflight_sidecar_config_id == "" then null else $preflight_sidecar_config_id end),
-      sidecar_upstream_index:(if $sidecar_upstream_index == "" then null else $sidecar_upstream_index end),
-      sidecar_upstream_child:(if $sidecar_upstream_child == "" then null else $sidecar_upstream_child end),
-      sidecar_preflight_sha256:(if $sidecar_preflight_sha256 == "" then null else $sidecar_preflight_sha256 end),
-      claimed_image_id:(if $claimed_image_id == "" then null else $claimed_image_id end),
       observed:{uid:$uid,previous_uid:$old_uid,created_at:$created_at,
         condition:$condition,condition_transition_at:$transition_at,
-        claimed_image_id:(if $observed_claimed_image_id == "" then null else $observed_claimed_image_id end),
         logs_sha256:$logs_sha256,pods:$pods},verdict:$verdict,failure_classes:$failures}')")
 done
-
-if [[ "$generated_job_active" == true ]]; then
-  remaining_job=
-  if ! run_kubectl delete job "$generated_job_name" --wait=true \
-      --timeout="$command_timeout" >/dev/null; then
-    add_failure "$generated_job_name:final-delete-failed"
-  elif ! remaining_job=$(run_kubectl get job "$generated_job_name" -o name \
-      --ignore-not-found=true); then
-    add_failure "$generated_job_name:final-absence-check-failed"
-  elif [[ -n "$remaining_job" ]]; then
-    add_failure "$generated_job_name:job-residue"
-  elif ! remaining_pods=$(run_kubectl get pods \
-      -l "batch.kubernetes.io/controller-uid=$uid" -o json); then
-    add_failure "$generated_job_name:pod-absence-check-failed"
-  elif ! jq -e '.items | length == 0' >/dev/null <<<"$remaining_pods"; then
-    add_failure "$generated_job_name:pod-residue"
-  else
-    generated_job_active=false
-  fi
-fi
 
 if ((negative_count == 1)); then
   probe_after="$tmp_dir/probe-after"

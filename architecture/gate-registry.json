@@ -135,8 +135,8 @@
       "status": "shipped",
       "plan_anchor": "**D19**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/m1-gate-job.yaml"
+        "source_kind": "recipe",
+        "source": "RECEIVING-MATERIALIZER-JOURNEY"
       }
     },
     {
@@ -216,16 +216,16 @@
   ],
   "entries": [
     {
-      "source_kind": "manifest",
-      "source": "deploy/gates/m1-gate-job.yaml",
+      "source_kind": "recipe",
+      "source": "RECEIVING-MATERIALIZER-JOURNEY",
       "classification": "required-gate",
       "decision_ids": [
         "D3",
         "D19"
       ],
-      "bead_owner": "bd:wamn-0h0g.11.10",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass-checks-9-and-10",
+      "bead_owner": "bd:wamn-0h0g.15.25.4",
+      "proof_tier": "disposable-infrastructure",
+      "expected_outcome": "pass",
       "can_fail": true,
       "allowed_skips": [],
       "coverage_exclusions": [],
