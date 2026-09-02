@@ -50,6 +50,7 @@ fn components() -> BTreeSet<ServingComponent> {
                 "map".into(),
                 ServingComponentOperation {
                     registered_operation: None,
+                    dependencies: Vec::new(),
                 },
             )]),
         },
@@ -64,6 +65,7 @@ fn components() -> BTreeSet<ServingComponent> {
                     registered_operation: Some(
                         "client-acme-receiving:purchase-order/get@3.0.0".into(),
                     ),
+                    dependencies: Vec::new(),
                 },
             )]),
         },

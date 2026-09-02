@@ -943,6 +943,7 @@ mod tests {
                 "request".into(),
                 ServingComponentOperation {
                     registered_operation: None,
+                    dependencies: Vec::new(),
                 },
             )]),
         }])

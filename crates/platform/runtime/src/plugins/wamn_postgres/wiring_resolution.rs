@@ -102,7 +102,8 @@ SELECT selected.version, \
 /// historical version scoped to the carried tenant/package/environment release.
 pub const RELEASE_WIRING_SQL: &str = "\
 WITH release_scope AS MATERIALIZED ( \
-    SELECT snapshot.effective_release_id, member.package_version \
+    SELECT snapshot.effective_release_id, member.package_version, \
+           convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.release_manifest_v3_snapshots AS snapshot \
       JOIN catalog.effective_release_packages AS member \
         ON member.tenant_id = snapshot.tenant_id \
@@ -116,7 +117,7 @@ WITH release_scope AS MATERIALIZED ( \
 ), selected AS MATERIALIZED ( \
     SELECT wiring.version, release_scope.effective_release_id, \
            release_scope.package_version, \
-           wiring.graph_json, wiring.wiring_hash, \
+           wiring.graph_json, wiring.wiring_hash, release_scope.manifest, \
            release_scope.effective_release_id AS release_id \
       FROM release_scope \
       JOIN catalog.wirings AS wiring \
@@ -140,7 +141,7 @@ SELECT selected.version, selected.effective_release_id, \
        selected.package_version, \
        selected.graph_json::text, selected.wiring_hash, \
        COALESCE( \
-           jsonb_agg( \
+           (SELECT jsonb_agg( \
                jsonb_build_object( \
                    'node-id', member.node_id, \
                    'component', jsonb_build_object( \
@@ -158,24 +159,55 @@ SELECT selected.version, selected.effective_release_id, \
                        'effects', component.effects \
                    ) \
                ) ORDER BY member.node_id COLLATE \"C\" \
-           ) FILTER (WHERE member.node_id IS NOT NULL), \
+            ) \
+              FROM catalog.release_components AS member \
+              JOIN catalog.component_library AS component \
+                ON component.tenant_id = member.tenant_id \
+               AND component.package_id = member.package_id \
+               AND component.package_version = member.package_version \
+               AND component.component_digest = member.component_digest \
+             WHERE member.tenant_id = $1 \
+               AND member.effective_release_id = selected.release_id \
+               AND member.wiring_package_id = $2 \
+               AND member.wiring_package_version = selected.package_version \
+               AND member.wiring_id = $4 \
+               AND member.wiring_version = $5), \
            '[]'::jsonb \
-       )::text AS node_components \
-  FROM selected \
-  LEFT JOIN catalog.release_components AS member \
-    ON member.tenant_id = $1 \
-   AND member.effective_release_id = selected.release_id \
-   AND member.wiring_package_id = $2 \
-   AND member.wiring_package_version = selected.package_version \
-   AND member.wiring_id = $4 \
-   AND member.wiring_version = $5 \
-  LEFT JOIN catalog.component_library AS component \
-    ON component.tenant_id = member.tenant_id \
-   AND component.package_id = member.package_id \
-   AND component.package_version = member.package_version \
-   AND component.component_digest = member.component_digest \
- GROUP BY selected.version, selected.effective_release_id, selected.package_version, \
-          selected.graph_json, selected.wiring_hash";
+       )::text AS node_components, \
+       COALESCE( \
+           (SELECT jsonb_agg( \
+               jsonb_build_object( \
+                   'scope', jsonb_build_object( \
+                       'tenant-id', $1::text, \
+                       'package-id', component.package_id, \
+                       'package-version', component.package_version \
+                   ), \
+                   'component', component.component, \
+                   'interface-version', component.interface_version, \
+                   'operations', component.operations, \
+                   'component-digest', component.component_digest, \
+                   'imports', component.imports, \
+                   'imports-fingerprint', component.imports_fingerprint, \
+                   'effects', component.effects \
+               ) ORDER BY projected.ordinality \
+            ) \
+              FROM jsonb_array_elements(selected.manifest -> 'components') \
+                   WITH ORDINALITY AS projected(definition, ordinality) \
+              JOIN catalog.effective_release_packages AS release_package \
+                ON release_package.tenant_id = $1 \
+               AND release_package.effective_release_id = selected.release_id \
+               AND release_package.package_id = projected.definition ->> 'package-id' \
+              JOIN catalog.component_library AS component \
+                ON component.tenant_id = release_package.tenant_id \
+               AND component.package_id = release_package.package_id \
+               AND component.package_version = release_package.package_version \
+               AND component.component = projected.definition ->> 'component' \
+               AND component.interface_version = projected.definition ->> 'interface-version' \
+               AND component.component_digest = projected.definition ->> 'digest'), \
+           '[]'::jsonb \
+       )::text AS components, \
+       jsonb_array_length(selected.manifest -> 'components') AS manifest_component_count \
+  FROM selected";
 
 /// Exact immutable candidate wiring selected by private management admission.
 ///
@@ -818,7 +850,26 @@ fn decode_released_wiring(
         node_components.len() == decoded.document.nodes.len(),
         "release-wiring-node-closure-incomplete"
     );
-    lower_resolved_wiring(tenant_id, package_id, environment, decoded, node_components)
+    let components: String = row
+        .try_get(6)
+        .context("decode release manifest component closure")?;
+    let components: Vec<AdmittedComponent> =
+        serde_json::from_str(&components).context("parse release manifest component closure")?;
+    let expected_component_count: i32 = row
+        .try_get(7)
+        .context("decode release manifest component count")?;
+    anyhow::ensure!(
+        usize::try_from(expected_component_count).ok() == Some(components.len()),
+        "release-manifest-component-closure-incomplete"
+    );
+    lower_resolved_wiring(
+        tenant_id,
+        package_id,
+        environment,
+        decoded,
+        node_components,
+        components,
+    )
 }
 
 fn decode_active_wiring(
@@ -858,7 +909,15 @@ fn decode_active_wiring(
         );
         node_components.insert(node_id.clone(), component.clone());
     }
-    lower_resolved_wiring(tenant_id, package_id, environment, decoded, node_components)
+    let components = node_components.values().cloned().collect();
+    lower_resolved_wiring(
+        tenant_id,
+        package_id,
+        environment,
+        decoded,
+        node_components,
+        components,
+    )
 }
 
 fn lower_resolved_wiring(
@@ -867,10 +926,10 @@ fn lower_resolved_wiring(
     environment: &str,
     decoded: DecodedWiring,
     resolved: BTreeMap<String, AdmittedComponent>,
+    components: Vec<AdmittedComponent>,
 ) -> anyhow::Result<ResolvedActiveWiring> {
     let mut executable = decoded.document.clone();
     let mut operations = Vec::with_capacity(resolved.len());
-    let mut components = Vec::new();
     for (node_id, component) in resolved {
         let node = decoded
             .document
@@ -880,7 +939,8 @@ fn lower_resolved_wiring(
         anyhow::ensure!(
             node.component == component.component
                 && node.interface_version == component.interface_version
-                && component.operations.contains_key(&node.operation),
+                && component.operations.contains_key(&node.operation)
+                && components.contains(&component),
             "release-wiring-node-binding-mismatch"
         );
         let runtime_key = component.component_digest.clone();
@@ -894,9 +954,6 @@ fn lower_resolved_wiring(
             if !operations.contains(&operation) {
                 operations.push(operation);
             }
-        }
-        if !components.contains(&component) {
-            components.push(component.clone());
         }
     }
     verify_served_effect_projections(&components)?;
@@ -1039,6 +1096,9 @@ mod tests {
         overlay
             .operations
             .insert("overlay:entity/create@2.0.0".to_owned(), overlay_operation);
+        let mut dependency = component("dependency", "nested", 'c');
+        dependency.scope.package_id = "base".to_owned();
+        dependency.scope.package_version = "1.0.0".to_owned();
         let graph_hash = document.wiring_hash().as_str().to_owned();
 
         let resolved = lower_resolved_wiring(
@@ -1056,6 +1116,7 @@ mod tests {
                 ("base".to_owned(), base.clone()),
                 ("overlay".to_owned(), overlay.clone()),
             ]),
+            vec![base.clone(), overlay.clone(), dependency.clone()],
         )
         .expect("exact node targets lower");
 
@@ -1069,6 +1130,7 @@ mod tests {
         );
         assert!(resolved.components.contains(&base));
         assert!(resolved.components.contains(&overlay));
+        assert!(resolved.components.contains(&dependency));
     }
 
     #[test]

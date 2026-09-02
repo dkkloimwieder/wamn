@@ -732,12 +732,10 @@ async fn mint_release_manifest_from_sources(
             &mut membership,
         )
         .await?;
-        if let Some(operation) = entry_operation {
-            entry_targets
-                .entry(operation)
-                .or_default()
-                .push(target.clone());
-        }
+        entry_targets
+            .entry(entry_operation)
+            .or_default()
+            .push(target.clone());
     }
 
     let registrations = if let Some(registrations) = promoted_registrations {
@@ -1216,6 +1214,150 @@ fn resolve_wiring_components(
     Ok(resolved)
 }
 
+type ComponentOperationKey = (String, String, String);
+
+fn resolve_component_dependency_closure(
+    roots: &BTreeMap<String, AdmittedComponent>,
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+) -> Result<Vec<AdmittedComponent>, MintManifestError> {
+    let mut pending = roots.values().cloned().collect::<Vec<_>>();
+    let mut closure = BTreeMap::<(String, String, String), AdmittedComponent>::new();
+    while let Some(component) = pending.pop() {
+        let key = (
+            component.scope.package_id.clone(),
+            component.scope.package_version.clone(),
+            component.component_digest.clone(),
+        );
+        if let Some(existing) = closure.get(&key) {
+            if existing != &component {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::OperationDependency,
+                    format!("component dependency tuple {key:?} resolves more than one fact"),
+                ));
+            }
+            continue;
+        }
+        for operation in component.operations.values() {
+            for dependency in &operation.dependencies {
+                pending.push(resolve_component_dependency(dependency, component_facts)?.clone());
+            }
+        }
+        closure.insert(key, component);
+    }
+    validate_component_dependency_cycles(closure.values())?;
+    Ok(closure.into_values().collect())
+}
+
+fn resolve_component_dependency<'a>(
+    dependency: &wamn_catalog::ComponentOperationDependency,
+    component_facts: &'a BTreeMap<(String, String), Vec<AdmittedComponent>>,
+) -> Result<&'a AdmittedComponent, MintManifestError> {
+    let Some(facts) =
+        component_facts.get(&(dependency.package.clone(), dependency.version.clone()))
+    else {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::OperationDependency,
+            format!(
+                "component dependency {}@{} is absent from the effective release",
+                dependency.package, dependency.version
+            ),
+        ));
+    };
+    let mut matches = facts.iter().filter(|component| {
+        component.component_digest == dependency.digest
+            && component
+                .operation(&dependency.operation)
+                .is_some_and(|operation| {
+                    operation.registered_operation.as_deref() == Some(dependency.operation.as_str())
+                })
+    });
+    let Some(component) = matches.next() else {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::OperationDependency,
+            format!(
+                "component dependency {}@{} digest {} operation {:?} has no exact admitted fact",
+                dependency.package, dependency.version, dependency.digest, dependency.operation
+            ),
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::OperationDependency,
+            format!(
+                "component dependency {}@{} digest {} operation {:?} resolves more than one admitted fact",
+                dependency.package, dependency.version, dependency.digest, dependency.operation
+            ),
+        ));
+    }
+    Ok(component)
+}
+
+fn validate_component_dependency_cycles<'a>(
+    components: impl Iterator<Item = &'a AdmittedComponent>,
+) -> Result<(), MintManifestError> {
+    let mut graph = BTreeMap::<ComponentOperationKey, Vec<ComponentOperationKey>>::new();
+    for component in components {
+        for (operation_name, operation) in &component.operations {
+            let key = (
+                component.scope.package_id.clone(),
+                component.component_digest.clone(),
+                operation_name.clone(),
+            );
+            let dependencies = operation
+                .dependencies
+                .iter()
+                .map(|dependency| {
+                    (
+                        dependency.package.clone(),
+                        dependency.digest.clone(),
+                        dependency.operation.clone(),
+                    )
+                })
+                .collect();
+            if graph.insert(key.clone(), dependencies).is_some() {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::OperationDependency,
+                    format!("component operation tuple {key:?} occurs more than once"),
+                ));
+            }
+        }
+    }
+    let mut incoming = BTreeMap::new();
+    for dependencies in graph.values() {
+        for dependency in dependencies {
+            *incoming.entry(dependency.clone()).or_insert(0_usize) += 1;
+        }
+    }
+    for operation in graph.keys() {
+        incoming.entry(operation.clone()).or_insert(0);
+    }
+    let mut pending = incoming
+        .iter()
+        .filter(|(_, count)| **count == 0)
+        .map(|(operation, _)| operation.clone())
+        .collect::<VecDeque<_>>();
+    let mut visited = 0_usize;
+    while let Some(operation) = pending.pop_front() {
+        visited += 1;
+        for dependency in &graph[&operation] {
+            let count = incoming
+                .get_mut(dependency)
+                .expect("exact dependency resolution populated every target");
+            *count -= 1;
+            if *count == 0 {
+                pending.push_back(dependency.clone());
+            }
+        }
+    }
+    if visited != graph.len() {
+        return Err(MintManifestError::new(
+            MintManifestErrorKind::OperationDependency,
+            "component operation dependency closure contains a cycle",
+        ));
+    }
+    Ok(())
+}
+
 fn derive_serving_registrations(
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     entry_targets: &BTreeMap<String, Vec<ReleaseWiringTarget>>,
@@ -1226,6 +1368,26 @@ fn derive_serving_registrations(
             let Some(declaration) = operation.registration() else {
                 continue;
             };
+            let source_manifest = package_manifests
+                .get(&declaration.source_package)
+                .ok_or_else(|| {
+                    MintManifestError::new(
+                        MintManifestErrorKind::Registration,
+                        format!(
+                            "event handler {operation_key:?} source package {:?} is absent while resolving entity {:?}",
+                            declaration.source_package, declaration.entity
+                        ),
+                    )
+                })?;
+            if !source_manifest.models.contains_key(&declaration.entity) {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::Registration,
+                    format!(
+                        "event handler {operation_key:?} source package {:?} does not own entity {:?}",
+                        declaration.source_package, declaration.entity
+                    ),
+                ));
+            }
             let operation_id = wamn_schema_generator::canonical_operation_identity(
                 &manifest.package,
                 operation_key,
@@ -1289,7 +1451,7 @@ async fn resolve_wiring(
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
     membership: &mut BTreeSet<ReleaseComponentMembership>,
-) -> Result<Option<String>, MintManifestError> {
+) -> Result<String, MintManifestError> {
     let version = i32::try_from(target.wiring_version).map_err(|error| {
         MintManifestError::with_source(
             MintManifestErrorKind::Wiring,
@@ -1364,18 +1526,16 @@ async fn resolve_wiring(
             error,
         )
     })?;
+    let component_closure = resolve_component_dependency_closure(&resolved, component_facts)?;
     validate_anonymous_wiring_closure(request.attachments, target, &document, &resolved)?;
-    let entry_operation = resolved
-        .get(&document.entry)
-        .and_then(|component| component.operation(&document.nodes[&document.entry].operation))
-        .and_then(|operation| operation.registered_operation.clone());
+    let entry_operation = document.nodes[&document.entry].operation.clone();
     wirings.insert(ServingWiring {
         package_id: target.package_id.clone(),
         wiring_id: target.wiring_id.clone(),
         wiring_version: target.wiring_version,
         graph_hash: derived_hash,
     });
-    for (node_id, fact) in resolved {
+    for fact in component_closure {
         let digest = ArtifactHash::parse(fact.component_digest.clone()).map_err(|error| {
             MintManifestError::with_source(
                 MintManifestErrorKind::Component,
@@ -1399,11 +1559,14 @@ async fn resolve_wiring(
                         name.clone(),
                         ServingComponentOperation {
                             registered_operation: operation.registered_operation.clone(),
+                            dependencies: operation.dependencies.clone(),
                         },
                     )
                 })
                 .collect(),
         });
+    }
+    for (node_id, fact) in resolved {
         membership.insert(ReleaseComponentMembership {
             wiring_package_id: target.package_id.clone(),
             wiring_package_version: target.package_version.clone(),
@@ -1461,6 +1624,18 @@ fn validate_anonymous_wiring_closure(
                         "attachment {attachment_id:?} reaches registered operation \
                          {operation:?} at node {node_id:?}; set auth-policy mode = \
                          {mode:?}",
+                        mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
+                    ),
+                ));
+            }
+            if let Some(dependency) = operation.dependencies.first() {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::UnauthenticatedRegisteredOperation,
+                    format!(
+                        "attachment {attachment_id:?} reaches registered operation \
+                         {:?} through component dependency at node {node_id:?}; set \
+                         auth-policy mode = {mode:?}",
+                        dependency.operation,
                         mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
                     ),
                 ));
@@ -1884,10 +2059,26 @@ mod tests {
         .expect("the repository handler manifest parses")
     }
 
+    fn source_manifest() -> wamn_schema_generator::PackageManifest {
+        serde_json::from_str(include_str!("../../../packages/receiving/wamn.json"))
+            .expect("the repository source manifest parses")
+    }
+
+    fn handler_manifest_with_entity(entity: &str) -> wamn_schema_generator::PackageManifest {
+        let mut document = serde_json::to_value(handler_manifest())
+            .expect("the repository handler manifest serializes");
+        document["custom_operations"]["quality.create_inspection"]["registration"]["entity"] =
+            serde_json::Value::String(entity.to_owned());
+        serde_json::from_value(document).expect("the mutated handler manifest parses")
+    }
+
     #[test]
     fn serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring() {
         let manifest = handler_manifest();
-        let manifests = BTreeMap::from([("client_acme_receiving".to_owned(), manifest)]);
+        let manifests = BTreeMap::from([
+            ("client_acme_receiving".to_owned(), manifest),
+            ("wamn_receiving".to_owned(), source_manifest()),
+        ]);
         let operation = "client-acme-receiving:quality/create-inspection@3.0.0".to_owned();
         let target = ReleaseWiringTarget {
             package_id: "client_acme_receiving".to_owned(),
@@ -1910,6 +2101,23 @@ mod tests {
             let error = derive_serving_registrations(&manifests, &targets)
                 .expect_err("zero or multiple handler entry wirings were accepted");
             assert_eq!(error.kind(), MintManifestErrorKind::Registration);
+        }
+
+        let manifests = BTreeMap::from([
+            (
+                "client_acme_receiving".to_owned(),
+                handler_manifest_with_entity("missing"),
+            ),
+            ("wamn_receiving".to_owned(), source_manifest()),
+        ]);
+        let error = derive_serving_registrations(&manifests, &targets)
+            .expect_err("a registration source entity absent from its package was accepted");
+        assert_eq!(error.kind(), MintManifestErrorKind::Registration);
+        for fact in ["quality.create_inspection", "wamn_receiving", "missing"] {
+            assert!(
+                error.detail().contains(fact),
+                "missing refusal fact {fact:?}"
+            );
         }
     }
 
@@ -2020,6 +2228,60 @@ mod tests {
     }
 
     #[test]
+    fn component_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {
+        let base_operation = "base:receiving/record-receipt@1.0.0";
+        let overlay_operation = "overlay:receiving/record-receipt@3.0.0";
+        let mut base = closure_component("base-component", Some(base_operation));
+        base.scope.package_id = "base".to_owned();
+        let mut overlay = closure_component("overlay-component", Some(overlay_operation));
+        overlay.scope.package_id = "overlay".to_owned();
+        overlay.scope.package_version = "3.0.0".to_owned();
+        overlay.component_digest = format!("sha256:{}", "b".repeat(64));
+        overlay
+            .operations
+            .get_mut(overlay_operation)
+            .expect("the overlay operation exists")
+            .dependencies = vec![wamn_catalog::ComponentOperationDependency {
+            package: "base".to_owned(),
+            version: "1.0.0".to_owned(),
+            digest: base.component_digest.clone(),
+            operation: base_operation.to_owned(),
+        }];
+        let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
+        let facts = BTreeMap::from([
+            (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
+            (
+                ("overlay".to_owned(), "3.0.0".to_owned()),
+                vec![overlay.clone()],
+            ),
+        ]);
+
+        let closure = resolve_component_dependency_closure(&roots, &facts)
+            .expect("the exact dependency expands the release component closure");
+        assert_eq!(closure.len(), 2);
+        assert!(closure.contains(&base));
+        assert!(closure.contains(&overlay));
+
+        base.operations
+            .get_mut(base_operation)
+            .expect("the base operation exists")
+            .dependencies = vec![wamn_catalog::ComponentOperationDependency {
+            package: "overlay".to_owned(),
+            version: "3.0.0".to_owned(),
+            digest: overlay.component_digest.clone(),
+            operation: overlay_operation.to_owned(),
+        }];
+        let cyclic = BTreeMap::from([
+            (("base".to_owned(), "1.0.0".to_owned()), vec![base]),
+            (("overlay".to_owned(), "3.0.0".to_owned()), vec![overlay]),
+        ]);
+        let error = resolve_component_dependency_closure(&roots, &cyclic)
+            .expect_err("an exact component dependency cycle was accepted");
+        assert_eq!(error.kind(), MintManifestErrorKind::OperationDependency);
+        assert!(error.detail().contains("cycle"));
+    }
+
+    #[test]
     fn release_mint_refuses_an_anonymous_path_to_a_registered_operation() {
         let target = ReleaseWiringTarget {
             package_id: "base".to_owned(),
@@ -2057,6 +2319,32 @@ mod tests {
              \"base:purchase-order/get@1.0.0\" at node \"registered\"; set \
              auth-policy mode = \"pat\""
         );
+
+        let mut dependency_facts = facts.clone();
+        dependency_facts
+            .get_mut("entry")
+            .unwrap()
+            .operations
+            .get_mut("run")
+            .unwrap()
+            .dependencies = vec![wamn_catalog::ComponentOperationDependency {
+            package: "base".to_owned(),
+            version: "1.0.0".to_owned(),
+            digest: DIGEST.to_owned(),
+            operation: "base:purchase-order/get@1.0.0".to_owned(),
+        }];
+        let error = validate_anonymous_wiring_closure(
+            &anonymous,
+            &target,
+            &closure_document(false),
+            &dependency_facts,
+        )
+        .expect_err("anonymous dependency reachability must fail at release mint");
+        assert_eq!(
+            error.kind(),
+            MintManifestErrorKind::UnauthenticatedRegisteredOperation
+        );
+        assert!(error.detail().contains("through component dependency"));
 
         assert!(
             validate_anonymous_wiring_closure(

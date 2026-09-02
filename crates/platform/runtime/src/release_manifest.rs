@@ -251,6 +251,7 @@ mod tests {
                     "map".into(),
                     ServingComponentOperation {
                         registered_operation: None,
+                        dependencies: Vec::new(),
                     },
                 )]),
             }]),

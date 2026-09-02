@@ -900,6 +900,7 @@ mod tests {
                     snapshot.operation.expect("operation"),
                     ServingComponentOperation {
                         registered_operation: snapshot.registered_operation,
+                        dependencies: Vec::new(),
                     },
                 )]),
             }]),

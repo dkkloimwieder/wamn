@@ -1,9 +1,9 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
 //! Format 3 closes over exact package membership, component digests, wiring
-//! definitions, attachments, and
-//! registrations. It contains no flow, execution-plan, call-graph, or callable
-//! identity. Producers must source every member from current catalog records;
+//! definitions, exact component-operation dependencies, attachments, and
+//! registrations. It contains no flow or execution-plan identity. Producers
+//! must source every member from current catalog records;
 //! this model intentionally provides no legacy-plan conversion.
 //!
 //! The document identity is the SHA-256 of its RFC 8785 canonical JSON. Sets and
@@ -11,14 +11,14 @@
 //! [`ServingManifest::from_canonical_bytes`] rejects bytes whose order or JSON
 //! encoding differs from that canonical representation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    ArtifactHash, AttachmentKind, CatalogIdentityError, DefinitionHash, EffectiveReleaseId,
-    HASH_PREFIX, ManifestDigest, PackageCoordinate,
+    ArtifactHash, AttachmentKind, CatalogIdentityError, ComponentOperationDependency,
+    DefinitionHash, EffectiveReleaseId, HASH_PREFIX, ManifestDigest, PackageCoordinate,
     package::validate_canonical_operation_for_package, validate_digest, validate_text,
 };
 
@@ -80,6 +80,9 @@ pub struct ServingComponentOperation {
     /// Explicit application permission identity. Palette exports carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
+    /// Exact typed imports this operation may invoke through the host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<ComponentOperationDependency>,
 }
 
 /// One immutable component artifact in the release closure.
@@ -284,6 +287,7 @@ impl ServingManifest {
                 }
             }
         }
+        validate_component_dependency_closure(&package_versions, &self.components)?;
 
         let mut targets = BTreeSet::new();
         for wiring in &self.wirings {
@@ -380,6 +384,111 @@ impl ServingManifest {
         }
         Ok(())
     }
+}
+
+type ComponentOperationKey = (String, String, String);
+
+fn validate_component_dependency_closure(
+    package_versions: &BTreeMap<&str, &str>,
+    components: &BTreeSet<ServingComponent>,
+) -> Result<(), CatalogIdentityError> {
+    let mut graph = BTreeMap::<ComponentOperationKey, Vec<ComponentOperationKey>>::new();
+    for component in components {
+        for (operation_name, operation) in &component.operations {
+            let key = (
+                component.package_id.clone(),
+                component.digest.as_str().to_owned(),
+                operation_name.clone(),
+            );
+            if graph.contains_key(&key) {
+                return invalid(format!(
+                    "component operation tuple {key:?} occurs more than once"
+                ));
+            }
+            let mut targets = Vec::with_capacity(operation.dependencies.len());
+            for dependency in &operation.dependencies {
+                validate_package_member(package_versions, &dependency.package)?;
+                let release_version = package_versions
+                    .get(dependency.package.as_str())
+                    .expect("dependency package membership was validated");
+                if *release_version != dependency.version {
+                    return invalid(format!(
+                        "component dependency {}@{} differs from release member {}@{}",
+                        dependency.package, dependency.version, dependency.package, release_version
+                    ));
+                }
+                validate_digest(&dependency.digest, "component-dependency-digest")?;
+                validate_canonical_operation_for_package(
+                    &dependency.operation,
+                    &dependency.package,
+                    &dependency.version,
+                )?;
+                let matches = components
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.package_id == dependency.package
+                            && candidate.digest.as_str() == dependency.digest
+                            && candidate.operations.get(&dependency.operation).is_some_and(
+                                |operation| {
+                                    operation.registered_operation.as_deref()
+                                        == Some(dependency.operation.as_str())
+                                },
+                            )
+                    })
+                    .count();
+                if matches != 1 {
+                    return invalid(format!(
+                        "component dependency {}@{} digest {} operation {:?} resolves to {matches} exact component facts",
+                        dependency.package,
+                        dependency.version,
+                        dependency.digest,
+                        dependency.operation
+                    ));
+                }
+                targets.push((
+                    dependency.package.clone(),
+                    dependency.digest.clone(),
+                    dependency.operation.clone(),
+                ));
+            }
+            graph.insert(key, targets);
+        }
+    }
+
+    let mut incoming = graph
+        .keys()
+        .cloned()
+        .map(|operation| (operation, 0_usize))
+        .collect::<BTreeMap<_, _>>();
+    for dependencies in graph.values() {
+        for dependency in dependencies {
+            *incoming
+                .get_mut(dependency)
+                .expect("exact dependency validation populated every target") += 1;
+        }
+    }
+    let mut pending = incoming
+        .iter()
+        .filter(|(_, count)| **count == 0)
+        .map(|(operation, _)| operation.clone())
+        .collect::<VecDeque<_>>();
+    let mut visited = 0_usize;
+    while let Some(operation) = pending.pop_front() {
+        visited += 1;
+        for dependency in &graph[&operation] {
+            let count = incoming
+                .get_mut(dependency)
+                .expect("exact dependency validation populated every target");
+            *count -= 1;
+            if *count == 0 {
+                pending.push_back(dependency.clone());
+            }
+        }
+    }
+    if visited != graph.len() {
+        return invalid("component operation dependency closure contains a cycle");
+    }
+    Ok(())
 }
 
 fn validate_format_version(document: &Value) -> Result<(), CatalogIdentityError> {
@@ -522,9 +631,15 @@ mod tests {
                 interface_version: "0.1".into(),
                 digest: artifact_hash(COMPONENT_B),
                 operations: BTreeMap::from([(
-                    "map".into(),
+                    "overlay:transform/map@3.0.0".into(),
                     ServingComponentOperation {
-                        registered_operation: None,
+                        registered_operation: Some("overlay:transform/map@3.0.0".into()),
+                        dependencies: vec![ComponentOperationDependency {
+                            package: "base".into(),
+                            version: "1.0.0".into(),
+                            digest: COMPONENT_A.into(),
+                            operation: "base:purchase-order/get@1.0.0".into(),
+                        }],
                     },
                 )]),
             },
@@ -537,6 +652,7 @@ mod tests {
                     "base:purchase-order/get@1.0.0".into(),
                     ServingComponentOperation {
                         registered_operation: Some("base:purchase-order/get@1.0.0".into()),
+                        dependencies: Vec::new(),
                     },
                 )]),
             },
@@ -614,6 +730,58 @@ mod tests {
 
         assert_eq!(forward.canonical_bytes(), reversed.canonical_bytes());
         assert_eq!(forward.digest(), reversed.digest());
+    }
+
+    #[test]
+    fn component_dependency_closure_is_exact_and_acyclic() {
+        let mut missing = components().into_iter().collect::<Vec<_>>();
+        let overlay = missing
+            .iter_mut()
+            .find(|component| component.package_id == "overlay")
+            .expect("the fixture carries the overlay component");
+        overlay
+            .operations
+            .get_mut("overlay:transform/map@3.0.0")
+            .unwrap()
+            .dependencies[0]
+            .digest = COMPONENT_B.into();
+        let error = ServingManifest::new(
+            release(),
+            missing.into_iter().collect(),
+            wirings(),
+            BTreeMap::from([("orders".to_string(), attachment())]),
+            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
+        )
+        .expect_err("a missing exact component dependency was accepted");
+        assert!(
+            error
+                .to_string()
+                .contains("resolves to 0 exact component facts")
+        );
+
+        let mut cyclic = components().into_iter().collect::<Vec<_>>();
+        let base = cyclic
+            .iter_mut()
+            .find(|component| component.package_id == "base")
+            .expect("the fixture carries the base component");
+        base.operations
+            .get_mut("base:purchase-order/get@1.0.0")
+            .unwrap()
+            .dependencies = vec![ComponentOperationDependency {
+            package: "overlay".into(),
+            version: "3.0.0".into(),
+            digest: COMPONENT_B.into(),
+            operation: "overlay:transform/map@3.0.0".into(),
+        }];
+        let error = ServingManifest::new(
+            release(),
+            cyclic.into_iter().collect(),
+            wirings(),
+            BTreeMap::from([("orders".to_string(), attachment())]),
+            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
+        )
+        .expect_err("a component operation dependency cycle was accepted");
+        assert!(error.to_string().contains("cycle"));
     }
 
     #[test]
