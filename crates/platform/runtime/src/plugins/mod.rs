@@ -4,6 +4,7 @@ pub mod flow_http_routing;
 pub mod wamn_credentials;
 pub mod wamn_jetstream;
 pub mod wamn_logging;
+pub mod wamn_blobstore;
 pub mod wamn_postgres;
 
 pub use connection_http::ConnectionHttp;
