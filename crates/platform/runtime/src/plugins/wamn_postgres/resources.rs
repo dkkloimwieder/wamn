@@ -1166,9 +1166,7 @@ async fn finish_statement_txn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugins::wamn_postgres::{
-        ContractMismatch, ContractPart, StatementError, ValueShape,
-    };
+    use crate::plugins::wamn_postgres::{ContractMismatch, ContractPart, ValueShape};
 
     fn mismatch() -> StatementError {
         StatementError::StatementContractMismatch(ContractMismatch {
