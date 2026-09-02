@@ -647,7 +647,7 @@
             {
               "name": "outcome",
               "type": "text",
-              "nullable": false
+              "nullable": true
             },
             {
               "name": "observed_row_version",

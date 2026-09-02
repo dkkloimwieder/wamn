@@ -1465,6 +1465,8 @@ fn error_detail_contract(detail: &OperationErrorDetailDeclaration) -> Value {
 }
 
 fn static_sql_rows(operation: &CustomOperationDeclaration, projection: Projection) -> Vec<RustRow> {
+    // SQLx 0.9 cannot infer non-null for PostgreSQL expressions, so a statement's
+    // nullable carrier may be tool-imposed while its public operation remains non-null.
     operation
         .statements
         .iter()
