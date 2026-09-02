@@ -166,6 +166,18 @@ trusted connection context rather than changing the corpus bytes:
 cargo test -p wamn-proof-integration \
   acme_overlay_publication --locked --offline
 
+# Exact cross-package closure and the real Component Model call boundary.
+cargo test -p wamn-catalog \
+  component_dependency_closure_is_exact_and_acyclic --lib --locked --offline
+cargo test -p wamn-ctl \
+  serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring \
+  --lib --locked --offline
+cargo test -p wamn-ctl \
+  component_dependencies_expand_the_exact_release_closure_and_refuse_cycles \
+  --lib --locked --offline
+cargo test -p wamn-execution-host \
+  nested_permission_denial --lib --locked --offline
+
 set -euo pipefail
 RECEIVING_PG_CONTAINER=wamn-receiving-pg18
 RECEIVING_PG_PORT=54329
