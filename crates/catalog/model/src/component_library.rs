@@ -82,16 +82,19 @@ pub struct ComponentParameterDeclaration {
 #[serde(rename_all = "kebab-case")]
 pub enum ComponentConnectionType {
     Http,
+    Blobstore,
 }
 
 /// Every connection type. A new variant does not compile until it is listed.
-const CONNECTION_TYPES: [ComponentConnectionType; 1] = [ComponentConnectionType::Http];
+const CONNECTION_TYPES: [ComponentConnectionType; 2] =
+    [ComponentConnectionType::Http, ComponentConnectionType::Blobstore];
 
 impl ComponentConnectionType {
     /// Exact WIT `namespace:package` whose import this connection type needs.
     pub fn import_package(self) -> &'static str {
         match self {
             Self::Http => "wamn:connection",
+            Self::Blobstore => "wasmcloud:blobstore",
         }
     }
 }

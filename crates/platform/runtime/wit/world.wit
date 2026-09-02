@@ -54,3 +54,14 @@ world logging-plugin {
 world flow-http-routing-plugin {
   import wamn:flow-http-routing/routing@0.1.0;
 }
+
+/// Host-side bindgen world for the WAMN blobstore plugin (§2b): the host
+/// IMPLEMENTS `wasmcloud:blobstore@0.1.0` over `object_store`, with
+/// binding-scoped credentials and bucket/prefix confinement. Upstream's
+/// `wasi_blobstore` providers are prior-art source only and are never
+/// registered — WAMN is the single runtime owner of this interface.
+world blobstore-plugin {
+  import wasmcloud:blobstore/types@0.1.0;
+  import wasmcloud:blobstore/container@0.1.0;
+  import wasmcloud:blobstore/blobstore@0.1.0;
+}

@@ -378,6 +378,7 @@ fn portable_requirement(
 ) -> ComponentConnectionRequirement {
     let descriptor = match connection.requirement_type {
         ComponentConnectionType::Http => ConnectionTypeDescriptor::http_v1(),
+        ComponentConnectionType::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
     };
     ComponentConnectionRequirement::new(component_digest, &connection.store_alias, descriptor)
 }
