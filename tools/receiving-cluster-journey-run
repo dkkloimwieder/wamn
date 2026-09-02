@@ -1756,7 +1756,6 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
       "exactly-one-pending-inspection",
       "exact-materializer-durable-ack",
       "zero-materializer-dead-letter",
-      "single-callerless-materializer-trace",
       "cross-environment-scheduling-refusal"
     ],
     evidence_scope:{
