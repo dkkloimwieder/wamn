@@ -137,6 +137,9 @@
       "kind": "command",
       "visibility": "public",
       "permission": "receiving.record_receipt",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -315,6 +318,76 @@
           ]
         },
         "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "purchase_order_number",
+            "supplier_id",
+            "status",
+            "row_version",
+            "acme_inspection_required",
+            "acme_quality_status"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "load_purchase_order_detail": {
+          "path": "query/quality_purchase_order_detail.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_number",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "supplier_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "acme_inspection_required",
+              "type": "boolean",
+              "nullable": false
+            },
+            {
+              "name": "acme_quality_status",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        }
       }
     },
     "quality.load_purchase_order_detail": {

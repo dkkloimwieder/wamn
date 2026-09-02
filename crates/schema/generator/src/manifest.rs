@@ -988,27 +988,27 @@ fn validate_static_sql_declarations(
     let has_connection = operation.connection.is_some();
     let has_relations = !operation.relations.is_empty();
     let has_statements = !operation.statements.is_empty();
+    let matching_dependencies = manifest
+        .base_dependencies
+        .values()
+        .filter(|dependency| {
+            dependency
+                .operations
+                .iter()
+                .any(|candidate| candidate == operation_name)
+        })
+        .count();
+    if matching_dependencies > 1 {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{operation_name} is ambiguous across {matching_dependencies} base dependencies"
+            ),
+        ));
+    }
     if !has_connection && !has_relations && !has_statements {
-        let matching_dependencies = manifest
-            .base_dependencies
-            .values()
-            .filter(|dependency| {
-                dependency
-                    .operations
-                    .iter()
-                    .any(|candidate| candidate == operation_name)
-            })
-            .count();
         if operation.kind == CustomOperationKind::Command && matching_dependencies == 1 {
             return Ok(());
-        }
-        if matching_dependencies > 1 {
-            return Err(GenerateError::new(
-                GenerateErrorKind::InvalidOperation,
-                format!(
-                    "{operation_name} is ambiguous across {matching_dependencies} base dependencies"
-                ),
-            ));
         }
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,

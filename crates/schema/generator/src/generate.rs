@@ -1236,6 +1236,18 @@ fn emit_custom_operation(
         ("wamn_rows".to_owned(), json!(wamn_rows)),
         ("wamn_accessors".to_owned(), json!(accessors)),
     ]);
+    if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
+        source_map.insert(
+            "composition".to_owned(),
+            json!({
+                "alias": alias,
+                "package": dependency.package,
+                "version": dependency.version,
+                "digest": dependency.digest,
+                "operation": operation_name,
+            }),
+        );
+    }
     match operation.kind {
         CustomOperationKind::Command => {
             source_map.insert("command".to_owned(), json!(operation_name));
@@ -1282,6 +1294,18 @@ fn emit_custom_operation_contracts(
         ("grant".to_owned(), json!(grant)),
         ("sql_files".to_owned(), json!(sql_files)),
     ]);
+    if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
+        operation_contract.insert(
+            "dependency".to_owned(),
+            json!({
+                "alias": alias,
+                "package": dependency.package,
+                "version": dependency.version,
+                "digest": dependency.digest,
+                "operation": operation_name,
+            }),
+        );
+    }
     if let Some(connection) = &operation.connection {
         operation_contract.insert("connection".to_owned(), json!(connection));
     }
@@ -1339,6 +1363,22 @@ fn emit_custom_operation_contracts(
         &format!("{root}.errors.json"),
         &custom_operation_error_contract(catalog, operation),
     )
+}
+
+fn operation_dependency<'a>(
+    manifest: &'a PackageManifest,
+    operation_name: &str,
+) -> Option<(&'a str, &'a crate::manifest::BaseDependencyRequirement)> {
+    manifest
+        .base_dependencies
+        .iter()
+        .find_map(|(alias, dependency)| {
+            dependency
+                .operations
+                .iter()
+                .any(|candidate| candidate == operation_name)
+                .then_some((alias.as_str(), dependency))
+        })
 }
 
 fn custom_operation_error_contract(

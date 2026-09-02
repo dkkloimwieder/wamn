@@ -932,6 +932,41 @@ fn overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain() {
 }
 
 #[test]
+fn dependency_composition_may_add_one_declared_post_call_projection() {
+    let mut overlay = overlay_manifest();
+    let projection = projection_operation();
+    let operation = overlay["custom_operations"]["receiving.record_receipt"]
+        .as_object_mut()
+        .unwrap();
+    operation.insert("connection".to_owned(), json!("postgres"));
+    operation.insert("transaction".to_owned(), json!("explicit_per_input"));
+    operation.insert("automatic_retry".to_owned(), json!(false));
+    operation.insert("relations".to_owned(), projection["relations"].clone());
+    operation.insert("statements".to_owned(), projection["statements"].clone());
+
+    let generated = run(&receiving_catalog(), &overlay, &generic_operation_sources())
+        .expect("an exact dependency may be followed by declared local projection SQL");
+    let contract = artifact_json(
+        &generated,
+        "generated/contracts/receiving/record_receipt.operation.json",
+    );
+    assert_eq!(
+        contract["sql_files"],
+        json!(["query/quality_purchase_order_detail.sql"])
+    );
+    assert_eq!(contract["dependency"]["alias"], "base_receiving");
+    let source_map = artifact_json(
+        &generated,
+        "generated/source-map/receiving_record_receipt.json",
+    );
+    assert_eq!(source_map["composition"]["package"], "wamn_receiving");
+    assert_eq!(source_map["command"], "receiving.record_receipt");
+    generated
+        .file("generated/wamn/receiving_record_receipt.rs")
+        .expect("declared post-call SQL generates its Wamn accessor");
+}
+
+#[test]
 fn overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions() {
     let mut range = overlay_manifest();
     range["base_dependencies"]["base_receiving"]["version"] = json!("^1.0");
