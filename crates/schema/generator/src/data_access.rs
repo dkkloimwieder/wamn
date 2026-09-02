@@ -699,7 +699,9 @@ fn derive_data_access_overlay_for_manifest(
     Ok(overlay)
 }
 
-fn application_schemas(manifest: &PackageManifest) -> Result<Vec<String>, GenerateError> {
+pub(crate) fn application_schemas(
+    manifest: &PackageManifest,
+) -> Result<Vec<String>, GenerateError> {
     let schemas = manifest
         .models
         .values()

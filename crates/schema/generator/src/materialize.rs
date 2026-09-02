@@ -6,11 +6,12 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result, ensure};
 use tokio_postgres::NoTls;
+use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::read_catalog;
 
 use crate::{
     AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
-    data_access_schemas, generate,
+    data_access::application_schemas, generate,
 };
 
 const GENERATOR_ID: &str = "wamn-schema-generator/0.1.0";
@@ -42,27 +43,25 @@ pub async fn materialize_package(
     source_commit: &str,
     package_root: &Path,
 ) -> Result<()> {
-    ensure!(
-        !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
-        "source-commit must be one nonempty argument"
-    );
+    validate_source_commit(source_commit)?;
+    materialize_after_introspection(
+        mode,
+        source_commit,
+        package_root,
+        introspect_package(database_url, package_root),
+    )
+    .await
+}
 
-    let manifest_path = package_root.join("wamn.json");
-    let manifest_bytes =
-        fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
-    let manifest =
-        PackageManifest::from_slice(&manifest_bytes).context("parse package manifest")?;
-    let source_files = load_authored_sql(package_root, &manifest)?;
-    let authored_sql = source_files
-        .iter()
-        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
-        .collect::<Vec<_>>();
+/// Introspect the package-owned schemas in one already-migrated PostgreSQL database.
+pub async fn introspect_package(database_url: &str, package_root: &Path) -> Result<CatalogIr> {
+    let (_, manifest) = load_manifest(package_root)?;
+    let schemas = application_schemas(&manifest).context("resolve application schemas")?;
 
     let (client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to the already-migrated PostgreSQL database")?;
     let connection_task = tokio::spawn(connection);
-    let schemas = data_access_schemas(&manifest_bytes).context("resolve application schemas")?;
     let schema_names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
     let catalog_result = read_catalog(&client, &schema_names).await;
     drop(client);
@@ -70,10 +69,30 @@ pub async fn materialize_package(
         .await
         .context("join PostgreSQL connection task")?
         .context("drive PostgreSQL connection")?;
-    let catalog = catalog_result.context("introspect package schemas")?;
+    catalog_result.context("introspect package schemas")
+}
+
+/// Materialize one package from an already-introspected catalog.
+///
+/// This stage reads the package's manifest and authored SQL, but performs no
+/// database access. The supplied catalog is the sole schema input.
+pub fn materialize_package_from_catalog(
+    mode: MaterializeMode,
+    catalog: &CatalogIr,
+    source_commit: &str,
+    package_root: &Path,
+) -> Result<()> {
+    validate_source_commit(source_commit)?;
+
+    let (manifest_bytes, manifest) = load_manifest(package_root)?;
+    let source_files = load_authored_sql(package_root, &manifest)?;
+    let authored_sql = source_files
+        .iter()
+        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
+        .collect::<Vec<_>>();
 
     let package = generate(&GenerationInput::new(
-        &catalog,
+        catalog,
         &manifest_bytes,
         &authored_sql,
         GenerationProvenance::new(source_commit, GENERATOR_ID, TOOLCHAIN_ID),
@@ -86,6 +105,36 @@ pub async fn materialize_package(
         MaterializeMode::Write => write_files(&output_root, &expected),
         MaterializeMode::Check => check_files(&output_root, &expected),
     }
+}
+
+async fn materialize_after_introspection<F>(
+    mode: MaterializeMode,
+    source_commit: &str,
+    package_root: &Path,
+    introspection: F,
+) -> Result<()>
+where
+    F: std::future::Future<Output = Result<CatalogIr>>,
+{
+    let catalog = introspection.await?;
+    materialize_package_from_catalog(mode, &catalog, source_commit, package_root)
+}
+
+fn validate_source_commit(source_commit: &str) -> Result<()> {
+    ensure!(
+        !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
+        "source-commit must be one nonempty argument"
+    );
+    Ok(())
+}
+
+fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {
+    let manifest_path = package_root.join("wamn.json");
+    let manifest_bytes =
+        fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest =
+        PackageManifest::from_slice(&manifest_bytes).context("parse package manifest")?;
+    Ok((manifest_bytes, manifest))
 }
 
 fn load_authored_sql(package_root: &Path, manifest: &PackageManifest) -> Result<Vec<SourceFile>> {
@@ -250,4 +299,138 @@ fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
     }
     files.sort();
     Ok(files)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use wamn_schema_introspection::ir::{Column, ColumnType, Constraint, Table};
+
+    use super::*;
+
+    const SOURCE_COMMIT: &str = "0123456789abcdef";
+    const MANIFEST: &[u8] = br#"{
+        "package":{"id":"test_package","version":"1.0.0"},
+        "required_platform_policy_contract":{"id":"test_data_access","state":"satisfied"},
+        "models":{
+            "thing":{
+                "schema":"application",
+                "table":"thing",
+                "owner":"test_package",
+                "server_owned_fields":["id"],
+                "operations":{
+                    "get":{
+                        "permission":"thing.get",
+                        "error_details":{
+                            "invalid_input":{"required":["field"]},
+                            "not_found":{"required":["field","id"]},
+                            "retry":{},
+                            "timeout":{},
+                            "permission_denied":{"required":["operation"]},
+                            "internal_error":{}
+                        },
+                        "result":"one"
+                    }
+                }
+            }
+        },
+        "connections":{"postgres":{"interface":"wamn:postgres@0.1.0"}},
+        "components":{"test_package":{"connections":["postgres"]}}
+    }"#;
+
+    struct TestPackage {
+        root: PathBuf,
+    }
+
+    impl TestPackage {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "wamn-schema-generator-materialize-{}-{name}",
+                std::process::id()
+            ));
+            if root.exists() {
+                fs::remove_dir_all(&root).expect("remove stale test package");
+            }
+            fs::create_dir_all(&root).expect("create test package");
+            fs::write(root.join("wamn.json"), MANIFEST).expect("write test manifest");
+            Self { root }
+        }
+
+        fn generated_snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
+            let generated = self.root.join("generated");
+            existing_files(&generated)
+                .expect("enumerate generated files")
+                .into_iter()
+                .map(|relative| {
+                    let bytes = fs::read(generated.join(&relative)).expect("read generated file");
+                    (relative, bytes)
+                })
+                .collect()
+        }
+    }
+
+    impl Drop for TestPackage {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("remove test package");
+        }
+    }
+
+    fn catalog() -> CatalogIr {
+        CatalogIr::new(vec![Table::new(
+            "application",
+            "thing",
+            vec![Column::new("id", ColumnType::Uuid, false, None, None)],
+            vec![Constraint::primary_key("thing_id_pkey", ["id"]).expect("construct primary key")],
+            Vec::new(),
+        )])
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn wrapper_and_split_paths_are_identical_without_reintrospection() {
+        let wrapper = TestPackage::new("wrapper");
+        let split = TestPackage::new("split");
+        let catalog = catalog();
+        let introspections = Cell::new(0_u8);
+
+        materialize_after_introspection(
+            MaterializeMode::Write,
+            SOURCE_COMMIT,
+            &wrapper.root,
+            async {
+                introspections.set(introspections.get() + 1);
+                Ok(catalog.clone())
+            },
+        )
+        .await
+        .expect("materialize through wrapper path");
+        assert_eq!(introspections.get(), 1);
+
+        materialize_package_from_catalog(
+            MaterializeMode::Write,
+            &catalog,
+            SOURCE_COMMIT,
+            &split.root,
+        )
+        .expect("materialize split generation path");
+        assert_eq!(
+            introspections.get(),
+            1,
+            "generation unexpectedly repeated database introspection"
+        );
+        assert_eq!(wrapper.generated_snapshot(), split.generated_snapshot());
+
+        let generated = split.generated_snapshot();
+        let stale = generated.keys().next().expect("generated artifact exists");
+        fs::write(split.root.join("generated").join(stale), b"stale")
+            .expect("write stale generated artifact");
+        let error = materialize_package_from_catalog(
+            MaterializeMode::Check,
+            &catalog,
+            SOURCE_COMMIT,
+            &split.root,
+        )
+        .expect_err("exact mode accepted stale output");
+        assert!(error.to_string().contains("generated artifact differs"));
+    }
 }

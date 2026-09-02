@@ -54,6 +54,8 @@ pub use manifest::{
     TieBreakerDeclaration, TimestamptzSpelling, UuidSpelling, canonical_operation_identity,
     canonical_operation_prefix, validate_operation_vocabulary,
 };
-pub use materialize::{MaterializeMode, materialize_package};
+pub use materialize::{
+    MaterializeMode, introspect_package, materialize_package, materialize_package_from_catalog,
+};
 pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
 pub use wamn_schema_introspection::ir::CatalogIr;
