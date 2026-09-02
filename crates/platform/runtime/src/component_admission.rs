@@ -313,19 +313,23 @@ mod tests {
     const DEPENDENCY_WITS: [(&str, &str); 5] = [
         (
             "wasi-clocks.wit",
-            "package wasi:clocks@0.2.3; interface monotonic-clock {}",
+            "package wasi:clocks@0.2.3; interface monotonic-clock { now: func() -> u64; }",
         ),
         (
+            // The interface carries a function ON PURPOSE. An EMPTY interface
+            // has nothing to import, so the component encoder elides the
+            // import entirely and the fixture silently stops carrying the
+            // surface the test names.
             "wasi-sockets.wit",
-            "package wasi:sockets@0.2.3; interface tcp {}",
+            "package wasi:sockets@0.2.3; interface tcp { connect: func(); }",
         ),
         (
             "wamn-connection.wit",
-            "package wamn:connection@0.1.0; interface http {}",
+            "package wamn:connection@0.1.0; interface http { send: func(); }",
         ),
         (
             "wamn-postgres.wit",
-            "package wamn:postgres@0.1.0; interface client {}",
+            "package wamn:postgres@0.1.0; interface client { query: func(); }",
         ),
         (
             "wamn-receiving.wit",
@@ -520,6 +524,12 @@ mod tests {
         assert_eq!(
             error.kind(),
             ComponentAdmissionErrorKind::ImportPolicyRefused
+        );
+        // Guard the guard. The refusal must NAME the socket import, or the
+        // fixture stopped carrying it and this test proves nothing.
+        assert!(
+            error.to_string().contains("wasi:sockets/tcp@0.2.3"),
+            "refusal must name the socket import it caught: {error}"
         );
     }
 
