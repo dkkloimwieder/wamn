@@ -1,0 +1,1 @@
+{"composition":{"alias":"base_receiving","digest":"sha256:c10453c58e992b45a82af3b25b8f843ec8263b5d846a19cab8964cad6e910b2d","operation":"receiving.record_receipt","package":"wamn_receiving","version":"1.0.0"},"kind":"command","manifest":"wamn.json#/custom_operations/receiving.record_receipt","operation":"receiving.record_receipt"}

@@ -1,0 +1,100 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    purchase_order.id,\n    purchase_order.purchase_order_number,\n    purchase_order.supplier_id,\n    purchase_order.status,\n    purchase_order.row_version,\n    purchase_order.acme_inspection_required,\n    purchase_order.acme_quality_status\nFROM purchase_order\nWHERE purchase_order.id = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "purchase_order_number",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "purchase_order_number"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "supplier_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "supplier_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "acme_inspection_required",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "acme_inspection_required"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "acme_quality_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "acme_quality_status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "80ee1d1fc0391b2167f4ad4360f2c8d2876d5d0303dc1996cb1a757288eb536f"
+}

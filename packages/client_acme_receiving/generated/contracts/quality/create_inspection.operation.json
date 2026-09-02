@@ -1,0 +1,1 @@
+{"connection":"postgres","grant":null,"kind":"event_handler","operation":"client-acme-receiving:quality/create-inspection@3.0.0","permission_token":null,"registration":{"entity":"receipt","ops":["insert"],"source_package":"wamn_receiving"},"sql_files":["command/create_inspection/insert_inspection.sql","command/create_inspection/load_inspection.sql"],"visibility":"private"}

@@ -1,0 +1,1 @@
+{"manifest":"wamn.json#/models/quality_inspection","model":"quality_inspection","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://receiving.quality_inspection","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"sql_constant_visibility":"crate"}}

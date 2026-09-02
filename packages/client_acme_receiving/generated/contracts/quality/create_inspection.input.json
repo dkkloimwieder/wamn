@@ -1,0 +1,1 @@
+{"fields":[{"nullable":false,"path":"event","type":"text","values":["insert"]},{"nullable":false,"path":"new.id","type":"uuid","values":[]}]}

@@ -1,0 +1,1 @@
+{"automatic_retry":false,"grant":"client-acme-receiving:purchase-order/update@3.0.0","operation":"client-acme-receiving:purchase-order/update@3.0.0","permission_token":"purchase_order.update","result":"one","sql_files":["generated/sql/purchase_order/update.sql"],"transaction":"implicit"}

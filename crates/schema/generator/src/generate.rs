@@ -248,7 +248,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         input.manifest_json,
         &manifest,
     )?;
-    insert_canonical_json_line(
+    insert_canonical_json(
         &mut files,
         crate::data_access::DATA_ACCESS_OVERLAY_PATH,
         &data_access,
@@ -2874,18 +2874,6 @@ fn insert_canonical_json(
             &serde_json::to_value(value).expect("generated JSON values always serialize"),
         ),
     )
-}
-
-fn insert_canonical_json_line(
-    files: &mut BTreeMap<String, Vec<u8>>,
-    path: &str,
-    value: &impl Serialize,
-) -> Result<(), GenerateError> {
-    let mut bytes = canonical_json_bytes(
-        &serde_json::to_value(value).expect("generated JSON values always serialize"),
-    );
-    bytes.push(b'\n');
-    insert_bytes(files, path, bytes)
 }
 
 fn insert_bytes(

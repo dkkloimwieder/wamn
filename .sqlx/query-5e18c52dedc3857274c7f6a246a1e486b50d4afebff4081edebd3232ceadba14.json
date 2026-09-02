@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO quality_inspection (receipt_id)\nVALUES ($1)\nON CONFLICT ON CONSTRAINT quality_inspection_receipt_id_pkey\nDO NOTHING\nRETURNING receipt_id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "receipt_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "quality_inspection",
+            "name": "receipt_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5e18c52dedc3857274c7f6a246a1e486b50d4afebff4081edebd3232ceadba14"
+}

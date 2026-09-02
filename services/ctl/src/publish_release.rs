@@ -1877,39 +1877,10 @@ mod tests {
     }
 
     fn handler_manifest() -> wamn_schema_generator::PackageManifest {
-        let mut document: serde_json::Value =
-            serde_json::from_str(include_str!("../../../packages/receiving/wamn.json"))
-                .expect("the repository package manifest parses as JSON");
-        document["package"] = serde_json::json!({
-            "id": "client_acme_receiving",
-            "version": "3.0.0"
-        });
-        document["base_dependencies"] = serde_json::json!({
-            "base_receiving": {
-                "package": "wamn_receiving",
-                "version": "1.0.0",
-                "digest": DIGEST,
-                "operations": ["receiving.record_receipt"]
-            }
-        });
-        document["models"] = serde_json::json!({});
-        document["custom_operations"] = serde_json::json!({
-            "quality.create_inspection": {
-                "kind": "event_handler",
-                "visibility": "private",
-                "registration": {
-                    "source_package": "wamn_receiving",
-                    "entity": "receipt",
-                    "ops": ["insert"]
-                }
-            }
-        });
-        document["components"] = serde_json::json!({
-            "receiving": {
-                "connections": ["postgres"]
-            }
-        });
-        serde_json::from_value(document).expect("the handler fixture manifest parses")
+        serde_json::from_str(include_str!(
+            "../../../packages/client_acme_receiving/wamn.json"
+        ))
+        .expect("the repository handler manifest parses")
     }
 
     #[test]

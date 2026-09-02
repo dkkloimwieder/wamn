@@ -2,11 +2,8 @@
 
 mod support;
 
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::json;
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::{
@@ -14,10 +11,6 @@ use wamn_control_provision::{
 };
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
-use wamn_schema_generator::{
-    DATA_ACCESS_OVERLAY_PATH, DataAccessRelationInventory,
-    derive_data_access_overlay_from_inventory,
-};
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
@@ -32,8 +25,12 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-fn package_root() -> PathBuf {
+fn receiving_package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving")
+}
+
+fn overlay_package_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/client_acme_receiving")
 }
 
 fn generation_url(admin_url: &str, role: &str) -> String {
@@ -50,131 +47,6 @@ fn reconcile_args(url: &str, packages: Vec<PathBuf>) -> ReconcilePackageDataAcce
         database_url: url.to_owned(),
         tenant: TENANT.to_owned(),
     }
-}
-
-struct OverlayPackage {
-    root: PathBuf,
-}
-
-impl OverlayPackage {
-    fn create() -> Self {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock follows the Unix epoch")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "wamn-package-data-access-overlay-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(root.join("migrations")).expect("create overlay migration directory");
-        let manifest = json!({
-            "package": {
-                "id": "client_acme_receiving",
-                "version": "3.0.0"
-            },
-            "required_platform_policy_contract": {
-                "id": "receiving_data_access",
-                "state": "satisfied"
-            },
-            "models": {
-                "quality_inspection": {
-                    "schema": "receiving",
-                    "table": "quality_inspection",
-                    "owner": "client_acme_receiving",
-                    "server_owned_fields": ["id", "receipt_id", "status"],
-                    "enum_fields": {
-                        "status": ["pending", "approved", "rejected"]
-                    },
-                    "operations": {
-                        "get": {
-                            "permission": "quality_inspection.get",
-                            "error_details": {
-                                "invalid_input": {"required": ["field"]},
-                                "not_found": {"required": ["field", "id"]},
-                                "retry": {},
-                                "timeout": {},
-                                "permission_denied": {"required": ["operation"]},
-                                "internal_error": {}
-                            },
-                            "result": "one"
-                        }
-                    }
-                }
-            },
-            "custom_operations": {},
-            "connections": {
-                "postgres": {"interface": "wamn:postgres@0.1.0"}
-            },
-            "components": {
-                "quality_inspection_get": {
-                    "connections": ["postgres"]
-                }
-            }
-        });
-        fs::write(
-            root.join("wamn.json"),
-            serde_json::to_vec_pretty(&manifest).expect("serialize overlay manifest"),
-        )
-        .expect("write overlay manifest");
-        fs::write(
-            root.join("migrations/0001_initial.sql"),
-            "CREATE TABLE receiving.quality_inspection (\n\
-                 id uuid NOT NULL,\n\
-                 receipt_id uuid NOT NULL,\n\
-                 status text NOT NULL DEFAULT 'pending',\n\
-                 CONSTRAINT quality_inspection_id_pkey PRIMARY KEY (id),\n\
-                 CONSTRAINT quality_inspection_receipt_id_key UNIQUE (receipt_id),\n\
-                 CONSTRAINT quality_inspection_status_check CHECK (status IN ('pending', 'approved', 'rejected'))\n\
-             );\n",
-        )
-        .expect("write overlay migration");
-        Self { root }
-    }
-}
-
-impl Drop for OverlayPackage {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).expect("remove owned overlay fixture directory");
-    }
-}
-
-async fn live_inventory(client: &Client) -> Vec<DataAccessRelationInventory> {
-    client
-        .query(
-            "SELECT namespace.nspname::text, relation.relname::text, \
-                    array_agg(attribute.attname::text ORDER BY attribute.attname::text COLLATE \"C\") \
-               FROM pg_catalog.pg_class AS relation \
-               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-               JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
-              WHERE namespace.nspname = 'receiving' AND relation.relkind = 'r' \
-                AND relation.relname <> 'wamn_entities' \
-                AND attribute.attnum > 0 AND NOT attribute.attisdropped \
-              GROUP BY namespace.nspname, relation.relname \
-              ORDER BY namespace.nspname COLLATE \"C\", relation.relname COLLATE \"C\"",
-            &[],
-        )
-        .await
-        .expect("read live overlay relation inventory")
-        .into_iter()
-        .map(|row| {
-            DataAccessRelationInventory::new(
-                row.get::<_, String>(0),
-                row.get::<_, String>(1),
-                row.get::<_, Vec<String>>(2),
-            )
-        })
-        .collect()
-}
-
-async fn write_overlay_contribution(client: &Client, package: &OverlayPackage) {
-    let manifest_bytes = fs::read(package.root.join("wamn.json")).expect("read overlay manifest");
-    let overlay =
-        derive_data_access_overlay_from_inventory(&live_inventory(client).await, &manifest_bytes)
-            .expect("derive generated overlay contribution");
-    let path = package.root.join(DATA_ACCESS_OVERLAY_PATH);
-    fs::create_dir_all(path.parent().expect("overlay path has a parent"))
-        .expect("create overlay evidence directory");
-    fs::write(path, overlay.canonical_bytes()).expect("write canonical overlay contribution");
 }
 
 async fn acl_identity(client: &Client) -> Vec<String> {
@@ -218,7 +90,6 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         return;
     };
     let admin = connect(&url).await;
-    let overlay_package = OverlayPackage::create();
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
         .await
@@ -264,20 +135,19 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .await
         .expect("install application authorization floor");
     apply_package::run(ApplyPackageArgs {
-        package: package_root(),
+        package: receiving_package_root(),
         database_url: url.to_string(),
         tenant: TENANT.to_owned(),
     })
     .await
     .expect("apply Receiving package before policy");
     apply_package::run(ApplyPackageArgs {
-        package: overlay_package.root.clone(),
+        package: overlay_package_root(),
         database_url: url.to_string(),
         tenant: TENANT.to_owned(),
     })
     .await
     .expect("apply client overlay package before policy");
-    write_overlay_contribution(&admin, &overlay_package).await;
     admin
         .batch_execute(&sql::prepare_workload_generation_sql(
             WorkloadRoleFamily::App,
@@ -301,7 +171,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
 
     let incomplete = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
-        vec![package_root()],
+        vec![receiving_package_root()],
     ))
     .await
     .expect_err("one package cannot reconcile a two-package installed set");
@@ -312,7 +182,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         "incomplete installed set did not carry its typed refusal: {incomplete:#}"
     );
 
-    let installed_packages = vec![package_root(), overlay_package.root.clone()];
+    let installed_packages = vec![receiving_package_root(), overlay_package_root()];
     let first_effect = reconcile_package_data_access::reconcile_package_data_access(
         reconcile_args(&url, installed_packages.clone()),
     )
@@ -341,9 +211,21 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .await
         .expect("generated lock carrier permits the declared row lock");
     guest
-        .query("SELECT id FROM receiving.quality_inspection", &[])
+        .query(
+            "SELECT receipt_id, status, row_version FROM receiving.quality_inspection",
+            &[],
+        )
         .await
         .expect("overlay SELECT survives beside base authority");
+    guest
+        .execute(
+            "UPDATE receiving.quality_inspection \
+                SET status = status, row_version = row_version \
+              WHERE false",
+            &[],
+        )
+        .await
+        .expect("overlay UPDATE survives beside base authority");
     let delete = guest
         .execute("DELETE FROM receiving.purchase_order WHERE false", &[])
         .await

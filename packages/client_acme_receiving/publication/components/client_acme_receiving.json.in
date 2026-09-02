@@ -1,0 +1,183 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "client_acme_receiving",
+    "package-version": "3.0.0"
+  },
+  "component": "client_acme_receiving",
+  "interface-version": "0.1.0",
+  "operations": {
+    "client-acme-receiving:purchase-order/get@3.0.0": {
+      "registered-operation": "client-acme-receiving:purchase-order/get@3.0.0",
+      "input-ports": [{
+        "name": "input",
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["request_id", "id"],
+            "additionalProperties": false,
+            "properties": {
+              "request_id": {"type": "string", "minLength": 1},
+              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+            }
+          }
+        }
+      }],
+      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
+      "parameters": []
+    },
+    "client-acme-receiving:purchase-order/update@3.0.0": {
+      "registered-operation": "client-acme-receiving:purchase-order/update@3.0.0",
+      "input-ports": [{
+        "name": "input",
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["request_id", "id", "expected_row_version", "change"],
+            "additionalProperties": false,
+            "properties": {
+              "request_id": {"type": "string", "minLength": 1},
+              "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+              "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
+              "change": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "acme_inspection_required": {
+                    "type": ["boolean", "null"],
+                    "x-wamn-explicit-null": "invalid_input"
+                  },
+                  "acme_quality_status": {
+                    "type": ["string", "null"],
+                    "enum": ["not_required", "pending", "approved", null],
+                    "x-wamn-explicit-null": "invalid_input"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }],
+      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
+      "parameters": []
+    },
+    "client-acme-receiving:receiving/record-receipt@3.0.0": {
+      "registered-operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
+      "input-ports": [{
+        "name": "input",
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": ["request_id", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "request_id": {"type": "string", "minLength": 1},
+              "value": {
+                "type": "object",
+                "required": ["idempotency_key", "purchase_order_id", "receipt_reference", "occurred_at", "line"],
+                "additionalProperties": false,
+                "properties": {
+                  "idempotency_key": {"type": "string", "minLength": 1},
+                  "purchase_order_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+                  "receipt_reference": {"type": "string", "minLength": 1},
+                  "occurred_at": {"type": "string"},
+                  "line": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object",
+                      "required": ["purchase_order_line_id", "quantity", "location_id"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "purchase_order_line_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+                        "quantity": {"type": "string"},
+                        "location_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }],
+      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
+      "parameters": []
+    },
+    "client-acme-receiving:quality/load-purchase-order-detail@3.0.0": {
+      "registered-operation": "client-acme-receiving:quality/load-purchase-order-detail@3.0.0",
+      "input-ports": [{
+        "name": "input",
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["request_id", "purchase_order_id"],
+            "additionalProperties": false,
+            "properties": {
+              "request_id": {"type": "string", "minLength": 1},
+              "purchase_order_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+            }
+          }
+        }
+      }],
+      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
+      "parameters": []
+    },
+    "client-acme-receiving:quality/approve-inspection@3.0.0": {
+      "registered-operation": "client-acme-receiving:quality/approve-inspection@3.0.0",
+      "input-ports": [{
+        "name": "input",
+        "schema": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["request_id", "receipt_id", "expected_row_version"],
+            "additionalProperties": false,
+            "properties": {
+              "request_id": {"type": "string", "minLength": 1},
+              "receipt_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
+              "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"}
+            }
+          }
+        }
+      }],
+      "output-ports": [{"name": "main", "schema": {"type": "array"}}],
+      "parameters": []
+    },
+    "client-acme-receiving:quality/create-inspection@3.0.0": {
+      "registered-operation": "client-acme-receiving:quality/create-inspection@3.0.0",
+      "input-ports": [{
+        "name": "input",
+        "schema": {
+          "type": "object",
+          "required": ["event", "new"],
+          "additionalProperties": false,
+          "properties": {
+            "event": {"type": "string", "enum": ["insert"]},
+            "new": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+              }
+            }
+          }
+        }
+      }],
+      "output-ports": [],
+      "parameters": []
+    }
+  },
+  "connections": []
+}

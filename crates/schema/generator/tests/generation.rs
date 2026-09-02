@@ -6,10 +6,10 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
-    AuthoredSql, CrudAction, GenerateErrorKind, GeneratedPackage, GenerationInput,
-    GenerationProvenance, OperationVisibility, PackageManifest, canonical_operation_identity,
-    canonical_operation_prefix, corpus_sha256, generate, validate_operation_vocabulary,
-    validate_parity_json,
+    AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, GenerateErrorKind,
+    GeneratedPackage, GenerationInput, GenerationProvenance, OperationVisibility, PackageManifest,
+    canonical_operation_identity, canonical_operation_prefix, corpus_sha256, generate,
+    validate_operation_vocabulary, validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
@@ -1964,7 +1964,18 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
     )
     .unwrap();
 
-    let overlay = artifact_json(&package, "generated/platform-policy/data-access.json");
+    let overlay_file = package.file(DATA_ACCESS_OVERLAY_PATH).unwrap();
+    DataAccessOverlay::from_slice(overlay_file.bytes())
+        .expect("the generator must emit exact canonical data-access evidence");
+    let mut noncanonical_overlay = overlay_file.bytes().to_vec();
+    noncanonical_overlay.push(b'\n');
+    assert_eq!(
+        DataAccessOverlay::from_slice(&noncanonical_overlay)
+            .expect_err("a second byte spelling must refuse")
+            .kind(),
+        GenerateErrorKind::InvalidManifest
+    );
+    let overlay: Value = serde_json::from_slice(overlay_file.bytes()).unwrap();
     assert_eq!(overlay["role"], "wamn_app");
     assert_eq!(overlay["contract"], "receiving_data_access");
     let location = overlay["relations"]

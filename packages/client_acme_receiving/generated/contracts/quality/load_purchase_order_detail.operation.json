@@ -1,0 +1,1 @@
+{"connection":"postgres","grant":"client-acme-receiving:quality/load-purchase-order-detail@3.0.0","kind":"projection","operation":"client-acme-receiving:quality/load-purchase-order-detail@3.0.0","permission_token":"quality.load_purchase_order_detail","result":"one","sql_files":["query/quality_purchase_order_detail.sql"],"visibility":"public"}

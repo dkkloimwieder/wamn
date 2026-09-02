@@ -1,0 +1,1 @@
+{"grant":"client-acme-receiving:receiving/record-receipt@3.0.0","kind":"command","operation":"client-acme-receiving:receiving/record-receipt@3.0.0","permission_token":"receiving.record_receipt","result":"one","sql_files":[],"visibility":"public"}

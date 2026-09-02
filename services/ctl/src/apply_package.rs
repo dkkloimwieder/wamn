@@ -1492,38 +1492,10 @@ mod tests {
 
     #[test]
     fn overlay_registration_projection_does_not_require_redeclaring_the_base_entity() {
-        let mut document: serde_json::Value =
-            serde_json::from_str(include_str!("../../../packages/receiving/wamn.json"))
-                .expect("the repository package manifest parses as JSON");
-        document["package"] =
-            serde_json::json!({"id": "client_acme_receiving", "version": "3.0.0"});
-        document["base_dependencies"] = serde_json::json!({
-            "base_receiving": {
-                "package": "wamn_receiving",
-                "version": "1.0.0",
-                "digest": format!("sha256:{}", "a".repeat(64)),
-                "operations": ["receiving.record_receipt"]
-            }
-        });
-        document["models"] = serde_json::json!({});
-        document["custom_operations"] = serde_json::json!({
-            "quality.create_inspection": {
-                "kind": "event_handler",
-                "visibility": "private",
-                "registration": {
-                    "source_package": "wamn_receiving",
-                    "entity": "receipt",
-                    "ops": ["insert"]
-                }
-            }
-        });
-        document["components"] = serde_json::json!({
-            "quality_create_inspection": {
-                "connections": ["postgres"]
-            }
-        });
-        let manifest: wamn_schema_generator::PackageManifest =
-            serde_json::from_value(document).expect("the overlay manifest parses");
+        let manifest: wamn_schema_generator::PackageManifest = serde_json::from_str(include_str!(
+            "../../../packages/client_acme_receiving/wamn.json"
+        ))
+        .expect("the repository overlay manifest parses");
         wamn_schema_generator::validate_operation_vocabulary(&manifest)
             .expect("the overlay operation vocabulary is valid without base model restatement");
 

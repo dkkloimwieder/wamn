@@ -1,0 +1,1 @@
+{"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"receipt_id","type":"uuid","values":[]},{"nullable":false,"path":"expected_row_version","type":"int64","values":[]}]}

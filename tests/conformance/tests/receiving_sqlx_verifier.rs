@@ -1,4 +1,4 @@
-//! Native SQLx compile verifier over the exact shipped Receiving SQL corpus.
+//! Native SQLx compile verifier over the exact SQL consumed by generated native siblings.
 
 #[expect(
     dead_code,
@@ -23,6 +23,40 @@ mod native {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../packages/receiving/generated/native-verifier/receiving_record_receipt.rs"
+        ));
+    }
+}
+
+#[expect(
+    dead_code,
+    reason = "compile-only SQLx verification owns generated fields and SQL references"
+)]
+mod client_acme_native {
+    pub mod purchase_order {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packages/client_acme_receiving/generated/native-verifier/purchase_order.rs"
+        ));
+    }
+
+    pub mod quality_approve_inspection {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packages/client_acme_receiving/generated/native-verifier/quality_approve_inspection.rs"
+        ));
+    }
+
+    pub mod quality_create_inspection {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packages/client_acme_receiving/generated/native-verifier/quality_create_inspection.rs"
+        ));
+    }
+
+    pub mod quality_load_purchase_order_detail {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packages/client_acme_receiving/generated/native-verifier/quality_load_purchase_order_detail.rs"
         ));
     }
 }
@@ -167,4 +201,48 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
         native::receiving_record_receipt::validate_receipt_line_purchase_order_id_bind_fixture(),
         native::receiving_record_receipt::validate_receipt_line_line_bind_fixture()
     );
+}
+
+#[test]
+fn client_acme_native_verifier_compiles_the_exact_runtime_sql_files() {
+    let _ = sqlx::query_file_as!(
+        client_acme_native::purchase_order::PurchaseOrderRow,
+        "../../packages/client_acme_receiving/generated/sql/purchase_order/get.sql",
+        client_acme_native::purchase_order::get_id_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        client_acme_native::purchase_order::PurchaseOrderUpdateRow,
+        "../../packages/client_acme_receiving/generated/sql/purchase_order/update.sql",
+        client_acme_native::purchase_order::update_id_bind_fixture(),
+        client_acme_native::purchase_order::update_expected_row_version_bind_fixture(),
+        client_acme_native::purchase_order::update_acme_inspection_required_present_bind_fixture(),
+        client_acme_native::purchase_order::update_acme_inspection_required_value_bind_fixture(),
+        client_acme_native::purchase_order::update_acme_quality_status_present_bind_fixture(),
+        client_acme_native::purchase_order::update_acme_quality_status_value_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        client_acme_native::quality_load_purchase_order_detail::LoadPurchaseOrderDetailRow,
+        "../../packages/client_acme_receiving/query/quality_purchase_order_detail.sql",
+        client_acme_native::quality_load_purchase_order_detail::
+            load_purchase_order_detail_purchase_order_id_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        client_acme_native::quality_approve_inspection::ApproveInspectionRow,
+        "../../packages/client_acme_receiving/command/approve_inspection/approve_inspection.sql",
+        client_acme_native::quality_approve_inspection::
+            approve_inspection_receipt_id_bind_fixture(),
+        client_acme_native::quality_approve_inspection::
+            approve_inspection_expected_row_version_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        client_acme_native::quality_create_inspection::InsertInspectionRow,
+        "../../packages/client_acme_receiving/command/create_inspection/insert_inspection.sql",
+        client_acme_native::quality_create_inspection::insert_inspection_receipt_id_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        client_acme_native::quality_create_inspection::LoadInspectionRow,
+        "../../packages/client_acme_receiving/command/create_inspection/load_inspection.sql",
+        client_acme_native::quality_create_inspection::load_inspection_receipt_id_bind_fixture()
+    );
+    // `receiving.record_receipt` composes the exact base operation and owns no local SQL.
 }
