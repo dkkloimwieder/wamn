@@ -16,29 +16,14 @@
 # (bind_plugins binds only what is declared here).
 #
 # IDENTITY (host-injected, non-spoofable): `wamn.tenant` scopes the fully
-# qualified `catalog.packages` and `catalog.event_registrations` reads and also
-# drives the doorbell subject; `wamn.project` selects the per-project pool;
+# qualified `catalog.packages` and `catalog.event_registrations` reads;
+# `wamn.project` selects the per-project pool;
 # `wamn.postgres.authority` selects the closed event-materializer credential
 # class. The WAMN_MAT_* environment is guest-side SUBSCRIPTION config only
 # (stream name + subject segments + the tenant label checked against the
 # credential-scoped catalog row) — RLS holds regardless of what the env claims.
 #
-# THE DOORBELL SEGMENT IS AN EXECUTION TARGET, NOT A TENANT —
-# `wamn.doorbell.<execution-target-id>` — and THIS WORKLOAD CARRIES NO KEY THAT
-# STATES ONE. The host derives it with `mvp_execution_target_id(wamn.tenant)`
-# in `crates/platform/runtime/src/plugins/wamn_jetstream.rs`, the MVP
-# tenant-to-target adapter. The explicit target that
-# `deploy/platform/dispatcher-projects.example.yaml` and
-# `deploy/platform/waker.yaml` now render therefore cannot be rendered here:
-# the guest config shape has to gain a key first, which is a plugin change and
-# not a manifest one. Until then this file is compatible only through the
-# adapter — the residual the open placement epic wamn-0h0g.5 owns, and the one
-# placement row wamn-0h0g.10.5 could not discharge in the manifests alone. The
-# retirement trigger is recorded at the plugin (wamn-0h0g.10.11): the first
-# component that must ring a target which is not its own tenant.
-#
 # ONE TENANT PER WORKLOAD (v1): registrations and claims are tenant-scoped, and
-# the doorbell is scoped to the target the adapter derives from that tenant, so
 # a multi-tenant project-env runs one materializer workload per tenant.
 # Multi-registration fan-out within the tenant is one workload
 # (a durable consumer per registration).
@@ -71,9 +56,9 @@ spec:
       environment: wamn-system
       hostInterfaces:
         # The host's hostInterfaces are the ALLOWLIST for host plugins. The
-        # materializer imports PostgreSQL, JetStream, and the production
-        # router-delivery bridge; all three must be listed or the component
-        # fails to instantiate.
+        # materializer imports PostgreSQL, JetStream, the routing resource type
+        # borrowed by delivery, and the production router-delivery bridge; all
+        # four must be listed or the component fails to instantiate.
         - namespace: wamn
           package: postgres
           version: "0.1.0"
@@ -81,7 +66,11 @@ spec:
         - namespace: wamn
           package: jetstream
           version: "0.1.0"
-          interfaces: [types, consumer, doorbell]
+          interfaces: [types, consumer]
+        - namespace: wamn
+          package: flow-http-routing
+          version: "0.1.0"
+          interfaces: [routing]
         - namespace: wamn
           package: router-delivery
           version: "0.1.0"

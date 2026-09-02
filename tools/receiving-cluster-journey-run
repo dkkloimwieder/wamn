@@ -1553,8 +1553,10 @@ jq -e --arg image "$materializer_ref" --arg namespace "$namespace" '
     "WAMN_MAT_TENANT","WAMN_MAT_FETCH_MS","WAMN_MAT_SWEEP_MS"
   ]] == ["EVT_acme_dev","acme","receiving","dev","receiving-route-auth","500","500"] and
   (.spec.template.spec.hostInterfaces | sort_by(.package)) == [
+    {namespace:"wamn", package:"flow-http-routing", version:"0.1.0",
+     interfaces:["routing"]},
     {namespace:"wamn", package:"jetstream", version:"0.1.0",
-     interfaces:["types","consumer","doorbell"]},
+     interfaces:["types","consumer"]},
     {namespace:"wamn", package:"postgres", version:"0.1.0",
      interfaces:["types","client"]},
     {namespace:"wamn", package:"router-delivery", version:"0.1.0",
