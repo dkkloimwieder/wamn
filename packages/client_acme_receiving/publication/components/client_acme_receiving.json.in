@@ -69,6 +69,12 @@
     },
     "client-acme-receiving:receiving/record-receipt@3.0.0": {
       "registered-operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
+      "dependencies": [{
+        "package": "wamn_receiving",
+        "version": "1.0.0",
+        "digest": "sha256:c10453c58e992b45a82af3b25b8f843ec8263b5d846a19cab8964cad6e910b2d",
+        "operation": "wamn-receiving:receiving/record-receipt@1.0.0"
+      }],
       "input-ports": [{
         "name": "input",
         "schema": {
@@ -156,7 +162,6 @@
       "parameters": []
     },
     "client-acme-receiving:quality/create-inspection@3.0.0": {
-      "registered-operation": "client-acme-receiving:quality/create-inspection@3.0.0",
       "input-ports": [{
         "name": "input",
         "schema": {

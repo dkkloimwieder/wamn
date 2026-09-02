@@ -59,6 +59,13 @@ mod client_acme_native {
             "/../../packages/client_acme_receiving/generated/native-verifier/quality_load_purchase_order_detail.rs"
         ));
     }
+
+    pub mod receiving_record_receipt {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packages/client_acme_receiving/generated/native-verifier/receiving_record_receipt.rs"
+        ));
+    }
 }
 
 #[test]
@@ -244,5 +251,10 @@ fn client_acme_native_verifier_compiles_the_exact_runtime_sql_files() {
         "../../packages/client_acme_receiving/command/create_inspection/load_inspection.sql",
         client_acme_native::quality_create_inspection::load_inspection_receipt_id_bind_fixture()
     );
-    // `receiving.record_receipt` composes the exact base operation and owns no local SQL.
+    let _ = sqlx::query_file_as!(
+        client_acme_native::receiving_record_receipt::LoadPurchaseOrderDetailRow,
+        "../../packages/client_acme_receiving/query/quality_purchase_order_detail.sql",
+        client_acme_native::receiving_record_receipt::
+            load_purchase_order_detail_purchase_order_id_bind_fixture()
+    );
 }

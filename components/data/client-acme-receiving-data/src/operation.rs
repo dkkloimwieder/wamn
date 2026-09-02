@@ -10,6 +10,7 @@ use crate::error::{AccessError, AccessErrorKind};
 use crate::generated::{
     purchase_order as purchase_order_sql, quality_approve_inspection as approve_sql,
     quality_create_inspection as create_sql, quality_load_purchase_order_detail as detail_sql,
+    receiving_record_receipt as record_receipt_sql,
 };
 
 const MAX_ENVELOPE_ITEMS: usize = 100;
@@ -785,18 +786,39 @@ pub async fn receiving_record_receipt_result(input: &str) -> Result<String, Acce
                     })?
                     .to_owned();
                 let result = match parse_uuid(&purchase_order_id, "purchase_order_id") {
-                    Ok(id) => purchase_order_sql::get(&mut connection, id)
-                        .await
-                        .map_err(|source| {
-                            AccessError::from_sqlx("load Acme record_receipt confirmation", &source)
-                        })
-                        .and_then(|row| {
+                    Ok(id) => {
+                        async {
+                            let mut transaction = connection.begin().await.map_err(|source| {
+                                AccessError::from_sqlx(
+                                    "begin Acme record_receipt confirmation",
+                                    &source,
+                                )
+                            })?;
+                            let row = record_receipt_sql::load_purchase_order_detail(
+                                &mut transaction,
+                                id,
+                            )
+                            .await
+                            .map_err(|source| {
+                                AccessError::from_sqlx(
+                                    "load Acme record_receipt confirmation",
+                                    &source,
+                                )
+                            })?;
+                            transaction.commit().await.map_err(|source| {
+                                AccessError::from_sqlx(
+                                    "commit Acme record_receipt confirmation",
+                                    &source,
+                                )
+                            })?;
                             row.ok_or_else(|| {
                                 AccessError::internal(
                                     "base record_receipt returned a missing purchase_order",
                                 )
                             })
-                        }),
+                        }
+                        .await
+                    }
                     Err(_) => Err(AccessError::internal(
                         "base record_receipt returned a noncanonical purchase_order_id",
                     )),

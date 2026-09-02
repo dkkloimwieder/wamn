@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "receiving_record_receipt",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "client_acme_receiving",
+      "interface-version": "0.1.0",
+      "operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
+      "terminal": "respond"
+    }
+  }
+}
