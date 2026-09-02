@@ -539,10 +539,6 @@ pub fn bind_component_statement_facts(
         ));
     }
     for (export, operation_statements) in &statements {
-        let operation = component
-            .operations
-            .get(export)
-            .expect("the operation-set comparison proved this export exists");
         validate_operation_statement_facts(export, operation_statements)?;
     }
     for (export, operation_statements) in statements {

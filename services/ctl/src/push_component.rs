@@ -1526,7 +1526,6 @@ async fn append_or_verify_admitted_component_count(
 #[cfg(test)]
 mod tests {
     use std::fs::OpenOptions;
-    use std::path::Path;
 
     use wamn_catalog::{
         AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageScope,
@@ -1776,7 +1775,7 @@ mod tests {
         .expect("reordered projection hashes");
         assert_eq!(forward, reversed);
 
-        let mut changed = component;
+        let mut changed = component.clone();
         let operation = changed
             .operations
             .values_mut()
