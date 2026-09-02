@@ -1840,35 +1840,7 @@ async fn resolve_wiring(
         graph_hash: derived_hash,
     });
     for fact in component_closure {
-        let digest = ArtifactHash::parse(fact.component_digest.clone()).map_err(|error| {
-            MintManifestError::with_source(
-                MintManifestErrorKind::Component,
-                format!(
-                    "component {:?} stores a non-canonical digest",
-                    fact.component
-                ),
-                error,
-            )
-        })?;
-        components.insert(ServingComponent {
-            package_id: fact.scope.package_id.clone(),
-            component: fact.component.clone(),
-            interface_version: fact.interface_version.clone(),
-            digest,
-            operations: fact
-                .operations
-                .iter()
-                .map(|(name, operation)| {
-                    (
-                        name.clone(),
-                        ServingComponentOperation {
-                            registered_operation: operation.registered_operation.clone(),
-                            dependencies: operation.dependencies.clone(),
-                        },
-                    )
-                })
-                .collect(),
-        });
+        components.insert(project_serving_component(&fact)?);
     }
     for (node_id, fact) in resolved {
         membership.insert(ReleaseComponentMembership {
@@ -1883,6 +1855,41 @@ async fn resolve_wiring(
         });
     }
     Ok(entry_operation)
+}
+
+fn project_serving_component(
+    fact: &AdmittedComponent,
+) -> Result<ServingComponent, MintManifestError> {
+    let digest = ArtifactHash::parse(fact.component_digest.clone()).map_err(|error| {
+        MintManifestError::with_source(
+            MintManifestErrorKind::Component,
+            format!(
+                "component {:?} stores a non-canonical digest",
+                fact.component
+            ),
+            error,
+        )
+    })?;
+    Ok(ServingComponent {
+        package_id: fact.scope.package_id.clone(),
+        component: fact.component.clone(),
+        interface_version: fact.interface_version.clone(),
+        digest,
+        operations: fact
+            .operations
+            .iter()
+            .map(|(name, operation)| {
+                (
+                    name.clone(),
+                    ServingComponentOperation {
+                        registered_operation: operation.registered_operation.clone(),
+                        dependencies: operation.dependencies.clone(),
+                        statements: operation.statements.clone(),
+                    },
+                )
+            })
+            .collect(),
+    })
 }
 
 /// Refuse an anonymous attachment whose selected wiring can reach a registered
@@ -2418,6 +2425,7 @@ mod tests {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
+                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: DIGEST.to_owned(),
@@ -2601,6 +2609,7 @@ mod tests {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
+                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: DIGEST.to_owned(),
@@ -2839,6 +2848,37 @@ mod tests {
             .expect_err("an exact component dependency cycle was accepted");
         assert_eq!(error.kind(), MintManifestErrorKind::OperationDependency);
         assert!(error.detail().contains("cycle"));
+    }
+
+    #[test]
+    fn release_projection_preserves_operation_scoped_statement_facts() {
+        let operation = "base:purchase-order/get@1.0.0";
+        let sql = "SELECT row_version FROM purchase_order WHERE id = $1";
+        let digest = sha256(sql.as_bytes());
+        let mut admitted = closure_component("base-component", Some(operation));
+        admitted
+            .operations
+            .get_mut(operation)
+            .expect("fixture has the registered operation")
+            .statements
+            .insert(
+                digest.clone(),
+                wamn_catalog::ComponentSqlStatement {
+                    name: "get".to_owned(),
+                    path: "generated/sql/purchase_order/get.sql".to_owned(),
+                    sql: sql.to_owned(),
+                    binds: Vec::new(),
+                    columns: Vec::new(),
+                },
+            );
+
+        let serving = project_serving_component(&admitted)
+            .expect("an admitted component projects to serving facts");
+
+        assert_eq!(
+            serving.operations[operation].statement(&digest),
+            admitted.operations[operation].statement(&digest)
+        );
     }
 
     #[test]

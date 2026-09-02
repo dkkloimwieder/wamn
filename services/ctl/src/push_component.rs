@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Component as PathComponent, Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -16,10 +16,12 @@ use oci_client::client::{ClientConfig, ClientProtocol, Config, ImageLayer};
 use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
+use serde::Deserialize;
 use tokio_postgres::{Client as PgClient, Config as PgConfig, NoTls, Transaction};
 use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
+    ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts, component_sql_digest,
 };
 use wamn_runtime::component_admission::validate_component_admission;
 use wamn_runtime::component_artifact::{
@@ -80,6 +82,11 @@ pub enum ComponentProjectionErrorKind {
     PlaneContentMismatch,
     ComponentFactConflict,
     ConnectionFactConflict,
+    StatementContractInvalid,
+    StatementOperationMismatch,
+    StatementPathInvalid,
+    StatementDigestMismatch,
+    StatementCorpusMismatch,
 }
 
 impl ComponentProjectionErrorKind {
@@ -92,6 +99,11 @@ impl ComponentProjectionErrorKind {
             Self::PlaneContentMismatch => "plane-content-mismatch",
             Self::ComponentFactConflict => "component-fact-conflict",
             Self::ConnectionFactConflict => "connection-fact-conflict",
+            Self::StatementContractInvalid => "statement-contract-invalid",
+            Self::StatementOperationMismatch => "statement-operation-mismatch",
+            Self::StatementPathInvalid => "statement-path-invalid",
+            Self::StatementDigestMismatch => "statement-digest-mismatch",
+            Self::StatementCorpusMismatch => "statement-corpus-mismatch",
         }
     }
 }
@@ -114,6 +126,10 @@ impl ComponentProjectionError {
     pub const fn kind(&self) -> ComponentProjectionErrorKind {
         self.kind
     }
+
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
 }
 
 impl fmt::Display for ComponentProjectionError {
@@ -128,6 +144,24 @@ impl fmt::Display for ComponentProjectionError {
 }
 
 impl std::error::Error for ComponentProjectionError {}
+
+#[derive(Debug, Deserialize)]
+struct GeneratedOperationContract {
+    operation: String,
+    statements: Vec<GeneratedStatementContract>,
+    #[serde(flatten)]
+    _operation_contract: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedStatementContract {
+    name: String,
+    path: String,
+    digest: String,
+    binds: Vec<ComponentSqlField>,
+    columns: Vec<ComponentSqlField>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProjectionPlane {
@@ -220,6 +254,9 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
     let directory = crate::apply_package::read_package_directory(&args.package)?;
     let package = plan_package_migrations(&directory, None)
         .context("validate strict package directory before component publication")?;
+    let package_manifest =
+        wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)
+            .context("parse strict package manifest before component publication")?;
     let component_bytes = std::fs::read(&args.component_bytes)
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
     let declaration_bytes = std::fs::read(&args.declaration)
@@ -240,14 +277,18 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
         },
     )
     .context("validate exact component bytes")?;
-    let admitted = facts.component;
+    let mut admitted = facts.component;
+    ensure_component_package_matches(&admitted, &package.coordinate)?;
+    let statement_facts =
+        load_component_statement_facts(&args.package, &package_manifest, &admitted)?;
+    bind_component_statement_facts(&mut admitted, statement_facts)
+        .context("bind generated SQL facts to exact component operations")?;
     let requirements = facts
         .connections
         .iter()
         .map(|connection| portable_requirement(&admitted.component_digest, connection))
         .collect::<Vec<_>>();
     let projection_hash = admitted_projection_hash(&admitted, &requirements)?;
-    ensure_component_package_matches(&admitted, &package.coordinate)?;
     let project_config: PgConfig = args
         .project_database_url
         .parse()
@@ -344,6 +385,439 @@ pub fn admitted_projection_hash(
         "connection-requirements": requirement_documents,
     });
     Ok(wamn_execution_contract::canonical_json_sha256(&projection))
+}
+
+#[derive(Debug)]
+struct ExpectedOperationContract {
+    relative_path: String,
+    component: String,
+    public: bool,
+}
+
+fn load_component_statement_facts(
+    package_root: &Path,
+    manifest: &wamn_schema_generator::PackageManifest,
+    component: &AdmittedComponent,
+) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
+    wamn_schema_generator::validate_operation_vocabulary(manifest).map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementContractInvalid,
+            format!("package operation vocabulary is invalid: {error}"),
+        )
+    })?;
+    if !manifest.components.contains_key(&component.component) {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementOperationMismatch,
+            format!(
+                "component {:?} is absent from the package manifest",
+                component.component
+            ),
+        ));
+    }
+    let expected = expected_operation_contracts(manifest)?;
+    let canonical_root = package_root.canonicalize().map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementPathInvalid,
+            format!(
+                "cannot resolve package root {} while reading statement evidence: {error}",
+                package_root.display()
+            ),
+        )
+    })?;
+    let mut all_statements = BTreeMap::new();
+    let mut corpus = BTreeMap::<String, Vec<u8>>::new();
+    for (operation, expected_contract) in &expected {
+        let contract_path = package_root.join(&expected_contract.relative_path);
+        let contract_bytes = std::fs::read(&contract_path).map_err(|error| {
+            ComponentProjectionError::new(
+                ComponentProjectionErrorKind::StatementContractInvalid,
+                format!(
+                    "read generated operation contract {}: {error}",
+                    contract_path.display()
+                ),
+            )
+        })?;
+        let contract: GeneratedOperationContract = serde_json::from_slice(&contract_bytes)
+            .map_err(|error| {
+                ComponentProjectionError::new(
+                    ComponentProjectionErrorKind::StatementContractInvalid,
+                    format!(
+                        "generated operation contract {} has invalid statement shape: {error}",
+                        contract_path.display()
+                    ),
+                )
+            })?;
+        if contract.operation != *operation {
+            return Err(ComponentProjectionError::new(
+                ComponentProjectionErrorKind::StatementOperationMismatch,
+                format!(
+                    "generated operation contract {} names {:?}, expected {operation:?}",
+                    contract_path.display(),
+                    contract.operation
+                ),
+            ));
+        }
+        let operation_statements = load_operation_statements(
+            package_root,
+            &canonical_root,
+            operation,
+            contract.statements,
+            &mut corpus,
+        )?;
+        all_statements.insert(operation.clone(), operation_statements);
+    }
+
+    let weld_path = package_root.join("generated/package-weld.json");
+    let weld_bytes = std::fs::read(&weld_path).map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementCorpusMismatch,
+            format!(
+                "read generated package weld {}: {error}",
+                weld_path.display()
+            ),
+        )
+    })?;
+    let weld = wamn_schema_generator::PackageWeld::from_slice(&weld_bytes).map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementCorpusMismatch,
+            format!(
+                "generated package weld {} is invalid: {error}",
+                weld_path.display()
+            ),
+        )
+    })?;
+    let observed_corpus = wamn_schema_generator::corpus_sha256(
+        corpus
+            .iter()
+            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
+    );
+    if observed_corpus != weld.application_sql_corpus_identity() {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementCorpusMismatch,
+            format!(
+                "generated statement corpus is {observed_corpus}, but package weld records {}",
+                weld.application_sql_corpus_identity()
+            ),
+        ));
+    }
+
+    let expected_component_operations = expected
+        .iter()
+        .filter(|(_, expected)| expected.component == component.component)
+        .map(|(operation, _)| operation.clone())
+        .collect::<BTreeSet<_>>();
+    let exported_operations = component
+        .operations
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let missing = expected_component_operations
+        .difference(&exported_operations)
+        .collect::<Vec<_>>();
+    let unexpected_public = component
+        .operations
+        .iter()
+        .filter_map(|(export, declared)| {
+            declared
+                .registered_operation
+                .as_ref()
+                .filter(|_| !expected_component_operations.contains(export))
+                .map(|_| export)
+        })
+        .collect::<Vec<_>>();
+    if !missing.is_empty() || !unexpected_public.is_empty() {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementOperationMismatch,
+            format!(
+                "component {:?} differs from its manifest operation set: missing={missing:?}, unexpected-public={unexpected_public:?}",
+                component.component
+            ),
+        ));
+    }
+
+    let mut selected = BTreeMap::new();
+    for operation in expected_component_operations {
+        let declared = &component.operations[&operation];
+        let expected_contract = &expected[&operation];
+        let expected_registration = expected_contract.public.then_some(operation.as_str());
+        if declared.registered_operation.as_deref() != expected_registration {
+            return Err(ComponentProjectionError::new(
+                ComponentProjectionErrorKind::StatementOperationMismatch,
+                format!(
+                    "component {:?} export {operation:?} registered-operation is {:?}, expected {expected_registration:?}",
+                    component.component, declared.registered_operation
+                ),
+            ));
+        }
+        selected.insert(
+            operation.clone(),
+            all_statements
+                .remove(&operation)
+                .expect("every expected operation contract was loaded"),
+        );
+    }
+    Ok(selected)
+}
+
+fn expected_operation_contracts(
+    manifest: &wamn_schema_generator::PackageManifest,
+) -> Result<BTreeMap<String, ExpectedOperationContract>, ComponentProjectionError> {
+    let default_component = (manifest.components.len() == 1).then(|| {
+        manifest
+            .components
+            .keys()
+            .next()
+            .expect("one component exists")
+            .as_str()
+    });
+    let mut expected = BTreeMap::new();
+    for (model, declaration) in &manifest.models {
+        for (action, operation) in &declaration.operations {
+            let local_operation = format!("{model}.{}", action.as_str());
+            insert_expected_operation(
+                manifest,
+                &mut expected,
+                &local_operation,
+                operation.component.as_deref().or(default_component),
+                true,
+            )?;
+        }
+    }
+    for (local_operation, operation) in &manifest.custom_operations {
+        insert_expected_operation(
+            manifest,
+            &mut expected,
+            local_operation,
+            operation.component.as_deref().or(default_component),
+            operation.visibility() == wamn_schema_generator::OperationVisibility::Public,
+        )?;
+    }
+    Ok(expected)
+}
+
+fn insert_expected_operation(
+    manifest: &wamn_schema_generator::PackageManifest,
+    expected: &mut BTreeMap<String, ExpectedOperationContract>,
+    local_operation: &str,
+    component: Option<&str>,
+    public: bool,
+) -> Result<(), ComponentProjectionError> {
+    let component = component.ok_or_else(|| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementOperationMismatch,
+            format!("operation {local_operation:?} has no component assignment"),
+        )
+    })?;
+    let operation =
+        wamn_schema_generator::canonical_operation_identity(&manifest.package, local_operation)
+            .map_err(|error| {
+                ComponentProjectionError::new(
+                    ComponentProjectionErrorKind::StatementOperationMismatch,
+                    format!("operation {local_operation:?} is not canonical: {error}"),
+                )
+            })?;
+    let (module, action) = local_operation.split_once('.').ok_or_else(|| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementOperationMismatch,
+            format!("operation {local_operation:?} has no module/action boundary"),
+        )
+    })?;
+    let relative_path = format!("generated/contracts/{module}/{action}.operation.json");
+    if expected
+        .insert(
+            operation.clone(),
+            ExpectedOperationContract {
+                relative_path,
+                component: component.to_owned(),
+                public,
+            },
+        )
+        .is_some()
+    {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementOperationMismatch,
+            format!("operation {operation:?} occurs more than once in the package manifest"),
+        ));
+    }
+    Ok(())
+}
+
+fn load_operation_statements(
+    package_root: &Path,
+    canonical_root: &Path,
+    operation: &str,
+    statements: Vec<GeneratedStatementContract>,
+    corpus: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<BTreeMap<String, ComponentSqlStatement>, ComponentProjectionError> {
+    let mut admitted = BTreeMap::new();
+    let mut names = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    for statement in statements {
+        validate_generated_statement_shape(operation, &statement)?;
+        if !names.insert(statement.name.clone()) || !paths.insert(statement.path.clone()) {
+            return Err(ComponentProjectionError::new(
+                ComponentProjectionErrorKind::StatementContractInvalid,
+                format!("operation {operation:?} repeats a statement name or path"),
+            ));
+        }
+        let bytes =
+            read_exact_statement_bytes(package_root, canonical_root, operation, &statement.path)?;
+        let observed_digest = component_sql_digest(&bytes);
+        if statement.digest != observed_digest {
+            return Err(ComponentProjectionError::new(
+                ComponentProjectionErrorKind::StatementDigestMismatch,
+                format!(
+                    "operation {operation:?} statement {:?} records {}, exact bytes are {observed_digest}",
+                    statement.name, statement.digest
+                ),
+            ));
+        }
+        let sql = std::str::from_utf8(&bytes)
+            .map(str::to_owned)
+            .map_err(|error| {
+                ComponentProjectionError::new(
+                    ComponentProjectionErrorKind::StatementContractInvalid,
+                    format!(
+                        "operation {operation:?} statement {:?} is not UTF-8 SQL: {error}",
+                        statement.name
+                    ),
+                )
+            })?;
+        let fact = ComponentSqlStatement {
+            name: statement.name,
+            path: statement.path.clone(),
+            sql,
+            binds: statement.binds,
+            columns: statement.columns,
+        };
+        if admitted.insert(statement.digest.clone(), fact).is_some() {
+            return Err(ComponentProjectionError::new(
+                ComponentProjectionErrorKind::StatementContractInvalid,
+                format!(
+                    "operation {operation:?} repeats statement digest {:?}",
+                    statement.digest
+                ),
+            ));
+        }
+        if let Some(existing) = corpus.get(&statement.path) {
+            if existing != &bytes {
+                return Err(ComponentProjectionError::new(
+                    ComponentProjectionErrorKind::StatementCorpusMismatch,
+                    format!(
+                        "package SQL path {:?} resolves to different bytes across operation contracts",
+                        statement.path
+                    ),
+                ));
+            }
+        } else {
+            corpus.insert(statement.path, bytes);
+        }
+    }
+    Ok(admitted)
+}
+
+fn validate_generated_statement_shape(
+    operation: &str,
+    statement: &GeneratedStatementContract,
+) -> Result<(), ComponentProjectionError> {
+    if !canonical_text(&statement.name) {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementContractInvalid,
+            format!("operation {operation:?} carries an empty or non-canonical statement name"),
+        ));
+    }
+    for (kind, fields) in [("bind", &statement.binds), ("column", &statement.columns)] {
+        let mut names = BTreeSet::new();
+        for field in fields {
+            if !canonical_text(&field.name) || !names.insert(field.name.as_str()) {
+                return Err(ComponentProjectionError::new(
+                    ComponentProjectionErrorKind::StatementContractInvalid,
+                    format!(
+                        "operation {operation:?} statement {:?} carries an empty, non-canonical, or duplicate {kind}",
+                        statement.name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn canonical_text(value: &str) -> bool {
+    !value.is_empty() && value.trim() == value && !value.as_bytes().contains(&0)
+}
+
+fn read_exact_statement_bytes(
+    package_root: &Path,
+    canonical_root: &Path,
+    operation: &str,
+    relative_path: &str,
+) -> Result<Vec<u8>, ComponentProjectionError> {
+    let path = Path::new(relative_path);
+    if path.as_os_str().is_empty()
+        || !path.extension().is_some_and(|extension| extension == "sql")
+        || relative_path.contains('\\')
+        || !path
+            .components()
+            .all(|part| matches!(part, PathComponent::Normal(_)))
+        || path
+            .components()
+            .filter_map(|part| match part {
+                PathComponent::Normal(part) => part.to_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+            != relative_path
+    {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementPathInvalid,
+            format!(
+                "operation {operation:?} statement path {relative_path:?} is not a canonical package-relative SQL path"
+            ),
+        ));
+    }
+    let candidate = package_root.join(path);
+    let metadata = std::fs::symlink_metadata(&candidate).map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementPathInvalid,
+            format!(
+                "operation {operation:?} cannot inspect statement path {relative_path:?}: {error}"
+            ),
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementPathInvalid,
+            format!(
+                "operation {operation:?} statement path {relative_path:?} is not a package-owned regular file"
+            ),
+        ));
+    }
+    let canonical_candidate = candidate.canonicalize().map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementPathInvalid,
+            format!(
+                "operation {operation:?} cannot resolve statement path {relative_path:?}: {error}"
+            ),
+        )
+    })?;
+    if !canonical_candidate.starts_with(canonical_root) {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementPathInvalid,
+            format!(
+                "operation {operation:?} statement path {relative_path:?} escapes the package or is not a file"
+            ),
+        ));
+    }
+    std::fs::read(&canonical_candidate).map_err(|error| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorKind::StatementPathInvalid,
+            format!(
+                "operation {operation:?} cannot read statement path {relative_path:?}: {error}"
+            ),
+        )
+    })
 }
 
 async fn publish_and_verify(
@@ -1039,6 +1513,7 @@ mod tests {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
+                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: format!("sha256:{}", "a".repeat(64)),
@@ -1046,6 +1521,110 @@ mod tests {
             imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
             effects: Vec::new(),
         }
+    }
+
+    fn repository_receiving_component() -> AdmittedComponent {
+        let mut document: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../packages/receiving/publication/components/receiving.json.in"
+        ))
+        .expect("repository component declaration is JSON");
+        document["scope"]["tenant-id"] = serde_json::json!("tenant-a");
+        let declaration: ComponentDeclaration =
+            serde_json::from_value(document).expect("repository component declaration parses");
+        AdmittedComponent {
+            scope: declaration.scope,
+            component: declaration.component,
+            interface_version: declaration.interface_version,
+            operations: declaration
+                .operations
+                .into_iter()
+                .map(|(export, operation)| {
+                    (
+                        export,
+                        AdmittedComponentOperation {
+                            registered_operation: operation.registered_operation,
+                            dependencies: operation.dependencies,
+                            input_ports: Vec::new(),
+                            output_ports: Vec::new(),
+                            parameters: Vec::new(),
+                            statements: BTreeMap::new(),
+                        },
+                    )
+                })
+                .collect(),
+            component_digest: format!("sha256:{}", "c".repeat(64)),
+            imports: Vec::new(),
+            imports_fingerprint: format!("sha256:{}", "d".repeat(64)),
+            effects: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn package_evidence_binds_exact_sql_to_each_manifest_operation() {
+        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let manifest = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
+            "../../../packages/receiving/wamn.json"
+        ))
+        .expect("repository package manifest parses");
+        let mut component = repository_receiving_component();
+
+        let statements = load_component_statement_facts(&package_root, &manifest, &component)
+            .expect("generated operation contracts and package weld agree");
+        assert_eq!(statements.len(), component.operations.len());
+        assert!(statements.values().all(|operation| !operation.is_empty()));
+        bind_component_statement_facts(&mut component, statements)
+            .expect("manifest-backed facts bind to the exact exports");
+
+        let operation = "wamn-receiving:purchase-order/get@1.0.0";
+        let statement = component.operations[operation]
+            .statements
+            .values()
+            .next()
+            .expect("get has one admitted statement");
+        assert_eq!(statement.name, "get");
+        assert_eq!(statement.path, "generated/sql/purchase_order/get.sql");
+        assert_eq!(
+            component.operations[operation]
+                .statement(&component_sql_digest(statement.sql.as_bytes())),
+            Some(statement)
+        );
+    }
+
+    #[test]
+    fn unsafe_paths_and_digest_drift_are_typed_statement_refusals() {
+        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let canonical_root = package_root.canonicalize().expect("package root resolves");
+        let path_error = read_exact_statement_bytes(
+            &package_root,
+            &canonical_root,
+            "wamn-receiving:purchase-order/get@1.0.0",
+            "../Cargo.toml",
+        )
+        .expect_err("a path traversal was admitted");
+        assert_eq!(
+            path_error.kind(),
+            ComponentProjectionErrorKind::StatementPathInvalid
+        );
+
+        let mut corpus = BTreeMap::new();
+        let digest_error = load_operation_statements(
+            &package_root,
+            &canonical_root,
+            "wamn-receiving:purchase-order/get@1.0.0",
+            vec![GeneratedStatementContract {
+                name: "get".to_owned(),
+                path: "generated/sql/purchase_order/get.sql".to_owned(),
+                digest: format!("sha256:{}", "f".repeat(64)),
+                binds: Vec::new(),
+                columns: Vec::new(),
+            }],
+            &mut corpus,
+        )
+        .expect_err("statement digest drift was admitted");
+        assert_eq!(
+            digest_error.kind(),
+            ComponentProjectionErrorKind::StatementDigestMismatch
+        );
     }
 
     #[test]
@@ -1081,6 +1660,30 @@ mod tests {
         assert_ne!(
             forward,
             admitted_projection_hash(&changed, &requirements).expect("changed projection hashes")
+        );
+
+        let mut with_statement = component;
+        let sql = "SELECT row_version FROM purchase_order WHERE id = $1";
+        with_statement
+            .operations
+            .values_mut()
+            .next()
+            .expect("fixture has one operation")
+            .statements
+            .insert(
+                component_sql_digest(sql.as_bytes()),
+                ComponentSqlStatement {
+                    name: "get".to_owned(),
+                    path: "generated/sql/purchase_order/get.sql".to_owned(),
+                    sql: sql.to_owned(),
+                    binds: Vec::new(),
+                    columns: Vec::new(),
+                },
+            );
+        assert_ne!(
+            forward,
+            admitted_projection_hash(&with_statement, &requirements)
+                .expect("statement-bearing projection hashes")
         );
     }
 

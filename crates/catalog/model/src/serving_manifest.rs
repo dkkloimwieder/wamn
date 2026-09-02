@@ -1,9 +1,9 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
 //! Format 3 closes over exact package membership, component digests, wiring
-//! definitions, exact component-operation dependencies, attachments, and
-//! registrations. It contains no flow or execution-plan identity. Producers
-//! must source every member from current catalog records;
+//! definitions, exact component-operation dependencies and SQL statements,
+//! attachments, and registrations. It contains no flow or execution-plan
+//! identity. Producers must source every member from current catalog records;
 //! this model intentionally provides no legacy-plan conversion.
 //!
 //! The document identity is the SHA-256 of its RFC 8785 canonical JSON. Sets and
@@ -18,8 +18,9 @@ use serde_json::Value;
 
 use crate::{
     ArtifactHash, AttachmentKind, CatalogIdentityError, ComponentOperationDependency,
-    DefinitionHash, EffectiveReleaseId, HASH_PREFIX, ManifestDigest, PackageCoordinate,
-    package::validate_canonical_operation_for_package, validate_digest, validate_text,
+    ComponentSqlStatement, DefinitionHash, EffectiveReleaseId, HASH_PREFIX, ManifestDigest,
+    PackageCoordinate, package::validate_canonical_operation_for_package, validate_digest,
+    validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -83,6 +84,16 @@ pub struct ServingComponentOperation {
     /// Exact typed imports this operation may invoke through the host.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<ComponentOperationDependency>,
+    /// Exact SQL available only while this export is active.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub statements: BTreeMap<String, ComponentSqlStatement>,
+}
+
+impl ServingComponentOperation {
+    /// Resolve one release-pinned statement inside this operation's authority.
+    pub fn statement(&self, digest: &str) -> Option<&ComponentSqlStatement> {
+        self.statements.get(digest)
+    }
 }
 
 /// One immutable component artifact in the release closure.
@@ -285,6 +296,15 @@ impl ServingManifest {
                         operation.registered_operation
                     ));
                 }
+                crate::component_library::validate_operation_statement_facts(
+                    export,
+                    &operation.statements,
+                )
+                .map_err(|error| CatalogIdentityError::InvalidDefinition {
+                    message: format!(
+                        "serving component operation {export:?} carries invalid statement facts: {error}"
+                    ),
+                })?;
             }
         }
         validate_component_dependency_closure(&package_versions, &self.components)?;
@@ -640,6 +660,7 @@ mod tests {
                             digest: COMPONENT_A.into(),
                             operation: "base:purchase-order/get@1.0.0".into(),
                         }],
+                        statements: BTreeMap::new(),
                     },
                 )]),
             },
@@ -653,6 +674,7 @@ mod tests {
                     ServingComponentOperation {
                         registered_operation: Some("base:purchase-order/get@1.0.0".into()),
                         dependencies: Vec::new(),
+                        statements: BTreeMap::new(),
                     },
                 )]),
             },
@@ -799,6 +821,88 @@ mod tests {
             ServingManifest::from_canonical_bytes(&indented),
             Err(CatalogIdentityError::NonCanonicalJson)
         );
+    }
+
+    #[test]
+    fn statement_lookup_is_operation_scoped_and_revalidates_exact_bytes() {
+        let operation = "base:purchase-order/get@1.0.0";
+        let sql = "SELECT row_version FROM purchase_order WHERE id = $1";
+        let digest = crate::digest(sql.as_bytes());
+        let mut components = components();
+        let mut base = components
+            .iter()
+            .find(|component| component.package_id == "base")
+            .expect("fixture has a base component")
+            .clone();
+        components.remove(&base);
+        base.operations
+            .get_mut(operation)
+            .expect("fixture has the base operation")
+            .statements
+            .insert(
+                digest.clone(),
+                ComponentSqlStatement {
+                    name: "get".into(),
+                    path: "generated/sql/purchase_order/get.sql".into(),
+                    sql: sql.into(),
+                    binds: Vec::new(),
+                    columns: Vec::new(),
+                },
+            );
+        components.insert(base.clone());
+
+        let manifest = ServingManifest::new(
+            release(),
+            components.clone(),
+            wirings(),
+            BTreeMap::from([("orders".to_string(), attachment())]),
+            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
+        )
+        .expect("an exact operation-scoped statement enters the serving manifest");
+        let admitted = manifest
+            .components
+            .iter()
+            .find(|component| component.package_id == "base")
+            .expect("base component remains present")
+            .operations[operation]
+            .statement(&digest);
+        assert!(admitted.is_some());
+        assert!(
+            manifest
+                .components
+                .iter()
+                .find(|component| component.package_id == "overlay")
+                .expect("overlay component remains present")
+                .operations["overlay:transform/map@3.0.0"]
+                .statement(&digest)
+                .is_none()
+        );
+
+        let mut broken = components;
+        let mut base = broken
+            .iter()
+            .find(|component| component.package_id == "base")
+            .expect("fixture has a base component")
+            .clone();
+        broken.remove(&base);
+        base.operations
+            .get_mut(operation)
+            .expect("fixture has the base operation")
+            .statements
+            .get_mut(&digest)
+            .expect("fixture has a statement")
+            .sql
+            .push_str(" ");
+        broken.insert(base);
+        let error = ServingManifest::new(
+            release(),
+            broken,
+            wirings(),
+            BTreeMap::from([("orders".to_string(), attachment())]),
+            BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
+        )
+        .expect_err("statement bytes may not drift from their digest");
+        assert!(error.to_string().contains("invalid statement facts"));
     }
 
     #[test]

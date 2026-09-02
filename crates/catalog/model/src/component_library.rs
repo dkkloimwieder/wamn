@@ -2,10 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::{Component as PathComponent, Path};
 
 use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 
 use crate::package::validate_canonical_operation_for_package;
 use crate::{CatalogIdentityError, PackageCoordinate, validate_text};
@@ -184,6 +186,43 @@ pub struct AdmittedComponentEffect {
     pub interfaces: Vec<String>,
 }
 
+/// Closed PostgreSQL value vocabulary carried by one admitted SQL statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComponentSqlValueType {
+    Boolean,
+    Int32,
+    Int64,
+    Float64,
+    Text,
+    Bytes,
+    Numeric,
+    Timestamptz,
+    Json,
+    Uuid,
+}
+
+/// One ordered bind or result column in an admitted SQL statement.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentSqlField {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub value_type: ComponentSqlValueType,
+    pub nullable: bool,
+}
+
+/// Exact SQL bytes and typed shape admitted under their SHA-256 map key.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentSqlStatement {
+    pub name: String,
+    pub path: String,
+    pub sql: String,
+    pub binds: Vec<ComponentSqlField>,
+    pub columns: Vec<ComponentSqlField>,
+}
+
 /// One normalized operation exported by an admitted component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -197,6 +236,16 @@ pub struct AdmittedComponentOperation {
     pub input_ports: Vec<AdmittedComponentPort>,
     pub output_ports: Vec<AdmittedComponentPort>,
     pub parameters: Vec<AdmittedComponentParameter>,
+    /// Exact SQL available while this export is active, keyed by raw-byte digest.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub statements: BTreeMap<String, ComponentSqlStatement>,
+}
+
+impl AdmittedComponentOperation {
+    /// Resolve one statement only inside this operation's admitted authority.
+    pub fn statement(&self, digest: &str) -> Option<&ComponentSqlStatement> {
+        self.statements.get(digest)
+    }
 }
 
 /// Complete package-owned fact persisted in `catalog.component_library`.
@@ -257,6 +306,9 @@ pub enum ComponentFactErrorKind {
     DuplicateConnection,
     UnimportedConnection,
     UndeclaredConnection,
+    UnexpectedOperationStatements,
+    InvalidStatementFact,
+    DuplicateStatementField,
 }
 
 /// Refusal to mint a complete normalized component-library fact.
@@ -354,6 +406,7 @@ pub fn normalize_component_fact(
                 input_ports,
                 output_ports,
                 parameters,
+                statements: BTreeMap::new(),
             },
         );
     }
@@ -436,6 +489,7 @@ pub fn verify_stored_effect_projection(
                 format!("operation {export:?} dependencies are not normalized"),
             ));
         }
+        validate_operation_statement_facts(export, &operation.statements)?;
     }
     let dependency_imports = operation_dependency_imports(&component.operations)?;
     validate_operation_dependency_imports(&component.imports, &dependency_imports)?;
@@ -445,6 +499,153 @@ pub fn verify_stored_effect_projection(
         &dependency_imports,
     )
     .map(|_| ())
+}
+
+/// Attach generated SQL facts to manifest-backed exports atomically.
+///
+/// The publisher supplies only manifest-backed exports. Public package
+/// operations are necessarily present through `registered-operation`; private
+/// package operations are admitted by their manifest match at the publisher
+/// and deliberately carry no authorization token. Unmentioned exports remain
+/// palette operations with no package SQL.
+pub fn bind_component_statement_facts(
+    component: &mut AdmittedComponent,
+    statements: BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>,
+) -> Result<(), ComponentFactError> {
+    let registered = component
+        .operations
+        .iter()
+        .filter_map(|(export, operation)| {
+            operation
+                .registered_operation
+                .as_ref()
+                .map(|_| export.clone())
+        })
+        .collect::<BTreeSet<_>>();
+    let exported = component
+        .operations
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let supplied = statements.keys().cloned().collect::<BTreeSet<_>>();
+    if !registered.is_subset(&supplied) || !supplied.is_subset(&exported) {
+        let missing = registered.difference(&supplied).collect::<Vec<_>>();
+        let extra = supplied.difference(&exported).collect::<Vec<_>>();
+        return Err(ComponentFactError::new(
+            ComponentFactErrorKind::UnexpectedOperationStatements,
+            format!(
+                "statement operation set differs from component exports: missing-public={missing:?}, extra={extra:?}"
+            ),
+        ));
+    }
+    for (export, operation_statements) in &statements {
+        let operation = component
+            .operations
+            .get(export)
+            .expect("the operation-set comparison proved this export exists");
+        validate_operation_statement_facts(export, operation_statements)?;
+    }
+    for (export, operation_statements) in statements {
+        component
+            .operations
+            .get_mut(&export)
+            .expect("the exact operation-set comparison proved this export exists")
+            .statements = operation_statements;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_operation_statement_facts(
+    export: &str,
+    statements: &BTreeMap<String, ComponentSqlStatement>,
+) -> Result<(), ComponentFactError> {
+    let mut names = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    for (digest, statement) in statements {
+        if !valid_digest(digest) || component_sql_digest(statement.sql.as_bytes()) != *digest {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::InvalidStatementFact,
+                format!(
+                    "operation {export:?} statement {:?} digest disagrees with its SQL bytes",
+                    statement.name
+                ),
+            ));
+        }
+        validate_identity(&statement.name, "statement name")?;
+        if !is_safe_statement_path(&statement.path) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::InvalidStatementFact,
+                format!(
+                    "operation {export:?} statement {:?} path is not a canonical package-relative SQL path",
+                    statement.name
+                ),
+            ));
+        }
+        if !names.insert(&statement.name) || !paths.insert(&statement.path) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::InvalidStatementFact,
+                format!("operation {export:?} repeats a statement name or path"),
+            ));
+        }
+        validate_statement_fields(export, &statement.name, "bind", &statement.binds)?;
+        validate_statement_fields(export, &statement.name, "column", &statement.columns)?;
+    }
+    Ok(())
+}
+
+fn validate_statement_fields(
+    export: &str,
+    statement: &str,
+    field_kind: &str,
+    fields: &[ComponentSqlField],
+) -> Result<(), ComponentFactError> {
+    let mut names = BTreeSet::new();
+    for field in fields {
+        validate_identity(&field.name, field_kind)?;
+        if !names.insert(&field.name) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::DuplicateStatementField,
+                format!(
+                    "operation {export:?} statement {statement:?} repeats {field_kind} {:?}",
+                    field.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_safe_statement_path(path: &str) -> bool {
+    let parsed = Path::new(path);
+    !parsed.as_os_str().is_empty()
+        && parsed
+            .extension()
+            .is_some_and(|extension| extension == "sql")
+        && !path.contains('\\')
+        && parsed
+            .components()
+            .all(|part| matches!(part, PathComponent::Normal(_)))
+        && parsed
+            .components()
+            .filter_map(|part| match part {
+                PathComponent::Normal(part) => part.to_str(),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+            == path
+}
+
+/// SHA-256 identity of exact SQL source bytes.
+pub fn component_sql_digest(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity("sha256:".len() + 64);
+    output.push_str("sha256:");
+    for byte in digest {
+        use fmt::Write as _;
+        write!(&mut output, "{byte:02x}").expect("writing to a string is infallible");
+    }
+    output
 }
 
 fn validate_registered_operation_scope(
@@ -1140,6 +1341,7 @@ mod tests {
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
+                    statements: BTreeMap::new(),
                 },
             )]),
             component_digest: format!("sha256:{}", "a".repeat(64)),
@@ -1377,6 +1579,126 @@ mod tests {
             .unwrap_err()
             .kind(),
             ComponentFactErrorKind::RemoteSchemaReference
+        );
+    }
+
+    fn sql_statement(sql: &str) -> (String, ComponentSqlStatement) {
+        (
+            component_sql_digest(sql.as_bytes()),
+            ComponentSqlStatement {
+                name: "select_order".to_owned(),
+                path: "generated/sql/purchase_order/get.sql".to_owned(),
+                sql: sql.to_owned(),
+                binds: vec![ComponentSqlField {
+                    name: "id".to_owned(),
+                    value_type: ComponentSqlValueType::Uuid,
+                    nullable: false,
+                }],
+                columns: vec![ComponentSqlField {
+                    name: "row_version".to_owned(),
+                    value_type: ComponentSqlValueType::Int64,
+                    nullable: false,
+                }],
+            },
+        )
+    }
+
+    #[test]
+    fn generated_statement_facts_bind_to_exact_registered_export() {
+        let registered = "orders:purchase-order/get@1.2.0";
+        let mut declared = declaration();
+        let mut operation = declared.operations.remove("map").expect("map operation");
+        operation.registered_operation = Some(registered.to_owned());
+        declared.operations.insert(registered.to_owned(), operation);
+        let mut component = normalize_component_fact(
+            declared,
+            format!("sha256:{}", "a".repeat(64)),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("declaration normalizes before package evidence is attached")
+        .component;
+        let statement = sql_statement("SELECT row_version FROM purchase_order WHERE id = $1");
+
+        bind_component_statement_facts(
+            &mut component,
+            BTreeMap::from([(registered.to_owned(), BTreeMap::from([statement.clone()]))]),
+        )
+        .expect("exact generated statement facts bind");
+
+        assert_eq!(
+            component.operations[registered].statement(&statement.0),
+            Some(&statement.1)
+        );
+        verify_stored_effect_projection(&component)
+            .expect("a stored component re-verifies its exact SQL bytes");
+    }
+
+    #[test]
+    fn manifest_matched_private_operation_can_carry_sql_without_an_auth_token() {
+        let mut component = migration_defaulted_fact(&[]);
+        let statement = sql_statement("SELECT row_version FROM purchase_order WHERE id = $1");
+
+        bind_component_statement_facts(
+            &mut component,
+            BTreeMap::from([("map".to_owned(), BTreeMap::from([statement.clone()]))]),
+        )
+        .expect("the publisher may bind a manifest-matched private operation");
+
+        assert_eq!(
+            component.operations["map"].statement(&statement.0),
+            Some(&statement.1)
+        );
+    }
+
+    #[test]
+    fn statement_authority_refuses_wrong_operation_digest_and_shape() {
+        let mut component = migration_defaulted_fact(&[]);
+        let statement = sql_statement("SELECT row_version FROM purchase_order WHERE id = $1");
+        assert_eq!(
+            bind_component_statement_facts(
+                &mut component,
+                BTreeMap::from([("unknown".to_owned(), BTreeMap::new())]),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::UnexpectedOperationStatements
+        );
+
+        let operation = component.operations.get_mut("map").expect("map operation");
+        operation.registered_operation = Some("orders:purchase-order/get@1.2.0".to_owned());
+        operation.statements =
+            BTreeMap::from([(format!("sha256:{}", "f".repeat(64)), statement.1.clone())]);
+        assert_eq!(
+            verify_stored_effect_projection(&component)
+                .unwrap_err()
+                .kind(),
+            ComponentFactErrorKind::RegisteredOperationMismatch
+        );
+
+        let operation = component.operations.remove("map").expect("map operation");
+        component
+            .operations
+            .insert("orders:purchase-order/get@1.2.0".to_owned(), operation);
+        assert_eq!(
+            verify_stored_effect_projection(&component)
+                .unwrap_err()
+                .kind(),
+            ComponentFactErrorKind::InvalidStatementFact
+        );
+
+        let operation = component
+            .operations
+            .get_mut("orders:purchase-order/get@1.2.0")
+            .expect("registered operation");
+        let (digest, mut malformed) = statement;
+        malformed.binds.push(malformed.binds[0].clone());
+        operation.statements = BTreeMap::from([(digest, malformed)]);
+        assert_eq!(
+            verify_stored_effect_projection(&component)
+                .unwrap_err()
+                .kind(),
+            ComponentFactErrorKind::DuplicateStatementField
         );
     }
 }

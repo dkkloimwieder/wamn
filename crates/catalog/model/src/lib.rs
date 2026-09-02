@@ -23,8 +23,10 @@ pub use component_library::{
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,
     ComponentConnectionType, ComponentDeclaration, ComponentFactError, ComponentFactErrorKind,
     ComponentOperationDeclaration, ComponentOperationDependency, ComponentPackageScope,
-    ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema,
-    normalize_component_fact, schema_digests_match, verify_stored_effect_projection,
+    ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema, ComponentSqlField,
+    ComponentSqlStatement, ComponentSqlValueType, bind_component_statement_facts,
+    component_sql_digest, normalize_component_fact, schema_digests_match,
+    verify_stored_effect_projection,
 };
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,
