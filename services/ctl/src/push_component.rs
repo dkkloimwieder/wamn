@@ -389,6 +389,31 @@ pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmi
     })
 }
 
+/// Project one opaque admission into a disposable verification database.
+///
+/// This verification-only write neither publishes component bytes nor reaches
+/// the control plane. The receipt remains the sole source of projected facts.
+pub async fn project_admitted_component_for_verification(
+    admission: &ComponentAdmissionReceipt,
+    verification_database_url: &str,
+) -> anyhow::Result<()> {
+    let verification_config: PgConfig = verification_database_url
+        .parse()
+        .context("parse verification-project database URL")?;
+    persist_plane(
+        &verification_config,
+        ProjectionPlane::SourceProject,
+        &admission.component,
+        &admission.requirements,
+        &admission.manifest_sha256,
+        &admission.projection_hash,
+        &admission.directory,
+        &admission.package_path,
+    )
+    .await
+    .map(|_| ())
+}
+
 /// Publish one exact admission and project its facts without rereading sources.
 pub async fn publish_admitted_component(
     admission: &ComponentAdmissionReceipt,
@@ -2012,7 +2037,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dual_plane_persistence_reverifies_partial_retry_and_converges() {
+    async fn verification_projection_replays_refuses_drift_and_leaves_publish_project_noop() {
         let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
             eprintln!("skipping dual-plane projection proof; WAMN_CTL_PG_URL is unset");
             return;
@@ -2064,6 +2089,8 @@ mod tests {
 
         let project_config = database_config(&base_config, &project_database);
         let control_config = database_config(&base_config, &control_database);
+        let mut verification_url = url::Url::parse(&url).expect("parse PostgreSQL fixture URL");
+        verification_url.set_path(&format!("/{project_database}"));
         let mut project = connect(&project_config).await;
         let mut control = connect(&control_config).await;
         project
@@ -2101,11 +2128,20 @@ mod tests {
         )];
         let projection_hash = admitted_projection_hash(&component, &requirements)
             .expect("hash admitted projection once");
+        let admission = ComponentAdmissionReceipt {
+            package_path: package_path.clone(),
+            directory: directory.clone(),
+            component_bytes: Box::default(),
+            component: component.clone(),
+            requirements: requirements.clone().into_boxed_slice(),
+            manifest_sha256: package.manifest_sha256.clone().into_boxed_str(),
+            projection_hash: projection_hash.clone().into_boxed_str(),
+        };
 
         let missing =
-            verify_source_package_with_client(&mut project, &component, &directory, &package_path)
+            project_admitted_component_for_verification(&admission, verification_url.as_str())
                 .await
-                .expect_err("an unapplied source package refuses");
+                .expect_err("an unapplied source package refuses verification projection");
         assert_eq!(
             missing
                 .downcast_ref::<ComponentProjectionError>()
@@ -2127,9 +2163,9 @@ mod tests {
             .await
             .expect("seed the package root apply-package already proved");
         let incomplete =
-            verify_source_package_with_client(&mut project, &component, &directory, &package_path)
+            project_admitted_component_for_verification(&admission, verification_url.as_str())
                 .await
-                .expect_err("a package root without its exact migration ledger refuses");
+                .expect_err("an incomplete package refuses verification projection");
         assert_eq!(
             incomplete
                 .downcast_ref::<ComponentProjectionError>()
@@ -2194,19 +2230,57 @@ mod tests {
             ComponentProjectionErrorKind::SourcePackageMigrationMismatch
         );
 
-        let partial = persist_plane(
-            &project_config,
-            ProjectionPlane::SourceProject,
-            &component,
-            &requirements,
-            &package.manifest_sha256,
-            &projection_hash,
-            &directory,
-            &package_path,
-        )
-        .await
-        .expect("commit source-project half before interruption");
-        assert!(!partial.is_noop());
+        project_admitted_component_for_verification(&admission, verification_url.as_str())
+            .await
+            .expect("project the opaque receipt into the verification world");
+        let snapshot_sql = "SELECT jsonb_build_object( \
+                'component-count', (SELECT count(*) FROM catalog.component_library), \
+                'requirement-count', (SELECT count(*) FROM catalog.connection_requirements), \
+                'projection-hash', (SELECT projection_hash FROM catalog.component_library \
+                                     WHERE tenant_id = $1 AND component_digest = $2), \
+                'component-row', (SELECT xmin::text FROM catalog.component_library \
+                                   WHERE tenant_id = $1 AND component_digest = $2), \
+                'requirement-rows', (SELECT jsonb_agg(xmin::text ORDER BY store_alias COLLATE \"C\") \
+                                      FROM catalog.connection_requirements \
+                                     WHERE tenant_id = $1 AND component_digest = $2))::text";
+        let snapshot: String = project
+            .query_one(
+                snapshot_sql,
+                &[&component.scope.tenant_id, &component.component_digest],
+            )
+            .await
+            .expect("read verification projection snapshot")
+            .get(0);
+        let snapshot_json: serde_json::Value =
+            serde_json::from_str(&snapshot).expect("verification snapshot is JSON");
+        assert_eq!(snapshot_json["component-count"], 1);
+        assert_eq!(snapshot_json["requirement-count"], requirements.len());
+        assert_eq!(snapshot_json["projection-hash"], projection_hash);
+        let untouched_control_facts: i64 = control
+            .query_one(
+                "SELECT (SELECT count(*) FROM catalog.packages) \
+                      + (SELECT count(*) FROM catalog.component_library) \
+                      + (SELECT count(*) FROM catalog.connection_requirements)",
+                &[],
+            )
+            .await
+            .expect("count untouched control projection facts")
+            .get(0);
+        assert_eq!(untouched_control_facts, 0);
+
+        project_admitted_component_for_verification(&admission, verification_url.as_str())
+            .await
+            .expect("exact verification replay is a no-op");
+        let replay_snapshot: String = project
+            .query_one(
+                snapshot_sql,
+                &[&component.scope.tenant_id, &component.component_digest],
+            )
+            .await
+            .expect("read replayed verification snapshot")
+            .get(0);
+        assert_eq!(replay_snapshot, snapshot);
+
         let resumed = project_component_facts(
             &project_config,
             &control_config,
@@ -2275,6 +2349,42 @@ mod tests {
             extra
                 .downcast_ref::<ComponentProjectionError>()
                 .expect("extra requirement inventory is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::ConnectionFactConflict
+        );
+
+        let unexpected_project = ComponentConnectionRequirement::new(
+            &component.component_digest,
+            "unexpected-project",
+            ConnectionTypeDescriptor::http_v1(),
+        );
+        let transaction = project
+            .transaction()
+            .await
+            .expect("begin verification-project drift mutation");
+        transaction
+            .query_one(CLAIM_TENANT_SQL, &[&component.scope.tenant_id])
+            .await
+            .expect("claim verification-project tenant for drift mutation");
+        append_or_verify_requirement(
+            &transaction,
+            &component.scope.tenant_id,
+            &unexpected_project,
+        )
+        .await
+        .expect("seed an extra verification-project requirement");
+        transaction
+            .commit()
+            .await
+            .expect("commit verification-project drift");
+        let drift =
+            project_admitted_component_for_verification(&admission, verification_url.as_str())
+                .await
+                .expect_err("verification-project drift refuses exact replay");
+        assert_eq!(
+            drift
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("verification drift is a typed refusal")
                 .kind(),
             ComponentProjectionErrorKind::ConnectionFactConflict
         );

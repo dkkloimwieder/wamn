@@ -57,6 +57,12 @@ The security half is proven. The "easier" half is not:
   never separate control loops (owner ruling, `wamn-10yt.10.1`, 2026-09-02).
   Without this,
   components are more secure *and* harder — a failed thesis.
+  The fixed Admit → Gate → Publish → Apply order uses a disposable
+  verification-world projection because Admit is pure and persists nothing
+  while Publish is otherwise the first writer. It writes only the opaque
+  admission receipt's exact project facts; Publish later exact-replays that
+  project leg as a no-op,
+  without widening the projection into OCI or control (`wamn-10yt.10.11`).
 - **Slice v exit criterion added:** at least one wiring composes a
   package operation with palette components, authored through the
   editor, gated, published, and routed. Direct route attachments alone
