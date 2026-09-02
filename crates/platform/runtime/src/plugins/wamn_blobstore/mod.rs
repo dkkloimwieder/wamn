@@ -28,5 +28,7 @@
 //! and a test says so.
 
 pub mod bindings;
+pub mod drain;
 pub mod confinement;
 pub mod intake;
+pub mod store;
