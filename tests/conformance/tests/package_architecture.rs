@@ -9,7 +9,7 @@ const ROOT_WORKSPACE: &str = "root";
 /// additive-only inside one invocation, so the `no_std` palette guests are
 /// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
 const COMPONENT_WORKSPACES: [(&str, &str, usize); 2] = [
-    ("components", "components/Cargo.toml", 15),
+    ("components", "components/Cargo.toml", 12),
     ("components-no-std", "components/no-std/Cargo.toml", 2),
 ];
 const ROOT_MEMBER_COUNT: usize = 35;

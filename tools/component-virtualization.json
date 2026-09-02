@@ -7,6 +7,12 @@
   },
   "artifacts": [
     {
+      "package": "client-acme-receiving",
+      "workspace_manifest": "components/Cargo.toml",
+      "raw_file": "client_acme_receiving.wasm",
+      "output_file": "client_acme_receiving.wasm"
+    },
+    {
       "package": "receiving",
       "workspace_manifest": "components/Cargo.toml",
       "raw_file": "receiving.wasm",

@@ -404,12 +404,30 @@
     },
     {
       "workspace": "components",
+      "name": "client-acme-receiving",
+      "manifest_path": "components/application/client-acme-receiving/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "receiving",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
       "name": "receiving",
       "manifest_path": "components/application/receiving/Cargo.toml",
       "role": "component",
       "target_class": "guest",
       "bounded_context": "receiving",
       "deployable": true
+    },
+    {
+      "workspace": "components",
+      "name": "wamn-client-acme-receiving-data-access",
+      "manifest_path": "components/data/client-acme-receiving-data/Cargo.toml",
+      "role": "adapter",
+      "target_class": "guest",
+      "bounded_context": "data",
+      "deployable": false
     },
     {
       "workspace": "components",

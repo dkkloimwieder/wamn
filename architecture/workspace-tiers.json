@@ -16,7 +16,7 @@
       {
         "workspace": "components",
         "manifest": "components/Cargo.toml",
-        "package_count": 10
+        "package_count": 12
       },
       {
         "workspace": "components-no-std",
@@ -67,6 +67,7 @@
     "product_components": {
       "root_packages": [],
       "component_packages": [
+        "client-acme-receiving",
         "http-request",
         "http-route",
         "materializer",
@@ -131,6 +132,7 @@
       ],
       "component_packages": [
         "busyloop",
+        "client-acme-receiving",
         "connection-http-standard",
         "http-request",
         "http-route",
@@ -140,11 +142,12 @@
         "sqlx-command",
         "std-virtualization-probe",
         "transform",
+        "wamn-client-acme-receiving-data-access",
         "wamn-postgres-sqlx",
         "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 35 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 12 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 35 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 14 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -164,6 +167,7 @@
       ],
       "component_packages": [
         "busyloop",
+        "client-acme-receiving",
         "connection-http-standard",
         "http-request",
         "http-route",
@@ -173,6 +177,7 @@
         "sqlx-command",
         "std-virtualization-probe",
         "transform",
+        "wamn-client-acme-receiving-data-access",
         "wamn-postgres-sqlx",
         "wamn-receiving-data-access"
       ],
@@ -191,6 +196,7 @@
         "wamn-waker"
       ],
       "component_packages": [
+        "client-acme-receiving",
         "http-request",
         "http-route",
         "materializer",
@@ -241,8 +247,8 @@
       "m1_inventory_tier": "product_components",
       "proof_inventory_tier": "full_ci",
       "expected_package_counts": {
-        "m1": 5,
-        "proof": 12
+        "m1": 6,
+        "proof": 14
       }
     }
   },
@@ -264,7 +270,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "the 10 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
+      "selected_packages": "the 12 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     },
     {

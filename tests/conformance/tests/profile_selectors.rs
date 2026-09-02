@@ -292,7 +292,7 @@ fn profile_contract_matches_locked_metadata() {
     }
 
     assert_eq!(root_members.len(), 35);
-    assert_eq!(component_members.len(), 12);
+    assert_eq!(component_members.len(), 14);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -411,6 +411,7 @@ fn profile_contract_matches_locked_metadata() {
         "component m1",
         &component_m1,
         &[
+            "client-acme-receiving",
             "http-route",
             "http-request",
             "materializer",
@@ -423,6 +424,7 @@ fn profile_contract_matches_locked_metadata() {
         &component_proof,
         &[
             "busyloop",
+            "client-acme-receiving",
             "connection-http-standard",
             "http-route",
             "http-request",
@@ -432,13 +434,14 @@ fn profile_contract_matches_locked_metadata() {
             "sqlx-command",
             "std-virtualization-probe",
             "transform",
+            "wamn-client-acme-receiving-data-access",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 5);
-    assert_eq!(component_proof.len(), 12);
+    assert_eq!(component_m1.len(), 6);
+    assert_eq!(component_proof.len(), 14);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(
@@ -452,6 +455,7 @@ fn profile_contract_matches_locked_metadata() {
             "sockprobe",
             "sqlx-command",
             "std-virtualization-probe",
+            "wamn-client-acme-receiving-data-access",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
         ]
