@@ -1,9 +1,9 @@
 //! Generates deterministic package artifacts from migration-derived schema IR.
 //!
-//! Generation is a pure transformation: callers provide the normalized
+//! Core generation is a pure transformation: callers provide the normalized
 //! [`CatalogIr`], exact manifest bytes, authored SQL bytes, and explicit
-//! provenance. The generator performs no filesystem, database, clock, or
-//! environment access.
+//! provenance. That transformation performs no filesystem, database, clock,
+//! or environment access.
 //!
 //! Generated identifiers follow
 //! `docs/architecture/application-naming.md`. Migration introspection owns
@@ -19,6 +19,7 @@ mod data_access;
 mod error;
 mod generate;
 mod manifest;
+mod materialize;
 mod parity;
 mod sql;
 mod sql_lex;
@@ -53,5 +54,6 @@ pub use manifest::{
     TieBreakerDeclaration, TimestamptzSpelling, UuidSpelling, canonical_operation_identity,
     canonical_operation_prefix, validate_operation_vocabulary,
 };
+pub use materialize::{MaterializeMode, materialize_package};
 pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
 pub use wamn_schema_introspection::ir::CatalogIr;
