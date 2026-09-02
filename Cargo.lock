@@ -5247,6 +5247,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-simulator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "wamn-execution-contract",
+]
+
+[[package]]
 name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [

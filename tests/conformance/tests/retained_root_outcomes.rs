@@ -72,6 +72,7 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "wamn-schema-introspection",
         "crates/schema/introspection/src/lib.rs",
     ),
+    ("wamn-simulator", "test-support/simulator/src/lib.rs"),
     (
         "wamn-test-infrastructure",
         "test-support/infrastructure/lib.rs",
@@ -91,6 +92,14 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "components/data/receiving-data/src/lib.rs",
     ),
     ("receiving", "components/application/receiving/src/lib.rs"),
+    (
+        "client-acme-receiving",
+        "components/application/client-acme-receiving/src/lib.rs",
+    ),
+    (
+        "wamn-client-acme-receiving-data-access",
+        "components/data/client-acme-receiving-data/src/lib.rs",
+    ),
     ("busyloop", "components/fixtures/busyloop/src/main.rs"),
     (
         "connection-http-standard",
@@ -106,6 +115,11 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "components/fixtures/std-virtualization-probe/src/lib.rs",
     ),
     ("http-request", "components/no-std/http-request/src/lib.rs"),
+    ("label-render", "components/no-std/label-render/src/lib.rs"),
+    (
+        "label-template",
+        "components/no-std/label-template/src/lib.rs",
+    ),
     ("transform", "components/no-std/transform/src/lib.rs"),
 ];
 

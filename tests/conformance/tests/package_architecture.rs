@@ -10,9 +10,9 @@ const ROOT_WORKSPACE: &str = "root";
 /// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
 const COMPONENT_WORKSPACES: [(&str, &str, usize); 2] = [
     ("components", "components/Cargo.toml", 12),
-    ("components-no-std", "components/no-std/Cargo.toml", 2),
+    ("components-no-std", "components/no-std/Cargo.toml", 4),
 ];
-const ROOT_MEMBER_COUNT: usize = 35;
+const ROOT_MEMBER_COUNT: usize = 36;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]

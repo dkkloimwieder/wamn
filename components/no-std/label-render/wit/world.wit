@@ -1,0 +1,5 @@
+package wamn:label-render@0.1.0;
+
+world label-render {
+  export wamn:node/handler@0.1.0;
+}

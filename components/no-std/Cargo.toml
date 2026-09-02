@@ -21,7 +21,7 @@ resolver = "2"
 # `../fixtures/connection-http-standard` is a third and stays in `../Cargo.toml`:
 # it has no `serde_json` dependency, so it has no unification to escape (owner
 # ruling, wamn-6i30).
-members = ["http-request", "transform"]
+members = ["http-request", "label-render", "label-template", "transform"]
 
 # Lint policy. IDENTICAL to the root workspace's by intent -- see the root
 # `Cargo.toml` for the full rationale and the measured exemption counts. It is

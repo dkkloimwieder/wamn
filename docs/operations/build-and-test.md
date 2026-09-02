@@ -120,7 +120,7 @@ cargo test --workspace --no-fail-fast > sweep.txt 2>&1
 - `--workspace` is required. Cargo otherwise selects default members only.
   Measured at `1bffa614` from `cargo metadata --no-deps`: **17 default members
   of 35 workspace members.** The current `architecture/workspace-tiers.json`
-  `full_ci` tier carries all 34 current members.
+  `full_ci` tier carries all 36 current members.
 
 **Measured state at `1bffa614`, by the owner, not re-run here: 168 binaries,
 1448 passed, 21 failed, 34 ignored, no compile errors. All 21 failures are

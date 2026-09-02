@@ -53,10 +53,12 @@ cargo build \
   --release \
   --target wasm32-wasip2 \
   -p transform \
-  -p http-request
+  -p http-request \
+  -p label-render
 
 render_declaration transform
 render_declaration http-request
+render_declaration label-render
 
 set --
 if [ "$registry_mode" = "--insecure-registry" ]; then
@@ -86,4 +88,19 @@ cargo run --manifest-path "$repo_root/Cargo.toml" --locked -p wamn-ctl -- \
   --control-database-url "$control_database_url" \
   --admit-platform-package wamn:node \
   --admit-platform-package wamn:connection \
+  "$@"
+
+# A pure transform: `wamn:node` and nothing else. Its rendering lives in the
+# `label-template` rlib, which is a path dependency rather than a published
+# artifact, so it is built into this guest and never pushed on its own.
+cargo run --manifest-path "$repo_root/Cargo.toml" --locked -p wamn-ctl -- \
+  push-component \
+  --package "$package_directory" \
+  --component-bytes "$component_target/label_render.wasm" \
+  --declaration "$scratch/label-render.json" \
+  --artifact-base "$artifact_base" \
+  --registry-auth-file "$registry_auth_file" \
+  --project-database-url "$project_database_url" \
+  --control-database-url "$control_database_url" \
+  --admit-platform-package wamn:node \
   "$@"
