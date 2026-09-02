@@ -14,6 +14,19 @@
 //! * [`intake`] bounds a body and refuses to commit one it cannot prove
 //!   complete, so a truncated stream cannot overwrite a good object under a
 //!   deterministic key.
+//!
+//! # Two object-store semantics decided here, not inherited
+//!
+//! **`..` is refused as a SEGMENT, never as a substring.** A substring check
+//! would also refuse the legitimate key `report..2026.zpl`, and a containment
+//! rule that refuses valid names teaches authors to work around it.
+//!
+//! **The prefix separator is never doubled.** S3 treats `a//b` and `a/b` as
+//! different keys, so a trailing slash on the environment-owned prefix would
+//! put one logical object under two names — which breaks the deterministic-key
+//! overwrite rule §2c depends on. Both prefix spellings resolve identically,
+//! and a test says so.
 
+pub mod bindings;
 pub mod confinement;
 pub mod intake;
