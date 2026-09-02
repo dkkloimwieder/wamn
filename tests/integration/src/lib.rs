@@ -4,6 +4,8 @@
 
 pub use wamn_test_infrastructure::ctl_process;
 
+#[cfg(test)]
+mod acme_overlay_publication;
 pub mod causation_e2e;
 mod cdc_reader_process;
 pub mod cdcbench;

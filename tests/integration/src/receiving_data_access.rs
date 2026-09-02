@@ -37,6 +37,30 @@ mod tests {
     const VALIDATE_RECEIPT_LINE_SQL: &str = include_str!(
         "../../../packages/receiving/command/record_receipt/validate_receipt_line.sql"
     );
+    const OVERLAY_FIELDS_MIGRATION: &str = include_str!(
+        "../../../packages/client_acme_receiving/migrations/0001_add_inspection_required.sql"
+    );
+    const OVERLAY_INSPECTION_MIGRATION: &str = include_str!(
+        "../../../packages/client_acme_receiving/migrations/0002_quality_inspection.sql"
+    );
+    const OVERLAY_GET_SQL: &str = include_str!(
+        "../../../packages/client_acme_receiving/generated/sql/purchase_order/get.sql"
+    );
+    const OVERLAY_UPDATE_SQL: &str = include_str!(
+        "../../../packages/client_acme_receiving/generated/sql/purchase_order/update.sql"
+    );
+    const OVERLAY_LOAD_DETAIL_SQL: &str = include_str!(
+        "../../../packages/client_acme_receiving/query/quality_purchase_order_detail.sql"
+    );
+    const OVERLAY_APPROVE_INSPECTION_SQL: &str = include_str!(
+        "../../../packages/client_acme_receiving/command/approve_inspection/approve_inspection.sql"
+    );
+    const OVERLAY_INSERT_INSPECTION_SQL: &str = include_str!(
+        "../../../packages/client_acme_receiving/command/create_inspection/insert_inspection.sql"
+    );
+    const OVERLAY_LOAD_INSPECTION_SQL: &str = include_str!(
+        "../../../packages/client_acme_receiving/command/create_inspection/load_inspection.sql"
+    );
 
     #[derive(Debug, Deserialize)]
     struct Manifest {
@@ -237,7 +261,156 @@ mod tests {
         );
 
         prove_record_receipt(&url, &mut client).await?;
+        client
+            .batch_execute(OVERLAY_FIELDS_MIGRATION)
+            .await
+            .context("apply the exact Acme field migration")?;
+        client
+            .batch_execute(OVERLAY_INSPECTION_MIGRATION)
+            .await
+            .context("apply the exact Acme inspection migration")?;
+        prove_acme_overlay(&mut client).await?;
 
+        Ok(())
+    }
+
+    async fn prove_acme_overlay(client: &mut Client) -> Result<()> {
+        let purchase_order_id = Uuid::from_u128(0xa400);
+        let other_purchase_order_id = Uuid::from_u128(0xa410);
+        let line_id = Uuid::from_u128(0xa401);
+        let other_line_id = Uuid::from_u128(0xa411);
+        let unused_line_id = Uuid::from_u128(0xa402);
+        let location_id = Uuid::from_u128(0xa420);
+        insert_receipt_fixtures(
+            client,
+            Uuid::from_u128(0xa430),
+            purchase_order_id,
+            other_purchase_order_id,
+            line_id,
+            unused_line_id,
+            other_line_id,
+            location_id,
+        )
+        .await?;
+
+        let no_quality_status = Option::<String>::None;
+        let enabled = Some(true);
+        let updated = client
+            .query_one(
+                OVERLAY_UPDATE_SQL,
+                &[
+                    &purchase_order_id,
+                    &1_i64,
+                    &true,
+                    &enabled,
+                    &false,
+                    &no_quality_status,
+                ],
+            )
+            .await
+            .context("execute exact Acme purchase_order.update SQL")?;
+        ensure!(
+            updated.get::<_, String>("outcome") == "updated"
+                && updated.get::<_, Option<bool>>("acme_inspection_required") == Some(true)
+                && updated
+                    .get::<_, Option<String>>("acme_quality_status")
+                    .as_deref()
+                    == Some("not_required")
+                && updated.get::<_, Option<i64>>("row_version") == Some(2),
+            "Acme purchase_order.update returned the wrong state"
+        );
+
+        let command = ReceiptCommand {
+            idempotency_key: "acme-receipt-command".to_owned(),
+            purchase_order_id,
+            receipt_reference: "acme-dock-receipt".to_owned(),
+            occurred_at: "2026-09-01T12:34:56.000000Z".to_owned(),
+            line: vec![ReceiptCommandLine {
+                purchase_order_line_id: line_id,
+                quantity: "10.00".to_owned(),
+                location_id,
+            }],
+        };
+        let recorded = execute_record_receipt(client, &command)
+            .await?
+            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
+        ensure!(
+            recorded.purchase_order_status == "open" && recorded.row_version == 3,
+            "base record_receipt returned the wrong composed result"
+        );
+
+        ensure!(
+            execute_create_inspection(client, recorded.receipt_id).await?,
+            "the first receipt delivery did not create its inspection"
+        );
+        ensure!(
+            !execute_create_inspection(client, recorded.receipt_id).await?,
+            "receipt redelivery inserted a second inspection"
+        );
+
+        let replayed = execute_record_receipt(client, &command)
+            .await?
+            .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
+        ensure!(
+            replayed == recorded,
+            "base receipt replay changed its result"
+        );
+        ensure!(
+            !execute_create_inspection(client, replayed.receipt_id).await?,
+            "replayed receipt inserted another inspection"
+        );
+        let pending = client
+            .query_one(
+                "SELECT count(*)::int8 AS inspection_count, min(status) AS status, \
+                        min(row_version) AS row_version \
+                   FROM quality_inspection WHERE receipt_id = $1",
+                &[&recorded.receipt_id],
+            )
+            .await
+            .context("read the idempotent inspection state")?;
+        ensure!(
+            pending.get::<_, i64>("inspection_count") == 1
+                && pending.get::<_, Option<String>>("status").as_deref() == Some("pending")
+                && pending.get::<_, Option<i64>>("row_version") == Some(1),
+            "receipt redelivery did not preserve one pending inspection"
+        );
+
+        let detail = client
+            .query_one(OVERLAY_LOAD_DETAIL_SQL, &[&purchase_order_id])
+            .await
+            .context("execute exact Acme load_purchase_order_detail SQL")?;
+        ensure!(
+            detail.get::<_, bool>("acme_inspection_required")
+                && detail.get::<_, String>("acme_quality_status") == "not_required"
+                && detail.get::<_, i64>("row_version") == 3,
+            "Acme detail projection returned the wrong pre-approval state"
+        );
+
+        let approved = client
+            .query_one(
+                OVERLAY_APPROVE_INSPECTION_SQL,
+                &[&recorded.receipt_id, &1_i64],
+            )
+            .await
+            .context("execute exact Acme approve_inspection SQL")?;
+        ensure!(
+            approved.get::<_, String>("outcome") == "approved"
+                && approved.get::<_, Option<String>>("status").as_deref() == Some("approved")
+                && approved.get::<_, Option<i64>>("row_version") == Some(2)
+                && approved.get::<_, Option<i64>>("purchase_order_row_version") == Some(4),
+            "Acme approve_inspection returned the wrong committed state"
+        );
+
+        let fetched = client
+            .query_one(OVERLAY_GET_SQL, &[&purchase_order_id])
+            .await
+            .context("execute exact Acme purchase_order.get SQL")?;
+        ensure!(
+            fetched.get::<_, bool>("acme_inspection_required")
+                && fetched.get::<_, String>("acme_quality_status") == "approved"
+                && fetched.get::<_, i64>("row_version") == 4,
+            "Acme purchase_order.get returned the wrong approved state"
+        );
         Ok(())
     }
 
@@ -259,6 +432,32 @@ mod tests {
         Ok(client)
     }
 
+    async fn execute_create_inspection(client: &mut Client, receipt_id: Uuid) -> Result<bool> {
+        let transaction = client
+            .transaction()
+            .await
+            .context("begin exact create_inspection transaction")?;
+        let inserted = transaction
+            .query_opt(OVERLAY_INSERT_INSPECTION_SQL, &[&receipt_id])
+            .await
+            .context("execute exact create_inspection insert SQL")?
+            .is_some();
+        let loaded = transaction
+            .query_opt(OVERLAY_LOAD_INSPECTION_SQL, &[&receipt_id])
+            .await
+            .context("execute exact create_inspection load SQL")?
+            .context("create_inspection could not load its converged row")?;
+        ensure!(
+            loaded.get::<_, Uuid>("receipt_id") == receipt_id,
+            "create_inspection loaded the wrong receipt"
+        );
+        transaction
+            .commit()
+            .await
+            .context("commit exact create_inspection transaction")?;
+        Ok(inserted)
+    }
+
     async fn prove_record_receipt(url: &str, client: &mut Client) -> Result<()> {
         let purchase_order_id = Uuid::from_u128(0x400);
         let other_purchase_order_id = Uuid::from_u128(0x410);
@@ -269,6 +468,7 @@ mod tests {
         let missing_id = Uuid::from_u128(0x4ff);
         insert_receipt_fixtures(
             client,
+            Uuid::from_u128(0x430),
             purchase_order_id,
             other_purchase_order_id,
             first_line_id,
@@ -564,6 +764,7 @@ mod tests {
 
     async fn insert_receipt_fixtures(
         client: &Client,
+        item_id: Uuid,
         purchase_order_id: Uuid,
         other_purchase_order_id: Uuid,
         first_line_id: Uuid,
@@ -571,25 +772,25 @@ mod tests {
         other_line_id: Uuid,
         location_id: Uuid,
     ) -> Result<()> {
-        let item_id = Uuid::from_u128(0x430);
+        let item_number = format!("item-record-receipt-{item_id}");
         client
             .execute(
                 "INSERT INTO item (id, item_number) VALUES ($1, $2)",
-                &[&item_id, &"item-record-receipt"],
+                &[&item_id, &item_number],
             )
             .await
             .context("insert record_receipt item fixture")?;
         client
             .execute(
                 "INSERT INTO location (id, location_code) VALUES ($1, $2)",
-                &[&location_id, &"dock-a"],
+                &[&location_id, &format!("dock-{location_id}")],
             )
             .await
             .context("insert record_receipt location fixture")?;
         insert_purchase_order(
             client,
             purchase_order_id,
-            "PO-record-receipt",
+            &format!("PO-record-receipt-{purchase_order_id}"),
             Uuid::from_u128(0x440),
             "open",
         )
@@ -597,7 +798,7 @@ mod tests {
         insert_purchase_order(
             client,
             other_purchase_order_id,
-            "PO-record-receipt-other",
+            &format!("PO-record-receipt-{other_purchase_order_id}"),
             Uuid::from_u128(0x441),
             "open",
         )

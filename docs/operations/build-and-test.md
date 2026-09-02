@@ -152,15 +152,20 @@ cargo test -p wamn-schema-generator --all-targets --no-fail-fast
 ```
 
 The Receiving SQLx siblings use one fresh disposable PostgreSQL 18 database.
-The live gate refuses a pre-existing `receiving` schema, applies the exact
-package migration, reads `wamn.json` structurally, and exercises the shipped
-update and `receiving.record_receipt` SQL. The command arm proves commit,
+The live gate refuses a pre-existing `receiving` schema, applies the exact base
+and Acme overlay migrations, reads `wamn.json` structurally, and exercises the
+shipped update, `receiving.record_receipt`, projection, inspection-handler, and
+approval SQL. The command arm proves commit,
 rollback, every closed domain refusal, immutable zero-write replay, lexical-
 scale conflict, quantity/status invariants, referenced-location delete blocking,
-and the named receipt-reference constraint mapping. Native verification selects
-the schema through trusted connection context rather than changing the corpus bytes:
+the named receipt-reference constraint mapping, and one inspection row across
+receipt and handler redelivery. Native verification selects the schema through
+trusted connection context rather than changing the corpus bytes:
 
 ```bash
+cargo test -p wamn-proof-integration \
+  acme_overlay_publication --locked --offline
+
 set -euo pipefail
 RECEIVING_PG_CONTAINER=wamn-receiving-pg18
 RECEIVING_PG_PORT=54329
