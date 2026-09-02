@@ -38,6 +38,7 @@ pub enum ComponentAdmissionErrorKind {
     InvalidComponentBytes,
     ImportPolicyRefused,
     OperationExportMismatch,
+    OperationDependencyMismatch,
     OperationSignatureMismatch,
     InvalidComponentFacts,
 }
@@ -107,6 +108,25 @@ pub fn validate_component_admission(
     })?;
     let raw = component.engine();
     let component_type = component.component_type();
+    let validate_handler_signature = |item: ComponentItem| -> anyhow::Result<()> {
+        let ComponentItem::ComponentInstance(instance) = item else {
+            anyhow::bail!("item is not an interface instance");
+        };
+        let Some(run) = instance.get_export(raw, "run") else {
+            anyhow::bail!("interface does not export run");
+        };
+        let ComponentItem::ComponentFunc(run) = run.ty else {
+            anyhow::bail!("interface member run is not a component function");
+        };
+        if run.async_() {
+            anyhow::bail!("run uses the async ABI");
+        }
+        run.typecheck::<
+            (&node_types::NodeContext, &str),
+            (Result<node_types::Emission, node_types::NodeError>,),
+        >(&component_type.instance_type())
+        .map_err(anyhow::Error::from)
+    };
     let declared_exports: BTreeSet<_> = request.declaration.operations.keys().cloned().collect();
     let byte_exports: BTreeSet<_> = component_type
         .exports(raw)
@@ -133,53 +153,68 @@ pub fn validate_component_admission(
         let item = component_type
             .get_export(raw, export)
             .expect("equal declaration and byte export sets contain every operation");
-        let ComponentItem::ComponentInstance(instance) = item.ty else {
-            return Err(operation_signature_mismatch(
-                &component_name,
-                export,
-                "export is not an interface instance",
-            ));
-        };
-        let Some(run) = instance.get_export(raw, "run") else {
-            return Err(operation_signature_mismatch(
-                &component_name,
-                export,
-                "interface does not export run",
-            ));
-        };
-        let ComponentItem::ComponentFunc(run) = run.ty else {
-            return Err(operation_signature_mismatch(
-                &component_name,
-                export,
-                "interface member run is not a component function",
-            ));
-        };
-        if run.async_() {
-            return Err(operation_signature_mismatch(
-                &component_name,
-                export,
-                "run uses the async ABI",
-            ));
+        if let Err(error) = validate_handler_signature(item.ty) {
+            return Err(operation_signature_mismatch(&component_name, export, error));
         }
-        if let Err(error) = run.typecheck::<
-            (&node_types::NodeContext, &str),
-            (Result<node_types::Emission, node_types::NodeError>,),
-        >(&component_type.instance_type())
-        {
-            return Err(operation_signature_mismatch(
+    }
+    let imports = component_type
+        .imports(raw)
+        .map(|(name, _)| name.to_string())
+        .collect::<Vec<_>>();
+    // The Component Model exposes one top-level import inventory, not a call
+    // graph from each export. Preserve the operation-owned declarations, while
+    // proving only the structural fact the bytes support: their exact union.
+    let declared_dependency_imports = request
+        .declaration
+        .operations
+        .values()
+        .flat_map(|operation| operation.dependencies.iter())
+        .map(|dependency| dependency.operation.clone())
+        .collect::<BTreeSet<_>>();
+    let byte_dependency_imports = imports
+        .iter()
+        .filter(|name| is_application_operation_import(name))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if declared_dependency_imports != byte_dependency_imports {
+        let missing = declared_dependency_imports
+            .difference(&byte_dependency_imports)
+            .cloned()
+            .collect::<Vec<_>>();
+        let extra = byte_dependency_imports
+            .difference(&declared_dependency_imports)
+            .cloned()
+            .collect::<Vec<_>>();
+        return Err(ComponentAdmissionError::new(
+            ComponentAdmissionErrorKind::OperationDependencyMismatch,
+            &component_name,
+            anyhow::anyhow!(
+                "declared operation dependencies differ from component imports: missing={missing:?}, extra={extra:?}"
+            ),
+        ));
+    }
+    for dependency in &byte_dependency_imports {
+        let item = component_type
+            .get_import(raw, dependency)
+            .expect("the component import inventory contains the dependency");
+        if let Err(error) = validate_handler_signature(item.ty) {
+            return Err(ComponentAdmissionError::new(
+                ComponentAdmissionErrorKind::OperationSignatureMismatch,
                 &component_name,
-                export,
-                error,
+                anyhow::anyhow!(
+                    "operation dependency import {dependency:?} does not match {HANDLER_SIGNATURE}: {error}"
+                ),
             ));
         }
     }
-    let imports = wamn_component_policy::ComponentImports::new(
-        component_type
-            .imports(raw)
-            .map(|(name, _)| name.to_string()),
+    let policy_imports = wamn_component_policy::ComponentImports::new(
+        imports
+            .iter()
+            .filter(|name| !byte_dependency_imports.contains(*name))
+            .cloned(),
     );
     wamn_component_policy::analyze_tenant(
-        &imports,
+        &policy_imports,
         &request.admitted_platform_packages,
         &component_name,
     )
@@ -195,8 +230,8 @@ pub fn validate_component_admission(
     normalize_component_fact(
         request.declaration,
         component_digest,
-        imports.iter().map(str::to_owned),
-        derive_effects(&imports),
+        imports,
+        derive_effects(&policy_imports),
     )
     .map_err(|source| {
         ComponentAdmissionError::new(
@@ -205,6 +240,12 @@ pub fn validate_component_admission(
             source,
         )
     })
+}
+
+fn is_application_operation_import(name: &str) -> bool {
+    wamn_component_policy::import_pkg(name)
+        .split_once(':')
+        .is_some_and(|(namespace, _)| !matches!(namespace, "wasi" | "wamn"))
 }
 
 fn operation_signature_mismatch(
@@ -221,10 +262,9 @@ fn operation_signature_mismatch(
 
 /// Group the audited imports into the authority packages that leave the host.
 ///
-/// Called only after [`wamn_component_policy::analyze_tenant`] has accepted the
-/// inventory, so every package here is either authority-free or an admitted
-/// platform capability, and the classification is a total function of the
-/// bytes — an author declares no part of it.
+/// Called with the policy inventory after exact operation dependencies have
+/// been removed, so every remaining package is authority-free or an admitted
+/// platform capability.
 fn derive_effects(
     imports: &wamn_component_policy::ComponentImports,
 ) -> Vec<AdmittedComponentEffect> {
@@ -260,8 +300,8 @@ pub fn component_digest(component_bytes: &[u8]) -> String {
 mod tests {
     use serde_json::json;
     use wamn_catalog::{
-        ComponentOperationDeclaration, ComponentPackageScope, ComponentParameterDeclaration,
-        ComponentPortDeclaration,
+        ComponentOperationDeclaration, ComponentOperationDependency, ComponentPackageScope,
+        ComponentParameterDeclaration, ComponentPortDeclaration,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
@@ -270,7 +310,7 @@ mod tests {
 
     const OPERATION: &str = "wamn:node/handler@0.1.0";
 
-    const DEPENDENCY_WITS: [(&str, &str); 4] = [
+    const DEPENDENCY_WITS: [(&str, &str); 5] = [
         (
             "wasi-clocks.wit",
             "package wasi:clocks@0.2.3; interface monotonic-clock {}",
@@ -287,9 +327,25 @@ mod tests {
             "wamn-postgres.wit",
             "package wamn:postgres@0.1.0; interface client {}",
         ),
+        (
+            "wamn-receiving.wit",
+            "package wamn-receiving:receiving@1.0.0; \
+             interface record-receipt { \
+               use wamn:node/types@0.1.0.{node-context, emission, node-error}; \
+               run: func(ctx: node-context, input: string) -> result<emission, node-error>; \
+             } \
+             interface wrong-receipt { run: func(); }",
+        ),
     ];
 
+    const DEPENDENCY_OPERATION: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+    const WRONG_DEPENDENCY_OPERATION: &str = "wamn-receiving:receiving/wrong-receipt@1.0.0";
+
     fn component_bytes(imports: &str) -> Vec<u8> {
+        component_bytes_with_exports(imports, "")
+    }
+
+    fn component_bytes_with_exports(imports: &str, extra_exports: &str) -> Vec<u8> {
         let mut resolve = Resolve::new();
         resolve
             .push_str(
@@ -303,7 +359,7 @@ mod tests {
                 .expect("fixture dependency parses");
         }
         let fixture = format!(
-            "package test:component@1.0.0; world fixture {{ {imports} export wamn:node/handler@0.1.0; }}"
+            "package test:component@1.0.0; world fixture {{ {imports} export wamn:node/handler@0.1.0; {extra_exports} }}"
         );
         let package = resolve
             .push_str("fixture.wit", &fixture)
@@ -336,6 +392,7 @@ mod tests {
                     OPERATION.to_string(),
                     ComponentOperationDeclaration {
                         registered_operation: None,
+                        dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
                             name: "input".to_string(),
                             schema: json!({"type": "object"}),
@@ -354,6 +411,15 @@ mod tests {
                 connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
+        }
+    }
+
+    fn dependency(operation: &str) -> ComponentOperationDependency {
+        ComponentOperationDependency {
+            package: "wamn_receiving".to_string(),
+            version: "1.0.0".to_string(),
+            digest: format!("sha256:{}", "c".repeat(64)),
+            operation: operation.to_string(),
         }
     }
 
@@ -455,6 +521,141 @@ mod tests {
             error.kind(),
             ComponentAdmissionErrorKind::ImportPolicyRefused
         );
+    }
+
+    #[test]
+    fn exact_operation_dependency_is_byte_verified_and_admitted() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let bytes = component_bytes(&format!("import {DEPENDENCY_OPERATION};"));
+        let mut request = request();
+        request
+            .declaration
+            .operations
+            .get_mut(OPERATION)
+            .expect("fixture operation exists")
+            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+
+        let component = validate_component_admission(&engine, &bytes, request)
+            .expect("an exact operation dependency admits")
+            .component;
+
+        assert_eq!(component.imports, [DEPENDENCY_OPERATION.to_string()]);
+        assert_eq!(
+            component.operations[OPERATION].dependencies,
+            [dependency(DEPENDENCY_OPERATION)]
+        );
+        assert!(component.effects.is_empty());
+    }
+
+    #[test]
+    fn multi_export_admission_proves_global_union_and_preserves_attachment() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let bytes = component_bytes_with_exports(
+            &format!("import {DEPENDENCY_OPERATION};"),
+            "export second: wamn:node/handler@0.1.0;",
+        );
+        let mut request = request();
+        let mut second = request
+            .declaration
+            .operations
+            .get(OPERATION)
+            .expect("fixture operation exists")
+            .clone();
+        second.dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+        request
+            .declaration
+            .operations
+            .insert("second".to_string(), second);
+
+        let component = validate_component_admission(&engine, &bytes, request)
+            .expect("the component-global dependency union admits")
+            .component;
+
+        assert!(component.operations[OPERATION].dependencies.is_empty());
+        assert_eq!(
+            component.operations["second"].dependencies,
+            [dependency(DEPENDENCY_OPERATION)]
+        );
+    }
+
+    #[test]
+    fn operation_dependency_inventory_refuses_missing_extra_and_mismatch() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+
+        let mut missing_request = request();
+        missing_request
+            .declaration
+            .operations
+            .get_mut(OPERATION)
+            .expect("fixture operation exists")
+            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+        let missing = validate_component_admission(&engine, &component_bytes(""), missing_request)
+            .expect_err("a declared dependency absent from bytes refuses");
+        assert_eq!(
+            missing.kind(),
+            ComponentAdmissionErrorKind::OperationDependencyMismatch
+        );
+        assert!(missing.to_string().contains("missing="));
+
+        let extra = validate_component_admission(
+            &engine,
+            &component_bytes(&format!("import {DEPENDENCY_OPERATION};")),
+            request(),
+        )
+        .expect_err("an undeclared application import refuses");
+        assert_eq!(
+            extra.kind(),
+            ComponentAdmissionErrorKind::OperationDependencyMismatch
+        );
+        assert!(extra.to_string().contains("extra="));
+
+        let mut mismatch_request = request();
+        mismatch_request
+            .declaration
+            .operations
+            .get_mut(OPERATION)
+            .expect("fixture operation exists")
+            .dependencies = vec![dependency(
+            "wamn-receiving:receiving/load-purchase-order@1.0.0",
+        )];
+        let mismatch = validate_component_admission(
+            &engine,
+            &component_bytes(&format!("import {DEPENDENCY_OPERATION};")),
+            mismatch_request,
+        )
+        .expect_err("a different exact application import refuses");
+        assert_eq!(
+            mismatch.kind(),
+            ComponentAdmissionErrorKind::OperationDependencyMismatch
+        );
+        assert!(mismatch.to_string().contains("missing="));
+        assert!(mismatch.to_string().contains("extra="));
+    }
+
+    #[test]
+    fn operation_dependency_import_must_have_the_handler_signature() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let mut request = request();
+        request
+            .declaration
+            .operations
+            .get_mut(OPERATION)
+            .expect("fixture operation exists")
+            .dependencies = vec![dependency(WRONG_DEPENDENCY_OPERATION)];
+
+        let error = validate_component_admission(
+            &engine,
+            &component_bytes(&format!("import {WRONG_DEPENDENCY_OPERATION};")),
+            request,
+        )
+        .expect_err("a dependency import with the wrong run type refuses");
+
+        assert_eq!(
+            error.kind(),
+            ComponentAdmissionErrorKind::OperationSignatureMismatch
+        );
+        assert!(error.to_string().contains(WRONG_DEPENDENCY_OPERATION));
+        assert!(error.to_string().contains(HANDLER_SIGNATURE));
     }
 
     /// The three classes in one inventory: an authority-free WASI package, the

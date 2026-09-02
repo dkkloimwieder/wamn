@@ -500,6 +500,7 @@ mod tests {
                     "run".to_owned(),
                     ComponentOperationDeclaration {
                         registered_operation: None,
+                        dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
                             name: "input".to_owned(),
                             schema: json!({}),

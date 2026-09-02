@@ -167,6 +167,7 @@ async fn provision_project(project: &Client, project_url: &str) {
             "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
             AdmittedComponentOperation {
                 registered_operation: Some("wamn-receiving:purchase-order/get@1.0.0".to_owned()),
+                dependencies: Vec::new(),
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),

@@ -974,6 +974,7 @@ mod tests {
                     operation.to_owned(),
                     ComponentOperationDeclaration {
                         registered_operation: None,
+                        dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
                             name: "input".to_owned(),
                             schema: json!({}),
@@ -1140,6 +1141,7 @@ mod tests {
                 "map".to_owned(),
                 AdmittedComponentOperation {
                     registered_operation: None,
+                    dependencies: Vec::new(),
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),

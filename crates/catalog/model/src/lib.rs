@@ -22,9 +22,9 @@ pub use component_library::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,
     ComponentConnectionType, ComponentDeclaration, ComponentFactError, ComponentFactErrorKind,
-    ComponentOperationDeclaration, ComponentPackageScope, ComponentParameterDeclaration,
-    ComponentPortDeclaration, ComponentSchema, normalize_component_fact, schema_digests_match,
-    verify_stored_effect_projection,
+    ComponentOperationDeclaration, ComponentOperationDependency, ComponentPackageScope,
+    ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema,
+    normalize_component_fact, schema_digests_match, verify_stored_effect_projection,
 };
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,

@@ -1791,6 +1791,7 @@ mod tests {
                 operation.to_owned(),
                 AdmittedComponentOperation {
                     registered_operation: registered_operation.map(str::to_owned),
+                    dependencies: Vec::new(),
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),

@@ -107,6 +107,16 @@ pub struct ComponentConnection {
     pub requirement_type: ComponentConnectionType,
 }
 
+/// One exact cross-package operation imported by component bytes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentOperationDependency {
+    pub package: String,
+    pub version: String,
+    pub digest: String,
+    pub operation: String,
+}
+
 /// One operation exported by component bytes before admission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -114,6 +124,9 @@ pub struct ComponentOperationDeclaration {
     /// Explicit application permission identity. Palette operations carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
+    /// Closed exact operation imports assigned to this exported operation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<ComponentOperationDependency>,
     pub input_ports: Vec<ComponentPortDeclaration>,
     pub output_ports: Vec<ComponentPortDeclaration>,
     pub parameters: Vec<ComponentParameterDeclaration>,
@@ -178,6 +191,9 @@ pub struct AdmittedComponentOperation {
     /// Explicit application permission identity. Never inferred from the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
+    /// Imports assigned to this export and byte-verified in the component inventory.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<ComponentOperationDependency>,
     pub input_ports: Vec<AdmittedComponentPort>,
     pub output_ports: Vec<AdmittedComponentPort>,
     pub parameters: Vec<AdmittedComponentParameter>,
@@ -227,6 +243,10 @@ pub enum ComponentFactErrorKind {
     NonCanonicalIdentity,
     RegisteredOperationMismatch,
     InvalidComponentDigest,
+    InvalidOperationDependency,
+    DuplicateOperationDependency,
+    ConflictingOperationDependency,
+    OperationDependencyMismatch,
     DuplicateInputPort,
     DuplicateOutputPort,
     DuplicateParameter,
@@ -314,6 +334,7 @@ pub fn normalize_component_fact(
             &export,
             operation.registered_operation.as_deref(),
         )?;
+        let dependencies = normalize_operation_dependencies(operation.dependencies)?;
         let input_ports = normalize_ports(
             operation.input_ports,
             ComponentFactErrorKind::DuplicateInputPort,
@@ -329,6 +350,7 @@ pub fn normalize_component_fact(
             export,
             AdmittedComponentOperation {
                 registered_operation: operation.registered_operation,
+                dependencies,
                 input_ports,
                 output_ports,
                 parameters,
@@ -342,7 +364,9 @@ pub fn normalize_component_fact(
     let imports_fingerprint = wamn_execution_contract::canonical_json_sha256(
         &serde_json::to_value(&imports).expect("a string list serializes"),
     );
-    let effects = normalize_effects(effects, &imports)?;
+    let dependency_imports = operation_dependency_imports(&operations)?;
+    validate_operation_dependency_imports(&imports, &dependency_imports)?;
+    let effects = normalize_effects(effects, &imports, &dependency_imports)?;
     let connections = normalize_connections(declaration.connections, &effects)?;
 
     Ok(AdmittedComponentFacts {
@@ -405,8 +429,22 @@ pub fn verify_stored_effect_projection(
             export,
             operation.registered_operation.as_deref(),
         )?;
+        let dependencies = normalize_operation_dependencies(operation.dependencies.clone())?;
+        if dependencies != operation.dependencies {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::InvalidOperationDependency,
+                format!("operation {export:?} dependencies are not normalized"),
+            ));
+        }
     }
-    normalize_effects(component.effects.clone(), &component.imports).map(|_| ())
+    let dependency_imports = operation_dependency_imports(&component.operations)?;
+    validate_operation_dependency_imports(&component.imports, &dependency_imports)?;
+    normalize_effects(
+        component.effects.clone(),
+        &component.imports,
+        &dependency_imports,
+    )
+    .map(|_| ())
 }
 
 fn validate_registered_operation_scope(
@@ -433,16 +471,117 @@ fn validate_registered_operation_scope(
     Ok(())
 }
 
-/// Sort and deduplicate derived effects, pinning them to exactly the imports.
+fn normalize_operation_dependencies(
+    declarations: Vec<ComponentOperationDependency>,
+) -> Result<Vec<ComponentOperationDependency>, ComponentFactError> {
+    let mut seen = BTreeSet::new();
+    let mut dependencies = Vec::with_capacity(declarations.len());
+    for declaration in declarations {
+        let coordinate = PackageCoordinate::new(&declaration.package, &declaration.version)
+            .map_err(|error| {
+                ComponentFactError::new(
+                    ComponentFactErrorKind::InvalidOperationDependency,
+                    error.to_string(),
+                )
+            })?;
+        if !valid_digest(&declaration.digest) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::InvalidOperationDependency,
+                "operation dependency digest must be sha256:<64 lowercase hex digits>",
+            ));
+        }
+        validate_canonical_operation_for_package(
+            &declaration.operation,
+            coordinate.package_id(),
+            coordinate.package_version(),
+        )
+        .map_err(|error| {
+            ComponentFactError::new(
+                ComponentFactErrorKind::InvalidOperationDependency,
+                error.to_string(),
+            )
+        })?;
+        if !seen.insert(declaration.operation.clone()) {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::DuplicateOperationDependency,
+                format!(
+                    "operation dependency {:?} is duplicated",
+                    declaration.operation
+                ),
+            ));
+        }
+        dependencies.push(declaration);
+    }
+    dependencies.sort_by(|left, right| left.operation.cmp(&right.operation));
+    Ok(dependencies)
+}
+
+fn validate_operation_dependency_imports(
+    imports: &[String],
+    dependencies: &BTreeSet<&str>,
+) -> Result<(), ComponentFactError> {
+    let imported_dependencies = imports
+        .iter()
+        .map(String::as_str)
+        .filter(|import| is_application_operation_import(import))
+        .collect::<BTreeSet<_>>();
+    if &imported_dependencies != dependencies {
+        let missing = dependencies
+            .difference(&imported_dependencies)
+            .copied()
+            .collect::<Vec<_>>();
+        let extra = imported_dependencies
+            .difference(dependencies)
+            .copied()
+            .collect::<Vec<_>>();
+        return Err(ComponentFactError::new(
+            ComponentFactErrorKind::OperationDependencyMismatch,
+            format!(
+                "declared operation dependencies differ from audited imports: missing={missing:?}, extra={extra:?}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn operation_dependency_imports(
+    operations: &BTreeMap<String, AdmittedComponentOperation>,
+) -> Result<BTreeSet<&str>, ComponentFactError> {
+    let mut pins = BTreeMap::new();
+    for dependency in operations
+        .values()
+        .flat_map(|operation| operation.dependencies.iter())
+    {
+        if let Some(existing) = pins.insert(dependency.operation.as_str(), dependency)
+            && existing != dependency
+        {
+            return Err(ComponentFactError::new(
+                ComponentFactErrorKind::ConflictingOperationDependency,
+                format!(
+                    "operation dependency {:?} carries conflicting package, version, or digest pins",
+                    dependency.operation
+                ),
+            ));
+        }
+    }
+    Ok(pins.into_keys().collect())
+}
+
+fn is_application_operation_import(name: &str) -> bool {
+    wamn_component_policy::import_pkg(name)
+        .split_once(':')
+        .is_some_and(|(namespace, _)| !matches!(namespace, "wasi" | "wamn"))
+}
+
+/// Sort and deduplicate derived effects, pinning them to platform imports.
 ///
-/// Both directions are checked: no effect interface may be absent from the
-/// audited imports, and no import that leaves the host may be absent from the
-/// projection. Together they admit exactly one `effects` value per import set,
-/// which is what lets [`verify_stored_effect_projection`] recognize a value no
-/// validator produced.
+/// Both directions are checked after excluding exact cross-package operation
+/// dependencies: those remain in the audited import inventory but are resolved
+/// as component calls, not host capability effects.
 fn normalize_effects(
     effects: Vec<AdmittedComponentEffect>,
     imports: &[String],
+    dependency_imports: &BTreeSet<&str>,
 ) -> Result<Vec<AdmittedComponentEffect>, ComponentFactError> {
     let mut normalized = Vec::with_capacity(effects.len());
     for effect in effects {
@@ -451,10 +590,14 @@ fn normalize_effects(
         interfaces.sort();
         interfaces.dedup();
         for interface in &interfaces {
-            if !imports.iter().any(|import| import == interface) {
+            if !imports.iter().any(|import| import == interface)
+                || dependency_imports.contains(interface.as_str())
+            {
                 return Err(ComponentFactError::new(
                     ComponentFactErrorKind::UnimportedEffect,
-                    format!("effect interface {interface:?} is not an audited import"),
+                    format!(
+                        "effect interface {interface:?} is not an audited platform-capability import"
+                    ),
                 ));
             }
         }
@@ -467,6 +610,9 @@ fn normalize_effects(
     normalized.dedup_by(|left, right| left.package == right.package);
 
     for import in imports {
+        if dependency_imports.contains(import.as_str()) {
+            continue;
+        }
         let package = wamn_component_policy::import_pkg(import);
         if !wamn_component_policy::is_effect_package(package) {
             continue;
@@ -683,6 +829,7 @@ mod tests {
                 "map".to_string(),
                 ComponentOperationDeclaration {
                     registered_operation: None,
+                    dependencies: Vec::new(),
                     input_ports: vec![ComponentPortDeclaration {
                         name: "input".to_string(),
                         schema: json!({
@@ -718,6 +865,15 @@ mod tests {
         AdmittedComponentEffect {
             package: "wamn:postgres".to_string(),
             interfaces: vec!["wamn:postgres/client@0.1.0".to_string()],
+        }
+    }
+
+    fn operation_dependency() -> ComponentOperationDependency {
+        ComponentOperationDependency {
+            package: "wamn_receiving".to_string(),
+            version: "1.0.0".to_string(),
+            digest: format!("sha256:{}", "c".repeat(64)),
+            operation: "wamn-receiving:receiving/record-receipt@1.0.0".to_string(),
         }
     }
 
@@ -775,6 +931,108 @@ mod tests {
 
         assert!(facts.component.effects.is_empty());
         assert_eq!(facts.component.imports.len(), 1);
+    }
+
+    #[test]
+    fn exact_operation_dependency_is_preserved_without_becoming_an_effect() {
+        let dependency = operation_dependency();
+        let mut declared = declaration();
+        operation_mut(&mut declared).dependencies = vec![dependency.clone()];
+
+        let facts = normalize_component_fact(
+            declared,
+            format!("sha256:{}", "a".repeat(64)),
+            [dependency.operation.clone()],
+            Vec::new(),
+        )
+        .expect("an exact audited operation dependency admits");
+
+        assert_eq!(facts.component.operations["map"].dependencies, [dependency]);
+        assert!(facts.component.effects.is_empty());
+        verify_stored_effect_projection(&facts.component)
+            .expect("the stored dependency projection remains verifiable");
+    }
+
+    #[test]
+    fn operation_dependency_must_be_exact_and_audited() {
+        let dependency = operation_dependency();
+        let mut missing = declaration();
+        operation_mut(&mut missing).dependencies = vec![dependency.clone()];
+        assert_eq!(
+            normalize_component_fact(
+                missing,
+                format!("sha256:{}", "a".repeat(64)),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::OperationDependencyMismatch
+        );
+
+        let mut invalid_digest = declaration();
+        let mut malformed = dependency.clone();
+        malformed.digest = "latest".to_string();
+        operation_mut(&mut invalid_digest).dependencies = vec![malformed];
+        assert_eq!(
+            normalize_component_fact(
+                invalid_digest,
+                format!("sha256:{}", "a".repeat(64)),
+                [dependency.operation.clone()],
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::InvalidOperationDependency
+        );
+
+        let mut mismatched_coordinate = declaration();
+        let mut mismatched = dependency.clone();
+        mismatched.version = "2.0.0".to_string();
+        operation_mut(&mut mismatched_coordinate).dependencies = vec![mismatched];
+        assert_eq!(
+            normalize_component_fact(
+                mismatched_coordinate,
+                format!("sha256:{}", "a".repeat(64)),
+                [dependency.operation.clone()],
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::InvalidOperationDependency
+        );
+
+        let mut duplicate = declaration();
+        operation_mut(&mut duplicate).dependencies = vec![dependency.clone(), dependency.clone()];
+        assert_eq!(
+            normalize_component_fact(
+                duplicate,
+                format!("sha256:{}", "a".repeat(64)),
+                [dependency.operation.clone()],
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::DuplicateOperationDependency
+        );
+
+        let mut conflicting = declaration();
+        let operation = operation_mut(&mut conflicting);
+        operation.dependencies = vec![dependency.clone()];
+        let mut second = operation.clone();
+        second.dependencies[0].digest = format!("sha256:{}", "d".repeat(64));
+        conflicting.operations.insert("map-two".to_string(), second);
+        assert_eq!(
+            normalize_component_fact(
+                conflicting,
+                format!("sha256:{}", "a".repeat(64)),
+                [dependency.operation],
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::ConflictingOperationDependency
+        );
     }
 
     #[test]
@@ -876,6 +1134,7 @@ mod tests {
                 "map".to_string(),
                 AdmittedComponentOperation {
                     registered_operation: None,
+                    dependencies: Vec::new(),
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),

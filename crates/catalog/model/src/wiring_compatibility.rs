@@ -403,6 +403,7 @@ mod tests {
                 operation.to_string(),
                 AdmittedComponentOperation {
                     registered_operation: None,
+                    dependencies: Vec::new(),
                     input_ports: vec![AdmittedComponentPort {
                         name: input_name.to_string(),
                         schema: schema(input_schema),

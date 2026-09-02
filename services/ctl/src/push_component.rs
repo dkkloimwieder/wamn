@@ -1035,6 +1035,7 @@ mod tests {
                     registered_operation: Some(
                         "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
                     ),
+                    dependencies: Vec::new(),
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -1529,6 +1530,7 @@ mod tests {
                         operation.to_owned(),
                         ComponentOperationDeclaration {
                             registered_operation: None,
+                            dependencies: Vec::new(),
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),
                             parameters: Vec::new(),

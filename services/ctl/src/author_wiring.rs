@@ -533,6 +533,7 @@ mod tests {
                 "call".to_owned(),
                 wamn_catalog::AdmittedComponentOperation {
                     registered_operation: None,
+                    dependencies: Vec::new(),
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
