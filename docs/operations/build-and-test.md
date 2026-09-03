@@ -1476,6 +1476,33 @@ bug. The standing answer is the scope-digest convention
 construction. This is a hazard *class*, not one bead's finding: it applies to
 every future name derived from user-supplied length.
 
+**Never run a command that operates on "everything currently present."** Two
+agents share this repository, and several git commands act on ambient state
+rather than on what you name. Each of these has cost real work in one session:
+
+- **`git stash` / `git stash pop` are BANNED.** The stash list is ONE SHARED
+  STACK for the whole repository — it lives in `.git/refs/stash`, not in a
+  worktree. A clean tree makes `stash` save nothing, and the following `pop`
+  then takes *another agent's* entry into your worktree. That happened: it
+  consumed the parked `.5.1` TypeScript work, which survived only because it
+  was noticed and diffed out before anything else touched the tree. To compare
+  against a baseline, add a THROWAWAY WORKTREE at the base commit
+  (`git worktree add --detach /tmp/<name> <ref>`) and measure there. If parked
+  work must be kept, keep it on a lane ref: a stash has no owner and no name,
+  and the next bare `pop` by anyone takes whatever is on top.
+- **`git add -A` is BANNED.** It stages every modified file in the tree,
+  including another agent's in-flight edits and any workspace-wide `cargo fmt`
+  churn. Twice in one session it swept fifteen unrelated files into a feature
+  commit. Name the paths you mean.
+- **`git checkout <file>` on UNCOMMITTED work is BANNED.** It is the usual way
+  to revert a mutant, and it silently discards everything else uncommitted in
+  that file. Commit before mutation testing, then `git checkout` restores the
+  commit rather than deleting the work.
+
+The common shape: a command whose subject is "the current state" rather than
+an argument you wrote. In a single-agent repository these are conveniences; in
+a shared one they are writes to somebody else's data.
+
 **Never share a `CARGO_TARGET_DIR` between parallel worktrees.** Three
 measured failure modes: `env!("CARGO_MANIFEST_DIR")` resolves to *another*
 worktree, so a test validates the wrong tree; artifact collision overwrites in
