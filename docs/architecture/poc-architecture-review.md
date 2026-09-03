@@ -55,19 +55,16 @@ The security half is proven. The "easier" half is not:
   publish → apply → ACL → release → activate) is ~12 steps. One programmatic
   stage engine owns orchestration; `wamn dev` and the loop console are clients,
   never separate control loops (owner ruling, `wamn-10yt.10.1`, 2026-09-02).
-  Each command owns one fresh disposable verification database: Migrate, Admit,
-  and Gate use it; Publish writes OCI/control facts and is a no-op for the
-  project projection. Only Apply and ACL mutate the durable database, while
-  Release derives from the verified closure. This prevents stale gate evidence
-  and keeps unverified work out of durable state.
-  Without this,
-  components are more secure *and* harder — a failed thesis.
-  The fixed Admit → Gate → Publish → Apply order uses a disposable
-  verification-world projection because Admit is pure and persists nothing
-  while Publish is otherwise the first writer. It writes only the opaque
-  admission receipt's exact project facts; Publish later exact-replays that
-  project leg as a no-op,
-  without widening the projection into OCI or control (`wamn-10yt.10.11`).
+  The engine creates and tears down one fresh disposable verification database
+  per command or watch session; invalidation suffixes share that session's
+  database, and a later run never reuses it. Migrate, Admit, and Gate use that
+  database; Publish writes OCI/control facts and exact-replays the project
+  projection as a no-op. Only Apply and ACL mutate the durable database, while
+  Release derives from the verified closure. The fixed order needs this mapping
+  because pure Admit persists nothing and Publish is otherwise the first writer.
+  Admit projects only the opaque receipt's exact facts, never a widened gate
+  fixture (`wamn-10yt.10.11`, `wamn-10yt.10.13`). Without this, components are
+  more secure *and* harder — a failed thesis.
 - **Slice v exit criterion added:** at least one wiring composes a
   package operation with palette components, authored through the
   editor, gated, published, and routed. Direct route attachments alone
