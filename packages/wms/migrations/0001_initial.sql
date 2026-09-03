@@ -67,7 +67,6 @@ CREATE TABLE wms.inventory_move_command (
 CREATE TABLE wms.inventory_movement (
     id uuid CONSTRAINT inventory_movement_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     idempotency_key text NOT NULL
-        CONSTRAINT inventory_movement_idempotency_key_key UNIQUE
         CONSTRAINT inventory_movement_idempotency_key_fkey
         REFERENCES wms.inventory_move_command (idempotency_key),
     pallet_id uuid NOT NULL
