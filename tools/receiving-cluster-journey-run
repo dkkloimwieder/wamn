@@ -44,6 +44,8 @@ source "$script_dir/journey-host-secrets.sh"
 source "$script_dir/journey-rendered-identity.sh"
 # shellcheck source=tools/journey-trace.sh
 source "$script_dir/journey-trace.sh"
+# shellcheck source=tools/journey-workload.sh
+source "$script_dir/journey-workload.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -1053,30 +1055,26 @@ jq -e --arg namespace "$namespace" --argjson replicas "$host_replicas" '
 ' >/dev/null "$evidence_dir/hosts.json"
 
 workload_manifest=$work_dir/flow-http.yaml
-awk -v target_namespace="$namespace" -v image="$flow_http_ref" -v host="$route_host" \
-  -v tenant="$app_tenant" -v environment="$app_environment" \
-  -v project="$app_project" -v schema="$app_schema" '
-  /^  namespace: wamn-system$/ { print "  namespace: " target_namespace; next }
-  /^      environment: wamn-system$/ { print "      environment: " target_namespace; next }
-  /^          image: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/flow-http:dev$/ {
-    print "          image: " image; next
-  }
-  /interfaces: \[incoming-handler\]/ {
-    print
-    print "          config:"
-    print "            host: " host
-    next
-  }
-  /wamn\.tenant:/ { print "              wamn.tenant: \"" tenant "\""; next }
-  /wamn\.environment:/ { print "              wamn.environment: \"" environment "\""; next }
-  /wamn\.project:/ { print "              wamn.project: \"" project "\""; next }
-  /wamn\.schema:/ { print "              wamn.schema: \"" schema "\""; next }
-  { print }
-' "$repo_root/deploy/platform/http-route-workload.example.yaml" >"$workload_manifest"
-if [[ $(grep -Fc -- "$route_host" "$workload_manifest") -ne 1 ]]; then
-  echo "rendered workload must carry exactly one setup-owned route host" >&2
-  exit 1
-fi
+declare -A workload_spec=(
+  [template]=$repo_root/deploy/platform/http-route-workload.example.yaml
+  [namespace]=$namespace
+  [image]=$flow_http_ref
+  [route_host]=$route_host
+  [tenant]=$app_tenant
+  [environment]=$app_environment
+  [project]=$app_project
+  [schema]=$app_schema
+  [template_namespace]=$system_namespace
+  [template_environment]=$system_namespace
+  [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
+  [template_interfaces]="interfaces: [incoming-handler]"
+  [template_tenant]=00000000-0000-0000-0000-000000000001
+  [template_environment_value]=poc
+  [template_project]=default
+  [template_schema]=public
+)
+render_workload_manifest workload_spec "$workload_manifest"
+
 run "${kube[@]}" apply -f "$workload_manifest"
 run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
   workloaddeployment/flow-http --timeout=240s

@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-workload.sh. No cluster: a text transform over one
+# checked-in template.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-workload.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+TEMPLATE=$repo_root/deploy/platform/http-route-workload.example.yaml
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+refused_saying() { local err; err=$("$@" 2>&1 >/dev/null) && return 1; [[ $err == *"$REASON"* ]]; }
+
+# Deliberately unguessable, so a hardcoded stand-in cannot match.
+build_spec() { # <array-name> <template> <tenant> <project> <schema> <environment>
+  eval "declare -gA $1=(
+    [template]=$2
+    [namespace]=warehouse-eu-3
+    [image]=registry.probe.invalid:5000/proofs/flow-http@sha256:abc123
+    [route_host]=probe.route.invalid
+    [tenant]=$3 [environment]=$6 [project]=$4 [schema]=$5
+    [template_namespace]=wamn-system [template_environment]=wamn-system
+    [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
+    [template_interfaces]='interfaces: [incoming-handler]'
+    [template_tenant]=00000000-0000-0000-0000-000000000001
+    [template_environment_value]=poc [template_project]=default [template_schema]=public
+  )"
+}
+
+echo "1. bytes, and both applications"
+build_spec rcv "$TEMPLATE" receiving-route-auth receiving receiving dev
+render_workload_manifest rcv "$work/rcv.yaml"; check "the Receiving render succeeds" $?
+[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == 54b44e025edde11d3f5d1462d068d7c4d1163f9baf560846d997dccc8df32c6e ]]
+check "bytes unchanged since the pre-lift block" $?
+build_spec wms "$TEMPLATE" wms-route-auth wms wms dev
+render_workload_manifest wms "$work/wms.yaml"; check "a second application renders" $?
+! diff -q "$work/rcv.yaml" "$work/wms.yaml" >/dev/null
+check "the two applications render differently" $?
+grep -q 'wamn.tenant: "wms-route-auth"' "$work/wms.yaml"; check "the second application's tenant is its own" $?
+# The FOUR claims this renderer owns. It does not own wamn.catalog, which the
+# production activation path sets as a fifth claim and which the journey leaves
+# at the template's "default" -- filed as wamn-362o.16, because the correct
+# value is a policy question rather than a substitution. Asserting only what is
+# owned keeps this from reading as coverage it does not have.
+! grep -qE '00000000-0000-0000-0000-000000000001|wamn\.environment: "poc"|wamn\.project: "default"|wamn\.schema: "public"' "$work/wms.yaml"
+check "no placeholder survives for the four claims this renderer owns" $?
+grep -q 'wamn.catalog: "default"' "$work/wms.yaml"
+check "wamn.catalog is knowingly untouched (wamn-362o.16), not silently handled" $?
+
+echo "2. exactly N — the count is per anchor, not one for all"
+# namespace: wamn-system occurs TWICE by design. A one-size exactly-once rule
+# would reject the real template; a bare at-least-once would accept a template
+# that had lost one. Only the declared count distinguishes them.
+[[ $(grep -c '^  namespace: warehouse-eu-3$' "$work/rcv.yaml") -eq 2 ]]
+check "the twice-occurring namespace anchor fired twice" $?
+drop_one() { grep -vn '' >/dev/null; }
+awk 'BEGIN{n=0} /^  namespace: wamn-system$/ && n==0 {n=1; next} {print}' "$TEMPLATE" >"$work/one-ns.yaml"
+build_spec oneNs "$work/one-ns.yaml" receiving-route-auth receiving receiving dev
+REASON="want 2" refused_saying render_workload_manifest oneNs "$work/out.yaml"
+check "control: a template with only ONE namespace is refused, naming the count" $?
+{ cat "$TEMPLATE"; echo '  namespace: wamn-system'; } >"$work/three-ns.yaml"
+build_spec threeNs "$work/three-ns.yaml" receiving-route-auth receiving receiving dev
+REASON="want 2" refused_saying render_workload_manifest threeNs "$work/out.yaml"
+check "control: a template with THREE namespaces is refused" $?
+
+echo "3. every identity anchor is load-bearing"
+for a in 'wamn.tenant: "00000000-0000-0000-0000-000000000001"' 'wamn.environment: "poc"' \
+         'wamn.project: "default"' 'wamn.schema: "public"'; do
+  grep -vF -- "$a" "$TEMPLATE" >"$work/drift.yaml"
+  build_spec drift "$work/drift.yaml" receiving-route-auth receiving receiving dev
+  REASON="want 1" refused_saying render_workload_manifest drift "$work/out.yaml"
+  check "control: a template missing [$a] is refused" $?
+done
+# The interfaces anchor needs its own MESSAGE asserted, not just a refusal.
+# Removing it also removes the config block that carries the route host, so the
+# route-host singularity guard refuses the same input -- and a control caught by
+# the neighbour proves the neighbour. Deleting the interfaces check left this
+# proof green until the message was the assertion.
+grep -vF -- 'interfaces: [incoming-handler]' "$TEMPLATE" >"$work/drift.yaml"
+build_spec drift "$work/drift.yaml" receiving-route-auth receiving receiving dev
+REASON="interfaces anchor matched 0 times" refused_saying render_workload_manifest drift "$work/out.yaml"
+check "control: a template missing the interfaces anchor is refused, naming IT" $?
+
+echo "4. the route host is setup-owned and singular"
+{ cat "$TEMPLATE"; echo '            host: probe.route.invalid'; } >"$work/two-hosts.yaml"
+build_spec twoHosts "$work/two-hosts.yaml" receiving-route-auth receiving receiving dev
+REASON="occurrences of the route host" refused_saying render_workload_manifest twoHosts "$work/out.yaml"
+check "control: a manifest answering on the host twice is refused" $?
+
+echo "5. the arguments themselves"
+build_spec absent "$work/nope.yaml" receiving-route-auth receiving receiving dev
+REASON="no template at" refused_saying render_workload_manifest absent "$work/out.yaml"
+check "control: a missing template is refused" $?
+build_spec short "$TEMPLATE" receiving-route-auth receiving receiving dev
+unset "short[tenant]"
+REASON="missing tenant" refused_saying render_workload_manifest short "$work/out.yaml"
+check "control: a missing required key is refused before any work" $?
+
+echo "6. nameref binding"
+binds() {
+  local n=$1
+  # A decoy GLOBAL under the name the caller will use.
+  build_spec "$n" "$TEMPLATE" DECOY DECOY DECOY DECOY
+  collide() {
+    eval "local -A $n=(
+      [template]=$TEMPLATE
+      [namespace]=warehouse-eu-3
+      [image]=registry.probe.invalid:5000/proofs/flow-http@sha256:abc123
+      [route_host]=probe.route.invalid
+      [tenant]=receiving-route-auth [environment]=dev [project]=receiving [schema]=receiving
+      [template_namespace]=wamn-system [template_environment]=wamn-system
+      [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
+      [template_interfaces]='interfaces: [incoming-handler]'
+      [template_tenant]=00000000-0000-0000-0000-000000000001
+      [template_environment_value]=poc [template_project]=default [template_schema]=public
+    )"
+    render_workload_manifest "$n" "$work/nr.yaml"
+  }
+  collide 2>/dev/null || return 1
+  ! grep -q DECOY "$work/nr.yaml"
+}
+for n in spec workload_spec config params; do
+  binds "$n"; check "a caller array named '$n' binds to the caller" $?
+done
+! binds _rwm_spec; check "control: colliding on the internal name is detected" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-workload: all properties hold"; else
+  echo "journey-workload: $failures failed"; exit 1; fi
