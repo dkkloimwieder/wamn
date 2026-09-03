@@ -1014,8 +1014,26 @@ jq -e --arg namespace "$namespace" --argjson replicas "$host_replicas" '
     any(.status.conditions[]?; .type == "Ready" and .status == "True"))
 ' >/dev/null "$evidence_dir/hosts.json"
 
+# The APPLICATION'S OWN IDENTITY, named here and nowhere else. These four
+# decide which tenant's data route authorization resolves against, so a
+# renderer that hardcoded them would deploy a second application under the
+# first one's tenant — and the journey would PASS, proving the wrong thing.
+# They are passed in for the same reason every other value here is.
+app_tenant=receiving-route-auth
+app_environment=dev
+app_project=receiving
+app_schema=receiving
+# How many SQL statements THIS application's probe route issues. Everything
+# else `trace_is_complete` checks is platform shape — authenticate, resolve,
+# pull, compile, link, instantiate, the two authority classes — and holds for
+# any caller. This one is the route's own, and a consumer whose route issues a
+# different number would fail inside a platform-sounding assertion.
+app_probe_statement_spans=1
+
 workload_manifest=$work_dir/flow-http.yaml
-awk -v target_namespace="$namespace" -v image="$flow_http_ref" -v host="$route_host" '
+awk -v target_namespace="$namespace" -v image="$flow_http_ref" -v host="$route_host" \
+  -v tenant="$app_tenant" -v environment="$app_environment" \
+  -v project="$app_project" -v schema="$app_schema" '
   /^  namespace: wamn-system$/ { print "  namespace: " target_namespace; next }
   /^      environment: wamn-system$/ { print "      environment: " target_namespace; next }
   /^          image: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/flow-http:dev$/ {
@@ -1027,10 +1045,10 @@ awk -v target_namespace="$namespace" -v image="$flow_http_ref" -v host="$route_h
     print "            host: " host
     next
   }
-  /wamn\.tenant:/ { print "              wamn.tenant: \"receiving-route-auth\""; next }
-  /wamn\.environment:/ { print "              wamn.environment: \"dev\""; next }
-  /wamn\.project:/ { print "              wamn.project: \"receiving\""; next }
-  /wamn\.schema:/ { print "              wamn.schema: \"receiving\""; next }
+  /wamn\.tenant:/ { print "              wamn.tenant: \"" tenant "\""; next }
+  /wamn\.environment:/ { print "              wamn.environment: \"" environment "\""; next }
+  /wamn\.project:/ { print "              wamn.project: \"" project "\""; next }
+  /wamn\.schema:/ { print "              wamn.schema: \"" schema "\""; next }
   { print }
 ' "$repo_root/deploy/platform/http-route-workload.example.yaml" >"$workload_manifest"
 if [[ $(grep -Fc -- "$route_host" "$workload_manifest") -ne 1 ]]; then
@@ -1202,8 +1220,9 @@ EOF
   }
 
   trace_is_complete() {
-    local trace_file=$1 expect_executor=$2
-    jq -e --arg expect_executor "$expect_executor" '
+    local trace_file=$1 expect_executor=$2 expect_statements=$3
+    jq -e --arg expect_executor "$expect_executor" \
+      --argjson expect_statements "$expect_statements" '
       def spans: [.batches[]?.scopeSpans[]?.spans[]?];
       def attr($span; $key):
         ([$span.attributes[]? |
@@ -1225,7 +1244,7 @@ EOF
       count_acquired("callable-http") == 1 and
       count_acquired("guest-sql") == 1 and
       count_named("wamn.postgres") > 0 and
-      count_named("wamn.postgres.statement") == 1 and
+      count_named("wamn.postgres.statement") == $expect_statements and
       if $expect_executor == "true" then
         count_acquired("executor-platform") == 1
       else
@@ -1242,7 +1261,8 @@ EOF
     local http_total_ms
     record_command "${kube[@]}" get --raw "$proxy_path"
     if ! "${kube[@]}" get --raw "$proxy_path" >"$trace_file" ||
-       ! trace_is_complete "$trace_file" "$expect_executor"; then
+       ! trace_is_complete "$trace_file" "$expect_executor" \
+            "$app_probe_statement_spans"; then
       echo "$phase trace is incomplete at collection" >&2
       exit 1
     fi
