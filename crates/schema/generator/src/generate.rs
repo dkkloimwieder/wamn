@@ -310,6 +310,9 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             operation,
         )?;
     }
+    for (path, bytes) in crate::typescript::generate_client(input.catalog, &manifest)? {
+        insert_bytes(&mut files, &path, bytes)?;
+    }
     let data_access = crate::data_access::derive_data_access_overlay(
         input.catalog,
         input.manifest_json,

@@ -12,6 +12,7 @@ pub enum GenerateErrorKind {
     InvalidOperation,
     InvalidConnection,
     InvalidComponent,
+    InvalidDistribution,
     MissingAuthoredSql,
     UnexpectedAuthoredSql,
     SchemaQualifiedSql,

@@ -25,6 +25,7 @@ mod materialize;
 mod parity;
 mod sql;
 mod sql_lex;
+mod typescript;
 
 pub use cursor::{
     CursorError, CursorErrorKind, CursorV1, CursorValue, decode_cursor, encode_cursor,
@@ -48,7 +49,7 @@ pub use manifest::{
     CursorPayload, CustomOperationDeclaration, CustomOperationInputDeclaration,
     CustomOperationKind, CustomOperationResultDeclaration, EventRegistrationDeclaration,
     FilterBinding, FilterDeclaration, InputRefusal, InternalRelationDeclaration, ItemSemantics,
-    LimitDeclaration, ModelDeclaration, NumericSpelling, OperationDeclaration,
+    LimitDeclaration, ModelDeclaration, NpmDistribution, NumericSpelling, OperationDeclaration,
     OperationErrorDetailDeclaration, OperationErrorDetailKey, OperationVisibility, PackageIdentity,
     PackageManifest, PaginationDeclaration, PaginationKind, PolicyContractRequirement,
     PolicyContractState, ResultClass, SortDeclaration, SortKey, StaticSqlFetch,

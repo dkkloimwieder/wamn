@@ -11,6 +11,8 @@ const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exc
 #[serde(deny_unknown_fields)]
 pub struct PackageManifest {
     pub package: PackageIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npm_distribution: Option<NpmDistribution>,
     #[serde(default)]
     pub base_dependencies: BTreeMap<String, BaseDependencyRequirement>,
     pub required_platform_policy_contract: PolicyContractRequirement,
@@ -1534,6 +1536,13 @@ pub struct PackageIdentity {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub predecessor_version: Option<String>,
+}
+
+/// Explicit npm distribution identity for generated TypeScript source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NpmDistribution {
+    pub name: String,
 }
 
 /// Exact package artifact and local operation set bound to one source alias.
