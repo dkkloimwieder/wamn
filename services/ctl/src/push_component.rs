@@ -1,9 +1,9 @@
-//! Publish exact component bytes, then project their admitted facts to both planes.
+//! Project admissions for verification, then publish exact component bytes.
 //!
 //! This is the sole production caller of component byte admission. It validates
-//! the local bytes and exact already-applied package before registry I/O,
-//! publishes one digest-addressed OCI layer, pulls it back, then exact-replays
-//! one admission-computed projection into the source-project and control stores.
+//! the local bytes, projects their exact facts into the verification world,
+//! publishes one digest-addressed OCI layer, pulls it back, then records the
+//! already-verified projection in the control store.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -79,6 +79,7 @@ pub enum ComponentProjectionErrorKind {
     SourcePackageNotApplied,
     PackageManifestMismatch,
     SourcePackageMigrationMismatch,
+    VerificationProjectionMissing,
     PlaneContentMismatch,
     ComponentFactConflict,
     ConnectionFactConflict,
@@ -97,6 +98,7 @@ impl ComponentProjectionErrorKind {
             Self::SourcePackageNotApplied => "source-package-not-applied",
             Self::PackageManifestMismatch => "package-manifest-mismatch",
             Self::SourcePackageMigrationMismatch => "source-package-migration-mismatch",
+            Self::VerificationProjectionMissing => "verification-projection-missing",
             Self::PlaneContentMismatch => "plane-content-mismatch",
             Self::ComponentFactConflict => "component-fact-conflict",
             Self::ConnectionFactConflict => "connection-fact-conflict",
@@ -207,19 +209,6 @@ struct ProjectionOutcome {
 impl ProjectionOutcome {
     fn is_noop(&self) -> bool {
         !self.package_inserted && !self.component_inserted && self.requirements_inserted == 0
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct DualPlaneProjectionOutcome {
-    project: ProjectionOutcome,
-    control: ProjectionOutcome,
-}
-
-impl DualPlaneProjectionOutcome {
-    #[cfg(test)]
-    fn is_noop(&self) -> bool {
-        self.project.is_noop() && self.control.is_noop()
     }
 }
 
@@ -428,9 +417,12 @@ pub async fn publish_admitted_component(
         .control_database_url
         .parse()
         .context("parse T1 control database URL")?;
-    verify_source_package(
+    let project = require_exact_verification_projection(
         &project_config,
         admitted,
+        &admission.requirements,
+        &admission.manifest_sha256,
+        &admission.projection_hash,
         &admission.directory,
         &admission.package_path,
     )
@@ -458,9 +450,9 @@ pub async fn publish_admitted_component(
     )
     .await?;
 
-    let projected = project_component_facts(
-        &project_config,
+    let control = persist_plane(
         &control_config,
+        ProjectionPlane::Control,
         admitted,
         &admission.requirements,
         &admission.manifest_sha256,
@@ -469,15 +461,34 @@ pub async fn publish_admitted_component(
         &admission.package_path,
     )
     .await?;
+    if project.manifest_sha256 != control.manifest_sha256
+        || project.projection_hash != control.projection_hash
+        || project.projection_hash != admission.projection_hash.as_ref()
+    {
+        return Err(ComponentProjectionError::new(
+            ComponentProjectionErrorKind::PlaneContentMismatch,
+            format!(
+                "{}@{} verification manifest/projection ({}, {}) disagrees with control ({}, {}) or admitted projection {}",
+                admitted.scope.package_id,
+                admitted.scope.package_version,
+                project.manifest_sha256,
+                project.projection_hash,
+                control.manifest_sha256,
+                control.projection_hash,
+                admission.projection_hash
+            ),
+        )
+        .into());
+    }
     println!(
         "projected {} (source-project: {}; control: {})",
         admitted.component_digest,
-        if projected.project.is_noop() {
+        if project.is_noop() {
             "already converged"
         } else {
             "changed"
         },
-        if projected.control.is_noop() {
+        if control.is_noop() {
             "already converged"
         } else {
             "changed"
@@ -506,6 +517,7 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
         declaration,
         admitted_platform_packages,
     })?;
+    project_admitted_component_for_verification(&admission, &project_database_url).await?;
     publish_admitted_component(
         &admission,
         PublishAdmittedComponentArgs {
@@ -1113,29 +1125,40 @@ fn ensure_component_package_matches(
     Ok(())
 }
 
-async fn verify_source_package(
+async fn require_exact_verification_projection(
     database_config: &PgConfig,
     component: &AdmittedComponent,
+    requirements: &[ComponentConnectionRequirement],
+    manifest_sha256: &str,
+    projection_hash: &str,
     directory: &PackageDirectory,
     package_path: &std::path::Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ProjectionOutcome> {
     let (mut client, connection) = database_config
         .connect(NoTls)
         .await
-        .context("connect to source-project database")?;
+        .context("connect to verification-project database")?;
     let connection_task = tokio::spawn(connection);
-    let verified =
-        verify_source_package_with_client(&mut client, component, directory, package_path).await;
+    let verified = require_exact_verification_projection_with_client(
+        &mut client,
+        component,
+        requirements,
+        manifest_sha256,
+        projection_hash,
+        directory,
+        package_path,
+    )
+    .await;
     drop(client);
     if verified.is_err() {
         connection_task.abort();
     } else {
         connection_task
             .await
-            .context("join source-project database connection")?
-            .context("drive source-project database connection")?;
+            .context("join verification-project database connection")?
+            .context("drive verification-project database connection")?;
     }
-    verified.map(|_| ())
+    verified
 }
 
 async fn verify_source_package_with_client(
@@ -1161,60 +1184,128 @@ async fn verify_source_package_with_client(
     Ok(observed)
 }
 
-async fn project_component_facts(
-    project_config: &PgConfig,
-    control_config: &PgConfig,
+async fn require_exact_verification_projection_with_client(
+    client: &mut PgClient,
     component: &AdmittedComponent,
     requirements: &[ComponentConnectionRequirement],
     manifest_sha256: &str,
     projection_hash: &str,
     directory: &PackageDirectory,
     package_path: &std::path::Path,
-) -> anyhow::Result<DualPlaneProjectionOutcome> {
-    // Source first. If the control write then fails, retry re-verifies this
-    // immutable package and exact-replays the already committed source facts.
-    let project = persist_plane(
-        project_config,
-        ProjectionPlane::SourceProject,
-        component,
-        requirements,
-        manifest_sha256,
-        projection_hash,
-        directory,
-        package_path,
-    )
-    .await?;
-    let control = persist_plane(
-        control_config,
-        ProjectionPlane::Control,
-        component,
-        requirements,
-        manifest_sha256,
-        projection_hash,
-        directory,
-        package_path,
-    )
-    .await?;
-    if project.manifest_sha256 != control.manifest_sha256
-        || project.projection_hash != control.projection_hash
-        || project.projection_hash != projection_hash
-    {
+) -> anyhow::Result<ProjectionOutcome> {
+    let transaction = client
+        .transaction()
+        .await
+        .context("begin exact verification projection check")?;
+    transaction
+        .query_one(CLAIM_TENANT_SQL, &[&component.scope.tenant_id])
+        .await
+        .context("claim verification-project tenant")?;
+    let coordinate = format!(
+        "{}:{}@{}",
+        component.scope.tenant_id, component.scope.package_id, component.scope.package_version
+    );
+    transaction
+        .query_one(LOCK_PROJECTION_SQL, &[&coordinate])
+        .await
+        .context("lock verification-project component projection coordinate")?;
+    let observed_manifest =
+        require_exact_applied_package(&transaction, component, directory, package_path).await?;
+    if observed_manifest != manifest_sha256 {
         return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorKind::PlaneContentMismatch,
+            ComponentProjectionErrorKind::PackageManifestMismatch,
             format!(
-                "{}@{} project manifest/projection ({}, {}) disagrees with control ({}, {}) or admitted projection {}",
-                component.scope.package_id,
-                component.scope.package_version,
-                project.manifest_sha256,
-                project.projection_hash,
-                control.manifest_sha256,
-                control.projection_hash,
-                projection_hash
+                "verification-project {}@{} recorded-sha256={} admitted-sha256={manifest_sha256}",
+                component.scope.package_id, component.scope.package_version, observed_manifest
             ),
         )
         .into());
     }
-    Ok(DualPlaneProjectionOutcome { project, control })
+
+    let imports =
+        serde_json::to_string(&component.imports).context("serialize admitted imports")?;
+    let effects =
+        serde_json::to_string(&component.effects).context("serialize admitted effects")?;
+    let operations =
+        serde_json::to_string(&component.operations).context("serialize admitted operations")?;
+    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 11] = [
+        &component.scope.tenant_id,
+        &component.scope.package_id,
+        &component.scope.package_version,
+        &component.component,
+        &component.interface_version,
+        &operations,
+        &component.component_digest,
+        &projection_hash,
+        &imports,
+        &component.imports_fingerprint,
+        &effects,
+    ];
+    let exact: bool = transaction
+        .query_one(EXACT_COMPONENT_SQL, &params)
+        .await
+        .context("verify exact verification-project component fact")?
+        .get(0);
+    if !exact {
+        let observed = transaction
+            .query_opt(
+                SELECT_COMPONENT_PROJECTION_HASH_SQL,
+                &[
+                    &component.scope.tenant_id,
+                    &component.scope.package_id,
+                    &component.scope.package_version,
+                    &component.component,
+                    &component.interface_version,
+                ],
+            )
+            .await
+            .context("read verification-project component projection")?
+            .map(|row| row.get::<_, String>(0));
+        let (kind, detail) = observed.map_or_else(
+            || {
+                (
+                    ComponentProjectionErrorKind::VerificationProjectionMissing,
+                    format!(
+                        "verification-project lacks {}@{} component={}; project the admission before publication",
+                        component.scope.package_id,
+                        component.scope.package_version,
+                        component.component
+                    ),
+                )
+            },
+            |observed_hash| {
+                (
+                    ComponentProjectionErrorKind::ComponentFactConflict,
+                    format!(
+                        "verification-project {}@{} component={} recorded-projection={} admitted-projection={projection_hash}",
+                        component.scope.package_id,
+                        component.scope.package_version,
+                        component.component,
+                        observed_hash
+                    ),
+                )
+            },
+        );
+        return Err(ComponentProjectionError::new(kind, detail).into());
+    }
+    verify_requirement_inventory(
+        &transaction,
+        &component.scope.tenant_id,
+        &component.component_digest,
+        requirements,
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .context("finish exact verification projection check")?;
+    Ok(ProjectionOutcome {
+        package_inserted: false,
+        component_inserted: false,
+        requirements_inserted: 0,
+        manifest_sha256: observed_manifest,
+        projection_hash: projection_hash.to_owned(),
+    })
 }
 
 async fn persist_plane(
@@ -1989,29 +2080,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn dual_plane_replay_is_noop_only_when_both_planes_are_noop() {
-        let outcome = |component_inserted| ProjectionOutcome {
-            package_inserted: false,
-            component_inserted,
-            requirements_inserted: 0,
-            manifest_sha256: format!("sha256:{}", "a".repeat(64)),
-            projection_hash: format!("sha256:{}", "b".repeat(64)),
-        };
-        let converged = DualPlaneProjectionOutcome {
-            project: outcome(false),
-            control: outcome(false),
-        };
-        assert!(converged.is_noop());
-        assert!(
-            !DualPlaneProjectionOutcome {
-                project: outcome(false),
-                control: outcome(true),
-            }
-            .is_noop()
-        );
-    }
-
     async fn connect(config: &PgConfig) -> PgClient {
         let (client, connection) = config
             .connect(NoTls)
@@ -2039,7 +2107,17 @@ mod tests {
     #[tokio::test]
     async fn verification_projection_replays_refuses_drift_and_leaves_publish_project_noop() {
         let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
-            eprintln!("skipping dual-plane projection proof; WAMN_CTL_PG_URL is unset");
+            eprintln!("skipping publication projection proof; WAMN_CTL_PG_URL is unset");
+            return;
+        };
+        let Ok(artifact_base) = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE") else {
+            eprintln!(
+                "skipping publication projection proof; WAMN_COMPONENT_ARTIFACT_BASE is unset"
+            );
+            return;
+        };
+        let Ok(registry_auth_file) = std::env::var("WAMN_REGISTRY_AUTH_FILE") else {
+            eprintln!("skipping publication projection proof; WAMN_REGISTRY_AUTH_FILE is unset");
             return;
         };
         let lock = OpenOptions::new()
@@ -2091,6 +2169,8 @@ mod tests {
         let control_config = database_config(&base_config, &control_database);
         let mut verification_url = url::Url::parse(&url).expect("parse PostgreSQL fixture URL");
         verification_url.set_path(&format!("/{project_database}"));
+        let mut control_url = url::Url::parse(&url).expect("parse PostgreSQL fixture URL");
+        control_url.set_path(&format!("/{control_database}"));
         let mut project = connect(&project_config).await;
         let mut control = connect(&control_config).await;
         project
@@ -2120,7 +2200,10 @@ mod tests {
         let directory = crate::apply_package::read_package_directory(&package_path)
             .expect("read real Receiving package");
         let package = plan_package_migrations(&directory, None).expect("plan real package");
-        let component = projection_component();
+        let component_bytes = b"verification-project-component".to_vec();
+        let mut component = projection_component();
+        component.component_digest =
+            wamn_runtime::component_admission::component_digest(&component_bytes);
         let requirements = vec![ComponentConnectionRequirement::new(
             &component.component_digest,
             "warehouse",
@@ -2131,11 +2214,18 @@ mod tests {
         let admission = ComponentAdmissionReceipt {
             package_path: package_path.clone(),
             directory: directory.clone(),
-            component_bytes: Box::default(),
+            component_bytes: component_bytes.into_boxed_slice(),
             component: component.clone(),
             requirements: requirements.clone().into_boxed_slice(),
             manifest_sha256: package.manifest_sha256.clone().into_boxed_str(),
             projection_hash: projection_hash.clone().into_boxed_str(),
+        };
+        let publish_args = || PublishAdmittedComponentArgs {
+            artifact_base: artifact_base.clone(),
+            registry_auth_file: PathBuf::from(&registry_auth_file),
+            insecure_registry: true,
+            project_database_url: verification_url.to_string(),
+            control_database_url: control_url.to_string(),
         };
 
         let missing =
@@ -2230,6 +2320,17 @@ mod tests {
             ComponentProjectionErrorKind::SourcePackageMigrationMismatch
         );
 
+        let unverified = publish_admitted_component(&admission, publish_args())
+            .await
+            .expect_err("publication refuses before Admit projects exact verification facts");
+        assert_eq!(
+            unverified
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("missing verification projection is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::VerificationProjectionMissing
+        );
+
         project_admitted_component_for_verification(&admission, verification_url.as_str())
             .await
             .expect("project the opaque receipt into the verification world");
@@ -2281,37 +2382,47 @@ mod tests {
             .get(0);
         assert_eq!(replay_snapshot, snapshot);
 
-        let resumed = project_component_facts(
-            &project_config,
-            &control_config,
-            &component,
-            &requirements,
-            &package.manifest_sha256,
-            &projection_hash,
-            &directory,
-            &package_path,
-        )
-        .await
-        .expect("partial retry re-verifies source and projects control");
-        assert!(resumed.project.is_noop());
-        assert!(!resumed.control.is_noop());
-        let again = project_component_facts(
-            &project_config,
-            &control_config,
-            &component,
-            &requirements,
-            &package.manifest_sha256,
-            &projection_hash,
-            &directory,
-            &package_path,
-        )
-        .await
-        .expect("exact dual-plane replay converges");
-        assert!(again.project.is_noop());
-        assert!(again.control.is_noop());
-        assert!(again.is_noop());
-        assert_eq!(again.project.projection_hash, projection_hash);
-        assert_eq!(again.control.projection_hash, projection_hash);
+        publish_admitted_component(&admission, publish_args())
+            .await
+            .expect("full publication observes the converged verification projection");
+        let published_project_snapshot: String = project
+            .query_one(
+                snapshot_sql,
+                &[&component.scope.tenant_id, &component.component_digest],
+            )
+            .await
+            .expect("read project facts after full publication")
+            .get(0);
+        assert_eq!(published_project_snapshot, snapshot);
+        let control_snapshot: String = control
+            .query_one(
+                snapshot_sql,
+                &[&component.scope.tenant_id, &component.component_digest],
+            )
+            .await
+            .expect("read control facts after full publication")
+            .get(0);
+        publish_admitted_component(&admission, publish_args())
+            .await
+            .expect("exact full publication replay converges");
+        let replayed_project_snapshot: String = project
+            .query_one(
+                snapshot_sql,
+                &[&component.scope.tenant_id, &component.component_digest],
+            )
+            .await
+            .expect("read project facts after publication replay")
+            .get(0);
+        let replayed_control_snapshot: String = control
+            .query_one(
+                snapshot_sql,
+                &[&component.scope.tenant_id, &component.component_digest],
+            )
+            .await
+            .expect("read control facts after publication replay")
+            .get(0);
+        assert_eq!(replayed_project_snapshot, snapshot);
+        assert_eq!(replayed_control_snapshot, control_snapshot);
 
         let unexpected = ComponentConnectionRequirement::new(
             &component.component_digest,
@@ -2333,9 +2444,9 @@ mod tests {
             .commit()
             .await
             .expect("commit extra control-plane requirement");
-        let extra = project_component_facts(
-            &project_config,
+        let extra = persist_plane(
             &control_config,
+            ProjectionPlane::Control,
             &component,
             &requirements,
             &package.manifest_sha256,
