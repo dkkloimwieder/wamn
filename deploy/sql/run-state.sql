@@ -344,12 +344,17 @@ REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;
 -- A project database is constant for (org, project, env), so expected_environment
 -- is verified, never selected as a second key. One tenant has one row; a missing
 -- or mismatched projection refuses admission rather than inventing a decision.
+-- The nullable source carriers make the additive migration honest for older
+-- rows: release minting refuses an unattested row until the sole policy-copy
+-- writer fills both from the authoritative system policy.
 CREATE TABLE wamn_run.environment_policies (
     tenant_id            text NOT NULL CHECK (tenant_id <> ''),
     expected_environment text NOT NULL CHECK (expected_environment <> ''),
     durability_class    text NOT NULL
         CONSTRAINT environment_policies_durability_class_check
         CHECK (durability_class IN ('standard', 'durable')),
+    source_policy_org   text,
+    source_policy_hash  text,
     PRIMARY KEY (tenant_id)
 );
 ALTER TABLE wamn_run.environment_policies ENABLE ROW LEVEL SECURITY;

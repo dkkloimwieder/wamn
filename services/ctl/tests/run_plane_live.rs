@@ -86,6 +86,7 @@ use wamn_ctl::reconcile_run_plane::{
     self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneArgs, ReconcileTargetError,
     ReconcileTargetErrorKind,
 };
+use wamn_ctl::verification_policy::project_environment_policy;
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
@@ -1335,15 +1336,75 @@ async fn reconcile_target_identity_guard_live() {
     let projected_row = primary_su
         .query_one(
             &format!(
-                "SELECT expected_environment,durability_class \
+                "SELECT expected_environment,durability_class, \
+                        source_policy_org,source_policy_hash \
                    FROM {SCHEMA}.environment_policies WHERE tenant_id='t1'"
             ),
             &[],
         )
         .await
         .expect("read converged project-local policy");
-    let projected = (projected_row.get(0), projected_row.get(1));
-    assert_eq!(projected, (CLI_ENV.to_string(), "standard".to_string()));
+    let expected_source_hash = wamn_execution_contract::canonical_json_sha256(&serde_json::json!({
+        "backup-cadence": "",
+        "cpu": "100m",
+        "durability-class": "standard",
+        "hibernation": "off",
+        "image": "postgres",
+        "instances": 1,
+        "memory": "128Mi",
+        "name": CLI_ENV,
+        "promotion-rank": 0,
+        "recovery-domain": "own",
+        "storage": "1Gi",
+        "wal-retention": "",
+    }));
+    let projected = (
+        projected_row.get::<_, String>(0),
+        projected_row.get::<_, String>(1),
+        projected_row.get::<_, Option<String>>(2),
+        projected_row.get::<_, Option<String>>(3),
+    );
+    assert_eq!(
+        projected,
+        (
+            CLI_ENV.to_string(),
+            "standard".to_string(),
+            Some(CLI_ORG.to_string()),
+            Some(expected_source_hash.clone()),
+        )
+    );
+    let replay =
+        project_environment_policy(&system_url, &primary_url, &schema(), CLI_ORG, "t1", CLI_ENV)
+            .await
+            .expect("replay the exact source policy projection");
+    assert!(!replay.changed(), "exact projection replay was not a no-op");
+    assert_eq!(replay.source_policy_org(), CLI_ORG);
+    assert_eq!(replay.environment(), CLI_ENV);
+    assert_eq!(replay.source_policy_hash(), expected_source_hash);
+    primary_su
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.environment_policies \
+                    SET source_policy_hash=$1 WHERE tenant_id='t1'"
+            ),
+            &[&format!("sha256:{}", "0".repeat(64))],
+        )
+        .await
+        .expect("seed a stale projected policy hash");
+    assert!(
+        project_environment_policy(&system_url, &primary_url, &schema(), CLI_ORG, "t1", CLI_ENV,)
+            .await
+            .expect("repair the stale policy projection")
+            .changed(),
+        "stale projection was not reported as changed"
+    );
+    assert!(
+        !project_environment_policy(&system_url, &primary_url, &schema(), CLI_ORG, "t1", CLI_ENV,)
+            .await
+            .expect("replay the repaired policy projection")
+            .changed(),
+        "repaired projection did not converge"
+    );
     let carrier_present: bool = system_su
         .query_one(
             "SELECT EXISTS (SELECT FROM information_schema.columns \

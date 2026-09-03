@@ -56,7 +56,7 @@ use tokio_postgres::NoTls;
 use wamn_control_provision::{
     DISPATCH_READER_ROLE, project_env_database_name, sql, validate_project_env,
 };
-use wamn_control_registry::{DurabilityClass, Triple};
+use wamn_control_registry::Triple;
 use wamn_schema_control::{
     BareSchemaName, EffectWriterRoleObservation, RowPolicyObservation, RowSecurityObservation,
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
@@ -320,20 +320,20 @@ pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
         );
     }
     let result = async {
-        let durability_class = resolve_durability_class(
+        let source_policy = crate::verification_policy::read_authoritative_environment_policy(
             &args.system_database_url,
             &args.org,
             &args.env,
             !args.dry_run,
         )
         .await?;
+        let durability_class = source_policy.durability_class();
         let plan = reconcile(&client, &schema, !args.dry_run).await?;
         let policy_changed = converge_environment_policy(
             &client,
             &schema,
             &args.tenant,
-            &args.env,
-            durability_class,
+            &source_policy,
             !args.dry_run,
         )
         .await?;
@@ -361,56 +361,18 @@ pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn resolve_durability_class(
-    system_database_url: &str,
-    org: &str,
-    env: &str,
-    apply: bool,
-) -> anyhow::Result<DurabilityClass> {
-    let (client, conn) = tokio_postgres::connect(system_database_url, NoTls)
-        .await
-        .context("system registry connect")?;
-    let conn_task = tokio::spawn(conn);
-    let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system")?;
-        let durability_class = if apply {
-            crate::env_policies::ensure_env_policy_durability_schema(&client).await?;
-            crate::env_policies::read_env_policy(&client, org, env)
-                .await?
-                .map(|policy| policy.durability_class)
-        } else {
-            crate::env_policies::observe_env_policy_durability_class(&client, org, env).await?
-        }
-        .with_context(|| {
-            format!(
-                "env {env:?} names none of org {org:?}'s env policies; refusing to project an invented durability class"
-            )
-        })?;
-        Ok::<_, anyhow::Error>(durability_class)
-    }
-    .await;
-    drop(client);
-    let _ = conn_task.await;
-    result
-}
-
-/// Converge the system policy's resolved class into the project-local relation.
-/// The lookup and write are absent from admission and claim paths. `apply=false`
-/// observes only, including the from-zero case where the relation is not yet
-/// present, and returns whether a write would be required.
-pub async fn converge_environment_policy(
+/// Converge one source-attested environment policy into the project-local
+/// relation owned by this reconciler. `apply=false` observes only, including a
+/// from-zero schema where the relation or additive source carriers do not yet
+/// exist.
+pub(crate) async fn converge_environment_policy(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
-    tenant: &str,
-    environment: &str,
-    durability_class: DurabilityClass,
+    tenant_id: &str,
+    source: &crate::verification_policy::AuthoritativeEnvironmentPolicy,
     apply: bool,
 ) -> anyhow::Result<bool> {
-    anyhow::ensure!(!tenant.is_empty(), "tenant must not be empty");
-    anyhow::ensure!(!environment.is_empty(), "environment must not be empty");
+    anyhow::ensure!(!tenant_id.is_empty(), "tenant must not be empty");
     let table_present: bool = client
         .query_one(
             "SELECT pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) IS NOT NULL",
@@ -419,49 +381,88 @@ pub async fn converge_environment_policy(
         .await
         .context("observe project-local environment policy relation")?
         .get(0);
-    let current = if table_present {
+    let source_carriers_present: bool = if table_present {
+        client
+            .query_one(
+                "SELECT count(*) = 2 FROM pg_catalog.pg_attribute AS attribute \
+                  WHERE attribute.attrelid = \
+                          pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) \
+                    AND attribute.attname IN ('source_policy_org', 'source_policy_hash') \
+                    AND attribute.attnum > 0 AND NOT attribute.attisdropped",
+                &[&schema.as_str()],
+            )
+            .await
+            .context("observe project-local environment policy source carriers")?
+            .get(0)
+    } else {
+        false
+    };
+    let current = if source_carriers_present {
         client
             .query_opt(
                 &format!(
-                    "SELECT expected_environment, durability_class \
+                    "SELECT expected_environment, durability_class, \
+                            source_policy_org, source_policy_hash \
                        FROM {}.environment_policies WHERE tenant_id = $1",
                     schema.quoted()
                 ),
-                &[&tenant],
+                &[&tenant_id],
             )
             .await
             .context("observe project-local environment policy")?
-            .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    row.get::<_, String>(1),
+                    row.get::<_, Option<String>>(2),
+                    row.get::<_, Option<String>>(3),
+                )
+            })
     } else {
         None
     };
-    let wanted = durability_class.as_sql();
-    let changed = current
-        .as_ref()
-        .is_none_or(|(current_environment, current_class)| {
-            current_environment != environment || current_class != wanted
-        });
+    let wanted_class = source.durability_class().as_sql();
+    let changed = current.as_ref().is_none_or(
+        |(current_environment, current_class, current_org, current_hash)| {
+            current_environment != source.environment()
+                || current_class != wanted_class
+                || current_org.as_deref() != Some(source.source_policy_org.as_ref())
+                || current_hash.as_deref() != Some(source.source_policy_hash.as_ref())
+        },
+    );
     if apply && changed {
         anyhow::ensure!(
-            table_present,
-            "run-plane reconciliation did not create the environment policy relation"
+            table_present && source_carriers_present,
+            "run-plane reconciliation did not create the environment policy source carriers"
         );
         client
             .execute(
                 &format!(
                     "INSERT INTO {}.environment_policies \
-                       (tenant_id, expected_environment, durability_class) \
-                     VALUES ($1, $2, $3) \
+                       (tenant_id, expected_environment, durability_class, \
+                        source_policy_org, source_policy_hash) \
+                     VALUES ($1, $2, $3, $4, $5) \
                      ON CONFLICT (tenant_id) DO UPDATE SET \
                        expected_environment = EXCLUDED.expected_environment, \
-                       durability_class = EXCLUDED.durability_class \
-                     WHERE environment_policies.expected_environment \
-                               IS DISTINCT FROM EXCLUDED.expected_environment \
-                        OR environment_policies.durability_class \
-                               IS DISTINCT FROM EXCLUDED.durability_class",
+                       durability_class = EXCLUDED.durability_class, \
+                       source_policy_org = EXCLUDED.source_policy_org, \
+                       source_policy_hash = EXCLUDED.source_policy_hash \
+                     WHERE (environment_policies.expected_environment, \
+                            environment_policies.durability_class, \
+                            environment_policies.source_policy_org, \
+                            environment_policies.source_policy_hash) \
+                           IS DISTINCT FROM \
+                           (EXCLUDED.expected_environment, EXCLUDED.durability_class, \
+                            EXCLUDED.source_policy_org, EXCLUDED.source_policy_hash)",
                     schema.quoted()
                 ),
-                &[&tenant, &environment, &wanted],
+                &[
+                    &tenant_id,
+                    &source.environment(),
+                    &wanted_class,
+                    &source.source_policy_org.as_ref(),
+                    &source.source_policy_hash.as_ref(),
+                ],
             )
             .await
             .context("converge project-local environment policy")?;

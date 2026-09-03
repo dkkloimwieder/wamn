@@ -114,15 +114,36 @@ pub(crate) async fn read_env_policy(
     rows.first().map(env_policy_from_row).transpose()
 }
 
-/// Observe one policy's durability class without changing a pre-carrier
-/// registry. Older rows project as `standard`, exactly matching the additive
-/// migration's backfill; callers that apply still run the schema ensure first.
-pub(crate) async fn observe_env_policy_durability_class(
+/// Observe one complete policy without mutating a pre-durability registry.
+/// Older rows receive the same `standard` value that the additive carrier
+/// migration would persist, so their canonical policy identity is stable
+/// across that migration.
+pub(crate) async fn observe_env_policy(
     client: &tokio_postgres::Client,
     org: &str,
     name: &str,
-) -> anyhow::Result<Option<DurabilityClass>> {
-    let carrier_present: bool = client
+) -> anyhow::Result<Option<EnvPolicy>> {
+    let durability_present = env_policy_durability_carrier_present(client).await?;
+    if durability_present {
+        return read_env_policy(client, org, name).await;
+    }
+    let rows = client
+        .query(
+            "SELECT name, recovery_domain::text, promotion_rank, instances, \
+                    storage, cpu, memory, image, backup_cadence, wal_retention, \
+                    hibernation, 'standard'::text \
+               FROM registry.env_policies WHERE org = $1 AND name = $2",
+            &[&org, &name],
+        )
+        .await
+        .context("observe pre-durability env_policy")?;
+    rows.first().map(env_policy_from_row).transpose()
+}
+
+async fn env_policy_durability_carrier_present(
+    client: &tokio_postgres::Client,
+) -> anyhow::Result<bool> {
+    client
         .query_one(
             "SELECT EXISTS ( \
                SELECT 1 FROM pg_catalog.pg_attribute AS attribute \
@@ -134,24 +155,8 @@ pub(crate) async fn observe_env_policy_durability_class(
             &[],
         )
         .await
-        .context("observe registry env-policy durability carrier")?
-        .get(0);
-    let sql = if carrier_present {
-        "SELECT durability_class FROM registry.env_policies \
-          WHERE org = $1 AND name = $2"
-    } else {
-        "SELECT 'standard'::text FROM registry.env_policies \
-          WHERE org = $1 AND name = $2"
-    };
-    client
-        .query_opt(sql, &[&org, &name])
-        .await
-        .context("observe env-policy durability class")?
-        .map(|row| {
-            DurabilityClass::from_sql(row.get::<_, &str>(0))
-                .context("invalid env-policy durability_class")
-        })
-        .transpose()
+        .context("observe registry env-policy durability carrier")
+        .map(|row| row.get(0))
 }
 
 #[cfg(test)]

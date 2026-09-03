@@ -26,6 +26,8 @@ use wamn_schema_control::{
     normalize_http_route,
 };
 
+use crate::verification_policy::AuthoritativeEnvironmentPolicy;
+
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const INSERT_RELEASE_SQL: &str = "\
 INSERT INTO catalog.effective_releases (\
@@ -85,6 +87,14 @@ INSERT INTO catalog.release_manifest_v3_snapshots (\
 fn expected_environment_sql(run_schema: &BareSchemaName) -> String {
     format!(
         "SELECT expected_environment FROM {}.environment_policies WHERE tenant_id = $1",
+        run_schema.quoted()
+    )
+}
+
+fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
+    format!(
+        "SELECT expected_environment, source_policy_org, source_policy_hash \
+           FROM {}.environment_policies WHERE tenant_id = $1",
         run_schema.quoted()
     )
 }
@@ -193,6 +203,7 @@ pub enum MintManifestErrorKind {
     RouteHostUnbound,
     EnvironmentPolicyAbsent,
     EnvironmentPolicyMismatch,
+    EnvironmentPolicySourceMismatch,
 }
 
 impl MintManifestErrorKind {
@@ -214,6 +225,7 @@ impl MintManifestErrorKind {
             Self::RouteHostUnbound => "route-host-unbound",
             Self::EnvironmentPolicyAbsent => "environment-policy-not-converged",
             Self::EnvironmentPolicyMismatch => "environment-policy-environment-mismatch",
+            Self::EnvironmentPolicySourceMismatch => "environment-policy-source-mismatch",
         }
     }
 }
@@ -408,6 +420,14 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         attachments: &attachments,
     };
     let run_schema = args.verified_run_schema()?;
+    let source_policy = crate::verification_policy::read_authoritative_environment_policy(
+        &args.control_database_url,
+        &args.org,
+        &args.environment,
+        false,
+    )
+    .await
+    .context("read the authoritative environment policy before release mint")?;
 
     let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await
@@ -419,6 +439,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         &package_manifests,
         &package_manifest_hashes,
         &run_schema,
+        &source_policy,
     )
     .await;
     match minted {
@@ -447,6 +468,7 @@ async fn mint_in_transaction(
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
     run_schema: &BareSchemaName,
+    source_policy: &AuthoritativeEnvironmentPolicy,
 ) -> anyhow::Result<MintedReleaseManifest> {
     let transaction = client
         .transaction()
@@ -459,13 +481,44 @@ async fn mint_in_transaction(
         package_manifest_hashes,
     )
     .await?;
-    let expected = read_expected_environment(&transaction, run_schema, request.tenant_id).await?;
-    verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
+    let projected =
+        read_projected_environment_policy(&transaction, run_schema, request.tenant_id).await?;
+    verify_projected_environment_policy(
+        projected.as_ref(),
+        source_policy,
+        &minted.manifest.release,
+        run_schema,
+    )?;
     transaction
         .commit()
         .await
         .context("commit the release mint")?;
     Ok(minted)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ProjectedEnvironmentPolicy {
+    expected_environment: String,
+    source_policy_org: Option<String>,
+    source_policy_hash: Option<String>,
+}
+
+pub(crate) async fn read_projected_environment_policy(
+    transaction: &Transaction<'_>,
+    run_schema: &BareSchemaName,
+    tenant_id: &str,
+) -> Result<Option<ProjectedEnvironmentPolicy>, MintManifestError> {
+    transaction
+        .query_opt(&projected_environment_policy_sql(run_schema), &[&tenant_id])
+        .await
+        .map(|row| {
+            row.map(|row| ProjectedEnvironmentPolicy {
+                expected_environment: row.get(0),
+                source_policy_org: row.get(1),
+                source_policy_hash: row.get(2),
+            })
+        })
+        .map_err(|error| storage("read the provisioned environment policy", error))
 }
 
 pub(crate) async fn read_expected_environment(
@@ -486,15 +539,61 @@ pub(crate) fn verify_provisioned_environment(
     run_schema: &BareSchemaName,
 ) -> Result<(), MintManifestError> {
     let Some(expected_environment) = expected_environment else {
+        return Err(environment_policy_absent(release, run_schema));
+    };
+    verify_environment_name(expected_environment, release)
+}
+
+pub(crate) fn verify_projected_environment_policy(
+    projected: Option<&ProjectedEnvironmentPolicy>,
+    source_policy: &AuthoritativeEnvironmentPolicy,
+    release: &ServingRelease,
+    run_schema: &BareSchemaName,
+) -> Result<(), MintManifestError> {
+    let Some(projected) = projected else {
+        return Err(environment_policy_absent(release, run_schema));
+    };
+    verify_environment_name(&projected.expected_environment, release)?;
+    if projected.source_policy_org.as_deref() != Some(source_policy.source_policy_org.as_ref())
+        || projected.source_policy_hash.as_deref()
+            != Some(source_policy.source_policy_hash.as_ref())
+    {
         return Err(MintManifestError::new(
-            MintManifestErrorKind::EnvironmentPolicyAbsent,
+            MintManifestErrorKind::EnvironmentPolicySourceMismatch,
             format!(
-                "tenant {:?} has no row in {}.environment_policies; run reconcile-run-plane",
-                release.tenant_id,
-                run_schema.as_str()
+                "environment {:?} policy source differs: projected-org={:?}, authoritative-org={:?}, projected-hash={:?}, authoritative-hash={:?}; rerun the verification policy projection",
+                release.environment,
+                projected.source_policy_org.as_deref().unwrap_or("<absent>"),
+                source_policy.source_policy_org,
+                projected
+                    .source_policy_hash
+                    .as_deref()
+                    .unwrap_or("<absent>"),
+                source_policy.source_policy_hash,
             ),
         ));
-    };
+    }
+    Ok(())
+}
+
+fn environment_policy_absent(
+    release: &ServingRelease,
+    run_schema: &BareSchemaName,
+) -> MintManifestError {
+    MintManifestError::new(
+        MintManifestErrorKind::EnvironmentPolicyAbsent,
+        format!(
+            "tenant {:?} has no row in {}.environment_policies; run reconcile-run-plane",
+            release.tenant_id,
+            run_schema.as_str()
+        ),
+    )
+}
+
+fn verify_environment_name(
+    expected_environment: &str,
+    release: &ServingRelease,
+) -> Result<(), MintManifestError> {
     if expected_environment != release.environment {
         return Err(MintManifestError::new(
             MintManifestErrorKind::EnvironmentPolicyMismatch,
@@ -2994,6 +3093,13 @@ mod tests {
 
     #[test]
     fn environment_policy_refusals_remain_distinct() {
+        let authoritative_hash = format!("sha256:{}", "a".repeat(64));
+        let stale_hash = format!("sha256:{}", "b".repeat(64));
+        let source_policy = AuthoritativeEnvironmentPolicy {
+            source_policy_org: "acme".into(),
+            policy: wamn_control_registry::EnvPolicy::prod(),
+            source_policy_hash: authoritative_hash.clone().into_boxed_str(),
+        };
         let release = ServingRelease {
             tenant_id: "tenant-a".to_owned(),
             effective_release_id: EffectiveReleaseId::new(1).unwrap(),
@@ -3002,17 +3108,49 @@ mod tests {
         };
         let schema = BareSchemaName::new("wamn_run").unwrap();
         assert_eq!(
-            verify_provisioned_environment(None, &release, &schema)
+            verify_projected_environment_policy(None, &source_policy, &release, &schema)
                 .unwrap_err()
                 .kind(),
             MintManifestErrorKind::EnvironmentPolicyAbsent
         );
+        let wrong_environment = ProjectedEnvironmentPolicy {
+            expected_environment: "dev".to_owned(),
+            source_policy_org: Some("acme".to_owned()),
+            source_policy_hash: Some(authoritative_hash.clone()),
+        };
         assert_eq!(
-            verify_provisioned_environment(Some("dev"), &release, &schema)
-                .unwrap_err()
-                .kind(),
+            verify_projected_environment_policy(
+                Some(&wrong_environment),
+                &source_policy,
+                &release,
+                &schema,
+            )
+            .unwrap_err()
+            .kind(),
             MintManifestErrorKind::EnvironmentPolicyMismatch
         );
-        verify_provisioned_environment(Some("prod"), &release, &schema).unwrap();
+        let stale = ProjectedEnvironmentPolicy {
+            expected_environment: "prod".to_owned(),
+            source_policy_org: Some("acme".to_owned()),
+            source_policy_hash: Some(stale_hash.clone()),
+        };
+        let mismatch =
+            verify_projected_environment_policy(Some(&stale), &source_policy, &release, &schema)
+                .unwrap_err();
+        assert_eq!(
+            mismatch.kind(),
+            MintManifestErrorKind::EnvironmentPolicySourceMismatch
+        );
+        assert!(mismatch.detail().contains("environment \"prod\""));
+        assert!(mismatch.detail().contains(&stale_hash));
+        assert!(mismatch.detail().contains(&authoritative_hash));
+
+        let exact = ProjectedEnvironmentPolicy {
+            expected_environment: "prod".to_owned(),
+            source_policy_org: Some("acme".to_owned()),
+            source_policy_hash: Some(authoritative_hash),
+        };
+        verify_projected_environment_policy(Some(&exact), &source_policy, &release, &schema)
+            .unwrap();
     }
 }
