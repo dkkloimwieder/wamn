@@ -36,6 +36,7 @@ pub(crate) struct LockPalletRow {
 
 #[derive(Debug)]
 pub(crate) struct MovePalletRow {
+    pub location_id: wamn_postgres_statements::Uuid,
     pub row_version: i64,
     pub status: String,
 }
@@ -57,7 +58,7 @@ pub(crate) const FINALIZE_COMMAND_DIGEST: &str = "sha256:25ad208233b35158b2a8b6e
 pub(crate) const FIND_REPLAY_DIGEST: &str = "sha256:1de97cab3802dcc898f61fc86c29fb776b9b33cd81b080b6d1567fa48e449b54";
 pub(crate) const INSERT_MOVEMENT_DIGEST: &str = "sha256:4ecddcc7be1836213dd4b10c5e039ae2f6a10e590e4228131a1ffffb41b978a7";
 pub(crate) const LOCK_PALLET_DIGEST: &str = "sha256:a55bfebbebf5bba9540074165b1e5750116fda67b8ef07439c89469ed1ffece3";
-pub(crate) const MOVE_PALLET_DIGEST: &str = "sha256:64beda453260a3bde8bb9c40a47aedafe3fef62beb5f73bda38baa743402ef36";
+pub(crate) const MOVE_PALLET_DIGEST: &str = "sha256:0253289ea4de402bbf488abeb841b2ee2bd63f324d7936200fe533e42282d7eb";
 pub(crate) const SELECT_PALLET_QUANTITY_DIGEST: &str = "sha256:7788b618608496d40d21c0bbfec54e4508661fbea826075abb61e5cceeec6288";
 pub(crate) const VALIDATE_LOCATION_DIGEST: &str = "sha256:043f1cb7e8359f79c83b7944e308c1d4238a2bc7b0eac50a0093e53e7563d516";
 
@@ -173,6 +174,7 @@ pub(crate) async fn move_pallet(
     ]).await?;
     wamn_postgres_statements::decode_one(MOVE_PALLET_DIGEST, rows, |row| {
         Ok(MovePalletRow {
+            location_id: row.decode("location_id")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
         })

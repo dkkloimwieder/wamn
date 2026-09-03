@@ -34,6 +34,7 @@ pub(crate) struct LockPalletRow {
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct MovePalletRow {
+    pub location_id: uuid::Uuid,
     pub row_version: i64,
     pub status: String,
 }
