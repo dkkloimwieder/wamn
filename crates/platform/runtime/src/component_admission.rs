@@ -577,6 +577,13 @@ mod tests {
         assert!(component.effects.is_empty());
     }
 
+    // A world naming a second handler export is encoded with the component-model
+    // `implements` clause, which the engine parses only under this feature. The
+    // shipped host and executor both enable it — `runtime_inventory` asserts they
+    // must — and the documented command for this crate is `--all-features`. Gated
+    // rather than left red, because a bare `-p wamn-runtime` failing here reads as
+    // a production capability gap and is not one.
+    #[cfg(feature = "wasm_component_model_implements")]
     #[test]
     fn multi_export_admission_proves_global_union_and_preserves_attachment() {
         let engine = crate::build_engine(&[]).expect("engine builds");
