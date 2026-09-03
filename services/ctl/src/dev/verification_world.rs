@@ -5,10 +5,13 @@ use std::fmt;
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
-use wamn_control_provision::{DB_OWNER_ROLE, sql};
+use wamn_control_provision::{
+    CredentialGeneration, DB_OWNER_ROLE, management_admitter_generation_role, sql,
+};
 use wamn_pg_core::Identifier;
 use wamn_schema_control::BareSchemaName;
 
+use super::activation::DevActivationIdentity;
 use crate::reconcile_run_plane;
 
 pub(crate) const RUN_SCHEMA: &str = "wamn_run";
@@ -17,6 +20,7 @@ const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql
 /// Exact database-local changes made by one verification-world bootstrap.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VerificationWorldBootstrapReceipt {
+    management_admitter_connect_granted: bool,
     package_owner_create_granted: bool,
     run_plane_actions: usize,
     application_authorization_installed: bool,
@@ -41,7 +45,8 @@ impl Error for VerificationWorldBootstrapError {
 impl VerificationWorldBootstrapReceipt {
     /// Whether every database-local structural surface was already present.
     pub const fn is_noop(self) -> bool {
-        !self.package_owner_create_granted
+        !self.management_admitter_connect_granted
+            && !self.package_owner_create_granted
             && self.run_plane_actions == 0
             && !self.application_authorization_installed
     }
@@ -49,27 +54,31 @@ impl VerificationWorldBootstrapReceipt {
 
 /// Bootstrap the exact Migrate, Admit, and Gate surfaces in one verification database.
 ///
-/// The URL is the only target. No durable-environment coordinate or policy fact
-/// can enter this boundary. The order mirrors production prerequisites:
-/// package-owner/effect-writer roles, package-owner database authority, the
-/// converged catalog + run plane, the static application-authorization floor,
-/// then the management-admitter surface that names those relations.
+/// The URL is the only mutation target. Deployment identity enters only to name
+/// the two existing management-admitter generations that the authenticated
+/// Gate and Publish path presents. The order mirrors production prerequisites:
+/// generation access, package-owner/effect-writer roles, package-owner database
+/// authority, the converged catalog + run plane, the static
+/// application-authorization floor, then the management-admitter surface that
+/// names those relations.
 pub async fn bootstrap(
     verification_database_url: &str,
+    identity: &DevActivationIdentity,
 ) -> Result<VerificationWorldBootstrapReceipt, VerificationWorldBootstrapError> {
-    bootstrap_inner(verification_database_url)
+    bootstrap_inner(verification_database_url, identity)
         .await
         .map_err(VerificationWorldBootstrapError)
 }
 
 async fn bootstrap_inner(
     verification_database_url: &str,
+    identity: &DevActivationIdentity,
 ) -> anyhow::Result<VerificationWorldBootstrapReceipt> {
     let (mut client, connection) = tokio_postgres::connect(verification_database_url, NoTls)
         .await
         .context("connect to the disposable verification database")?;
     let connection_task = tokio::spawn(connection);
-    let result = bootstrap_with_client(&mut client).await;
+    let result = bootstrap_with_client(&mut client, identity).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -84,7 +93,10 @@ async fn bootstrap_inner(
 
 async fn bootstrap_with_client(
     client: &mut Client,
+    identity: &DevActivationIdentity,
 ) -> anyhow::Result<VerificationWorldBootstrapReceipt> {
+    let management_admitter_connect_granted =
+        ensure_management_admitter_connect(client, identity).await?;
     client
         .batch_execute(sql::ensure_db_owner_role_sql())
         .await
@@ -111,10 +123,95 @@ async fn bootstrap_with_client(
         .context("converge the management-admitter verification surface")?;
 
     Ok(VerificationWorldBootstrapReceipt {
+        management_admitter_connect_granted,
         package_owner_create_granted,
         run_plane_actions: run_plane.actions.len(),
         application_authorization_installed,
     })
+}
+
+async fn ensure_management_admitter_connect(
+    client: &Client,
+    identity: &DevActivationIdentity,
+) -> anyhow::Result<bool> {
+    let database: String = client
+        .query_one("SELECT current_database()", &[])
+        .await
+        .context("read verification database identity for management admission")?
+        .get(0);
+    let database = Identifier::new(database).context("validate verification database identity")?;
+    let roles = [CredentialGeneration::A, CredentialGeneration::B]
+        .into_iter()
+        .map(|generation| {
+            management_admitter_generation_role(
+                &identity.org,
+                &identity.project,
+                &identity.environment,
+                database.as_str(),
+                generation,
+            )
+        })
+        .map(Identifier::new)
+        .collect::<Result<Vec<_>, _>>()
+        .context("validate management-admitter generation identities")?;
+
+    for role in &roles {
+        let exists: bool = client
+            .query_one(
+                "SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = $1)",
+                &[&role.as_str()],
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "read existing management-admitter generation {}",
+                    role.as_str()
+                )
+            })?
+            .get(0);
+        anyhow::ensure!(
+            exists,
+            "required management-admitter generation {} is absent; provision both A/B generations before verification",
+            role.as_str()
+        );
+    }
+
+    let mut granted = false;
+    for role in &roles {
+        let directly_granted: bool = client
+            .query_one(
+                "SELECT EXISTS (\
+                   SELECT FROM pg_catalog.pg_database AS database \
+                   CROSS JOIN LATERAL pg_catalog.aclexplode(database.datacl) AS acl \
+                   JOIN pg_catalog.pg_roles AS role ON role.oid = acl.grantee \
+                   WHERE database.datname = pg_catalog.current_database() \
+                     AND role.rolname = $1 \
+                     AND acl.privilege_type = 'CONNECT'\
+                 )",
+                &[&role.as_str()],
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "read direct verification-database CONNECT for {}",
+                    role.as_str()
+                )
+            })?
+            .get(0);
+        if directly_granted {
+            continue;
+        }
+        client
+            .batch_execute(&format!(
+                "GRANT CONNECT ON DATABASE {} TO {}",
+                database.quoted(),
+                role.quoted()
+            ))
+            .await
+            .with_context(|| format!("grant verification-database CONNECT to {}", role.as_str()))?;
+        granted = true;
+    }
+    Ok(granted)
 }
 
 async fn ensure_package_owner_create(client: &Client) -> anyhow::Result<bool> {
@@ -210,6 +307,80 @@ mod tests {
         url.set_path(&format!("/{database}"));
         url.set_query(None);
         url.into()
+    }
+
+    fn database_name(url: &str) -> String {
+        let url = url::Url::parse(url).expect("parse live database URL");
+        let mut segments = url
+            .path_segments()
+            .expect("a PostgreSQL URL carries path segments")
+            .filter(|segment| !segment.is_empty());
+        let database = segments
+            .next()
+            .expect("a PostgreSQL URL names one database");
+        assert!(segments.next().is_none(), "database URL names one database");
+        database.to_owned()
+    }
+
+    fn management_admitter_roles(identity: &DevActivationIdentity, database: &str) -> [String; 2] {
+        [CredentialGeneration::A, CredentialGeneration::B].map(|generation| {
+            management_admitter_generation_role(
+                &identity.org,
+                &identity.project,
+                &identity.environment,
+                database,
+                generation,
+            )
+        })
+    }
+
+    async fn create_management_admitter_roles(
+        admin: &Client,
+        identity: &DevActivationIdentity,
+        database: &str,
+    ) -> [String; 2] {
+        let roles = management_admitter_roles(identity, database);
+        for role in &roles {
+            let role = Identifier::new(role.clone()).expect("generated role is a valid identifier");
+            admin
+                .batch_execute(&format!(
+                    "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                     INHERIT NOREPLICATION NOBYPASSRLS",
+                    role.quoted()
+                ))
+                .await
+                .expect("create an existing management-admitter generation fixture");
+        }
+        roles
+    }
+
+    async fn direct_database_connect(client: &Client, database: &str, role: &str) -> bool {
+        client
+            .query_one(
+                "SELECT EXISTS (\
+                   SELECT FROM pg_catalog.pg_database AS database \
+                   CROSS JOIN LATERAL pg_catalog.aclexplode(database.datacl) AS acl \
+                   JOIN pg_catalog.pg_roles AS role ON role.oid = acl.grantee \
+                   WHERE database.datname = $1 \
+                     AND role.rolname = $2 \
+                     AND acl.privilege_type = 'CONNECT'\
+                 )",
+                &[&database, &role],
+            )
+            .await
+            .expect("read one direct database CONNECT grant")
+            .get(0)
+    }
+
+    async fn database_acl(client: &Client, database: &str) -> Option<String> {
+        client
+            .query_one(
+                "SELECT datacl::text FROM pg_catalog.pg_database WHERE datname = $1",
+                &[&database],
+            )
+            .await
+            .expect("read one database ACL")
+            .get(0)
     }
 
     fn live_config(verification_url: &str) -> DevConfig {
@@ -325,7 +496,7 @@ mod tests {
             .get(0)
     }
 
-    async fn prove_fresh_world(url: &str) {
+    async fn prove_fresh_world(url: &str, identity: &DevActivationIdentity) {
         let client = connect(url).await;
         let major: i32 = client
             .query_one(
@@ -365,10 +536,22 @@ mod tests {
             .get(0);
         assert_eq!(preexisting, 0, "the verification database is not fresh");
 
-        let first = bootstrap(url).await.expect("bootstrap the fresh world");
+        let first = bootstrap(url, identity)
+            .await
+            .expect("bootstrap the fresh world");
         assert!(!first.is_noop());
+        assert!(first.management_admitter_connect_granted);
+        let verification_database = database_name(url);
+        for role in management_admitter_roles(identity, &verification_database) {
+            assert!(
+                direct_database_connect(&client, &verification_database, &role).await,
+                "{role} lacks direct CONNECT on the verification database"
+            );
+        }
         assert_eq!(runtime_fact_count(&client).await, 0);
-        let again = bootstrap(url).await.expect("replay verification bootstrap");
+        let again = bootstrap(url, identity)
+            .await
+            .expect("replay verification bootstrap");
         assert!(again.is_noop(), "verification bootstrap did not converge");
         assert_eq!(runtime_fact_count(&client).await, 0);
 
@@ -421,12 +604,52 @@ mod tests {
         let url = std::env::var(LIVE_URL)
             .expect("WAMN_DEV_VERIFICATION_PG_URL must name a disposable PostgreSQL 18 database");
         let config = live_config(&url);
+        let verification_database = database_name(&url);
+        let durable_database = database_name(config.target_database_url());
+        let admin = connect(&database_url(&url, "postgres")).await;
+        let roles = create_management_admitter_roles(
+            &admin,
+            config.activation_identity(),
+            &verification_database,
+        )
+        .await;
+        admin
+            .batch_execute(&sql::create_database_named_sql(&durable_database))
+            .await
+            .expect("create the durable-environment ACL sentinel");
+        admin
+            .batch_execute(&format!(
+                "REVOKE CONNECT, TEMPORARY ON DATABASE {} FROM PUBLIC",
+                Identifier::new(durable_database.clone())
+                    .expect("durable database is a valid identifier")
+                    .quoted()
+            ))
+            .await
+            .expect("install the durable-environment ACL sentinel");
+        let durable_acl_before = database_acl(&admin, &durable_database).await;
+        let identity = config.activation_identity().clone();
         verification_database::run(&config, |verification_url| async move {
-            prove_fresh_world(&verification_url).await;
+            prove_fresh_world(&verification_url, &identity).await;
             Ok::<_, std::convert::Infallible>(())
         })
         .await
         .expect("create and clean up the disposable verification database")
         .expect("verification-world proof is infallible");
+        let durable_acl_after = database_acl(&admin, &durable_database).await;
+        assert_eq!(
+            durable_acl_after, durable_acl_before,
+            "verification bootstrap changed the durable environment database ACL"
+        );
+        admin
+            .batch_execute(&sql::drop_database_named_sql(&durable_database))
+            .await
+            .expect("drop the durable-environment ACL sentinel");
+        for role in roles {
+            let role = Identifier::new(role).expect("generated role is a valid identifier");
+            admin
+                .batch_execute(&format!("DROP ROLE {}", role.quoted()))
+                .await
+                .expect("drop the management-admitter generation fixture");
+        }
     }
 }

@@ -363,7 +363,7 @@ where
     P: DevSourceStateProvider + Send,
 {
     verification_database::run(config, |verification_database_url| async move {
-        verification_world::bootstrap(&verification_database_url)
+        verification_world::bootstrap(&verification_database_url, config.activation_identity())
             .await
             .map_err(|error| DevRunError::stage_failed(DevStage::Migrate, error))?;
         run_suffix_with_source_state_provider(DevStage::Migrate, runner, source_state_provider)
@@ -445,7 +445,10 @@ where
     O: DevWatchObserver + Send,
 {
     verification_database::run(config, |verification_database_url| async move {
-        if let Err(error) = verification_world::bootstrap(&verification_database_url).await {
+        if let Err(error) =
+            verification_world::bootstrap(&verification_database_url, config.activation_identity())
+                .await
+        {
             observer.completed(DevWatchOutcome {
                 from: DevStage::Migrate,
                 result: Err(DevRunError::stage_failed(DevStage::Migrate, error)),
@@ -472,7 +475,10 @@ where
     P: DevSourceStateProvider + Send,
 {
     verification_database::run(config, |verification_database_url| async move {
-        if let Err(error) = verification_world::bootstrap(&verification_database_url).await {
+        if let Err(error) =
+            verification_world::bootstrap(&verification_database_url, config.activation_identity())
+                .await
+        {
             observer.completed(DevWatchOutcome {
                 from: DevStage::Migrate,
                 result: Err(DevRunError::stage_failed(DevStage::Migrate, error)),
