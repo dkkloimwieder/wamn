@@ -16,6 +16,7 @@ sha2.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-postgres.workspace = true
 wamn-schema-introspection = { workspace = true }
+wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-event-wire = { workspace = true }
 

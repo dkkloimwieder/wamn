@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "location_list",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "receiving",
+      "interface-version": "0.1.0",
+      "operation": "wamn-receiving:location/list@1.0.0",
+      "terminal": "respond"
+    }
+  }
+}

@@ -72,6 +72,15 @@ hand-authored application UI
    Byte-stable regeneration.
 2. **`.5.2b` Rust emitter** — typed models, operation IO/error types,
    operation client, descriptors. No endpoints, no TS emitter.
+   **The descriptor TYPE lives in `wamn-client`, not the generator**
+   (owner ruling 2026-09-03, amending this item's original wording that
+   controls "consume the IR's descriptor types directly"). That wording was
+   meant to forbid hand-authored descriptors — which the emitted constants
+   keep, every value projected and none authored — not to mandate a
+   dependency edge. Read literally it would put `wamn-schema-generator`, and
+   with it a Postgres driver and an async runtime, into a terminal binary to
+   read four strings. The type belongs at the boundary both sides share; the
+   generator is a dev-dependency of the controls, for the corpus fixture only.
 3. **`.5.3` `wamn-client`** — base URL + auth provider at
    construction; route construction per platform route law;
    operation-driven envelope/error/paging; `503`/`401`/`403` and
@@ -82,6 +91,30 @@ hand-authored application UI
    `request_id`, idempotency key, `occurred_at`; real authenticated
    routes.
 6. **`.5.6` developer TUI** — gated on ruling 9.
+
+## Tracker mapping
+
+The bead ids do not match this document's item labels, and are not renumbered
+to: the titles carry the labels, and renumbering for cosmetics would be churn.
+
+| this document | bead |
+|---|---|
+| `.5.2a` client-contract IR | `wamn-10yt.5.2` |
+| `.5.2b` Rust emitter | `wamn-10yt.5.3` |
+| `.5.3` `wamn-client` | `wamn-10yt.5.4` |
+| `.5.4` primitive controls | `wamn-10yt.5.5` |
+| `.5.5` Receiving operator TUI | `wamn-10yt.5.6` |
+| `.5.6` developer TUI | `wamn-10yt.5.7` (blocked) |
+| route metadata from the release | `wamn-10yt.5.8` |
+
+`.5.1`'s TS stash is `wamn-10yt.5.1`, parked per ruling 1.
+
+`wamn-10yt.5.8` was filed while building `.5.3` `wamn-client`, which takes
+route metadata as SUPPLIED input and found nothing in the tree producing it.
+It has no item label in this document because it is an answer to a question
+the document did not ask. Note that `.5.7` is the blocked developer TUI and
+NOT the route work — the two were conflated in discussion before the ids were
+checked.
 
 ## Exit gates (revised)
 

@@ -53,15 +53,22 @@
           "permission": "purchase_order.get",
           "error_details": {
             "invalid_input": {
-              "required": ["field"]
+              "required": [
+                "field"
+              ]
             },
             "not_found": {
-              "required": ["field", "id"]
+              "required": [
+                "field",
+                "id"
+              ]
             },
             "retry": {},
             "timeout": {},
             "permission_denied": {
-              "required": ["operation"]
+              "required": [
+                "operation"
+              ]
             },
             "internal_error": {}
           },
@@ -71,13 +78,21 @@
           "permission": "purchase_order.query",
           "error_details": {
             "invalid_input": {
-              "required": ["field"],
-              "optional": ["minimum", "maximum", "observed"]
+              "required": [
+                "field"
+              ],
+              "optional": [
+                "minimum",
+                "maximum",
+                "observed"
+              ]
             },
             "retry": {},
             "timeout": {},
             "permission_denied": {
-              "required": ["operation"]
+              "required": [
+                "operation"
+              ]
             },
             "internal_error": {}
           },
@@ -167,18 +182,28 @@
           "permission": "purchase_order.update",
           "error_details": {
             "invalid_input": {
-              "required": ["field"]
+              "required": [
+                "field"
+              ]
             },
             "not_found": {
-              "required": ["field", "id"]
+              "required": [
+                "field",
+                "id"
+              ]
             },
             "concurrency_conflict": {
-              "required": ["expected_row_version", "observed_row_version"]
+              "required": [
+                "expected_row_version",
+                "observed_row_version"
+              ]
             },
             "retry": {},
             "timeout": {},
             "permission_denied": {
-              "required": ["operation"]
+              "required": [
+                "operation"
+              ]
             },
             "internal_error": {}
           },
@@ -218,15 +243,22 @@
           "permission": "receipt.get",
           "error_details": {
             "invalid_input": {
-              "required": ["field"]
+              "required": [
+                "field"
+              ]
             },
             "not_found": {
-              "required": ["field", "id"]
+              "required": [
+                "field",
+                "id"
+              ]
             },
             "retry": {},
             "timeout": {},
             "permission_denied": {
-              "required": ["operation"]
+              "required": [
+                "operation"
+              ]
             },
             "internal_error": {}
           },
@@ -236,13 +268,21 @@
           "permission": "receipt.query",
           "error_details": {
             "invalid_input": {
-              "required": ["field"],
-              "optional": ["minimum", "maximum", "observed"]
+              "required": [
+                "field"
+              ],
+              "optional": [
+                "minimum",
+                "maximum",
+                "observed"
+              ]
             },
             "retry": {},
             "timeout": {},
             "permission_denied": {
-              "required": ["operation"]
+              "required": [
+                "operation"
+              ]
             },
             "internal_error": {}
           },
@@ -413,37 +453,65 @@
       ],
       "error_details": {
         "invalid_input": {
-          "required": ["field"],
-          "optional": ["minimum", "maximum", "observed"]
+          "required": [
+            "field"
+          ],
+          "optional": [
+            "minimum",
+            "maximum",
+            "observed"
+          ]
         },
         "purchase_order_not_found": {
-          "required": ["field"]
+          "required": [
+            "field"
+          ]
         },
         "purchase_order_not_open": {
-          "required": ["field"]
+          "required": [
+            "field"
+          ]
         },
         "purchase_order_line_not_found": {
-          "required": ["field", "id"]
+          "required": [
+            "field",
+            "id"
+          ]
         },
         "purchase_order_line_mismatch": {
-          "required": ["field", "id"]
+          "required": [
+            "field",
+            "id"
+          ]
         },
         "location_not_found": {
-          "required": ["field", "id"]
+          "required": [
+            "field",
+            "id"
+          ]
         },
         "quantity_exceeds_remaining": {
-          "required": ["field", "id"]
+          "required": [
+            "field",
+            "id"
+          ]
         },
         "receipt_reference_conflict": {
-          "required": ["constraint"]
+          "required": [
+            "constraint"
+          ]
         },
         "idempotency_conflict": {
-          "required": ["field"]
+          "required": [
+            "field"
+          ]
         },
         "retry": {},
         "timeout": {},
         "permission_denied": {
-          "required": ["operation"]
+          "required": [
+            "operation"
+          ]
         },
         "internal_error": {}
       },
@@ -816,6 +884,332 @@
               "name": "row_version",
               "type": "int64",
               "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "receiving.load_receipt_screen": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "receiving.load_receipt_screen",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "purchase_order_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_number",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "purchase_order_status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "open",
+              "complete",
+              "cancelled"
+            ]
+          },
+          {
+            "path": "supplier_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "row_version",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "line_id",
+            "type": "uuid",
+            "nullable": true
+          },
+          {
+            "path": "line_number",
+            "type": "int32",
+            "nullable": true
+          },
+          {
+            "path": "item_id",
+            "type": "uuid",
+            "nullable": true
+          },
+          {
+            "path": "item_number",
+            "type": "text",
+            "nullable": true
+          },
+          {
+            "path": "ordered_quantity",
+            "type": "numeric",
+            "nullable": true
+          },
+          {
+            "path": "received_quantity",
+            "type": "numeric",
+            "nullable": true
+          },
+          {
+            "path": "remaining_quantity",
+            "type": "numeric",
+            "nullable": true
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "not_found",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "purchase_order_number",
+            "status",
+            "supplier_id",
+            "row_version"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "purchase_order_line",
+          "select_fields": [
+            "id",
+            "purchase_order_id",
+            "line_number",
+            "item_id",
+            "ordered_quantity",
+            "received_quantity"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "item",
+          "select_fields": [
+            "id",
+            "item_number"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "load_receipt_screen": {
+          "path": "query/load_receipt_screen.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "purchase_order_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_number",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "purchase_order_status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "supplier_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "row_version",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "line_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "line_number",
+              "type": "int32",
+              "nullable": true
+            },
+            {
+              "name": "item_id",
+              "type": "uuid",
+              "nullable": true
+            },
+            {
+              "name": "item_number",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "ordered_quantity",
+              "type": "numeric",
+              "nullable": true
+            },
+            {
+              "name": "received_quantity",
+              "type": "numeric",
+              "nullable": true
+            },
+            {
+              "name": "remaining_quantity",
+              "type": "numeric",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "location.list": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "location.list",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "location_code",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "location",
+          "select_fields": [
+            "id",
+            "location_code"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "list_locations": {
+          "path": "query/location.sql",
+          "fetch": "bounded_list",
+          "parameters": [],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_code",
+              "type": "text",
+              "nullable": false
             }
           ]
         }
