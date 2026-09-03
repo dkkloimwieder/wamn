@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-host-values.sh. Runs nothing against a cluster: the
+# renderer is a pure text transform over two checked-in templates, so every
+# check here is local, offline, and takes under a second.
+#
+#   tools/journey-host-values-proof [repo_root]
+#
+# Three properties, each of which has caught a real defect:
+#
+#   1. BYTE IDENTITY. Receiving renders exactly the bytes it rendered before
+#      the block was un-fused and lifted. Both arms -- the normal one and
+#      --measure-startup, which differ only in replica count.
+#
+#   2. SECOND CONSUMER. WMS renders through the same function with a different
+#      identity, and every derived secret anchor fires against its own name.
+#      A constant is only proven generic when a second consumer with different
+#      values passes through it.
+#
+#   3. NAMEREF BINDING. A global holding decoys is planted under the callee's
+#      nameref name and a caller passes a local array of that name. Bash
+#      resolves such a cycle to the global with only a WARNING, so the render
+#      would silently use the decoys. Plausible caller names must all bind to
+#      the caller; the internal name itself is the control and MUST collide,
+#      because a control that passes means the check is inert.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-host-values.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+
+families=(executor-platform identity-reader http-admitter event-materializer)
+common="
+  [host_base_template]=$repo_root/deploy/platform/values-host-default.yaml
+  [template_tag]=dev [template_replicas]=3 [template_namespace]=wamn-system
+  [role_families]='${families[*]}'
+  [guest_secret_anchor]=wamn-host-db
+  [namespace]=warehouse-eu-3 [host_tag]=sha-9f3c1ab
+  [component_artifact_base]=registry.probe.invalid:5000/proofs/components
+  [release_artifact_base]=registry.probe.invalid:5000/proofs/releases
+  [manifest_digest]=sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  [nats_url]=nats://nats.probe.invalid:4222
+  [guest_secret_name]=probe-guest-sql
+  [secret_name:executor-platform]=probe-executor-platform
+  [secret_name:identity-reader]=probe-identity-reader
+  [secret_name:http-admitter]=probe-http-admitter
+  [secret_name:event-materializer]=probe-event-materializer
+"
+# Values chosen so a hardcoded stand-in cannot match them by coincidence.
+render_app() { # <out> <replicas> <org> <project> <env> <overlay>
+  local out=$1 replicas=$2
+  eval "local -A app_spec=(
+    $common
+    [org]=$3 [project]=$4 [environment]=$5
+    [host_values_overlay]=$repo_root/$6
+  )"
+  render_host_values app_spec "$out" "$replicas"
+}
+
+check() { # <label> <condition-exit>
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+
+echo "1. byte identity, both arms"
+RCV=deploy/platform/values-host-receiving-pat.yaml
+for arm in normal:3 measure:0; do
+  mkdir -p "$work/${arm%%:*}"
+  render_app "$work/${arm%%:*}" "${arm#*:}" acme receiving dev "$RCV"
+done
+# The measure arm must differ from the normal arm in exactly the replica line,
+# in each of the two rendered files. Anything else is a regression.
+for f in host-base.yaml host-overlay.yaml; do
+  differing=$(diff "$work/normal/$f" "$work/measure/$f" | grep -c '^[<>]' || true)
+  [[ $differing -eq 2 ]]; check "arms differ only in replicas: $f" $?
+done
+grep -q 'replicas: 3' "$work/normal/host-overlay.yaml"; check "normal arm renders 3" $?
+grep -q 'replicas: 0' "$work/measure/host-overlay.yaml"; check "measure arm renders 0" $?
+
+# The bytes themselves, pinned against what this block rendered BEFORE it was
+# un-fused and lifted. Measured from the pre-lift code extracted verbatim from
+# main. These are not decoration: three separate refactors of this block have
+# been checked against them, and each time the question that mattered was
+# whether the output changed, not whether the code looked equivalent.
+#
+# A legitimate template change moves these. Re-baseline DELIBERATELY -- render,
+# read the diff, and only then update the digest. On failure the rendered file
+# is left in place and named, so the diff is available.
+declare -A pinned=(
+  [normal/host-base.yaml]=ffd6b90c631a6a98b63c4c486ed9800981cd43c6ed67481599b9504c927ffd13
+  [normal/host-overlay.yaml]=a1236bb611e8135c554cc88bba249a01b72345951430d683f097f910584f86b5
+  [measure/host-base.yaml]=10343a03074e7fadbbf7574e6569a0334f3ae43dbe1256db83ff162135db569e
+  [measure/host-overlay.yaml]=d817c627a24d7746078d7d6533810416a92881f47eb281c9f2c02c20b80ae74a
+)
+keep=$(mktemp -d)
+for rel in "${!pinned[@]}"; do
+  actual=$(sha256sum "$work/$rel" | cut -d" " -f1)
+  if [[ "$actual" != "${pinned[$rel]}" ]]; then
+    mkdir -p "$keep/$(dirname "$rel")"
+    cp "$work/$rel" "$keep/$rel"
+    echo "        rendered output kept at $keep/$rel" >&2
+  fi
+  [[ "$actual" == "${pinned[$rel]}" ]]; check "bytes unchanged since the pre-lift block: $rel" $?
+done
+! grep -q 'acme--receiving--dev' "$work/normal/host-overlay.yaml"
+check "every derived secret anchor fired (no template name survives)" $?
+
+echo "2. second consumer"
+WMS=deploy/platform/values-host-wms-pat.yaml
+mkdir -p "$work/wms"
+render_app "$work/wms" 3 acme wms dev "$WMS"
+grep -q 'WAMN_PROJECT, value: wms' "$work/wms/host-overlay.yaml"
+check "WMS overlay carries its own identity" $?
+! grep -q 'acme--wms--dev' "$work/wms/host-overlay.yaml"
+check "every WMS-derived anchor fired" $?
+! diff -q "$work/normal/host-overlay.yaml" "$work/wms/host-overlay.yaml" >/dev/null
+check "the two applications render differently" $?
+
+echo "3. the guards themselves"
+# Both of these survived a mutation pass when the proof only rendered happy
+# paths: weakening the anchor rule to at-least-once, and disabling the
+# required-key check, changed nothing any assertion looked at. A guard nothing
+# exercises is documentation.
+dup_template=$work/duplicated-anchor.yaml
+awk '{ print } /^      replicas: 3$/ && !seen { print "  extraSection:"; print "    replicas: 3"; seen = 1 }' \
+  "$repo_root/$RCV" >"$dup_template"
+mkdir -p "$work/dup"
+eval "declare -A dup_spec=(
+  $common
+  [org]=acme [project]=receiving [environment]=dev
+  [host_values_overlay]=$dup_template
+)"
+! render_host_values dup_spec "$work/dup" 3 2>/dev/null
+check "a duplicated anchor is refused (exactly-once, not at-least-once)" $?
+
+mkdir -p "$work/incomplete"
+eval "declare -A missing_spec=(
+  $common
+  [org]=acme [project]=receiving [environment]=dev
+  [host_values_overlay]=$repo_root/$RCV
+)"
+unset "missing_spec[guest_secret_name]"
+! render_host_values missing_spec "$work/incomplete" 3 2>/dev/null
+check "a missing required key is refused before any work" $?
+
+eval "declare -A no_family_secret=(
+  $common
+  [org]=acme [project]=receiving [environment]=dev
+  [host_values_overlay]=$repo_root/$RCV
+)"
+unset "no_family_secret[secret_name:http-admitter]"
+! render_host_values no_family_secret "$work/incomplete" 3 2>/dev/null
+check "a declared family with no secret name is refused" $?
+
+echo "4. nameref binding"
+nameref_binds_to_caller() { # <name-the-caller-uses>
+  local n=$1 out=$work/nr-$1
+  mkdir -p "$out"
+  declare -gA "$n"
+  eval "$n=(
+    $common
+    [org]=DECOYORG [project]=DECOYPROJ [environment]=DECOYENV
+    [host_values_overlay]=$repo_root/$RCV
+  )"
+  collide() {
+    eval "local -A $n=(
+      $common
+      [org]=acme [project]=receiving [environment]=dev
+      [host_values_overlay]=$repo_root/$RCV
+    )"
+    render_host_values "$n" "$out" 3
+  }
+  collide 2>/dev/null || return 1
+  ! grep -q DECOY "$out"/host-base.yaml "$out"/host-overlay.yaml
+}
+for n in spec config values params opts host_values_spec render_spec; do
+  nameref_binds_to_caller "$n"; check "a caller array named '$n' binds to the caller" $?
+done
+# The control. If this PASSES, the seven above prove nothing.
+! nameref_binds_to_caller _rhv_spec
+check "control: colliding on the internal name is detected" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-host-values: all properties hold"; else
+  echo "journey-host-values: $failures failed"; exit 1; fi
