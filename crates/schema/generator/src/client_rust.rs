@@ -378,3 +378,79 @@ fn rust_type(type_name: &str) -> Result<&'static str, ClientRustError> {
         ColumnType::Uuid => "uuid::Uuid",
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The type map is a contract, and the compile gate cannot check it: a
+    /// `uuid` emitted as `String` still compiles, because nothing in the
+    /// scratch crate constructs a value. Mutation testing found exactly that
+    /// hole, so the map is pinned here directly.
+    #[test]
+    fn every_contract_type_has_its_exact_rust_spelling() {
+        for (contract, rust) in [
+            ("boolean", "bool"),
+            ("int32", "i32"),
+            ("int64", "i64"),
+            ("float64", "f64"),
+            ("text", "String"),
+            ("bytes", "Vec<u8>"),
+            ("numeric", "rust_decimal::Decimal"),
+            ("timestamptz", "chrono::DateTime<chrono::Utc>"),
+            ("json", "serde_json::Value"),
+            ("uuid", "uuid::Uuid"),
+            // The one literal outside the frozen column vocabulary: generated
+            // CRUD input contracts spell `request_id` this way.
+            ("string", "String"),
+        ] {
+            assert_eq!(
+                rust_type(contract).unwrap_or_else(|error| panic!("{contract}: {error}")),
+                rust,
+                "{contract}"
+            );
+        }
+    }
+
+    /// An unknown type REFUSES. Emitting an approximation would produce a
+    /// binding that compiled and described the wrong shape, which a caller
+    /// discovers at runtime rather than the build discovering it here.
+    #[test]
+    fn an_unknown_contract_type_refuses_by_name() {
+        let refusal = rust_type("geography").expect_err("an unmapped type refuses");
+        assert_eq!(refusal.kind(), ClientRustErrorKind::UnknownType);
+        assert!(refusal.to_string().contains("geography"), "{refusal}");
+    }
+
+    /// Every type the shipped releases actually use is mapped. Arithmetic over
+    /// the real corpus, so a vocabulary the packages adopt cannot reach the
+    /// emitter unmapped without this failing.
+    #[test]
+    fn every_type_the_shipped_releases_use_is_mapped() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .and_then(std::path::Path::parent)
+            .expect("repository root");
+        for package in ["receiving", "client_acme_receiving"] {
+            let ir = ClientContractIr::from_release(
+                package,
+                &root.join(format!("packages/{package}/generated/contracts")),
+                &root.join(format!("packages/{package}/publication/attachments.json")),
+            )
+            .expect("projects");
+            for model in &ir.models {
+                for operation in &model.operations {
+                    for field in operation
+                        .input_fields
+                        .iter()
+                        .chain(&operation.result_fields)
+                    {
+                        rust_type(&field.type_name)
+                            .unwrap_or_else(|error| panic!("{package} {}: {error}", field.path));
+                    }
+                }
+            }
+        }
+    }
+}
