@@ -393,6 +393,9 @@ pub struct PublishValidatedDraft {
     pub package_version: String,
     /// The wiring document itself — `catalog.wirings.graph_json`.
     pub document: serde_json::Value,
+    /// Optional source attribution written only to the authenticated command audit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<CommitProvenance>,
 }
 
 /// Read one immutable report projection.

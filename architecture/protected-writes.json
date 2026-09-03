@@ -575,6 +575,7 @@
         "constraint:deployment_attestations_org_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (org_id <> ''::text)",
         "constraint:deployment_attestations_project_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (project_id <> ''::text)",
         "constraint:deployment_attestations_release_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, effective_release_id, environment) REFERENCES catalog.effective_releases(tenant_id, effective_release_id, environment)",
+        "constraint:deployment_attestations_source_commit_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (source_commit IS NULL OR source_commit <> ''::text)",
         "constraint:deployment_attestations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:deployment_attestations_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
@@ -833,33 +834,6 @@
     },
     {
       "scope": "production-project-database",
-      "relation": "<app_schema>.wamn_entities",
-      "ops": false,
-      "installer": "provision-store",
-      "owner": "provision-store",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:wamn_entities_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (relation_oid)",
-        "row-security:enabled=false;forced=false"
-      ]
-    },
-    {
-      "scope": "production-project-database",
       "relation": "<app_schema>.wamn_cdc_exclusions",
       "ops": false,
       "installer": "provision-store",
@@ -882,6 +856,33 @@
       "author-reachable": "no",
       "guards": [
         "constraint:wamn_cdc_exclusions_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (relation_oid)",
+        "row-security:enabled=false;forced=false"
+      ]
+    },
+    {
+      "scope": "production-project-database",
+      "relation": "<app_schema>.wamn_entities",
+      "ops": false,
+      "installer": "provision-store",
+      "owner": "provision-store",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:wamn_entities_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (relation_oid)",
         "row-security:enabled=false;forced=false"
       ]
     },

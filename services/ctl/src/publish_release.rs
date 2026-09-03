@@ -699,6 +699,7 @@ pub async fn attest_deployment(
     control_database_url: &str,
     coordinate: &DeploymentCoordinate,
     manifest_hash: &ManifestDigest,
+    source_commit: Option<&str>,
 ) -> anyhow::Result<String> {
     let effective_release_id = i32::try_from(coordinate.effective_release_id)
         .context("effective-release-id exceeds PostgreSQL integer")?;
@@ -715,6 +716,7 @@ pub async fn attest_deployment(
             project_id: &coordinate.triple.project,
             environment: coordinate.triple.env.as_str(),
             deployed_manifest_hash: manifest_hash.as_str(),
+            source_commit,
             attested_at: &proposed_attested_at,
         };
         let statement = wamn_schema_control::attestation::register_attestation(&attestation);

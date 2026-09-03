@@ -955,7 +955,7 @@ async fn publish(
         command: AuditedCommand::Publish,
         author: author.clone(),
         target_ref,
-        provenance: None,
+        provenance: input.provenance.clone(),
     };
     // A completed retry is a CONTROL-store fact and must not depend on the
     // project database still being reachable or the new payload being
@@ -1845,6 +1845,7 @@ mod tests {
                     package_id: "orders".to_owned(),
                     package_version: "1.0.0".to_owned(),
                     document,
+                    provenance: None,
                 }),
             ),
         ];

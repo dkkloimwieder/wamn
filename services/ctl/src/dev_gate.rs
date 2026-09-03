@@ -364,7 +364,7 @@ mod tests {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::{TcpListener, TcpStream};
     use tokio::task::JoinHandle;
-    use wamn_authoring_model::{AuthoringScope, ValidatedDraftRef};
+    use wamn_authoring_model::{AuthoringScope, CommitProvenance, ValidatedDraftRef};
 
     use super::*;
 
@@ -398,6 +398,11 @@ mod tests {
             package_id: gate.package_id,
             package_version: gate.package_version,
             document: gate.document,
+            provenance: Some(CommitProvenance {
+                commit: "0123456789abcdef".to_owned(),
+                r#ref: None,
+                dirty: false,
+            }),
         }
     }
 
@@ -543,7 +548,7 @@ mod tests {
         );
         assert_eq!(
             request.body,
-            br#"{"document":"request","body":{"schema-version":"0.1","command-id":"publish-command-1","command":{"kind":"publish","input":{"scope":{"project-id":"receiving","environment":"dev"},"package-id":"receiving","package-version":"1.2.3","document":{"entry":"receive","nodes":[{"component":"sha256:abc","id":"receive"}],"wiring-id":"receiving"}}}}}"#
+            br#"{"document":"request","body":{"schema-version":"0.1","command-id":"publish-command-1","command":{"kind":"publish","input":{"scope":{"project-id":"receiving","environment":"dev"},"package-id":"receiving","package-version":"1.2.3","document":{"entry":"receive","nodes":[{"component":"sha256:abc","id":"receive"}],"wiring-id":"receiving"},"provenance":{"commit":"0123456789abcdef","ref":null,"dirty":false}}}}}"#
         );
     }
 

@@ -20,7 +20,8 @@ use tokio::process::Command;
 use tokio::time::Instant;
 use tokio_postgres::NoTls;
 use wamn_authoring_model::{
-    AuthoringScope, Gate, GateReceipt, PublishValidatedDraft, PublishedWiringIdentity,
+    AuthoringScope, CommitProvenance, Gate, GateReceipt, PublishValidatedDraft,
+    PublishedWiringIdentity,
 };
 use wamn_catalog::{PackageCoordinate, WiringDocument};
 use wamn_schema_control::BareSchemaName;
@@ -228,6 +229,7 @@ pub struct ProductionDevStageRunner {
     admissions: Vec<ComponentAdmissionReceipt>,
     gated_wirings: Vec<GatedWiring>,
     published_wirings: Vec<PublishedWiring>,
+    publish_provenance: Option<CommitProvenance>,
     release: Option<ReleaseCarrier>,
     activation: Option<DevActivation>,
 }
@@ -282,6 +284,7 @@ impl ProductionDevStageRunner {
             admissions: Vec::new(),
             gated_wirings: Vec::new(),
             published_wirings: Vec::new(),
+            publish_provenance: None,
             release: None,
             activation: None,
         })
@@ -357,9 +360,6 @@ impl ProductionDevStageRunner {
 
     async fn generate(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Generate);
-        let source = self.git.snapshot().await.map_err(|source| {
-            ProductionDevStageError::owner("read generation source commit", source.into())
-        })?;
         let packages = self.package_inputs()?;
         for package in packages {
             let catalog = self
@@ -377,7 +377,6 @@ impl ProductionDevStageRunner {
             wamn_schema_generator::materialize_package_from_catalog(
                 MaterializeMode::Write,
                 catalog,
-                source.source_commit(),
                 &package.root,
             )
             .map_err(|source| {
@@ -544,6 +543,7 @@ impl ProductionDevStageRunner {
                 &input.package_id,
                 &input.package_version,
                 &input.document,
+                None,
             );
             let outcome = self
                 .authoring
@@ -594,6 +594,21 @@ impl ProductionDevStageRunner {
             ));
         }
 
+        let source = self.git.snapshot().await.map_err(|source| {
+            ProductionDevStageError::owner("read publication source commit", source.into())
+        })?;
+        if source.state() != super::DevSourceState::Clean {
+            return Err(ProductionDevStageError::invalid(
+                "read publication source commit",
+                "the source worktree became dirty before Publish",
+            ));
+        }
+        let provenance = CommitProvenance {
+            commit: source.source_commit().to_owned(),
+            r#ref: None,
+            dirty: false,
+        };
+
         for admission in &self.admissions {
             publish_admitted_component(
                 admission,
@@ -619,6 +634,7 @@ impl ProductionDevStageRunner {
                 &input.package_id,
                 &input.package_version,
                 &input.document,
+                Some(&provenance.commit),
             );
             let outcome = self
                 .authoring
@@ -629,6 +645,7 @@ impl ProductionDevStageRunner {
                         package_id: input.package_id.to_string(),
                         package_version: input.package_version.to_string(),
                         document: input.document.clone(),
+                        provenance: Some(provenance.clone()),
                     },
                     Instant::now() + AUTHORING_REQUEST_TIMEOUT,
                 )
@@ -669,6 +686,7 @@ impl ProductionDevStageRunner {
             self.published_wirings
                 .push(PublishedWiring { input, receipt });
         }
+        self.publish_provenance = Some(provenance);
         Ok(())
     }
 
@@ -752,6 +770,17 @@ impl ProductionDevStageRunner {
             .map(|package| package.root.join(PACKAGE_MANIFEST))
             .collect();
         let identity = self.config.activation_identity();
+        let source_commit = self
+            .publish_provenance
+            .as_ref()
+            .ok_or_else(|| {
+                ProductionDevStageError::invalid(
+                    "mint effective release",
+                    "the Publish stage produced no source provenance",
+                )
+            })?
+            .commit
+            .clone();
         crate::publish_release::run(PublishReleaseArgs {
             database_url: self.config.verification_database_url().to_owned(),
             control_database_url: self.config.system_database_url().to_owned(),
@@ -773,17 +802,20 @@ impl ProductionDevStageRunner {
             ProductionDevStageError::owner("mint the verified effective release", source)
         })?;
 
-        crate::push_release_manifest::run(PushReleaseManifestArgs {
-            database_url: self.config.verification_database_url().to_owned(),
-            org: identity.org.clone(),
-            project: identity.project.clone(),
-            tenant: identity.tenant.clone(),
-            effective_release_id: self.config.effective_release_id(),
-            artifact_base: self.config.release_artifact_base().to_owned(),
-            registry_auth_file: self.config.registry_auth_file().to_owned(),
-            insecure_registry: self.config.insecure_registry(),
-            control_database_url: self.config.system_database_url().to_owned(),
-        })
+        crate::push_release_manifest::run_with_source_commit(
+            PushReleaseManifestArgs {
+                database_url: self.config.verification_database_url().to_owned(),
+                org: identity.org.clone(),
+                project: identity.project.clone(),
+                tenant: identity.tenant.clone(),
+                effective_release_id: self.config.effective_release_id(),
+                artifact_base: self.config.release_artifact_base().to_owned(),
+                registry_auth_file: self.config.registry_auth_file().to_owned(),
+                insecure_registry: self.config.insecure_registry(),
+                control_database_url: self.config.system_database_url().to_owned(),
+            },
+            &source_commit,
+        )
         .await
         .map_err(|source| {
             ProductionDevStageError::owner("publish the effective release manifest", source)
@@ -923,6 +955,7 @@ impl ProductionDevStageRunner {
                 self.admissions.clear();
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
+                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Generate | DevStage::Build => {
@@ -932,6 +965,7 @@ impl ProductionDevStageRunner {
                 self.admissions.clear();
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
+                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Virtualize => {
@@ -940,21 +974,25 @@ impl ProductionDevStageRunner {
                 self.admissions.clear();
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
+                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Admit => {
                 self.admissions.clear();
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
+                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Gate => {
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
+                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Publish => {
                 self.published_wirings.clear();
+                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Apply | DevStage::Acl | DevStage::Release => {
@@ -1121,13 +1159,17 @@ fn authoring_command_id(
     package_id: &str,
     package_version: &str,
     document: &Value,
+    source_commit: Option<&str>,
 ) -> String {
-    let identity = serde_json::json!({
+    let mut identity = serde_json::json!({
         "command": command,
         "package-id": package_id,
         "package-version": package_version,
         "document": document,
     });
+    if let Some(source_commit) = source_commit {
+        identity["source-commit"] = Value::String(source_commit.to_owned());
+    }
     format!(
         "wamn-dev-{command}-{}",
         wamn_execution_contract::canonical_json_sha256(&identity)
@@ -1246,13 +1288,35 @@ mod tests {
     }
 
     #[test]
-    fn command_identity_is_stable_and_separates_gate_from_publish() {
+    fn command_identity_is_stable_and_publish_separates_source_commits() {
         let document = serde_json::json!({"wiring-id": "purchase_order_get", "version": 1});
-        let first = authoring_command_id("gate", "wamn_receiving", "1.0.0", &document);
-        let second = authoring_command_id("gate", "wamn_receiving", "1.0.0", &document);
-        let publish = authoring_command_id("publish", "wamn_receiving", "1.0.0", &document);
-        assert_eq!(first, second);
-        assert_ne!(first, publish);
+        let first_gate = authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None);
+        let second_gate = authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None);
+        let first_publish = authoring_command_id(
+            "publish",
+            "wamn_receiving",
+            "1.0.0",
+            &document,
+            Some("0123456789abcdef"),
+        );
+        let repeated_publish = authoring_command_id(
+            "publish",
+            "wamn_receiving",
+            "1.0.0",
+            &document,
+            Some("0123456789abcdef"),
+        );
+        let next_commit_publish = authoring_command_id(
+            "publish",
+            "wamn_receiving",
+            "1.0.0",
+            &document,
+            Some("fedcba9876543210"),
+        );
+        assert_eq!(first_gate, second_gate);
+        assert_eq!(first_publish, repeated_publish);
+        assert_ne!(first_gate, first_publish);
+        assert_ne!(first_publish, next_commit_publish);
     }
 
     #[test]

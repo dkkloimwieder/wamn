@@ -346,6 +346,7 @@ CREATE TABLE catalog.deployment_attestations (
     environment            text        NOT NULL CHECK (environment <> ''),
     deployed_manifest_hash text        NOT NULL
         CHECK (deployed_manifest_hash ~ '^sha256:[0-9a-f]{64}$'),
+    source_commit          text        CHECK (source_commit IS NULL OR source_commit <> ''),
     attested_at            timestamptz NOT NULL,
     CONSTRAINT deployment_attestations_coordinate UNIQUE (
         tenant_id, effective_release_id, org_id, project_id, environment
@@ -393,6 +394,7 @@ CREATE OR REPLACE FUNCTION catalog.register_deployment_attestation(
     p_project_id text,
     p_environment text,
     p_deployed_manifest_hash text,
+    p_source_commit text,
     p_attested_at timestamptz
 )
 RETURNS timestamptz
@@ -403,10 +405,10 @@ DECLARE
 BEGIN
     INSERT INTO catalog.deployment_attestations (
         tenant_id, effective_release_id, org_id, project_id, environment,
-        deployed_manifest_hash, attested_at
+        deployed_manifest_hash, source_commit, attested_at
     ) VALUES (
         p_tenant_id, p_effective_release_id, p_org_id, p_project_id,
-        p_environment, p_deployed_manifest_hash, p_attested_at
+        p_environment, p_deployed_manifest_hash, p_source_commit, p_attested_at
     )
     ON CONFLICT (
         tenant_id, effective_release_id, org_id, project_id, environment
@@ -418,7 +420,7 @@ BEGIN
     END IF;
 
     -- Identical concurrent writers adopt the timestamp of the row that won;
-    -- only a different deployed manifest hash conflicts at this coordinate.
+    -- only different deployed content or source provenance conflicts here.
     SELECT attested_at INTO stored_attested_at
       FROM catalog.deployment_attestations
      WHERE tenant_id = p_tenant_id
@@ -426,7 +428,8 @@ BEGIN
        AND org_id = p_org_id
        AND project_id = p_project_id
        AND environment = p_environment
-       AND deployed_manifest_hash = p_deployed_manifest_hash;
+       AND deployed_manifest_hash = p_deployed_manifest_hash
+       AND source_commit IS NOT DISTINCT FROM p_source_commit;
 
     IF stored_attested_at IS NULL THEN
         RAISE EXCEPTION USING ERRCODE = '23505',
@@ -436,7 +439,7 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.register_deployment_attestation(
-    text, int, text, text, text, text, timestamptz
+    text, int, text, text, text, text, text, timestamptz
 ) FROM PUBLIC;
 
 -- Tenant isolation is structural even for owner-only tables.

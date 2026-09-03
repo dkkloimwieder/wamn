@@ -497,15 +497,22 @@ fn deployment_attestation_rust_binding_holds_on_postgres() {
         project_id: "billing",
         environment: "prod",
         deployed_manifest_hash: &hash,
+        source_commit: Some("0123456789abcdef"),
         attested_at: "2026-08-15T12:00:00Z",
     };
     let conflicting = wamn_schema_control::attestation::Attestation {
         deployed_manifest_hash: &other_hash,
         ..attestation
     };
+    let conflicting_source = wamn_schema_control::attestation::Attestation {
+        source_commit: Some("fedcba9876543210"),
+        ..attestation
+    };
     let project = wamn_schema_control::attestation::project_effective_release_identity(&identity);
     let write = wamn_schema_control::attestation::register_attestation(&attestation);
     let conflicting_write = wamn_schema_control::attestation::register_attestation(&conflicting);
+    let conflicting_source_write =
+        wamn_schema_control::attestation::register_attestation(&conflicting_source);
 
     let output = psql(
         &url,
@@ -518,7 +525,7 @@ PREPARE wamn_rust_attestation AS {prepared};
 DO $types$ DECLARE found text[]; BEGIN
   SELECT parameter_types::text[] INTO found
     FROM pg_prepared_statements WHERE name = 'wamn_rust_attestation';
-  ASSERT found = ARRAY['text','integer','text','text','text','text','text']::text[],
+  ASSERT found = ARRAY['text','integer','text','text','text','text','text','text']::text[],
     format('PostgreSQL types the Rust binding as %s', found);
 END
 $types$;
@@ -536,6 +543,7 @@ DO $binding$ DECLARE first_at timestamptz; BEGIN
        AND project_id = 'billing'
        AND environment = 'prod'
        AND deployed_manifest_hash = '{hash}'
+       AND source_commit = '0123456789abcdef'
        AND attested_at = first_at
   ), 'the Rust binding placed a value in the wrong column';
 END
@@ -550,12 +558,23 @@ DO $refusal$ BEGIN
   END;
 END
 $refusal$;
+
+DO $source_refusal$ BEGIN
+  BEGIN
+    PERFORM ({conflicting_source});
+    ASSERT false, 'different source provenance was accepted';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'WAMN-RUST-SOURCE-ATTESTATION-REFUSAL % %', SQLSTATE, SQLERRM;
+  END;
+END
+$source_refusal$;
 RESET ROLE;
 "#,
             project = render(&project),
             prepared = write.sql,
             write = render(&write),
             conflicting = render(&conflicting_write),
+            conflicting_source = render(&conflicting_source_write),
         ),
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -579,4 +598,11 @@ RESET ROLE;
         wamn_schema_control::attestation::AttestationErrorKind::ContentConflict
     );
     assert_eq!(error.coordinate(), "tenant-a/7 -> acme/billing/prod");
+    assert!(
+        stderr.contains(&format!(
+            "WAMN-RUST-SOURCE-ATTESTATION-REFUSAL 23505 {}",
+            wamn_schema_control::attestation::CONTENT_CONFLICT
+        )),
+        "the server accepted conflicting source provenance:\n{stderr}"
+    );
 }

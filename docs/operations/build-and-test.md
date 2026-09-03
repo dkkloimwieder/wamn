@@ -215,8 +215,6 @@ test "$RECEIVING_PG_READY" -eq 1
 
 RECEIVING_DATABASE_URL="postgresql://postgres:probe@127.0.0.1:${RECEIVING_PG_PORT}/wamn_receiving"
 RECEIVING_SQLX_DATABASE_URL="${RECEIVING_DATABASE_URL}?options=-csearch_path%3Dreceiving%2Cpublic"
-RECEIVING_SOURCE_COMMIT="$(jq -er .provenance.source_commit \
-  packages/receiving/generated/package-weld.json)"
 
 WAMN_RECEIVING_PG_URL="$RECEIVING_DATABASE_URL" cargo test \
   -p wamn-proof-integration \
@@ -226,10 +224,10 @@ WAMN_RECEIVING_PG_URL="$RECEIVING_DATABASE_URL" cargo test \
 # Two independent derivations must each equal the exact shipped path/byte set.
 WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
   cargo run -p wamn-schema-generator --example materialize_package \
-  --locked --offline -- check "$RECEIVING_SOURCE_COMMIT" packages/receiving
+  --locked --offline -- check packages/receiving
 WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
   cargo run -p wamn-schema-generator --example materialize_package \
-  --locked --offline -- check "$RECEIVING_SOURCE_COMMIT" packages/receiving
+  --locked --offline -- check packages/receiving
 
 # Normal builds consume the committed .sqlx evidence without a database.
 SQLX_OFFLINE=true cargo test -p wamn-proof-conformance \

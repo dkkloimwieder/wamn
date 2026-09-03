@@ -21,7 +21,7 @@ pub fn publication_boundary_sql() -> &'static str {
 /// Record an effective-release deployment attestation in the CONTROL plane.
 pub fn register_deployment_attestation_sql() -> &'static str {
     "SELECT catalog.register_deployment_attestation(\
-     $1, $2, $3, $4, $5, $6, $7::text::timestamptz)"
+     $1, $2, $3, $4, $5, $6, $7, $8::text::timestamptz)"
 }
 
 #[cfg(test)]

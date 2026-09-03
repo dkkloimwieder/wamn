@@ -707,11 +707,7 @@ fn run(
         catalog,
         &bytes,
         sources,
-        GenerationProvenance::new(
-            "0123456789abcdef",
-            "wamn-schema-generator/0.1.0",
-            "rust-1.89",
-        ),
+        GenerationProvenance::new("wamn-schema-generator/0.1.0", "rust-1.89"),
     ))
 }
 
@@ -2074,11 +2070,7 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
         &ir,
         RECEIVING_MANIFEST,
         &RECEIVING_SOURCES,
-        GenerationProvenance::new(
-            "0123456789abcdef",
-            "wamn-schema-generator/0.1.0",
-            "rust-1.89",
-        ),
+        GenerationProvenance::new("wamn-schema-generator/0.1.0", "rust-1.89"),
     ))
     .unwrap();
 
@@ -2215,11 +2207,7 @@ fn generic_custom_operation_path_preserves_shipped_receiving_bytes() {
         &receiving_catalog(),
         RECEIVING_MANIFEST,
         &RECEIVING_SOURCES,
-        GenerationProvenance::new(
-            "8f20e0eca55a121e2ec53681f466cc2118497a7b",
-            "wamn-schema-generator/0.1.0",
-            "rust-1.98.0",
-        ),
+        GenerationProvenance::new("wamn-schema-generator/0.1.0", "rust-1.98.0"),
     ))
     .unwrap();
     let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../packages/receiving");

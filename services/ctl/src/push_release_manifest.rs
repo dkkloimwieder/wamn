@@ -198,6 +198,25 @@ impl PushReleaseManifestArgs {
 
 /// Publish one canonical release manifest and print its content digest.
 pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
+    run_with_provenance(args, None).await
+}
+
+/// Publish one canonical release manifest attributed to one clean source commit.
+pub async fn run_with_source_commit(
+    args: PushReleaseManifestArgs,
+    source_commit: &str,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
+        "source commit must be one nonempty value"
+    );
+    run_with_provenance(args, Some(source_commit)).await
+}
+
+async fn run_with_provenance(
+    args: PushReleaseManifestArgs,
+    source_commit: Option<&str>,
+) -> anyhow::Result<()> {
     let canonical_bytes = canonical_release_bytes(&args).await?;
     let published = publish_release_manifest(
         &canonical_bytes,
@@ -217,6 +236,7 @@ pub async fn run(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
         &args.control_database_url,
         &coordinate,
         &published.digest,
+        source_commit,
     )
     .await?;
     println!("{}", published.digest);

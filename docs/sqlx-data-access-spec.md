@@ -61,7 +61,8 @@ cross-item atomicity out of scope.
 
 Each immutable application package records: `verified_schema_state_id` ·
 `required_schema_contract` · `required_platform_policy_contract` ·
-application SQL corpus identity · source/toolchain provenance. An
+application SQL corpus identity · generator/toolchain provenance. Source
+commit attribution is recorded when Publish and release deployment occur. An
 additive base schema may satisfy an unchanged overlay's contracts
 without rebuilding it.
 

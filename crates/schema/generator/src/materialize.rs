@@ -35,18 +35,13 @@ struct SourceFile {
 /// Materialize one package from its manifest, authored SQL, and migrated database.
 ///
 /// `database_url` names the already-migrated PostgreSQL database to introspect.
-/// `source_commit` is recorded as supplied. It need not identify a clean worktree;
-/// only an empty value or one containing whitespace is refused.
 pub async fn materialize_package(
     mode: MaterializeMode,
     database_url: &str,
-    source_commit: &str,
     package_root: &Path,
 ) -> Result<()> {
-    validate_source_commit(source_commit)?;
     materialize_after_introspection(
         mode,
-        source_commit,
         package_root,
         introspect_package(database_url, package_root),
     )
@@ -79,11 +74,8 @@ pub async fn introspect_package(database_url: &str, package_root: &Path) -> Resu
 pub fn materialize_package_from_catalog(
     mode: MaterializeMode,
     catalog: &CatalogIr,
-    source_commit: &str,
     package_root: &Path,
 ) -> Result<()> {
-    validate_source_commit(source_commit)?;
-
     let (manifest_bytes, manifest) = load_manifest(package_root)?;
     let source_files = load_authored_sql(package_root, &manifest)?;
     let authored_sql = source_files
@@ -95,7 +87,7 @@ pub fn materialize_package_from_catalog(
         catalog,
         &manifest_bytes,
         &authored_sql,
-        GenerationProvenance::new(source_commit, GENERATOR_ID, TOOLCHAIN_ID),
+        GenerationProvenance::new(GENERATOR_ID, TOOLCHAIN_ID),
     ))
     .context("generate package artifacts")?;
     let output_root = package_root.join("generated");
@@ -109,7 +101,6 @@ pub fn materialize_package_from_catalog(
 
 async fn materialize_after_introspection<F>(
     mode: MaterializeMode,
-    source_commit: &str,
     package_root: &Path,
     introspection: F,
 ) -> Result<()>
@@ -117,15 +108,7 @@ where
     F: std::future::Future<Output = Result<CatalogIr>>,
 {
     let catalog = introspection.await?;
-    materialize_package_from_catalog(mode, &catalog, source_commit, package_root)
-}
-
-fn validate_source_commit(source_commit: &str) -> Result<()> {
-    ensure!(
-        !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
-        "source-commit must be one nonempty argument"
-    );
-    Ok(())
+    materialize_package_from_catalog(mode, &catalog, package_root)
 }
 
 fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {
@@ -309,7 +292,6 @@ mod tests {
 
     use super::*;
 
-    const SOURCE_COMMIT: &str = "0123456789abcdef";
     const MANIFEST: &[u8] = br#"{
         "package":{"id":"test_package","version":"1.0.0"},
         "required_platform_policy_contract":{"id":"test_data_access","state":"satisfied"},
@@ -393,26 +375,16 @@ mod tests {
         let catalog = catalog();
         let introspections = Cell::new(0_u8);
 
-        materialize_after_introspection(
-            MaterializeMode::Write,
-            SOURCE_COMMIT,
-            &wrapper.root,
-            async {
-                introspections.set(introspections.get() + 1);
-                Ok(catalog.clone())
-            },
-        )
+        materialize_after_introspection(MaterializeMode::Write, &wrapper.root, async {
+            introspections.set(introspections.get() + 1);
+            Ok(catalog.clone())
+        })
         .await
         .expect("materialize through wrapper path");
         assert_eq!(introspections.get(), 1);
 
-        materialize_package_from_catalog(
-            MaterializeMode::Write,
-            &catalog,
-            SOURCE_COMMIT,
-            &split.root,
-        )
-        .expect("materialize split generation path");
+        materialize_package_from_catalog(MaterializeMode::Write, &catalog, &split.root)
+            .expect("materialize split generation path");
         assert_eq!(
             introspections.get(),
             1,
@@ -424,13 +396,8 @@ mod tests {
         let stale = generated.keys().next().expect("generated artifact exists");
         fs::write(split.root.join("generated").join(stale), b"stale")
             .expect("write stale generated artifact");
-        let error = materialize_package_from_catalog(
-            MaterializeMode::Check,
-            &catalog,
-            SOURCE_COMMIT,
-            &split.root,
-        )
-        .expect_err("exact mode accepted stale output");
+        let error = materialize_package_from_catalog(MaterializeMode::Check, &catalog, &split.root)
+            .expect_err("exact mode accepted stale output");
         assert!(error.to_string().contains("generated artifact differs"));
     }
 }

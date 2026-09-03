@@ -510,6 +510,15 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
         "document": wiring_document()
     });
     decode(&command("publish", complete.clone()));
+    let mut attributed = complete.clone();
+    attributed
+        .as_object_mut()
+        .expect("publish input is an object")
+        .insert(
+            "provenance".to_owned(),
+            json!({"commit": "0123456789abcdef", "ref": null, "dirty": false}),
+        );
+    decode(&command("publish", attributed));
 
     // Every field is load-bearing: dropping any one leaves `catalog.wirings`
     // unwritable, so none may carry a serde default.
@@ -562,5 +571,9 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
     assert_eq!(
         schema["definitions"]["PublishValidatedDraft"]["required"],
         json!(["document", "package-id", "package-version", "scope"])
+    );
+    assert_eq!(
+        schema["definitions"]["PublishValidatedDraft"]["properties"]["provenance"]["anyOf"][0]["$ref"],
+        "#/definitions/CommitProvenance"
     );
 }

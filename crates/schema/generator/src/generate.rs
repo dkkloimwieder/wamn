@@ -49,19 +49,17 @@ impl<'a> AuthoredSql<'a> {
     }
 }
 
-/// Explicit source and toolchain facts embedded in every package weld.
+/// Explicit generator and toolchain facts embedded in every package weld.
 #[derive(Debug, Clone, Copy)]
 pub struct GenerationProvenance<'a> {
-    source_commit: &'a str,
     generator: &'a str,
     toolchain: &'a str,
 }
 
 impl<'a> GenerationProvenance<'a> {
-    /// Construct provenance without consulting git, environment, or a clock.
-    pub const fn new(source_commit: &'a str, generator: &'a str, toolchain: &'a str) -> Self {
+    /// Construct generator provenance without consulting git, environment, or a clock.
+    pub const fn new(generator: &'a str, toolchain: &'a str) -> Self {
         Self {
-            source_commit,
             generator,
             toolchain,
         }
@@ -259,7 +257,6 @@ struct RequiredConstraint {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OwnedProvenance {
-    source_commit: Box<str>,
     generator: Box<str>,
     toolchain: Box<str>,
 }
@@ -335,7 +332,6 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         )
         .into(),
         provenance: OwnedProvenance {
-            source_commit: input.provenance.source_commit.into(),
             generator: input.provenance.generator.into(),
             toolchain: input.provenance.toolchain.into(),
         },
@@ -388,11 +384,7 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
         &manifest.required_platform_policy_contract.id,
         "platform policy contract",
     )?;
-    for value in [
-        input.provenance.source_commit,
-        input.provenance.generator,
-        input.provenance.toolchain,
-    ] {
+    for value in [input.provenance.generator, input.provenance.toolchain] {
         if value.is_empty() {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidIdentity,

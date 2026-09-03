@@ -240,8 +240,8 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
     let coordinate = DeploymentCoordinate::new("acme", "receiving", &release);
     let digest = ManifestDigest::parse(format!("sha256:{}", "f".repeat(64))).unwrap();
     let (first, second) = tokio::join!(
-        attest_deployment(&url, &coordinate, &digest),
-        attest_deployment(&url, &coordinate, &digest)
+        attest_deployment(&url, &coordinate, &digest, Some("0123456789abcdef")),
+        attest_deployment(&url, &coordinate, &digest, Some("0123456789abcdef"))
     );
     assert_eq!(
         first.expect("first identical attestation succeeds"),

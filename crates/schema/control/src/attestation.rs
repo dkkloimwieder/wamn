@@ -22,7 +22,7 @@ use crate::model::{SqlStatement, Value};
 use crate::sql;
 
 /// The refusal `catalog.register_deployment_attestation` raises when a coordinate
-/// is re-attested with a different `deployed_manifest_hash`.
+/// is re-attested with different deployed content or source provenance.
 ///
 /// One condition, one literal: this is the DDL's own `MESSAGE`, not a Rust
 /// synonym for it.
@@ -107,8 +107,9 @@ pub fn translate_projection_failure(
 ///
 /// The coordinate is exactly `(tenant_id, effective_release_id, org_id,
 /// project_id, environment)` — the relation's `deployment_attestations_coordinate`
-/// UNIQUE constraint. `deployed_manifest_hash` is the conflict-bearing content;
-/// the server preserves the first writer's `attested_at` on an exact retry.
+/// UNIQUE constraint. `deployed_manifest_hash` and `source_commit` are the
+/// conflict-bearing content; the server preserves the first writer's
+/// `attested_at` on an exact retry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attestation<'a> {
     pub tenant_id: &'a str,
@@ -119,6 +120,8 @@ pub struct Attestation<'a> {
     /// `sha256:<64 hex>` — the relation's `CHECK` is the only place that shape
     /// is enforced.
     pub deployed_manifest_hash: &'a str,
+    /// Optional clean source commit attributed by a checkout-aware publisher.
+    pub source_commit: Option<&'a str>,
     /// A proposed attestation instant, as a literal PostgreSQL parses to
     /// `timestamptz` (RFC 3339). The server keeps this only when this invocation
     /// wins the insert; exact retries retain the recorded winner. Bound as text
@@ -145,6 +148,7 @@ pub fn register_attestation(attestation: &Attestation<'_>) -> SqlStatement {
             Value::Text(attestation.project_id.to_owned()),
             Value::Text(attestation.environment.to_owned()),
             Value::Text(attestation.deployed_manifest_hash.to_owned()),
+            Value::NullableText(attestation.source_commit.map(str::to_owned)),
             Value::Text(attestation.attested_at.to_owned()),
         ],
     }
@@ -264,6 +268,7 @@ mod tests {
             project_id: "billing",
             environment: "prod",
             deployed_manifest_hash: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            source_commit: Some("0123456789abcdef"),
             attested_at: "2026-08-15T12:00:00Z",
         }
     }
@@ -284,6 +289,7 @@ mod tests {
                     "sha256:2222222222222222222222222222222222222222222222222222222222222222"
                         .to_owned()
                 ),
+                Value::NullableText(Some("0123456789abcdef".to_owned())),
                 Value::Text("2026-08-15T12:00:00Z".to_owned()),
             ]
         );

@@ -777,6 +777,11 @@ fn publish_document_in(command_id: &str, project: &str, document: &serde_json::V
                     "package-id": CANDIDATE_PACKAGE,
                     "package-version": CANDIDATE_PACKAGE_VERSION,
                     "document": document,
+                    "provenance": {
+                        "commit": "0123456789abcdef",
+                        "ref": null,
+                        "dirty": false
+                    },
                 },
             },
         },
@@ -959,6 +964,22 @@ async fn ledger_rows(admin: &Client) -> Vec<(String, String, String, String)> {
         .iter()
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
         .collect()
+}
+
+async fn command_provenance(
+    admin: &Client,
+    command_id: &str,
+) -> Option<(String, Option<String>, bool)> {
+    admin
+        .query_opt(
+            "SELECT provenance_commit, provenance_ref, provenance_dirty \
+               FROM catalog.authoring_command_audit \
+              WHERE tenant_id = $1 AND command_id = $2",
+            &[&TENANT, &command_id],
+        )
+        .await
+        .expect("read command provenance")
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
 }
 
 /// Every durable authoring row the control store still holds.
@@ -2134,6 +2155,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         minted_release_snapshot_count(&project).await,
         0,
         "act-1 Publish minted an act-2 release snapshot"
+    );
+    assert_eq!(
+        command_provenance(&admin, "publish-gated").await,
+        Some(("0123456789abcdef".to_owned(), None, false))
     );
 
     // An exact retry replays its stored receipt and converges on the one row.
