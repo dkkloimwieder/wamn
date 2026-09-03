@@ -1556,6 +1556,29 @@ sets**, so a reorder-and-compare test must know which of its lists are sets
 and which are orderings. Reversing an ordering correctly fails a correct
 implementation.
 
+**A SHARED assertion must not encode one consumer's constant.** The same
+failure at harness grain, found while extracting the cluster journey so a
+second application could use it. Two instances, both of which read as platform
+code:
+
+- `trace_is_complete()` looks entirely generic and asserts
+  `count_named("wamn.postgres.statement") == 1` — which is Receiving's probe
+  route issuing exactly one statement. A consumer whose route issues eight
+  fails at `"trace is incomplete at collection"`, a message naming the wrong
+  cause.
+- One awk program rewrote namespace, environment and image for any caller
+  (shared) while hardcoding `wamn.tenant`, `environment`, `project` and
+  `schema` (Receiving's). Left fused, a second application deploys under the
+  FIRST one's tenant, route authorization resolves against the wrong data, and
+  the journey PASSES. A green gate proving the wrong thing is worse than a red
+  one.
+
+**Standing law: a shared block reads only what it is passed.** No closure over
+caller state, no constant belonging to one consumer. Where a block is genuinely
+mixed, UN-FUSE IT IN PLACE FIRST — as its own change, proven by the existing
+consumer still passing — and only then move it. Extracting first and finding
+the fusion later is how the wrong-tenant green gate gets built.
+
 **A wrong package name greps as zero failures.** `cargo test -p <nonexistent>`
 errors out — it does not run and report zero. Measured at `1bffa614`:
 
