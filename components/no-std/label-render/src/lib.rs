@@ -12,6 +12,13 @@
 //! is the WIT boundary and nothing else — parse, delegate, translate the error
 //! exactly once.
 //!
+//! **The output ENRICHES the input**: every field the record arrived with, plus
+//! `zpl`. Edges carry payloads verbatim, so a node that replaced its payload
+//! would destroy upstream context at its own hop — and a downstream node could
+//! not recover it, because a wiring parameter can point at a field but cannot
+//! resurrect one. A palette transform that means to NARROW the payload
+//! declares itself a projection instead.
+//!
 //! `template_id` is a **wiring parameter**, not an input field. Template choice
 //! is authoring intent: a wirer picks "pallet label" once and the wiring then
 //! declares honestly what it renders, so gate cases can pin golden output per
@@ -66,7 +73,22 @@ impl Guest for Component {
         let zpl = label_template::render(template_id, &fields)
             .map_err(|error| invalid_input(error.code(), error.detail()))?;
 
-        let payload = serde_json::to_string(&serde_json::json!({ "zpl": zpl }))
+        // ENRICHING, not replacing. An edge carries a payload verbatim, so a
+        // node that emitted `{zpl}` alone would destroy every upstream fact at
+        // this hop — the movement id a downstream node needs for its object
+        // key would simply be gone, and no wiring parameter could recover it.
+        // A pure transform therefore ADDS its output to the record it was
+        // given; a node that means to narrow the payload says so by being a
+        // projection.
+        //
+        // `zpl` overwrites an inbound member of the same name deliberately:
+        // this node's own output is the authority on what it rendered.
+        let mut record = fields;
+        record
+            .as_object_mut()
+            .expect("the input was checked to be an object above")
+            .insert("zpl".to_string(), serde_json::Value::String(zpl));
+        let payload = serde_json::to_string(&record)
             .map_err(|_| terminal("render_not_encodable", "rendered label is not encodable"))?;
         Ok(Emission {
             payload,

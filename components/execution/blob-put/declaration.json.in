@@ -12,12 +12,7 @@
         {
           "name": "input",
           "schema": {
-            "type": "object",
-            "properties": {
-              "key": { "type": "string", "minLength": 1 },
-              "body": { "type": "string" }
-            },
-            "required": ["key", "body"]
+            "type": "object"
           }
         }
       ],
@@ -27,23 +22,52 @@
           "schema": {
             "type": "object",
             "properties": {
-              "container": { "type": "string" },
-              "key": { "type": "string" }
+              "container": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              }
             },
-            "required": ["container", "key"]
+            "required": [
+              "container",
+              "key"
+            ]
           }
         }
       ],
       "parameters": [
         {
           "name": "store_alias",
-          "schema": { "type": "string", "minLength": 1 },
+          "schema": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required": true
+        },
+        {
+          "name": "key_field",
+          "schema": {
+            "type": "string",
+            "pattern": "^(|/.*)$"
+          },
+          "required": true
+        },
+        {
+          "name": "body_field",
+          "schema": {
+            "type": "string",
+            "pattern": "^(|/.*)$"
+          },
           "required": true
         }
       ]
     }
   },
   "connections": [
-    { "store-alias": "__STORE_ALIAS__", "requirement-type": "blobstore" }
+    {
+      "store-alias": "__STORE_ALIAS__",
+      "requirement-type": "blobstore"
+    }
   ]
 }

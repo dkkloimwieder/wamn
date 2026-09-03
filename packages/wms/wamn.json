@@ -283,6 +283,11 @@
             "nullable": false
           },
           {
+            "path": "location_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
             "path": "pallet_status",
             "type": "text",
             "nullable": false,
@@ -657,6 +662,11 @@
             }
           ],
           "row": [
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
             {
               "name": "row_version",
               "type": "int64",

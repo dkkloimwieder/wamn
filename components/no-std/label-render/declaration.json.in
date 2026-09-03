@@ -9,22 +9,41 @@
   "operations": {
     "wamn:node/handler@0.1.0": {
       "input-ports": [
-        { "name": "input", "schema": { "type": "object" } }
+        {
+          "name": "input",
+          "schema": {
+            "type": "object"
+          }
+        }
       ],
       "output-ports": [
         {
           "name": "main",
           "schema": {
             "type": "object",
-            "properties": { "zpl": { "type": "string" } },
-            "required": ["zpl"]
+            "properties": {
+              "zpl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "zpl"
+            ],
+            "additionalProperties": true
           }
         }
       ],
       "parameters": [
         {
           "name": "template_id",
-          "schema": { "type": "string", "enum": ["pallet", "location", "product"] },
+          "schema": {
+            "type": "string",
+            "enum": [
+              "pallet",
+              "location",
+              "product"
+            ]
+          },
           "required": true
         }
       ]

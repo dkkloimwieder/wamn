@@ -28,3 +28,5 @@ mod virtualized_std_guest;
 pub mod walbench;
 #[cfg(test)]
 mod wms_publication;
+#[cfg(test)]
+mod wms_wiring_shape;
