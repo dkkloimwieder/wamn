@@ -35,7 +35,7 @@
 //! because the environment owns the container, which is the ordinary operation
 //! of the ownership split rather than a deviation from the contract.
 
-use wash_runtime::engine::ctx::SharedCtx;
+use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
 use super::bindings::wasmcloud::blobstore::container::{Container, HostContainer, HostContainerWithStore};
@@ -45,6 +45,7 @@ use super::bindings::wasmcloud::blobstore::types::{
 };
 use super::drain::drain_body;
 use super::intake::MAX_OBJECT_BYTES;
+use super::plugin::{WAMN_BLOBSTORE_ID, WamnBlobstore};
 use super::store::{BoundContainer, StoreError};
 use super::wit_error::to_wit;
 
@@ -71,7 +72,14 @@ where
     })
 }
 
-impl HostContainer for SharedCtx {
+// The marker traits attach to the store's DATA type (`ActiveCtx`), while the
+// concurrent `*WithStore` traits attach to the `HasData` type (`SharedCtx`).
+// The split is the generated bindings', not ours.
+impl super::bindings::wasmcloud::blobstore::types::Host for ActiveCtx<'_> {}
+impl super::bindings::wasmcloud::blobstore::container::Host for ActiveCtx<'_> {}
+impl super::bindings::wasmcloud::blobstore::blobstore::Host for ActiveCtx<'_> {}
+
+impl HostContainer for ActiveCtx<'_> {
     async fn drop(&mut self, handle: Resource<Container>) -> wash_runtime::wasmtime::Result<()> {
         self.table.delete(handle)?;
         Ok(())
@@ -246,11 +254,20 @@ impl<T: 'static + Send> HostWithStore<T> for SharedCtx {
         )))
     }
 
+    /// `name` is the guest's own declared STORE ALIAS, not a container name.
+    ///
+    /// The container is environment-owned, so a guest that had to name it
+    /// would first need the coordinate the confinement exists to keep from it.
+    /// Naming its own alias is the only thing a component can honestly do
+    /// here, and the resolved binding supplies the real container.
     async fn get_container(
         accessor: &Accessor<T, Self>,
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<Container>, WitError>> {
-        let Some(container) = bound_container(accessor, &name)? else {
+        // Every refusal reports `no-such-container`. Distinguishing "unbound"
+        // from "bound but unauthorized" would tell a guest which aliases
+        // exist, which is the leak `container-exists` is also shaped to avoid.
+        let Ok(container) = resolve_alias(accessor, &name).await else {
             return Ok(Err(WitError::NoSuchContainer));
         };
         let handle = accessor.with(|mut access| access.get().table.push(container))?;
@@ -271,7 +288,7 @@ impl<T: 'static + Send> HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<bool, WitError>> {
-        Ok(Ok(bound_container(accessor, &name)?.is_some()))
+        Ok(Ok(resolve_alias(accessor, &name).await.is_ok()))
     }
 
     async fn copy_object(
@@ -297,14 +314,29 @@ pub const REFUSED_OBJECT_ID_REASON: &str =
     "object ids are bare strings carrying no backend or binding discriminator, so bucket and \
      prefix confinement cannot hold across them";
 
-/// The bound container, if `name` is the one this component was lent.
-fn bound_container<T>(
-    _accessor: &Accessor<T, SharedCtx>,
-    _name: &str,
-) -> wash_runtime::wasmtime::Result<Option<BoundContainer>>
+/// Resolve one store alias into its confined container, live.
+///
+/// Reaches the plugin through the store context the way `connection_http`
+/// does, then goes through the shared authority reader.
+async fn resolve_alias<T>(
+    accessor: &Accessor<T, SharedCtx>,
+    store_alias: &str,
+) -> Result<BoundContainer, super::binding::BindingError>
 where
     T: 'static,
 {
-    // Binding resolution lands with the plugin's connection-snapshot wiring.
-    Ok(None)
+    let resolved = accessor.with(|mut access| {
+        let ctx = access.get();
+        let component_id = ctx.component_id.to_string();
+        ctx.try_get_plugin::<WamnBlobstore>(WAMN_BLOBSTORE_ID)
+            .map(|plugin| (plugin, component_id))
+    });
+    let (plugin, component_id) = match resolved {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            tracing::warn!(error = %error, "blobstore plugin is not registered on this host");
+            return Err(super::binding::BindingError::Unauthorized);
+        }
+    };
+    plugin.container_for(&component_id, store_alias).await
 }

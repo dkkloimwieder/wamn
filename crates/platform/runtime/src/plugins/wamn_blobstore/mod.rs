@@ -33,5 +33,6 @@ pub mod drain;
 pub mod host;
 pub mod confinement;
 pub mod intake;
+pub mod plugin;
 pub mod store;
 pub mod wit_error;
