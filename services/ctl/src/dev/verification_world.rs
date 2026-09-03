@@ -11,7 +11,7 @@ use wamn_schema_control::BareSchemaName;
 
 use crate::reconcile_run_plane;
 
-const RUN_SCHEMA: &str = "wamn_run";
+pub(crate) const RUN_SCHEMA: &str = "wamn_run";
 const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 
 /// Exact database-local changes made by one verification-world bootstrap.
@@ -234,6 +234,7 @@ mod tests {
             "route_host": "receiving.localhost",
             "flow_http_workload_image": "127.0.0.1:5002/wamn/flow-http:dev",
             "package_sources": [],
+            "effective_release_id": 1,
             "tenant": "00000000-0000-0000-0000-000000000001",
             "catalog": "default",
             "environment": "receiving-dev",

@@ -828,6 +828,7 @@ mod tests {
             "route_host": "receiving.localhost",
             "flow_http_workload_image": "127.0.0.1:5002/wamn/flow-http:dev",
             "package_sources": [],
+            "effective_release_id": 1,
             "tenant": "00000000-0000-0000-0000-000000000001",
             "catalog": "default",
             "environment": "receiving-dev",

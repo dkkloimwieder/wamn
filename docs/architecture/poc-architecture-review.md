@@ -66,7 +66,9 @@ The security half is proven. The "easier" half is not:
   fixture (`wamn-10yt.10.11`, `wamn-10yt.10.13`). Without this, components are
   more secure *and* harder — a failed thesis. Source integrity has two layers:
   Git identifies authored source, while the existing exact manifest and migration
-  hashes protect package application; there is no package-root digest.
+  hashes protect package application; there is no package-root digest. The
+  overlay's component digest instead pins the built base artifact, which must
+  compare equal before Gate or Publish.
 - **Slice v exit criterion added:** at least one wiring composes a
   package operation with palette components, authored through the
   editor, gated, published, and routed. Direct route attachments alone

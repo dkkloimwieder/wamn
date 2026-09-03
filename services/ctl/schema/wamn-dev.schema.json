@@ -9,6 +9,11 @@
     "component_artifact_base": {
       "type": "string"
     },
+    "effective_release_id": {
+      "format": "uint32",
+      "minimum": 1.0,
+      "type": "integer"
+    },
     "environment": {
       "type": "string"
     },
@@ -100,6 +105,7 @@
   "required": [
     "catalog",
     "component_artifact_base",
+    "effective_release_id",
     "environment",
     "event_materializer_database_url",
     "event_nats_url",

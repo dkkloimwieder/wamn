@@ -8,7 +8,8 @@ use url::Url;
 use wamn_authoring_model::{
     AuthoringCommand, AuthoringDocument, AuthoringOutcome, AuthoringRequest,
     AuthoringRequestEnvelope, AuthoringResponseEnvelope, AuthoringSuccess, CommandRefusal, Gate,
-    GateReceipt, GateRefusal, SCHEMA_VERSION, decode_document,
+    GateReceipt, GateRefusal, PublishRefusal, PublishValidatedDraft, PublishedWiringIdentity,
+    SCHEMA_VERSION, decode_document,
 };
 
 /// Stable category of an authoring Gate client failure.
@@ -181,18 +182,73 @@ impl GateClient {
         gate: Gate,
         deadline: Instant,
     ) -> Result<Result<GateReceipt, GateRefusal>, GateClientError> {
+        let outcome = self
+            .submit_command(command_id, AuthoringCommand::Gate(gate), deadline)
+            .await?;
+        match outcome {
+            AuthoringOutcome::Completed(success) => match *success {
+                AuthoringSuccess::Gate(receipt) => Ok(Ok(receipt)),
+                AuthoringSuccess::Publish(_) => Err(malformed(
+                    &self.sanitized_gate_url,
+                    "Gate returned a publish receipt",
+                )),
+            },
+            AuthoringOutcome::Refused(refusal) => match refusal {
+                CommandRefusal::Gate(refusal) => Ok(Err(refusal)),
+                CommandRefusal::Publish(_) => Err(malformed(
+                    &self.sanitized_gate_url,
+                    "Gate returned a publish refusal",
+                )),
+            },
+        }
+    }
+
+    /// Publish one exact previously gated document through the same authenticated endpoint.
+    pub async fn publish(
+        &self,
+        command_id: &str,
+        publish: PublishValidatedDraft,
+        deadline: Instant,
+    ) -> Result<Result<PublishedWiringIdentity, PublishRefusal>, GateClientError> {
+        let outcome = self
+            .submit_command(command_id, AuthoringCommand::Publish(publish), deadline)
+            .await?;
+        match outcome {
+            AuthoringOutcome::Completed(success) => match *success {
+                AuthoringSuccess::Publish(receipt) => Ok(Ok(receipt)),
+                AuthoringSuccess::Gate(_) => Err(malformed(
+                    &self.sanitized_gate_url,
+                    "Publish returned a Gate receipt",
+                )),
+            },
+            AuthoringOutcome::Refused(refusal) => match refusal {
+                CommandRefusal::Publish(refusal) => Ok(Err(refusal)),
+                CommandRefusal::Gate(_) => Err(malformed(
+                    &self.sanitized_gate_url,
+                    "Publish returned a Gate refusal",
+                )),
+            },
+        }
+    }
+
+    async fn submit_command(
+        &self,
+        command_id: &str,
+        command: AuthoringCommand,
+        deadline: Instant,
+    ) -> Result<AuthoringOutcome, GateClientError> {
         let request = AuthoringDocument::Request(Box::new(AuthoringRequestEnvelope::Command(
             AuthoringRequest {
                 schema_version: SCHEMA_VERSION.to_owned(),
                 command_id: command_id.to_owned(),
-                command: AuthoringCommand::Gate(gate),
+                command,
             },
         )));
         let body = serde_json::to_vec(&request).map_err(|source| {
             GateClientError::with_source(
                 GateClientErrorKind::RequestEncoding,
                 self.sanitized_gate_url.clone(),
-                "encode the Gate request contract",
+                "encode the authoring request contract",
                 source,
             )
         })?;
@@ -206,19 +262,19 @@ impl GateClient {
                 .body(body)
                 .send()
                 .await
-                .map_err(|source| self.transport("send the Gate request", source))?;
+                .map_err(|source| self.transport("send the authoring request", source))?;
             let status = response.status();
             let body = response
                 .bytes()
                 .await
-                .map_err(|source| self.transport("read the Gate response", source))?;
+                .map_err(|source| self.transport("read the authoring response", source))?;
             Ok::<_, GateClientError>((status, body))
         };
         let (status, body) = timeout_at(deadline, exchange).await.map_err(|_| {
             GateClientError::new(
                 GateClientErrorKind::DeadlineExceeded,
                 self.sanitized_gate_url.clone(),
-                "Gate HTTP exchange exceeded its deadline",
+                "authoring HTTP exchange exceeded its deadline",
             )
         })??;
 
@@ -228,7 +284,7 @@ impl GateClient {
                 status.as_u16(),
             ));
         }
-        decode_gate_response(&body, command_id, &self.sanitized_gate_url)
+        decode_command_response(&body, command_id, &self.sanitized_gate_url)
     }
 
     fn transport(&self, detail: &'static str, source: reqwest::Error) -> GateClientError {
@@ -241,11 +297,11 @@ impl GateClient {
     }
 }
 
-fn decode_gate_response(
+fn decode_command_response(
     body: &[u8],
     command_id: &str,
     gate_url: &str,
-) -> Result<Result<GateReceipt, GateRefusal>, GateClientError> {
+) -> Result<AuthoringOutcome, GateClientError> {
     let text = std::str::from_utf8(body).map_err(|source| {
         GateClientError::with_source(
             GateClientErrorKind::MalformedResponse,
@@ -265,29 +321,19 @@ fn decode_gate_response(
     let AuthoringDocument::Response(response) = document else {
         return Err(malformed(gate_url, "Gate returned a request document"));
     };
-    let AuthoringResponseEnvelope::Command(response) = response.as_ref() else {
-        return Err(malformed(gate_url, "Gate returned a query response"));
+    let AuthoringResponseEnvelope::Command(response) = *response else {
+        return Err(malformed(
+            gate_url,
+            "authoring endpoint returned a query response",
+        ));
     };
     if response.command_id != command_id {
         return Err(malformed(
             gate_url,
-            "Gate response command identity does not match the request",
+            "authoring response command identity does not match the request",
         ));
     }
-    match &response.outcome {
-        AuthoringOutcome::Completed(success) => match success.as_ref() {
-            AuthoringSuccess::Gate(receipt) => Ok(Ok(receipt.clone())),
-            AuthoringSuccess::Publish(_) => {
-                Err(malformed(gate_url, "Gate returned a publish receipt"))
-            }
-        },
-        AuthoringOutcome::Refused(refusal) => match refusal {
-            CommandRefusal::Gate(refusal) => Ok(Err(refusal.clone())),
-            CommandRefusal::Publish(_) => {
-                Err(malformed(gate_url, "Gate returned a publish refusal"))
-            }
-        },
-    }
+    Ok(response.outcome)
 }
 
 fn malformed(gate_url: &str, detail: &'static str) -> GateClientError {
@@ -342,6 +388,16 @@ mod tests {
                 "entry": "receive",
                 "nodes": [{"id": "receive", "component": "sha256:abc"}],
             }),
+        }
+    }
+
+    fn publish() -> PublishValidatedDraft {
+        let gate = gate();
+        PublishValidatedDraft {
+            scope: gate.scope,
+            package_id: gate.package_id,
+            package_version: gate.package_version,
+            document: gate.document,
         }
     }
 
@@ -453,6 +509,41 @@ mod tests {
         assert_eq!(
             request.body,
             br#"{"document":"request","body":{"schema-version":"0.1","command-id":"gate-command-1","command":{"kind":"gate","input":{"scope":{"project-id":"receiving","environment":"dev"},"package-id":"receiving","package-version":"1.2.3","document":{"entry":"receive","nodes":[{"component":"sha256:abc","id":"receive"}],"wiring-id":"receiving"}}}}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn publishes_the_exact_gated_document_through_the_same_authenticated_endpoint() {
+        let response = br#"{"document":"response","body":{"schema-version":"0.1","command-id":"publish-command-1","outcome":{"status":"completed","value":{"command":"publish","result":{"wiring-id":"receiving","version":1,"artifact-hash":"sha256:def"}}}}}"#;
+        let (url, server) = loopback("200 OK", response).await;
+        let client = GateClient::new(&url, "publish-super-secret").expect("build authoring client");
+
+        let outcome = client
+            .publish(
+                "publish-command-1",
+                publish(),
+                Instant::now() + Duration::from_secs(1),
+            )
+            .await
+            .expect("Publish exchange succeeds");
+
+        assert_eq!(
+            outcome,
+            Ok(PublishedWiringIdentity {
+                wiring_id: "receiving".to_owned(),
+                version: 1,
+                artifact_hash: "sha256:def".to_owned(),
+            })
+        );
+        let request = server.await.expect("join loopback server");
+        assert_eq!(request.request_line, "POST /authoring HTTP/1.1");
+        assert_eq!(
+            request.headers.get("authorization").map(String::as_str),
+            Some("Bearer publish-super-secret")
+        );
+        assert_eq!(
+            request.body,
+            br#"{"document":"request","body":{"schema-version":"0.1","command-id":"publish-command-1","command":{"kind":"publish","input":{"scope":{"project-id":"receiving","environment":"dev"},"package-id":"receiving","package-version":"1.2.3","document":{"entry":"receive","nodes":[{"component":"sha256:abc","id":"receive"}],"wiring-id":"receiving"}}}}}"#
         );
     }
 

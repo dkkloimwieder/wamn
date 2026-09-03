@@ -6,6 +6,8 @@
 
 pub mod activation;
 pub mod config;
+#[cfg(target_os = "linux")]
+pub mod coordinator;
 pub mod verification_database;
 pub mod verification_world;
 #[cfg(target_os = "linux")]

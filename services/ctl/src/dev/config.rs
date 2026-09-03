@@ -6,6 +6,7 @@
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
@@ -47,6 +48,7 @@ const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
 const ROUTE_HOST: &str = "route_host";
 const FLOW_HTTP_WORKLOAD_IMAGE: &str = "flow_http_workload_image";
 const PACKAGE_SOURCES: &str = "package_sources";
+const EFFECTIVE_RELEASE_ID: &str = "effective_release_id";
 const TENANT: &str = "tenant";
 const CATALOG: &str = "catalog";
 const ENVIRONMENT: &str = "environment";
@@ -89,6 +91,7 @@ struct DevConfigDocument {
     route_host: String,
     flow_http_workload_image: String,
     package_sources: Vec<PathBuf>,
+    effective_release_id: NonZeroU32,
     tenant: String,
     catalog: String,
     environment: String,
@@ -535,6 +538,7 @@ pub struct DevConfig {
     route_host: Box<str>,
     flow_http_workload_image: Box<str>,
     package_sources: Box<[PathBuf]>,
+    effective_release_id: NonZeroU32,
     activation_identity: DevActivationIdentity,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
@@ -600,6 +604,7 @@ impl fmt::Debug for DevConfig {
                 &self.sanitized_endpoint(FLOW_HTTP_WORKLOAD_IMAGE),
             )
             .field(PACKAGE_SOURCES, &self.package_sources)
+            .field(EFFECTIVE_RELEASE_ID, &self.effective_release_id)
             .field("activation_identity", &self.activation_identity)
             .field(HOST_BINARY, &self.host_binary)
             .field(WASMTIME_CACHE_DIR, &self.wasmtime_cache_dir)
@@ -633,6 +638,11 @@ impl DevConfig {
     /// Identity-reader PostgreSQL URL passed to the local serving host.
     pub fn identity_database_url(&self) -> &str {
         &self.identity_database_url
+    }
+
+    /// Credential-free identity endpoint used in authentication diagnostics.
+    pub fn identity_database_endpoint(&self) -> &str {
+        self.sanitized_endpoint(IDENTITY_DATABASE_URL)
     }
 
     /// Guest-SQL PostgreSQL URL passed to the local serving host.
@@ -710,6 +720,11 @@ impl DevConfig {
         &self.package_sources
     }
 
+    /// Positive deployment-owned identity for the effective release minted by this loop.
+    pub const fn effective_release_id(&self) -> u32 {
+        self.effective_release_id.get()
+    }
+
     /// Deployment identity passed unchanged to local activation.
     pub const fn activation_identity(&self) -> &DevActivationIdentity {
         &self.activation_identity
@@ -785,6 +800,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         route_host,
         flow_http_workload_image,
         package_sources,
+        effective_release_id,
         tenant,
         catalog,
         environment,
@@ -948,6 +964,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         route_host,
         flow_http_workload_image,
         package_sources,
+        effective_release_id,
         activation_identity,
         host_binary,
         wasmtime_cache_dir,
@@ -1169,6 +1186,20 @@ fn json_value_matches_schema(schema: &Value, value: &Value) -> bool {
     match schema.get("type").and_then(Value::as_str) {
         Some("string") => value.is_string(),
         Some("boolean") => value.is_boolean(),
+        Some("integer") => value
+            .as_u64()
+            .and_then(|number| u32::try_from(number).ok())
+            .is_some_and(|number| {
+                let number = f64::from(number);
+                schema
+                    .get("minimum")
+                    .and_then(Value::as_f64)
+                    .is_none_or(|minimum| number >= minimum)
+                    && schema
+                        .get("maximum")
+                        .and_then(Value::as_f64)
+                        .is_none_or(|maximum| number <= maximum)
+            }),
         Some("array") => value.as_array().is_some_and(|values| {
             schema.get("items").is_some_and(|item| {
                 values
@@ -1583,6 +1614,7 @@ mod tests {
             (ROUTE_HOST): "receiving.localhost",
             (FLOW_HTTP_WORKLOAD_IMAGE): format!("{}/wamn/flow-http:dev", addresses[13]),
             (PACKAGE_SOURCES): [],
+            (EFFECTIVE_RELEASE_ID): 1,
             (TENANT): "00000000-0000-0000-0000-000000000001",
             (CATALOG): "default",
             (ENVIRONMENT): "receiving-dev",
@@ -1677,6 +1709,7 @@ mod tests {
             config.wasmtime_cache_dir(),
             Path::new("/tmp/wamn-dev-cache")
         );
+        assert_eq!(config.effective_release_id(), 1);
 
         for key in [TENANT, HOST_BINARY, WASMTIME_CACHE_DIR] {
             let mut missing = complete_document(&addresses);
@@ -1688,6 +1721,15 @@ mod tests {
             assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
             assert_eq!(error.key(), key);
         }
+
+        let mut zero_release = complete_document(&addresses);
+        zero_release[EFFECTIVE_RELEASE_ID] = json!(0);
+        let error = parse_config(
+            &serde_json::to_vec(&zero_release).expect("serialize zero release identity"),
+        )
+        .expect_err("effective release identity must be positive");
+        assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        assert_eq!(error.key(), EFFECTIVE_RELEASE_ID);
     }
 
     #[test]

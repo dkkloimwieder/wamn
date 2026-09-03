@@ -326,6 +326,28 @@ impl fmt::Debug for ComponentAdmissionReceipt {
     }
 }
 
+impl ComponentAdmissionReceipt {
+    /// Exact package identity carried by the admitted component facts.
+    pub fn package_id(&self) -> &str {
+        &self.component.scope.package_id
+    }
+
+    /// Exact package version carried by the admitted component facts.
+    pub fn package_version(&self) -> &str {
+        &self.component.scope.package_version
+    }
+
+    /// Package-local component name bound to the admitted bytes.
+    pub fn component(&self) -> &str {
+        &self.component.component
+    }
+
+    /// SHA-256 identity derived from the exact admitted bytes.
+    pub fn component_digest(&self) -> &str {
+        &self.component.component_digest
+    }
+}
+
 /// Validate saved component and package bytes without publication side effects.
 pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmissionReceipt> {
     let directory = crate::apply_package::read_package_directory(&args.package)?;
