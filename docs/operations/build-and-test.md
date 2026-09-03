@@ -1653,6 +1653,52 @@ not one: derive the anchor, AND assert that every declared anchor fired.
 Measured against the same mutant, the old block exits 0 having rendered the
 wrong count, and the new block exits 1 naming the anchor.
 
+**A nameref's own name is part of its interface, and must not be guessable.**
+The lift-specific hazard, and the worst failure mode in this whole family:
+byte-identical output produced from the wrong source. A shared bash function
+took its parameters as `local -n spec=$1`, so a caller whose own array was
+also called `spec` created a circular name reference. Bash does not error on
+that — it WARNS, then resolves to whatever else is in scope. The render
+succeeds, and the bytes may even be right.
+
+They were right, in the instance that found this, and only by luck: the proof
+harness had named its array `spec` too, so the wrong resolution happened to
+land on the same array. A hundred warnings scrolled past above output that
+diffed clean. Had the two arrays held different content, the function would
+have rendered from the wrong one and the diff would have looked like a
+substantive regression in the lift — or, worse, like nothing at all.
+
+**Proof method, and run it BEFORE lifting a block rather than after.** Plant a
+GLOBAL holding decoy values under the callee's nameref name, have a caller
+pass a LOCAL array of the same name holding real values, and assert no decoy
+reaches the output. That is the reproducible shape: bash resolves the cycle to
+the global, so the render silently uses the decoy.
+
+The result is a matrix, not a single check, because the collision is
+reachable for ANY name the caller happens to pick. The defence is not
+impossibility — it is that no caller would pick this one. So run the plausible
+names a caller might actually choose (`spec`, `config`, `values`, `params`,
+`opts`, and the caller's own array name) and require all of them to pass, then
+run the internal name itself as the control and require it to FAIL. A control
+that passes means the proof is inert: the first version of this check bound
+the decoy to a global while the caller used a *differently* named array, which
+is not a cycle at all, and it passed against a deliberately regressed
+function.
+
+Silence on stderr is not the assertion. Warnings scroll past in a long run,
+and the check must be on the bytes.
+
+Worth noting where the save came from in practice: the collided render was
+also caught by the exactly-once anchor rule above, because decoy identity
+values derive anchors that match nothing. Two independent laws, and the second
+one held when the first was the one being tested.
+
+The general form: any indirection that resolves a NAME at runtime — namerefs,
+`eval`, variable-variables, a template that interpolates an identifier — can
+silently bind to the wrong thing, and the tell is absent precisely when the
+two things are similar enough to be confused. Name the internal side so no
+caller would collide with it, and prove the binding with content, not names.
+
 **A variable that means both "input to a render" and "expected state after an
 imperative step" is two variables wearing one name.** `host_replicas` was set
 to 3, or to 0 under `--measure-startup`, and passed to both renders. Then the
