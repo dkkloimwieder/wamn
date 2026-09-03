@@ -165,6 +165,21 @@ pub struct CustomOperationResultDeclaration {
 }
 
 /// Byte-stable command identity rules consumed by the runtime implementation.
+///
+/// # CANONICALIZE, THEN HASH. Validation is not canonicalization.
+///
+/// The spellings below are what an implementation must NORMALIZE its inputs
+/// TO before hashing them — not a shape to check them against. The difference
+/// is invisible until a retry: an uppercase UUID validates perfectly, reaches
+/// the command bytes in the spelling the caller sent, and canonicalizes to
+/// DIFFERENT bytes than the same move sent lowercase. The idempotency key then
+/// keys two different bodies, the replay path sees a mismatch, and a second
+/// delivery of one operator action is refused as a conflicting command — or,
+/// worse, executed as a new one.
+///
+/// Nothing fails at the boundary, so nothing points at the cause. An
+/// implementation therefore parses and RE-SPELLS every member the rules name,
+/// and hashes what it re-spelled.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommandCanonicalization {
