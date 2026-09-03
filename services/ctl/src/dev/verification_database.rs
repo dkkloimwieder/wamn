@@ -174,6 +174,11 @@ trait DatabaseAuthority {
         &self,
         database: &Identifier,
     ) -> impl Future<Output = Result<(), VerificationDatabaseError>> + Send;
+
+    fn revoke_public_connect(
+        &self,
+        database: &Identifier,
+    ) -> impl Future<Output = Result<(), VerificationDatabaseError>> + Send;
 }
 
 struct PostgresAuthority {
@@ -276,6 +281,25 @@ impl DatabaseAuthority for PostgresAuthority {
                 .with_source(source)
             })
     }
+
+    async fn revoke_public_connect(
+        &self,
+        database: &Identifier,
+    ) -> Result<(), VerificationDatabaseError> {
+        self.client
+            .batch_execute(&format!(
+                "REVOKE CONNECT ON DATABASE {} FROM PUBLIC",
+                database.quoted()
+            ))
+            .await
+            .map_err(|source| {
+                VerificationDatabaseError::new(
+                    VerificationDatabaseErrorKind::CreateFailed,
+                    "grant the verification credential authority to revoke PUBLIC CONNECT on its disposable database",
+                )
+                .with_source(source)
+            })
+    }
 }
 
 async fn recreate(
@@ -284,6 +308,10 @@ async fn recreate(
 ) -> Result<(), VerificationDatabaseError> {
     authority.drop_database(database).await?;
     if let Err(error) = authority.create_database(database).await {
+        let _cleanup = authority.drop_database(database).await;
+        return Err(error);
+    }
+    if let Err(error) = authority.revoke_public_connect(database).await {
         let _cleanup = authority.drop_database(database).await;
         return Err(error);
     }
@@ -370,6 +398,7 @@ mod tests {
         Release(Box<str>),
         Drop(Box<str>),
         Create(Box<str>),
+        RevokePublicConnect(Box<str>),
         Run(Box<str>),
         Stage(DevStage),
         Outcome(DevStage),
@@ -379,6 +408,7 @@ mod tests {
     struct RecordingAuthority {
         events: Arc<Mutex<Vec<Event>>>,
         refuse_create: bool,
+        refuse_revoke_public_connect: bool,
         lease_available: bool,
     }
 
@@ -427,6 +457,7 @@ mod tests {
             Self {
                 events: Arc::default(),
                 refuse_create: false,
+                refuse_revoke_public_connect: false,
                 lease_available: true,
             }
         }
@@ -437,6 +468,16 @@ mod tests {
             Self {
                 events: Arc::default(),
                 refuse_create: true,
+                refuse_revoke_public_connect: false,
+                lease_available: true,
+            }
+        }
+
+        fn refusing_revoke_public_connect() -> Self {
+            Self {
+                events: Arc::default(),
+                refuse_create: false,
+                refuse_revoke_public_connect: true,
                 lease_available: true,
             }
         }
@@ -445,6 +486,7 @@ mod tests {
             Self {
                 events: Arc::default(),
                 refuse_create: false,
+                refuse_revoke_public_connect: false,
                 lease_available: false,
             }
         }
@@ -497,6 +539,21 @@ mod tests {
                 Ok(())
             }
         }
+
+        async fn revoke_public_connect(
+            &self,
+            database: &Identifier,
+        ) -> Result<(), VerificationDatabaseError> {
+            self.record(Event::RevokePublicConnect(database.as_str().into()));
+            if self.refuse_revoke_public_connect {
+                Err(VerificationDatabaseError::new(
+                    VerificationDatabaseErrorKind::CreateFailed,
+                    "grant the verification credential authority to revoke PUBLIC CONNECT on its disposable database",
+                ))
+            } else {
+                Ok(())
+            }
+        }
     }
 
     #[tokio::test]
@@ -520,6 +577,7 @@ mod tests {
                     Event::Acquire("wamn-verification".into()),
                     Event::Drop("wamn-verification".into()),
                     Event::Create("wamn-verification".into()),
+                    Event::RevokePublicConnect("wamn-verification".into()),
                     Event::Run(EXACT_URL.into()),
                     Event::Drop("wamn-verification".into()),
                     Event::Release("wamn-verification".into()),
@@ -550,6 +608,7 @@ mod tests {
             Event::Acquire("wamn-verification".into()),
             Event::Drop("wamn-verification".into()),
             Event::Create("wamn-verification".into()),
+            Event::RevokePublicConnect("wamn-verification".into()),
             Event::Run(EXACT_URL.into()),
         ];
         expected.extend(DEV_STAGE_ORDER.map(Event::Stage));
@@ -596,6 +655,7 @@ mod tests {
             Event::Acquire("wamn-verification".into()),
             Event::Drop("wamn-verification".into()),
             Event::Create("wamn-verification".into()),
+            Event::RevokePublicConnect("wamn-verification".into()),
             Event::Run(EXACT_URL.into()),
         ];
         expected.extend(DEV_STAGE_ORDER[3..].iter().copied().map(Event::Stage));
@@ -649,6 +709,30 @@ mod tests {
                 Event::Acquire("wamn-verification".into()),
                 Event::Drop("wamn-verification".into()),
                 Event::Create("wamn-verification".into()),
+                Event::Drop("wamn-verification".into()),
+                Event::Release("wamn-verification".into()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn public_connect_revoke_failure_refuses_before_the_operation_and_cleans_up() {
+        let authority = RecordingAuthority::refusing_revoke_public_connect();
+        let spec = DatabaseSpec::from_url(EXACT_URL).expect("valid database spec");
+
+        let error = run_with_authority(&authority, &spec, |_| async { Ok::<(), ()>(()) })
+            .await
+            .expect_err("PUBLIC CONNECT must be revoked before verification begins");
+
+        assert_eq!(error.kind(), VerificationDatabaseErrorKind::CreateFailed);
+        assert!(error.remedy().contains("revoke PUBLIC CONNECT"));
+        assert_eq!(
+            authority.events(),
+            vec![
+                Event::Acquire("wamn-verification".into()),
+                Event::Drop("wamn-verification".into()),
+                Event::Create("wamn-verification".into()),
+                Event::RevokePublicConnect("wamn-verification".into()),
                 Event::Drop("wamn-verification".into()),
                 Event::Release("wamn-verification".into()),
             ]
@@ -773,6 +857,24 @@ mod tests {
                     .expect("inspect fresh verification database")
                     .get(0);
                 assert_eq!(stale, None);
+                let public_connect: bool = client
+                    .query_one(
+                        "SELECT EXISTS (\
+                           SELECT 1 \
+                           FROM pg_catalog.pg_database AS database \
+                           CROSS JOIN LATERAL pg_catalog.aclexplode(\
+                             COALESCE(database.datacl, pg_catalog.acldefault('d', database.datdba))\
+                           ) AS acl \
+                           WHERE database.datname = pg_catalog.current_database() \
+                             AND acl.grantee = 0 \
+                             AND acl.privilege_type = 'CONNECT'\
+                         )",
+                        &[],
+                    )
+                    .await
+                    .expect("inspect verification database CONNECT floor")
+                    .get(0);
+                assert!(!public_connect);
                 client
                     .batch_execute("CREATE TABLE current_run_evidence (id bigint)")
                     .await
