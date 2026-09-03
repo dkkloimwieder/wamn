@@ -83,6 +83,22 @@ hand-authored application UI
    routes.
 6. **`.5.6` developer TUI** — gated on ruling 9.
 
+## Tracker mapping
+
+The bead ids do not match this document's item labels, and are not renumbered
+to: the titles carry the labels, and renumbering for cosmetics would be churn.
+
+| this document | bead |
+|---|---|
+| `.5.2a` client-contract IR | `wamn-10yt.5.2` |
+| `.5.2b` Rust emitter | `wamn-10yt.5.3` |
+| `.5.3` `wamn-client` | `wamn-10yt.5.4` |
+| `.5.4` primitive controls | `wamn-10yt.5.5` |
+| `.5.5` Receiving operator TUI | `wamn-10yt.5.6` |
+| `.5.6` developer TUI | `wamn-10yt.5.7` (blocked) |
+
+`.5.1`'s TS stash is `wamn-10yt.5.1`, parked per ruling 1.
+
 ## Exit gates (revised)
 
 1. IR: regeneration byte-identical on unchanged release; contract
