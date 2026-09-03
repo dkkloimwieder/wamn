@@ -42,6 +42,8 @@ source "$script_dir/journey-host-values.sh"
 source "$script_dir/journey-host-secrets.sh"
 # shellcheck source=tools/journey-rendered-identity.sh
 source "$script_dir/journey-rendered-identity.sh"
+# shellcheck source=tools/journey-trace.sh
+source "$script_dir/journey-trace.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -1237,40 +1239,6 @@ EOF
     ' "$evidence_dir/first-request-$phase.log" \
       >"$evidence_dir/first-request-$phase.receipt"
     printf '%s\n' "$trace_id" >"$evidence_dir/first-request-$phase.trace-id"
-  }
-
-  trace_is_complete() {
-    local trace_file=$1 expect_executor=$2 expect_statements=$3
-    jq -e --arg expect_executor "$expect_executor" \
-      --argjson expect_statements "$expect_statements" '
-      def spans: [.batches[]?.scopeSpans[]?.spans[]?];
-      def attr($span; $key):
-        ([$span.attributes[]? |
-          select(.key == $key) | .value.stringValue][0] // "");
-      spans as $spans |
-      def count_named($name):
-        [$spans[] | select(.name == $name)] | length;
-      def count_acquired($class):
-        [$spans[] |
-          select(.name == "wamn.postgres.acquire" and
-                 attr(.; "wamn.authority_class") == $class)] | length;
-      count_named("wamn.route.authenticate") == 1 and
-      count_named("wamn.router.resolve") == 1 and
-      count_named("wamn.component.pull") == 1 and
-      count_named("wamn.component.compile") == 1 and
-      count_named("wamn.component.linker_setup") == 1 and
-      count_named("wamn.component.link") == 1 and
-      count_named("wamn.component.instantiate") == 1 and
-      count_acquired("callable-http") == 1 and
-      count_acquired("guest-sql") == 1 and
-      count_named("wamn.postgres") > 0 and
-      count_named("wamn.postgres.statement") == $expect_statements and
-      if $expect_executor == "true" then
-        count_acquired("executor-platform") == 1
-      else
-        count_acquired("executor-platform") == 0
-      end
-    ' >/dev/null "$trace_file"
   }
 
   collect_trace_breakdown() {

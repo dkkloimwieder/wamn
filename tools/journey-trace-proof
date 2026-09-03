@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-trace.sh. No cluster: the function reads one JSON
+# file. Traces are synthesised, so every condition can be violated in isolation
+# -- which is the only way to know each of the twelve is load-bearing.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-trace.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+
+# A complete trace, built from parts so any one part can be removed. The
+# statement count is a parameter of the FIXTURE too, so the proof can show the
+# assertion tracks it rather than accepting whatever it finds.
+trace() { # <out> <statements> <executor-acquires> [omit-span-name] [extra-json]
+  local out=$1 statements=$2 executor=$3 omit=${4:-} extra=${5:-}
+  python3 - "$out" "$statements" "$executor" "$omit" "$extra" <<'PY'
+import json, sys
+out, statements, executor, omit, extra = sys.argv[1:6]
+def span(name, cls=None):
+    s = {"name": name, "attributes": []}
+    if cls:
+        s["attributes"].append({"key": "wamn.authority_class",
+                                "value": {"stringValue": cls}})
+    return s
+spans = []
+for n in ("wamn.route.authenticate", "wamn.router.resolve",
+          "wamn.component.pull", "wamn.component.compile",
+          "wamn.component.linker_setup", "wamn.component.link",
+          "wamn.component.instantiate"):
+    if n != omit:
+        spans.append(span(n))
+if omit != "acquire:callable-http":
+    spans.append(span("wamn.postgres.acquire", "callable-http"))
+if omit != "acquire:guest-sql":
+    spans.append(span("wamn.postgres.acquire", "guest-sql"))
+for _ in range(int(executor)):
+    spans.append(span("wamn.postgres.acquire", "executor-platform"))
+if omit != "wamn.postgres":
+    spans.append(span("wamn.postgres"))
+for _ in range(int(statements)):
+    spans.append(span("wamn.postgres.statement"))
+if extra:
+    spans.append(json.loads(extra))
+json.dump({"batches": [{"scopeSpans": [{"spans": spans}]}]}, open(out, "w"))
+PY
+}
+refused_saying() { local err; err=$(trace_is_complete "$1" "$2" "$3" 2>&1 >/dev/null) && return 1; [[ $err == *"$4"* ]]; }
+
+echo "1. a complete trace, both arms"
+trace "$work/exec.json" 1 1
+trace_is_complete "$work/exec.json" true 1; check "executor arm: complete trace accepted" $?
+trace "$work/noexec.json" 1 0
+trace_is_complete "$work/noexec.json" false 1; check "non-executor arm: complete trace accepted" $?
+
+echo "2. the statement count is the ROUTE'S, and tracks its parameter"
+trace "$work/eight.json" 8 1
+trace_is_complete "$work/eight.json" true 8; check "a route issuing eight statements is accepted when it declares eight" $?
+! trace_is_complete "$work/eight.json" true 1 2>/dev/null
+check "control: eight statements against a declared one is refused" $?
+! trace_is_complete "$work/exec.json" true 8 2>/dev/null
+check "control: one statement against a declared eight is refused" $?
+
+echo "3. the executor arm is asserted in BOTH directions"
+! trace_is_complete "$work/exec.json" false 1 2>/dev/null
+check "control: an unexpected executor acquisition is refused" $?
+! trace_is_complete "$work/noexec.json" true 1 2>/dev/null
+check "control: a missing executor acquisition is refused" $?
+
+echo "4. every platform span is load-bearing"
+for span in wamn.route.authenticate wamn.router.resolve wamn.component.pull \
+            wamn.component.compile wamn.component.linker_setup \
+            wamn.component.link wamn.component.instantiate wamn.postgres; do
+  trace "$work/omit.json" 1 1 "$span"
+  ! trace_is_complete "$work/omit.json" true 1 2>/dev/null
+  check "control: a trace missing $span is refused" $?
+done
+for cls in callable-http guest-sql; do
+  trace "$work/omit.json" 1 1 "acquire:$cls"
+  ! trace_is_complete "$work/omit.json" true 1 2>/dev/null
+  check "control: a trace missing the $cls acquisition is refused" $?
+done
+
+echo "5. counts are exact, not at-least — for EVERY count, not a sample"
+# One duplicate control per span proved only that span's count. Relaxing any
+# OTHER == 1 to >= 1 survived, because nothing duplicated it. A count is only
+# shown exact by duplicating the thing it counts, so every one gets its own.
+for span in wamn.route.authenticate wamn.router.resolve wamn.component.pull \
+            wamn.component.compile wamn.component.linker_setup \
+            wamn.component.link wamn.component.instantiate; do
+  trace "$work/dup.json" 1 1 "" "{\"name\":\"$span\",\"attributes\":[]}"
+  ! trace_is_complete "$work/dup.json" true 1 2>/dev/null
+  check "control: $span appearing twice is refused" $?
+done
+for cls in callable-http guest-sql; do
+  trace "$work/dupacq.json" 1 1 "" \
+    "{\"name\":\"wamn.postgres.acquire\",\"attributes\":[{\"key\":\"wamn.authority_class\",\"value\":{\"stringValue\":\"$cls\"}}]}"
+  ! trace_is_complete "$work/dupacq.json" true 1 2>/dev/null
+  check "control: the $cls authority acquired twice is refused" $?
+done
+trace "$work/dupexec.json" 1 2
+! trace_is_complete "$work/dupexec.json" true 1 2>/dev/null
+check "control: the executor authority acquired twice is refused" $?
+
+echo "6. the arguments themselves"
+refused_saying "$work/absent.json" true 1 "no trace at"
+check "control: a missing trace file is refused" $?
+refused_saying "$work/exec.json" yes 1 "must be true or false"
+check "control: a non-boolean executor expectation is refused" $?
+refused_saying "$work/exec.json" true one "must be a count"
+check "control: a non-numeric statement expectation is refused" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-trace: all properties hold"; else
+  echo "journey-trace: $failures failed"; exit 1; fi
