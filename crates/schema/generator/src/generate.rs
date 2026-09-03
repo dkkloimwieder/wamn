@@ -1588,7 +1588,12 @@ fn custom_operation_error_origin(operation: &CustomOperationDeclaration, literal
             if operation.input.line.is_some() {
                 sources.push("line_count");
             }
-            if operation.canonicalization.is_some() {
+            // Only a command WITH lines can refuse a duplicate one.
+            if operation
+                .canonicalization
+                .as_ref()
+                .is_some_and(|canonical| canonical.duplicate_line.is_some())
+            {
                 sources.push("duplicate_line");
             }
             if operation.input.line.is_some() && operation.canonicalization.is_some() {

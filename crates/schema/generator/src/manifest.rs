@@ -170,8 +170,18 @@ pub struct CustomOperationResultDeclaration {
 pub struct CommandCanonicalization {
     pub payload: CursorPayload,
     pub excluded_fields: Vec<String>,
-    pub line_order: CommandLineOrder,
-    pub duplicate_line: InputRefusal,
+    /// How a LINE SET is ordered before hashing, when the command has one.
+    ///
+    /// Absent means the command carries no lines, and canonicalization covers
+    /// the top-level fields alone under the shared canonical-JSON authority.
+    /// There is deliberately no enum value meaning "no ordering": that would
+    /// be a null wearing a name, and every command would have to pick one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_order: Option<CommandLineOrder>,
+    /// What a repeated line is refused with. Absent with `line_order`, for the
+    /// same reason: a command with no lines cannot repeat one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duplicate_line: Option<InputRefusal>,
     pub uuid: UuidSpelling,
     pub timestamptz: TimestamptzSpelling,
     pub numeric: NumericSpelling,
@@ -855,23 +865,45 @@ fn validate_command_canonicalization(
     operation: &CustomOperationDeclaration,
     canonicalization: &CommandCanonicalization,
 ) -> Result<(), GenerateError> {
-    let has_ordering_key = operation.input.fields.iter().any(|field| {
-        field.path.ends_with("line[].purchase_order_line_id")
-            && field.ty == wamn_schema_introspection::ir::ColumnType::Uuid
-            && !field.nullable
-    });
-    let has_positive_quantity = operation.input.fields.iter().any(|field| {
-        field.path.ends_with("line[].quantity")
-            && field.ty == wamn_schema_introspection::ir::ColumnType::Numeric
-            && !field.nullable
-    });
-    if operation.input.line.is_none() || !has_ordering_key || !has_positive_quantity {
+    // THE INPUT DECIDES, not a separate flag: a command with a line set
+    // declares how its lines are ordered and what a repeat is refused with,
+    // and a command without one declares neither. Tying the two together this
+    // way is what keeps a lineless command from having to name an ordering
+    // over lines it does not have.
+    let declares_lines = canonicalization.line_order.is_some();
+    if declares_lines != canonicalization.duplicate_line.is_some() {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation_name} line_order and duplicate_line must be declared together"),
+        ));
+    }
+    if declares_lines != operation.input.line.is_some() {
         return Err(GenerateError::new(
             GenerateErrorKind::InvalidOperation,
             format!(
-                "{operation_name} canonical line profile requires non-null UUID purchase_order_line_id and numeric quantity inputs"
+                "{operation_name} declares a canonical line profile without a line input, or a line input without one"
             ),
         ));
+    }
+    if declares_lines {
+        let has_ordering_key = operation.input.fields.iter().any(|field| {
+            field.path.ends_with("line[].purchase_order_line_id")
+                && field.ty == wamn_schema_introspection::ir::ColumnType::Uuid
+                && !field.nullable
+        });
+        let has_positive_quantity = operation.input.fields.iter().any(|field| {
+            field.path.ends_with("line[].quantity")
+                && field.ty == wamn_schema_introspection::ir::ColumnType::Numeric
+                && !field.nullable
+        });
+        if !has_ordering_key || !has_positive_quantity {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation_name} canonical line profile requires non-null UUID purchase_order_line_id and numeric quantity inputs"
+                ),
+            ));
+        }
     }
     let input_paths = operation
         .input
