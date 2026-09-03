@@ -1,0 +1,1 @@
+{"fields":[{"enum_values":null,"name":"id","nullable":false,"server_owned":true,"type":"uuid"},{"enum_values":null,"name":"product_code","nullable":false,"server_owned":false,"type":"text"}],"model":"product","owner":"wamn_wms","schema":"wms","table":"product"}

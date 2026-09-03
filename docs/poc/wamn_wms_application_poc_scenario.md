@@ -1,6 +1,8 @@
 # WAMN WMS — POC Scenario (app 1 of the portfolio)
 
-Status: **DRAFT FOR OWNER REVIEW — no code written against this.** Structure
+Status: **RULED AND APPROVED TO BUILD, 2026-09-03.** All five §10 questions
+answered; the answers are folded in below and §10 is kept as the record of what
+was asked and decided. Structure
 follows `wamn_receiving_layered_application_poc_scenario.md`. Scope is fixed by
 `poc-application-portfolio.md` row 1 and its build-order exit gate; this
 document does not widen it.
@@ -42,12 +44,8 @@ Landed and reused as-is:
 | `wasmcloud:blobstore@0.1.0` capability | `wamn_blobstore` plugin | the seam, now complete for released deployments |
 | Client-contract IR, Rust emitter, `wamn-client`, TUI primitives | slice v | an operator surface, if one is wanted |
 
-**Open question 1 — is a WMS operator TUI in scope?** The portfolio's gate
-names a wiring, a route and a contention test; it names no screen. Slice v's
-primitives would make one cheap, but "cheap" is not a reason. Recommend: NO
-screen in this app; the gate is served by the route and the contention test,
-and a second TUI is exactly the kind of thing to defer until a second app
-demands the same shape.
+**RULED — no WMS operator TUI.** The gate names a wiring and a route, not a
+screen. Slice v's primitives would make one cheap, and "cheap" is not a reason.
 
 ## 2. Simplest WMS base
 
@@ -81,16 +79,12 @@ test meaningful rather than a single-row update in disguise.
 `inventory_movement` is the append-only history every command writes, and the
 source the aggregates read.
 
-**Open question 2 — does WMS own `location` and `product`, or reuse
-Receiving's?** The portfolio says "seed fixtures: products, locations … shared
-across apps as base package data", which reads as sharing. But sharing a table
-across packages is a cross-package ownership question the layering model has
-not been asked before: Receiving owns `receiving.location`, and a WMS package
-reading it would be a base dependency of a shape only app 3 (traceability) was
-supposed to introduce. Recommend: **WMS owns its own `wms.location` and
-`wms.product`** for this app, and cross-package sharing waits for app 3 where
-it is the point rather than a side effect. This is the single largest scoping
-decision in the document.
+**RULED — WMS owns `wms.location` and `wms.product`.** Sharing a table across
+packages is a layering question app 3 (traceability) introduces DELIBERATELY,
+not one this app backs into as a side effect. The portfolio's "shared across
+apps as base package data" is corrected accordingly: **fixtures are SHAPES,
+not tables.** Every app authors its own reference tables; what they share is
+the code vocabulary the simulator emits.
 
 ### Base application operations
 
@@ -164,9 +158,9 @@ Receiving's `purchase_order.query` filters on two fields and sorts on three.
 **Open question 3 — sorting on `quantity` crosses a table.** Quantity lives in
 `pallet_quantity`, not `pallet`. A keyset sort over a joined column needs the
 sort key in the tie-broken ordering, and the generator's authored-SQL variant
-mechanism has only ever sorted own-table columns. Recommend: **drop `quantity`
-from the sort vocabulary for this app** unless measurement shows the generator
-already supports it. Naming it here rather than discovering it mid-build.
+mechanism has only ever sorted own-table columns. **RULED — dropped.** A
+join-crossing sort is a generator expansion in its own right, not a WMS side
+quest.
 
 Note also the constraint measured in `wamn-10yt.5.6`: a model `query` must be
 `ResultClass::Page`, and `Page` mandates a keyset cursor on `created_at ASC`
@@ -202,9 +196,18 @@ command's transaction — so the wiring's later node needs a value the first nod
 produced. That is a normal wiring data flow, but it means the key is only
 knowable after the command commits, and a retry of the WHOLE wiring re-runs the
 command under the same idempotency key and must observe the same movement id.
-Recommend confirming that the idempotent replay path returns the ORIGINAL
-movement id rather than a fresh one; if it does not, the label key is not
-stable and the rule is violated in a way no unit test would catch.
+**RULED — already law, and the schema is how it is kept.** Idempotent replay
+returns the IMMUTABLE ORIGINAL RESULT (the `record_receipt` ruling), so
+`inventory_movement.id` is stable under retry BY CONTRACT rather than by
+convention. Receiving implements it in the schema and WMS copies the shape
+exactly: `inventory_move_command` is keyed by `idempotency_key` and holds
+`movement_id uuid NOT NULL DEFAULT gen_random_uuid()` as a UNIQUE column, so a
+replay finds the claim row and returns the id it already generated. A command
+returning a FRESH id on replay is a defect in that command, never a reason to
+choose a different key.
+
+The contention gate asserts it: a replayed command returns the same movement
+id and the label object count stays one.
 
 ## 6. Aggregates
 
@@ -271,16 +274,18 @@ label_template_authoring                (three templates, demand-gated)
 cycle_count / putaway_strategy / wave_picking
 ```
 
-## 10. Questions for the owner, consolidated
+## 10. What was asked, and what was ruled
 
-1. **Operator TUI in this app?** Recommend no.
-2. **Does WMS own `location`/`product`, or share Receiving's?** Recommend own.
-   Largest scoping decision here.
-3. **Sort on `quantity` across the join?** Recommend drop unless measured
-   supported.
-4. **Is the idempotent replay of `inventory.move` guaranteed to return the
-   ORIGINAL movement id?** If not, the label's deterministic key is unstable
-   and the at-least-once rule is violated silently.
-5. **Is `inventory.aggregate` a projection or does it want event-sourced
-   rollups?** Recommend projection for this app; rollups are app 2's problem
-   and building them here would be app-2 machinery inside app 1.
+Kept as the record. All five were decided 2026-09-03.
+
+| # | Question | Ruling |
+|---|---|---|
+| 1 | Operator TUI in this app? | **No.** The gate names a wiring and a route. |
+| 2 | Own `location`/`product`, or share Receiving's? | **Own.** Cross-package sharing is app 3's deliberate introduction. |
+| 3 | Sort on `quantity` across the join? | **Dropped.** A join-crossing sort is a generator expansion, not a WMS side quest. |
+| 4 | Does idempotent replay return the ORIGINAL movement id? | **Yes, by contract** — the immutable-original-result law, kept by the command table's UNIQUE pre-generated id. Asserted in the contention gate. |
+| 5 | Aggregates: projection or event-sourced rollups? | **Projection.** Rollups are app 2's problem; building them here is app-2 machinery inside app 1. |
+
+Three of the five were derivable from existing law rather than novel forks —
+Q4 from the idempotency ruling, and Q1/Q3/Q5 from R-C. Recorded so the next
+scenario escalates less.

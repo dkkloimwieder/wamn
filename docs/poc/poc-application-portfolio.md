@@ -40,8 +40,13 @@ Apps 5–8 build only when their named capability has a consumer.
   rate, duplicates, reordering, faults. Every app's driver is a profile.
 - **Mock external system**: one HTTP server profile-driven (ERP, MES,
   label printer) with injectable latency/failure.
-- **Seed fixtures**: products, locations, work orders, assets, users —
-  shared across apps as base package data.
+- **Seed fixtures**: products, locations, work orders, assets, users — shared
+  across apps as SHAPES, not tables (owner ruling 2026-09-03, correcting this
+  line's original "shared across apps as base package data"). Every app owns
+  its own reference tables; what they share is the code vocabulary the
+  simulator emits (`SKU-00000`, `LOC-0000`, `PAL-000000`). Sharing a TABLE
+  across packages is a layering question app 3 introduces deliberately, and no
+  earlier app backs into it.
 
 ## Rules
 

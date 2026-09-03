@@ -1,0 +1,236 @@
+{
+  "package": {
+    "id": "wamn_wms",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "wms_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "inventory_movement": {
+      "schema": "wms",
+      "table": "inventory_movement",
+      "owner": "wamn_wms",
+      "server_owned_fields": [
+        "id"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    },
+    "location": {
+      "schema": "wms",
+      "table": "location",
+      "owner": "wamn_wms",
+      "server_owned_fields": [
+        "id"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    },
+    "pallet": {
+      "schema": "wms",
+      "table": "pallet",
+      "owner": "wamn_wms",
+      "server_owned_fields": [
+        "id",
+        "row_version",
+        "created_at",
+        "updated_at"
+      ],
+      "enum_fields": {
+        "status": [
+          "available",
+          "held",
+          "consumed"
+        ]
+      },
+      "operations": {
+        "get": {
+          "permission": "pallet.get",
+          "error_details": {
+            "invalid_input": {
+              "required": [
+                "field"
+              ]
+            },
+            "not_found": {
+              "required": [
+                "field",
+                "id"
+              ]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": [
+                "operation"
+              ]
+            },
+            "internal_error": {}
+          },
+          "result": "one"
+        },
+        "query": {
+          "permission": "pallet.query",
+          "error_details": {
+            "invalid_input": {
+              "required": [
+                "field"
+              ],
+              "optional": [
+                "minimum",
+                "maximum",
+                "observed"
+              ]
+            },
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {
+              "required": [
+                "operation"
+              ]
+            },
+            "internal_error": {}
+          },
+          "authored_sql": {
+            "default": "query/open_pallet.sql",
+            "variants": [
+              {
+                "field": "pallet_code",
+                "direction": "ascending",
+                "path": "query/open_pallet_by_pallet_code_ascending.sql"
+              },
+              {
+                "field": "pallet_code",
+                "direction": "descending",
+                "path": "query/open_pallet_by_pallet_code_descending.sql"
+              },
+              {
+                "field": "location_id",
+                "direction": "ascending",
+                "path": "query/open_pallet_by_location_id_ascending.sql"
+              },
+              {
+                "field": "location_id",
+                "direction": "descending",
+                "path": "query/open_pallet_by_location_id_descending.sql"
+              },
+              {
+                "field": "updated_at",
+                "direction": "ascending",
+                "path": "query/open_pallet_by_updated_at_ascending.sql"
+              },
+              {
+                "field": "updated_at",
+                "direction": "descending",
+                "path": "query/open_pallet_by_updated_at_descending.sql"
+              },
+              {
+                "field": "created_at",
+                "direction": "ascending",
+                "path": "query/open_pallet.sql"
+              },
+              {
+                "field": "created_at",
+                "direction": "descending",
+                "path": "query/open_pallet_by_created_at_descending.sql"
+              }
+            ]
+          },
+          "filters": [
+            {
+              "field": "status",
+              "binding": "json_array"
+            },
+            {
+              "field": "location_id",
+              "binding": "json_array"
+            },
+            {
+              "field": "pallet_code",
+              "binding": "json_array"
+            }
+          ],
+          "sort": {
+            "fields": [
+              "pallet_code",
+              "location_id",
+              "updated_at",
+              "created_at"
+            ],
+            "directions": [
+              "ascending",
+              "descending"
+            ],
+            "max_fields": 1
+          },
+          "pagination": {
+            "kind": "keyset",
+            "cursor": {
+              "version": 1,
+              "payload": "canonical_compact_json",
+              "encoding": "base64url_unpadded",
+              "opaque": true,
+              "invalid": "invalid_input"
+            },
+            "default_sort": {
+              "field": "created_at",
+              "direction": "ascending"
+            },
+            "tie_breaker": {
+              "field": "id"
+            }
+          },
+          "limit": {
+            "default": 100,
+            "minimum": 1,
+            "maximum": 100,
+            "invalid": "invalid_input"
+          },
+          "result": "page"
+        }
+      }
+    },
+    "pallet_quantity": {
+      "schema": "wms",
+      "table": "pallet_quantity",
+      "owner": "wamn_wms",
+      "server_owned_fields": [
+        "id"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    },
+    "product": {
+      "schema": "wms",
+      "table": "product",
+      "owner": "wamn_wms",
+      "server_owned_fields": [
+        "id"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    }
+  },
+  "internal_relations": {
+    "inventory_move_command": {
+      "schema": "wms",
+      "table": "inventory_move_command",
+      "cdc": "excluded"
+    }
+  },
+  "custom_operations": {},
+  "connections": {
+    "postgres": {
+      "interface": "wamn:postgres@0.1.0"
+    }
+  },
+  "components": {
+    "wms": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

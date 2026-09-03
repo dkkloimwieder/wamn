@@ -1,0 +1,1 @@
+{"manifest":"wamn.json#/models/pallet_quantity","model":"pallet_quantity","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://wms.pallet_quantity","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"statement_digest_visibility":"crate"}}
