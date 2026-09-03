@@ -34,6 +34,10 @@ done
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
+# The shared journey harness. Each function it defines reads only what it is
+# handed; see tools/journey-host-values.sh for the contract.
+# shellcheck source=tools/journey-host-values.sh
+source "$script_dir/journey-host-values.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -855,149 +859,50 @@ run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
 # What the checked-in templates say TODAY. An anchor that hardcodes the
 # template's current text is fused to it, and a template that drifts makes the
 # match silently miss. Naming the template's own values here is what lets the
-# END rule below turn that miss into a failure.
+# harness turn that miss into a failure.
 host_template_tag=dev
 host_template_replicas=3
 
 # Two distinct facts that used to share one name. The RENDER input is what Helm
 # is asked to deploy; the EXPECTATION is what the deployment must show
 # afterwards. They diverge in the measure-startup arm, which deploys zero and
-# then scales to one outside Helm -- so one name silently meant two things, and
-# lifting the render would have disconnected the reassignment from it by
-# accident rather than by design.
+# then scales to one outside Helm. The renderer is handed the first and never
+# sees the second, which is what makes the split hold after the lift.
 host_render_replicas=3
 if [[ "$measure_startup" == true ]]; then
   host_render_replicas=0
 fi
 host_replicas=$host_render_replicas
 
-host_base_anchor_map=$(printf '%s\n' \
-  "tag: ${host_template_tag}=tag: ${host_tag}" \
-  "namespace: ${system_namespace}=namespace: ${namespace}" \
-  "replicas: ${host_template_replicas}=replicas: ${host_render_replicas}")
-host_base=$work_dir/host-base.yaml
-awk -v anchor_map="$host_base_anchor_map" '
-  BEGIN {
-    rows = split(anchor_map, row, "\n")
-    for (i = 1; i <= rows; i++) {
-      if (row[i] == "") continue
-      cut = index(row[i], "=")
-      replacement[substr(row[i], 1, cut - 1)] = substr(row[i], cut + 1)
-    }
-  }
-  {
-    # Match the line CONTENT and re-emit at the file own indentation. The
-    # anchors used to carry the template exact leading spaces, which coupled
-    # the harness to a file it does not own: re-indenting the template made
-    # every match miss at once. Content is what the anchor means; the indent
-    # belongs to the template.
-    body = $0
-    sub(/^[ \t]+/, "", body)
-    if (body in replacement) {
-      indent = substr($0, 1, length($0) - length(body))
-      print indent replacement[body]
-      fired[body]++
-      next
-    }
-  }
-  { print }
-  END {
-    # EXACTLY once, not at least once. Matching on content rather than on the
-    # full indented line widens what an anchor can reach, so the count is what
-    # keeps it honest: a never-fired anchor is a drifted template, and a
-    # twice-fired one is an anchor that has started matching a second place in
-    # the tree. Both are silent corruption of the rendered values otherwise.
-    for (anchor in replacement) {
-      if (fired[anchor] == 1) continue
-      printf "values overlay anchor matched %d times, want 1: [%s]\n", \
-        fired[anchor], anchor > "/dev/stderr"
-      wrong = 1
-    }
-    if (wrong) exit 1
-  }
-' "$repo_root/deploy/platform/values-host-default.yaml" >"$host_base"
-# Every secret anchor DERIVED, never spelled out. The generating rule is
-# workload_secret_name: wamn-<family>-<org>--<project>--<env>. A second
-# application declares its own families and identity and gets its own anchors;
-# nothing here reads as Receiving. The App family is separate because its
-# anchor is the platform-fixed wamn-host-db, not a derived name.
-host_overlay_anchor_map=$(
-  printf '%s\n' \
-    "namespace: ${system_namespace}=namespace: ${namespace}" \
-    "replicas: ${host_template_replicas}=replicas: ${host_render_replicas}" \
-    "name: ${app_guest_secret_anchor}=name: ${guest_secret_name}"
-  for family in "${app_role_families[@]}"; do
-    printf '%s\n' "name: wamn-${family}-${app_org}--${app_project}--${app_environment}=name: ${host_secret_name_by_family[$family]}"
-  done
+# Everything the shared renderer reads, and nothing else. It reaches no global
+# of this journey's; a key it needs and does not get is an error, not an empty
+# string.
+declare -A host_values_spec=(
+  [host_base_template]=$repo_root/deploy/platform/values-host-default.yaml
+  [host_values_overlay]=$repo_root/$app_host_values_overlay
+  [template_tag]=$host_template_tag
+  [template_replicas]=$host_template_replicas
+  [template_namespace]=$system_namespace
+  [org]=$app_org
+  [project]=$app_project
+  [environment]=$app_environment
+  [role_families]=${app_role_families[*]}
+  [guest_secret_anchor]=$app_guest_secret_anchor
+  [namespace]=$namespace
+  [host_tag]=$host_tag
+  [component_artifact_base]=$component_artifact_base
+  [release_artifact_base]=$release_artifact_base
+  [manifest_digest]=$manifest_digest
+  [nats_url]=$nats_url
+  [guest_secret_name]=$guest_secret_name
 )
-host_overlay=$work_dir/host-receiving.yaml
-awk -v anchor_map="$host_overlay_anchor_map" \
-    -v component_base="$component_artifact_base" \
-    -v release_base="$release_artifact_base" -v digest="$manifest_digest" \
-    -v nats_url="$nats_url" '
-  BEGIN {
-    rows = split(anchor_map, row, "\n")
-    for (i = 1; i <= rows; i++) {
-      if (row[i] == "") continue
-      cut = index(row[i], "=")
-      replacement[substr(row[i], 1, cut - 1)] = substr(row[i], cut + 1)
-    }
-  }
-  {
-    # Match the line CONTENT and re-emit at the file own indentation. The
-    # anchors used to carry the template exact leading spaces, which coupled
-    # the harness to a file it does not own: re-indenting the template made
-    # every match miss at once. Content is what the anchor means; the indent
-    # belongs to the template.
-    body = $0
-    sub(/^[ \t]+/, "", body)
-    if (body in replacement) {
-      indent = substr($0, 1, length($0) - length(body))
-      print indent replacement[body]
-      fired[body]++
-      next
-    }
-  }
-  /name: WAMN_WASMTIME_CACHE_DIR/ {
-    print
-    print "        - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector.wamn-system.svc.cluster.local:4317 }"
-    print "        - { name: OTEL_BSP_SCHEDULE_DELAY, value: \"1\" }"
-    print "        - { name: OTEL_BSP_MAX_EXPORT_BATCH_SIZE, value: \"1\" }"
-    next
-  }
-  /^        - name: WAMN_EVT_NATS_URL$/ {
-    print
-    getline
-    print "          value: " nats_url
-    next
-  }
-  /^          value: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/components$/ {
-    print "          value: " component_base; next
-  }
-  /^        - "--release-artifact-base=/ {
-    print "        - \"--release-artifact-base=" release_base "\""; next
-  }
-  /^        - "--release-manifest-digest=/ {
-    print "        - \"--release-manifest-digest=" digest "\""
-    print "        - \"--allow-insecure-registries\""
-    next
-  }
-  { print }
-  END {
-    # EXACTLY once, not at least once. Matching on content rather than on the
-    # full indented line widens what an anchor can reach, so the count is what
-    # keeps it honest: a never-fired anchor is a drifted template, and a
-    # twice-fired one is an anchor that has started matching a second place in
-    # the tree. Both are silent corruption of the rendered values otherwise.
-    for (anchor in replacement) {
-      if (fired[anchor] == 1) continue
-      printf "values overlay anchor matched %d times, want 1: [%s]\n", \
-        fired[anchor], anchor > "/dev/stderr"
-      wrong = 1
-    }
-    if (wrong) exit 1
-  }
-' "$repo_root/$app_host_values_overlay" >"$host_overlay"
+for family in "${app_role_families[@]}"; do
+  host_values_spec[secret_name:$family]=${host_secret_name_by_family[$family]}
+done
+render_host_values host_values_spec "$work_dir" "$host_render_replicas"
+host_base=$work_dir/host-base.yaml
+host_overlay=$work_dir/host-overlay.yaml
+
 for expected in "$namespace" "$component_artifact_base" "$release_artifact_base" \
     "$manifest_digest" "$guest_secret_name" "${host_secret_name_by_family[@]}"; do
   grep -F -- "$expected" "$host_overlay" >/dev/null || {
