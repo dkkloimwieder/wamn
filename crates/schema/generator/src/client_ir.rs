@@ -1184,6 +1184,86 @@ mod tests {
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
+    /// Build an attachment map from the shipped one with the first
+    /// attachment's route rewritten. SYNTHETIC by necessity: no shipped route
+    /// is parameterized and every shipped attachment is `http`, so the two
+    /// properties below have no fixture and would otherwise go unproven —
+    /// mutation testing confirmed both survived without this.
+    fn attachments_with_first(
+        directory: &str,
+        edit: impl FnOnce(&mut Value),
+    ) -> std::path::PathBuf {
+        let scratch = std::env::temp_dir().join(directory);
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch");
+        let file = scratch.join("attachments.json");
+
+        let mut published: BTreeMap<String, Value> =
+            serde_json::from_value(read_json(&attachments("receiving")).expect("read"))
+                .expect("decode");
+        let first = published.keys().next().cloned().expect("not empty");
+        edit(published.get_mut(&first).expect("present"));
+        std::fs::write(&file, serde_json::to_vec(&published).expect("serialize")).expect("write");
+        file
+    }
+
+    /// A parameter name survives into the IR.
+    ///
+    /// This is the property that makes the route usable: a client substitutes
+    /// BY NAME, so a template collapsed to the collision form
+    /// (`canonical_http_route_template`) would leave it nothing to substitute
+    /// into. No shipped route is parameterized, so the case is synthetic —
+    /// but the platform's own tests author exactly this shape
+    /// (`services/ctl/src/publish_release.rs:2496` sets `/receipt/{id}` on a
+    /// serving attachment), so it is a real release shape, not an invented one.
+    #[test]
+    fn a_parameterized_template_keeps_its_parameter_name() {
+        let file = attachments_with_first("wamn-client-ir-parameterized", |attachment| {
+            attachment["definition"]["route"]["path"] =
+                Value::String("/purchase_order/{id}".to_owned());
+        });
+        let ir = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
+            .expect("a parameterized route projects");
+        let templates: Vec<&str> = ir
+            .models
+            .iter()
+            .flat_map(|model| &model.operations)
+            .filter_map(|operation| operation.route.as_ref())
+            .map(|route| route.template.as_str())
+            .collect();
+        assert!(
+            templates.contains(&"/purchase_order/{id}"),
+            "the parameter name was collapsed away: {templates:?}"
+        );
+        let _ = std::fs::remove_dir_all(file.parent().expect("scratch"));
+    }
+
+    /// Only `http` publishes a route a package client can call.
+    ///
+    /// `internal` carries none by construction, and `studio` is the authoring
+    /// surface — a generated package client that acquired a studio path would
+    /// call a control-plane route it was never generated for. Every shipped
+    /// attachment is `http`, so this too is synthetic.
+    #[test]
+    fn a_studio_attachment_publishes_no_client_route() {
+        let file = attachments_with_first("wamn-client-ir-studio", |attachment| {
+            attachment["kind"] = Value::String("studio".to_owned());
+        });
+        let ir = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
+            .expect("a studio attachment projects");
+        let routed = ir
+            .models
+            .iter()
+            .flat_map(|model| &model.operations)
+            .filter(|operation| operation.route.is_some())
+            .count();
+        assert_eq!(
+            routed, 5,
+            "a studio attachment contributed a client route; only the five http ones may"
+        );
+        let _ = std::fs::remove_dir_all(file.parent().expect("scratch"));
+    }
+
     /// An un-normalized route refuses rather than reaching a client. This
     /// layer reads the AUTHORED bytes, which publication normalizes only on a
     /// downstream copy, so a lowercase method would otherwise generate a
