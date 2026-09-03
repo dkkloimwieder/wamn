@@ -83,6 +83,7 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "materializer",
         "components/execution/materializer/src/main.rs",
     ),
+    ("blob-put", "components/execution/blob-put/src/lib.rs"),
     (
         "wamn-postgres-statements",
         "components/data/postgres-statements/src/lib.rs",
