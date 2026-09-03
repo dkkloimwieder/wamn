@@ -12,6 +12,7 @@ use tokio::process::Command;
 
 use super::config::{DevConfig, parse_config, preflight_config, resolve_dev_packages};
 use super::coordinator::{ProductionDevStageError, ProductionDevStageRunner};
+use super::read::DevReadHandle;
 use super::watch::{FilesystemInvalidationSource, GitSource};
 use super::{
     DevInvalidation, DevInvalidationSource, DevRunReceipt, DevStage, DevWatchObserver,
@@ -35,6 +36,17 @@ pub struct DevCommandArgs {
     /// Keep the disposable verification session open and rerun affected suffixes.
     #[arg(long)]
     watch: bool,
+}
+
+impl DevCommandArgs {
+    /// Construct the same strict request used by the CLI parser.
+    pub fn new(config: PathBuf, overlay_root: PathBuf, watch: bool) -> Self {
+        Self {
+            config,
+            overlay_root,
+            watch,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -113,6 +125,12 @@ impl DevWatchObserver for CommandObserver {
     }
 }
 
+struct SilentObserver;
+
+impl DevWatchObserver for SilentObserver {
+    fn completed(&mut self, _outcome: DevWatchOutcome) {}
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BuildWatchRoots {
@@ -120,33 +138,88 @@ struct BuildWatchRoots {
     workspace_roots: Vec<PathBuf>,
 }
 
-/// Execute the product development command through the shared stage engine.
-pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
-    let bytes = fs::read(&args.config)
-        .with_context(|| format!("read development config {}", args.config.display()))?;
-    let config = parse_config(&bytes).context("validate development config")?;
-    preflight_config(&config)
-        .await
-        .context("reach configured development endpoints")?;
+/// Prepared development-loop engine shared by CLI and console clients.
+#[derive(Debug)]
+pub struct DevSession {
+    config: DevConfig,
+    overlay_root: PathBuf,
+    watch: bool,
+    runner: ProductionDevStageRunner,
+    git: GitSource,
+}
 
-    let mut git = GitSource::discover(&args.overlay_root)
-        .await
-        .context("discover the originating Git worktree")?;
-    let mut runner =
-        ProductionDevStageRunner::new(config.clone(), args.overlay_root.clone(), git.clone())
-            .context("construct the production development coordinator")?;
+impl DevSession {
+    /// Validate every input and connect the read-only observation sources.
+    pub async fn prepare(args: DevCommandArgs) -> anyhow::Result<Self> {
+        let bytes = fs::read(&args.config)
+            .with_context(|| format!("read development config {}", args.config.display()))?;
+        let config = parse_config(&bytes).context("validate development config")?;
+        preflight_config(&config)
+            .await
+            .context("reach configured development endpoints")?;
 
-    let result = if args.watch {
-        run_watch_command(&config, &args.overlay_root, &mut runner, &mut git)
+        let git = GitSource::discover(&args.overlay_root)
+            .await
+            .context("discover the originating Git worktree")?;
+        let mut runner =
+            ProductionDevStageRunner::new(config.clone(), args.overlay_root.clone(), git.clone())
+                .context("construct the production development coordinator")?;
+        runner
+            .start_observations()
+            .await
+            .context("start development observation readers")?;
+
+        Ok(Self {
+            config,
+            overlay_root: args.overlay_root,
+            watch: args.watch,
+            runner,
+            git,
+        })
+    }
+
+    /// Clone the sole public state seam before running this session.
+    pub fn read_handle(&self) -> DevReadHandle {
+        self.runner.read_handle()
+    }
+
+    /// Run without terminal output; state remains available through the handle.
+    pub async fn run(mut self) -> anyhow::Result<Option<DevRunReceipt>> {
+        self.run_with_observer(&mut SilentObserver).await
+    }
+
+    async fn run_with_observer<O>(
+        &mut self,
+        observer: &mut O,
+    ) -> anyhow::Result<Option<DevRunReceipt>>
+    where
+        O: DevWatchObserver + Send,
+    {
+        let result = if self.watch {
+            run_watch_command(
+                &self.config,
+                &self.overlay_root,
+                &mut self.runner,
+                &mut self.git,
+                observer,
+            )
             .await
             .map(|()| None)
-    } else {
-        run_once_command(&config, &mut runner, &mut git)
-            .await
-            .map(Some)
-    };
-    let cleanup = runner.shutdown().await;
-    if let Some(receipt) = finish_with_cleanup(result, cleanup)? {
+        } else {
+            run_once_command(&self.config, &mut self.runner, &mut self.git)
+                .await
+                .map(Some)
+        };
+        let cleanup = self.runner.shutdown().await;
+        finish_with_cleanup(result, cleanup)
+    }
+}
+
+/// Execute the product development command through the shared stage engine.
+pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
+    let mut session = DevSession::prepare(args).await?;
+    let mut observer = CommandObserver;
+    if let Some(receipt) = session.run_with_observer(&mut observer).await? {
         print_receipt("run", &receipt);
     }
     Ok(())
@@ -168,6 +241,7 @@ async fn run_watch_command(
     overlay_root: &std::path::Path,
     runner: &mut ProductionDevStageRunner,
     git: &mut GitSource,
+    observer: &mut (impl DevWatchObserver + Send),
 ) -> anyhow::Result<()> {
     let packages = resolve_dev_packages(config, overlay_root)
         .context("resolve the manifest-declared package closure")?;
@@ -194,8 +268,7 @@ async fn run_watch_command(
         }),
         source: filesystem,
     };
-    let mut observer = CommandObserver;
-    run_watch_with_source_state_provider(config, runner, &mut source, &mut observer, git)
+    run_watch_with_source_state_provider(config, runner, &mut source, observer, git)
         .await
         .context("own the disposable verification database")??;
     Ok(())

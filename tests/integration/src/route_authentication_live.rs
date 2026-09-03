@@ -1152,6 +1152,8 @@ struct DevJourneyInputs {
     wamn_binary: PathBuf,
     host_binary: PathBuf,
     nats_url: String,
+    tempo_query_url: String,
+    otel_exporter_otlp_endpoint: String,
     flow_http_workload_image: String,
     component_artifact_base: String,
     release_artifact_base: String,
@@ -1165,6 +1167,10 @@ impl DevJourneyInputs {
             wamn_binary: required_journey_path("WAMN_RECEIVING_DEV_BIN")?,
             host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
             nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
+            tempo_query_url: required_journey("WAMN_RECEIVING_DEV_TEMPO_QUERY_URL")?,
+            otel_exporter_otlp_endpoint: required_journey(
+                "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
+            )?,
             flow_http_workload_image: required_journey(
                 "WAMN_RECEIVING_DEV_FLOW_HTTP_WORKLOAD_IMAGE",
             )?,
@@ -1940,6 +1946,8 @@ fn write_dev_config(
         "event_materializer_database_url": credentials.event_materializer.as_str(),
         "scheduler_nats_url": inputs.nats_url.as_str(),
         "event_nats_url": inputs.nats_url.as_str(),
+        "tempo_query_url": inputs.tempo_query_url.as_str(),
+        "otel_exporter_otlp_endpoint": inputs.otel_exporter_otlp_endpoint.as_str(),
         "component_artifact_base": inputs.component_artifact_base.as_str(),
         "release_artifact_base": inputs.release_artifact_base.as_str(),
         "registry_auth_file": &inputs.registry_auth_file,

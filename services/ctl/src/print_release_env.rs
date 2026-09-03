@@ -67,6 +67,15 @@ pub struct ReleaseCarrier {
     pub manifest_digest: ManifestDigest,
 }
 
+/// Exact immutable release snapshot and its serving carrier.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReleaseSnapshot {
+    /// Canonical release document read from the snapshot row.
+    pub manifest: ServingManifest,
+    /// Carrier derived from those exact canonical bytes.
+    pub carrier: ReleaseCarrier,
+}
+
 /// Read and derive the exact carrier for one minted release.
 pub async fn lookup_release_carrier(
     database_url: &str,
@@ -74,6 +83,20 @@ pub async fn lookup_release_carrier(
     effective_release_id: u32,
     artifact_base: &str,
 ) -> anyhow::Result<ReleaseCarrier> {
+    Ok(
+        lookup_release_snapshot(database_url, tenant, effective_release_id, artifact_base)
+            .await?
+            .carrier,
+    )
+}
+
+/// Read one canonical release snapshot and derive its carrier from the same bytes.
+pub async fn lookup_release_snapshot(
+    database_url: &str,
+    tenant: &str,
+    effective_release_id: u32,
+    artifact_base: &str,
+) -> anyhow::Result<ReleaseSnapshot> {
     let effective_release_id = i32::try_from(effective_release_id)
         .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
@@ -97,12 +120,15 @@ pub async fn lookup_release_carrier(
     };
     // The digest is re-derived from the bytes rather than read from a second
     // column, exactly as the publisher does: one carrier of release identity.
-    let (_, manifest_digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)
+    let (manifest, manifest_digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)
         .context("the frozen release snapshot is not a canonical format-3 manifest")?;
 
-    Ok(ReleaseCarrier {
-        artifact_base: artifact_base.to_owned(),
-        manifest_digest,
+    Ok(ReleaseSnapshot {
+        manifest,
+        carrier: ReleaseCarrier {
+            artifact_base: artifact_base.to_owned(),
+            manifest_digest,
+        },
     })
 }
 

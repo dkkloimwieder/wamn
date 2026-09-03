@@ -402,6 +402,7 @@ fn component_invocation_span(
         "wamn.component.invoke",
         wamn.tenant = %request.tenant_id,
         wamn.project = %project,
+        wamn.environment = %request.environment,
         wamn.wiring_id = %request.wiring_id,
         wamn.wiring_version = wiring_version,
         wamn.component_digest = %component_digest,
@@ -1747,6 +1748,7 @@ impl NestedOperationHost {
             "wamn.component.invoke",
             wamn.tenant = %self.tenant_id,
             wamn.project = %self.config.project,
+            wamn.environment = %self.release.manifest().release.environment,
             wamn.wiring_id = %context.wiring_id,
             wamn.wiring_version = context.wiring_version,
             wamn.component_digest = %dependency.digest,
@@ -2959,6 +2961,10 @@ mod tests {
         assert_eq!(
             attribute(component, "wamn.project").as_deref(),
             Some("project-a")
+        );
+        assert_eq!(
+            attribute(component, "wamn.environment").as_deref(),
+            Some("prod")
         );
         assert_eq!(
             attribute(component, "wamn.wiring_id").as_deref(),

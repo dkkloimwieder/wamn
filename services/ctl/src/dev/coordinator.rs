@@ -30,12 +30,16 @@ use wamn_schema_introspection::ir::{CatalogIr, Table};
 
 use super::activation::{self, DevActivation, DevActivationRequest};
 use super::config::{DevConfig, ResolvedDevPackages, VerifiedBaseComponentDigest};
+use super::observations::DevObservationReaders;
+use super::read::{
+    DevGateOutcome, DevGateVerdict, DevReadHandle, DevReadPublisher, dev_read_channel,
+};
 use super::verification_world::RUN_SCHEMA;
 use super::watch::GitSource;
-use super::{DevStage, DevStageRunner};
+use super::{DevStage, DevStageFailure, DevStageRunner};
 use crate::apply_package::ApplyPackageArgs;
 use crate::dev_gate::GateClient;
-use crate::print_release_env::{ReleaseCarrier, lookup_release_carrier};
+use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
 use crate::publish_release::{PublishReleaseArgs, ReleaseWiringTarget};
 use crate::push_component::{
     AdmitComponentArgs, ComponentAdmissionReceipt, PublishAdmittedComponentArgs, admit_component,
@@ -351,6 +355,9 @@ pub struct ProductionDevStageRunner {
     publish_provenance: Option<CommitProvenance>,
     release: Option<ReleaseCarrier>,
     activation: Option<DevActivation>,
+    read_publisher: DevReadPublisher,
+    read_handle: DevReadHandle,
+    observation_readers: Option<DevObservationReaders>,
 }
 
 impl fmt::Debug for ProductionDevStageRunner {
@@ -375,6 +382,10 @@ impl fmt::Debug for ProductionDevStageRunner {
             .field("published_wiring_count", &self.published_wirings.len())
             .field("release", &self.release)
             .field("activation", &self.activation)
+            .field(
+                "observation_readers_started",
+                &self.observation_readers.is_some(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -390,6 +401,7 @@ impl ProductionDevStageRunner {
             GateClient::new(config.gate_url(), config.gate_bearer_token()).map_err(|source| {
                 ProductionDevStageError::owner("construct the authoring client", source.into())
             })?;
+        let (read_publisher, read_handle) = dev_read_channel();
         Ok(Self {
             config,
             overlay_root,
@@ -406,7 +418,33 @@ impl ProductionDevStageRunner {
             publish_provenance: None,
             release: None,
             activation: None,
+            read_publisher,
+            read_handle,
+            observation_readers: None,
         })
+    }
+
+    /// Read-only state for terminal and future console clients.
+    pub fn read_handle(&self) -> DevReadHandle {
+        self.read_handle.clone()
+    }
+
+    /// Start the two read-only environment observation sources once.
+    pub async fn start_observations(&mut self) -> Result<(), ProductionDevStageError> {
+        if self.observation_readers.is_some() {
+            return Ok(());
+        }
+        self.observation_readers = Some(
+            DevObservationReaders::start(&self.config, self.read_publisher.clone())
+                .await
+                .map_err(|source| {
+                    ProductionDevStageError::owner(
+                        "start development observation readers",
+                        source.into(),
+                    )
+                })?,
+        );
+        Ok(())
     }
 
     /// Exact release carrier minted and pushed by the Release stage.
@@ -650,6 +688,7 @@ impl ProductionDevStageRunner {
 
     async fn gate(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Gate);
+        let mut read_outcomes = Vec::new();
         if self.admissions.len() != self.package_inputs()?.len() {
             return Err(ProductionDevStageError::invalid(
                 "gate package wirings",
@@ -681,16 +720,36 @@ impl ProductionDevStageRunner {
                 .map_err(|source| {
                     ProductionDevStageError::owner("submit production Gate", source.into())
                 })?;
-            let receipt = outcome.map_err(|refusal| {
-                ProductionDevStageError::invalid(
-                    "submit production Gate",
-                    format!(
-                        "{}@{}::{} was refused: {refusal:?}",
-                        input.package_id, input.package_version, input.wiring.wiring_id
-                    ),
-                )
-            })?;
-            self.gated_wirings.push(GatedWiring { input, receipt });
+            match outcome {
+                Ok(receipt) => {
+                    read_outcomes.push(DevGateOutcome {
+                        package_id: input.package_id.to_string(),
+                        package_version: input.package_version.to_string(),
+                        wiring_id: input.wiring.wiring_id.clone(),
+                        wiring_version: input.wiring.version,
+                        verdict: DevGateVerdict::Accepted(receipt.clone()),
+                    });
+                    self.read_publisher.set_gate_outcomes(read_outcomes.clone());
+                    self.gated_wirings.push(GatedWiring { input, receipt });
+                }
+                Err(refusal) => {
+                    read_outcomes.push(DevGateOutcome {
+                        package_id: input.package_id.to_string(),
+                        package_version: input.package_version.to_string(),
+                        wiring_id: input.wiring.wiring_id.clone(),
+                        wiring_version: input.wiring.version,
+                        verdict: DevGateVerdict::Refused(refusal.clone()),
+                    });
+                    self.read_publisher.set_gate_outcomes(read_outcomes);
+                    return Err(ProductionDevStageError::invalid(
+                        "submit production Gate",
+                        format!(
+                            "{}@{}::{} was refused: {refusal:?}",
+                            input.package_id, input.package_version, input.wiring.wiring_id
+                        ),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -941,18 +1000,19 @@ impl ProductionDevStageRunner {
             ProductionDevStageError::owner("publish the effective release manifest", source)
         })?;
 
-        self.release = Some(
-            lookup_release_carrier(
-                self.config.verification_database_url(),
-                &identity.tenant,
-                self.config.effective_release_id(),
-                self.config.release_artifact_base(),
-            )
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("load the exact release carrier", source)
-            })?,
-        );
+        let release = lookup_release_snapshot(
+            self.config.verification_database_url(),
+            &identity.tenant,
+            self.config.effective_release_id(),
+            self.config.release_artifact_base(),
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("load the exact release snapshot", source)
+        })?;
+        self.read_publisher
+            .set_release(release.manifest, release.carrier.clone());
+        self.release = Some(release.carrier);
         Ok(())
     }
 
@@ -1125,6 +1185,26 @@ impl ProductionDevStageRunner {
 
 impl DevStageRunner for ProductionDevStageRunner {
     type Error = ProductionDevStageError;
+
+    fn reset(&mut self, from: DevStage) {
+        self.read_publisher.reset(from);
+    }
+
+    fn stage_started(&mut self, stage: DevStage) {
+        self.read_publisher.stage_started(stage);
+    }
+
+    fn stage_completed(&mut self, stage: DevStage) {
+        self.read_publisher.stage_completed(stage);
+    }
+
+    fn stage_failed(&mut self, stage: DevStage, failure: DevStageFailure) {
+        self.read_publisher.stage_failed(stage, failure);
+    }
+
+    fn classify_error(&self, error: &Self::Error) -> DevStageFailure {
+        DevStageFailure::new(error.kind.as_str(), error.to_string(), None)
+    }
 
     async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
         if self.activation.is_some() {

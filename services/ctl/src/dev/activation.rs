@@ -37,6 +37,9 @@ pub const HOST_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const FLOW_HTTP_NAME: &str = "flow-http";
 const FLOW_HTTP_WORKLOAD_ID: &str = "wamn-dev-flow-http";
 const LOOPBACK_HTTP_BIND: &str = "127.0.0.1:0";
+const OTEL_EXPORTER_OTLP_PROTOCOL: &str = "grpc";
+const OTEL_BSP_SCHEDULE_DELAY_MILLIS: &str = "1";
+const OTEL_BSP_MAX_EXPORT_BATCH_SIZE: &str = "1";
 
 /// Exact deployment identity carried into the local serving process.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -599,6 +602,22 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         (
             "WAMN_EVT_NATS_URL".to_owned(),
             request.config.event_nats_url().to_owned(),
+        ),
+        (
+            "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
+            request.config.otel_exporter_otlp_endpoint().to_owned(),
+        ),
+        (
+            "OTEL_EXPORTER_OTLP_PROTOCOL".to_owned(),
+            OTEL_EXPORTER_OTLP_PROTOCOL.to_owned(),
+        ),
+        (
+            "OTEL_BSP_SCHEDULE_DELAY".to_owned(),
+            OTEL_BSP_SCHEDULE_DELAY_MILLIS.to_owned(),
+        ),
+        (
+            "OTEL_BSP_MAX_EXPORT_BATCH_SIZE".to_owned(),
+            OTEL_BSP_MAX_EXPORT_BATCH_SIZE.to_owned(),
         ),
     ];
     HostProcessSpec {
@@ -1215,6 +1234,8 @@ mod tests {
                 "event_materializer_database_url": "postgresql://materializer:materializer-secret@127.0.0.1:41008/target",
                 "scheduler_nats_url": "nats://127.0.0.1:41009",
                 "event_nats_url": "nats://127.0.0.1:41010",
+                "tempo_query_url": "http://127.0.0.1:41015",
+                "otel_exporter_otlp_endpoint": "http://127.0.0.1:41016",
                 "component_artifact_base": "127.0.0.1:41011/wamn/components",
                 "release_artifact_base": "127.0.0.1:41012/wamn/releases",
                 "registry_auth_file": "/run/secrets/dev-registry.json",
@@ -1436,6 +1457,13 @@ mod tests {
                     "WAMN_EVT_NATS_URL".to_owned(),
                     "nats://127.0.0.1:41010".to_owned(),
                 ),
+                (
+                    "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
+                    "http://127.0.0.1:41016".to_owned(),
+                ),
+                ("OTEL_EXPORTER_OTLP_PROTOCOL".to_owned(), "grpc".to_owned(),),
+                ("OTEL_BSP_SCHEDULE_DELAY".to_owned(), "1".to_owned()),
+                ("OTEL_BSP_MAX_EXPORT_BATCH_SIZE".to_owned(), "1".to_owned(),),
             ]
         );
 

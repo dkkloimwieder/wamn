@@ -39,6 +39,8 @@ const HTTP_ADMITTER_DATABASE_URL: &str = "http_admitter_database_url";
 const EVENT_MATERIALIZER_DATABASE_URL: &str = "event_materializer_database_url";
 const SCHEDULER_NATS_URL: &str = "scheduler_nats_url";
 const EVENT_NATS_URL: &str = "event_nats_url";
+const TEMPO_QUERY_URL: &str = "tempo_query_url";
+const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "otel_exporter_otlp_endpoint";
 const COMPONENT_ARTIFACT_BASE: &str = "component_artifact_base";
 const RELEASE_ARTIFACT_BASE: &str = "release_artifact_base";
 const REGISTRY_AUTH_FILE: &str = "registry_auth_file";
@@ -82,6 +84,8 @@ struct DevConfigDocument {
     event_materializer_database_url: String,
     scheduler_nats_url: String,
     event_nats_url: String,
+    tempo_query_url: String,
+    otel_exporter_otlp_endpoint: String,
     component_artifact_base: String,
     release_artifact_base: String,
     registry_auth_file: PathBuf,
@@ -529,6 +533,8 @@ pub struct DevConfig {
     event_materializer_database_url: Box<str>,
     scheduler_nats_url: Box<str>,
     event_nats_url: Box<str>,
+    tempo_query_url: Box<str>,
+    otel_exporter_otlp_endpoint: Box<str>,
     component_artifact_base: Box<str>,
     release_artifact_base: Box<str>,
     registry_auth_file: PathBuf,
@@ -586,6 +592,11 @@ impl fmt::Debug for DevConfig {
                 &self.sanitized_endpoint(SCHEDULER_NATS_URL),
             )
             .field(EVENT_NATS_URL, &self.sanitized_endpoint(EVENT_NATS_URL))
+            .field(TEMPO_QUERY_URL, &self.sanitized_endpoint(TEMPO_QUERY_URL))
+            .field(
+                OTEL_EXPORTER_OTLP_ENDPOINT,
+                &self.sanitized_endpoint(OTEL_EXPORTER_OTLP_ENDPOINT),
+            )
             .field(
                 COMPONENT_ARTIFACT_BASE,
                 &self.sanitized_endpoint(COMPONENT_ARTIFACT_BASE),
@@ -673,6 +684,16 @@ impl DevConfig {
     /// Event-plane NATS endpoint passed to the local serving host.
     pub fn event_nats_url(&self) -> &str {
         &self.event_nats_url
+    }
+
+    /// Tempo HTTP query endpoint used by the development read seam.
+    pub fn tempo_query_url(&self) -> &str {
+        &self.tempo_query_url
+    }
+
+    /// OTLP gRPC exporter endpoint passed to the local serving host.
+    pub fn otel_exporter_otlp_endpoint(&self) -> &str {
+        &self.otel_exporter_otlp_endpoint
     }
 
     /// Explicit component registry and repository base.
@@ -791,6 +812,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_database_url,
         scheduler_nats_url,
         event_nats_url,
+        tempo_query_url,
+        otel_exporter_otlp_endpoint,
         component_artifact_base,
         release_artifact_base,
         registry_auth_file,
@@ -832,6 +855,9 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     )?;
     let scheduler_nats_url = nonempty_string(scheduler_nats_url, SCHEDULER_NATS_URL)?;
     let event_nats_url = nonempty_string(event_nats_url, EVENT_NATS_URL)?;
+    let tempo_query_url = nonempty_string(tempo_query_url, TEMPO_QUERY_URL)?;
+    let otel_exporter_otlp_endpoint =
+        nonempty_string(otel_exporter_otlp_endpoint, OTEL_EXPORTER_OTLP_ENDPOINT)?;
     let component_artifact_base =
         nonempty_string(component_artifact_base, COMPONENT_ARTIFACT_BASE)?;
     let release_artifact_base = nonempty_string(release_artifact_base, RELEASE_ARTIFACT_BASE)?;
@@ -929,6 +955,20 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         false,
     )?;
     let event_probe = url_probe(EVENT_NATS_URL, &event_nats_url, &["nats"], 4222, false)?;
+    let tempo_probe = url_probe(
+        TEMPO_QUERY_URL,
+        &tempo_query_url,
+        &["http", "https"],
+        3200,
+        true,
+    )?;
+    let otel_exporter_probe = url_probe(
+        OTEL_EXPORTER_OTLP_ENDPOINT,
+        &otel_exporter_otlp_endpoint,
+        &["http", "https"],
+        4317,
+        false,
+    )?;
     let registry_port = if insecure_registry { 80 } else { 443 };
     let component_probe = artifact_base_probe(
         COMPONENT_ARTIFACT_BASE,
@@ -955,6 +995,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_database_url,
         scheduler_nats_url,
         event_nats_url,
+        tempo_query_url,
+        otel_exporter_otlp_endpoint,
         component_artifact_base,
         release_artifact_base,
         registry_auth_file,
@@ -983,6 +1025,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             release_probe,
             gate_probe,
             flow_http_probe,
+            tempo_probe,
+            otel_exporter_probe,
         ]
         .into_boxed_slice(),
     })
@@ -1552,7 +1596,7 @@ mod tests {
     use serde_json::json;
     use tokio::net::TcpListener;
 
-    const ENDPOINT_COUNT: usize = 14;
+    const ENDPOINT_COUNT: usize = 16;
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     const OVERLAY_MANIFEST: &[u8] =
         include_bytes!("../../../../packages/client_acme_receiving/wamn.json");
@@ -1605,6 +1649,8 @@ mod tests {
             (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[7]),
             (SCHEDULER_NATS_URL): format!("nats://{}", addresses[8]),
             (EVENT_NATS_URL): format!("nats://{}", addresses[9]),
+            (TEMPO_QUERY_URL): format!("http://{}", addresses[14]),
+            (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[15]),
             (COMPONENT_ARTIFACT_BASE): format!("{}/wamn/components", addresses[10]),
             (RELEASE_ARTIFACT_BASE): format!("{}/wamn/releases", addresses[11]),
             (REGISTRY_AUTH_FILE): "/run/secrets/registry.json",
@@ -1668,13 +1714,14 @@ mod tests {
             schema["properties"][PACKAGE_SOURCES]["items"]["type"],
             "string"
         );
-        assert!(
-            schema["required"]
-                .as_array()
-                .expect("schema required set")
-                .iter()
-                .any(|key| key == PACKAGE_SOURCES)
-        );
+        let required = schema["required"].as_array().expect("schema required set");
+        for expected in [
+            PACKAGE_SOURCES,
+            TEMPO_QUERY_URL,
+            OTEL_EXPORTER_OTLP_ENDPOINT,
+        ] {
+            assert!(required.iter().any(|key| key == expected));
+        }
 
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         let mut missing = complete_document(&addresses);
@@ -1710,6 +1757,14 @@ mod tests {
             Path::new("/tmp/wamn-dev-cache")
         );
         assert_eq!(config.effective_release_id(), 1);
+        assert_eq!(
+            config.tempo_query_url(),
+            format!("http://{}", addresses[14])
+        );
+        assert_eq!(
+            config.otel_exporter_otlp_endpoint(),
+            format!("http://{}", addresses[15])
+        );
 
         for key in [TENANT, HOST_BINARY, WASMTIME_CACHE_DIR] {
             let mut missing = complete_document(&addresses);
@@ -1954,6 +2009,21 @@ mod tests {
         assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
         assert_eq!(error.key(), SCHEDULER_NATS_URL);
 
+        for key in [TEMPO_QUERY_URL, OTEL_EXPORTER_OTLP_ENDPOINT] {
+            let mut missing_observability_endpoint = complete_document(&addresses);
+            missing_observability_endpoint
+                .as_object_mut()
+                .expect("fixture object")
+                .remove(key);
+            let error = parse_config(
+                &serde_json::to_vec(&missing_observability_endpoint)
+                    .expect("serialize missing observability endpoint"),
+            )
+            .expect_err("observability endpoints are required");
+            assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
+            assert_eq!(error.key(), key);
+        }
+
         let mut missing_workload = complete_document(&addresses);
         missing_workload
             .as_object_mut()
@@ -1986,6 +2056,18 @@ mod tests {
         .expect_err("TLS without trust configuration must refuse");
         assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
         assert_eq!(error.key(), SCHEDULER_NATS_URL);
+
+        for key in [TEMPO_QUERY_URL, OTEL_EXPORTER_OTLP_ENDPOINT] {
+            let mut unsupported_observability_endpoint = complete_document(&addresses);
+            unsupported_observability_endpoint[key] = json!("nats://127.0.0.1:41000");
+            let error = parse_config(
+                &serde_json::to_vec(&unsupported_observability_endpoint)
+                    .expect("serialize unsupported observability endpoint"),
+            )
+            .expect_err("observability endpoints require HTTP or HTTPS");
+            assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+            assert_eq!(error.key(), key);
+        }
     }
 
     #[test]

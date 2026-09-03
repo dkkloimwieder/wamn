@@ -54,6 +54,7 @@ use async_nats::jetstream::publish::PublishAck as NatsPublishAck;
 use futures_util::{StreamExt as _, TryStreamExt as _};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::Mutex;
 use tracing::Instrument as _;
 use wamn_catalog::ServingManifest;
@@ -196,6 +197,136 @@ const RESERVED_ROUTER_TAP_SUBJECT: &str = "reserved-router-tap-subject";
 /// Wire version of the preview record. Bumped when a field's meaning changes.
 const ROUTER_TAP_FORMAT_VERSION: u32 = 1;
 
+/// The only router-tap record version understood by this release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouterTapFormatVersion {
+    V1,
+}
+
+impl RouterTapFormatVersion {
+    /// Numeric value carried on the wire.
+    pub const fn as_u32(self) -> u32 {
+        match self {
+            Self::V1 => ROUTER_TAP_FORMAT_VERSION,
+        }
+    }
+}
+
+impl Serialize for RouterTapFormatVersion {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u32(self.as_u32())
+    }
+}
+
+impl<'de> Deserialize<'de> for RouterTapFormatVersion {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let version = u32::deserialize(deserializer)?;
+        if version == ROUTER_TAP_FORMAT_VERSION {
+            Ok(Self::V1)
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "unsupported router-tap format-version {version}"
+            )))
+        }
+    }
+}
+
+/// Delivery boundary named by one router-tap record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RouterTapRecordPhase {
+    Accepted,
+    Settled,
+}
+
+/// Trusted ingress kind that originated one delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RouterTapSourceKind {
+    Attachment,
+    Registration,
+}
+
+impl RouterTapSourceKind {
+    fn from_preview(kind: &str) -> Option<Self> {
+        match kind {
+            "attachment" => Some(Self::Attachment),
+            "registration" => Some(Self::Registration),
+            _ => None,
+        }
+    }
+}
+
+/// Frozen, owned router-tap v1 wire record shared by publisher and readers.
+///
+/// Fields are declared in the byte order emitted by the former JSON-map
+/// publisher so making the wire typed does not rewrite otherwise-identical
+/// records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RouterTapRecord {
+    pub delivery_id: Box<str>,
+    pub format_version: RouterTapFormatVersion,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<Box<str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub over_ceiling_bytes: Option<u64>,
+    pub payload: serde_json::Value,
+    pub phase: RouterTapRecordPhase,
+    pub redacted: bool,
+    pub source_id: Box<str>,
+    pub source_kind: RouterTapSourceKind,
+    pub wiring_id: Box<str>,
+    pub wiring_version: u32,
+}
+
+/// Semantic disagreement inside one otherwise well-formed tap record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouterTapRecordError {
+    detail: &'static str,
+}
+
+impl std::fmt::Display for RouterTapRecordError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.detail)
+    }
+}
+
+impl std::error::Error for RouterTapRecordError {}
+
+impl RouterTapRecord {
+    /// Prove the phase and bounded-payload fields describe one possible record.
+    pub fn validate(&self) -> Result<(), RouterTapRecordError> {
+        match (self.phase, self.outcome.as_deref()) {
+            (RouterTapRecordPhase::Accepted, Some(_)) => {
+                return Err(RouterTapRecordError {
+                    detail: "an accepted router tap cannot carry a settled outcome",
+                });
+            }
+            (RouterTapRecordPhase::Settled, None | Some("")) => {
+                return Err(RouterTapRecordError {
+                    detail: "a settled router tap must carry a nonempty outcome",
+                });
+            }
+            _ => {}
+        }
+        if let Some(bytes) = self.over_ceiling_bytes
+            && (bytes <= OUTPUT_CAPTURE_CEILING_BYTES as u64 || !self.payload.is_null())
+        {
+            return Err(RouterTapRecordError {
+                detail: "an over-ceiling router tap must name a larger size and omit payload",
+            });
+        }
+        Ok(())
+    }
+}
+
 /// Which boundary of one delivery a preview describes.
 ///
 /// The bridge sees two: the delivery it admitted, and the outcome the driver
@@ -211,22 +342,6 @@ pub enum RouterTapPhase {
     Accepted,
     /// Settled by the driver under this outcome label; the payload is the result.
     Settled(&'static str),
-}
-
-impl RouterTapPhase {
-    fn label(self) -> &'static str {
-        match self {
-            RouterTapPhase::Accepted => "accepted",
-            RouterTapPhase::Settled(_) => "settled",
-        }
-    }
-
-    fn outcome(self) -> Option<&'static str> {
-        match self {
-            RouterTapPhase::Accepted => None,
-            RouterTapPhase::Settled(outcome) => Some(outcome),
-        }
-    }
 }
 
 /// One delivery-boundary preview, borrowed from what the bridge already holds.
@@ -256,20 +371,56 @@ pub struct RouterTapPreview<'a> {
 /// delivery id arrives over the WIT boundary from a guest, so both go through
 /// [`subject_token`] and cannot inject a separator or a wildcard. `None` when an
 /// id sanitizes to nothing, because an empty token is not a subject.
-fn router_tap_subject(
-    claim: &JetstreamClaim,
+fn router_tap_environment_prefix(tenant: &str, project: &str, environment: &str) -> Option<String> {
+    if [tenant, project, environment]
+        .into_iter()
+        .any(|value| value.is_empty() || value.trim() != value || subject_token(value) != value)
+    {
+        return None;
+    }
+    Some(format!(
+        "{ROUTER_TAP_PREFIX}.{tenant}.{project}.{environment}"
+    ))
+}
+
+/// Exact environment-scoped subject filter for router-tap readers.
+pub fn router_tap_environment_filter(
+    tenant: &str,
+    project: &str,
+    environment: &str,
+) -> Option<String> {
+    router_tap_environment_prefix(tenant, project, environment).map(|prefix| format!("{prefix}.>"))
+}
+
+/// Exact subject carrying one environment-scoped router-tap record.
+pub fn router_tap_record_subject(
+    tenant: &str,
+    project: &str,
+    environment: &str,
     wiring_id: &str,
     delivery_id: &str,
 ) -> Option<String> {
+    let prefix = router_tap_environment_prefix(tenant, project, environment)?;
     let wiring = subject_token(wiring_id);
     let delivery = subject_token(delivery_id);
     if wiring.is_empty() || delivery.is_empty() {
         return None;
     }
-    Some(format!(
-        "{ROUTER_TAP_PREFIX}.{}.{}.{}.{wiring}.{delivery}",
-        claim.tenant, claim.project, claim.environment
-    ))
+    Some(format!("{prefix}.{wiring}.{delivery}"))
+}
+
+fn router_tap_subject(
+    claim: &JetstreamClaim,
+    wiring_id: &str,
+    delivery_id: &str,
+) -> Option<String> {
+    router_tap_record_subject(
+        &claim.tenant,
+        &claim.project,
+        &claim.environment,
+        wiring_id,
+        delivery_id,
+    )
 }
 
 /// Is `subject` inside the reserved preview namespace?
@@ -307,33 +458,49 @@ fn prepare_router_tap(
     preview: &RouterTapPreview<'_>,
 ) -> Option<PreparedRouterTap> {
     let subject = router_tap_subject(claim, preview.wiring_id, preview.delivery_id)?;
+    let source_kind = RouterTapSourceKind::from_preview(preview.source_kind)?;
     let mut payload = preview.payload.clone();
     let redacted = scrub(&mut payload);
-    let mut record = serde_json::json!({
-        "format-version": ROUTER_TAP_FORMAT_VERSION,
-        "phase": preview.phase.label(),
-        "delivery-id": preview.delivery_id,
-        "wiring-id": preview.wiring_id,
-        "wiring-version": preview.wiring_version,
-        "source-kind": preview.source_kind,
-        "source-id": preview.source_id,
-        "redacted": redacted,
-    });
-    if let Some(outcome) = preview.phase.outcome() {
-        record["outcome"] = serde_json::Value::String(outcome.to_owned());
-    }
     let payload_bytes = serde_json::to_vec(&payload)
         .expect("a serde_json::Value tree always serializes")
         .len();
-    if payload_bytes > OUTPUT_CAPTURE_CEILING_BYTES {
-        record["over-ceiling-bytes"] = serde_json::Value::from(payload_bytes);
-        record["payload"] = serde_json::Value::Null;
+    let (payload, over_ceiling_bytes) = if payload_bytes > OUTPUT_CAPTURE_CEILING_BYTES {
+        (
+            serde_json::Value::Null,
+            Some(
+                u64::try_from(payload_bytes)
+                    .expect("a serialized payload byte count always fits in u64"),
+            ),
+        )
     } else {
-        record["payload"] = payload;
-    }
+        (payload, None)
+    };
+    let (phase, outcome) = match preview.phase {
+        RouterTapPhase::Accepted => (RouterTapRecordPhase::Accepted, None),
+        RouterTapPhase::Settled(outcome) => (
+            RouterTapRecordPhase::Settled,
+            Some(Box::<str>::from(outcome)),
+        ),
+    };
+    let record = RouterTapRecord {
+        delivery_id: Box::from(preview.delivery_id),
+        format_version: RouterTapFormatVersion::V1,
+        outcome,
+        over_ceiling_bytes,
+        payload,
+        phase,
+        redacted,
+        source_id: Box::from(preview.source_id),
+        source_kind,
+        wiring_id: Box::from(preview.wiring_id),
+        wiring_version: preview.wiring_version,
+    };
+    record
+        .validate()
+        .expect("a router-tap preview constructs one valid phase and payload state");
     Some(PreparedRouterTap {
         subject,
-        body: serde_json::to_vec(&record).expect("a serde_json::Value tree always serializes"),
+        body: serde_json::to_vec(&record).expect("a router-tap record always serializes"),
     })
 }
 
@@ -2454,25 +2621,22 @@ mod tests {
             payload: &payload,
         };
         let prepared = prepare_router_tap(&claim, &preview).expect("the ids name tokens");
-        let record: serde_json::Value =
+        let record: RouterTapRecord =
             serde_json::from_slice(&prepared.body).expect("the tap body is JSON");
 
+        assert_eq!(record.payload["api_key"], serde_json::json!("[redacted]"));
         assert_eq!(
-            record["payload"]["api_key"],
+            record.payload["nested"]["authorization"],
             serde_json::json!("[redacted]")
         );
-        assert_eq!(
-            record["payload"]["nested"]["authorization"],
-            serde_json::json!("[redacted]")
-        );
-        assert_eq!(record["payload"]["plain"], serde_json::json!("visible"));
-        assert_eq!(record["redacted"], serde_json::json!(true));
-        assert_eq!(record["phase"], serde_json::json!("accepted"));
-        assert_eq!(record["outcome"], serde_json::Value::Null);
-        assert_eq!(record["delivery-id"], serde_json::json!("d-1"));
-        assert_eq!(record["wiring-version"], serde_json::json!(3));
-        assert_eq!(record["source-id"], serde_json::json!("orders-http"));
-        assert_eq!(record["format-version"], serde_json::json!(1));
+        assert_eq!(record.payload["plain"], serde_json::json!("visible"));
+        assert!(record.redacted);
+        assert_eq!(record.phase, RouterTapRecordPhase::Accepted);
+        assert_eq!(record.outcome, None);
+        assert_eq!(&*record.delivery_id, "d-1");
+        assert_eq!(record.wiring_version, 3);
+        assert_eq!(&*record.source_id, "orders-http");
+        assert_eq!(record.format_version.as_u32(), 1);
         assert_eq!(prepared.subject, "tap.acme.app.prod.orders.d-1");
 
         // A settled preview names its outcome; an accepted one has none to name.
@@ -2484,10 +2648,10 @@ mod tests {
             },
         )
         .expect("the ids name tokens");
-        let settled: serde_json::Value =
+        let settled: RouterTapRecord =
             serde_json::from_slice(&settled.body).expect("the tap body is JSON");
-        assert_eq!(settled["phase"], serde_json::json!("settled"));
-        assert_eq!(settled["outcome"], serde_json::json!("respond"));
+        assert_eq!(settled.phase, RouterTapRecordPhase::Settled);
+        assert_eq!(settled.outcome.as_deref(), Some("respond"));
 
         // A payload the extracted policy will not retain is DROPPED, not
         // truncated, and the envelope says how large it was.
@@ -2505,14 +2669,14 @@ mod tests {
             "an over-ceiling payload must not reach the wire: {} bytes",
             bounded.body.len()
         );
-        let bounded: serde_json::Value =
+        let bounded: RouterTapRecord =
             serde_json::from_slice(&bounded.body).expect("the tap body is JSON");
-        assert_eq!(bounded["payload"], serde_json::Value::Null);
+        assert_eq!(bounded.payload, serde_json::Value::Null);
         assert!(
-            bounded["over-ceiling-bytes"]
-                .as_u64()
-                .is_some_and(|bytes| bytes as usize > OUTPUT_CAPTURE_CEILING_BYTES),
-            "the dropped payload's size must survive as a flag: {bounded}"
+            bounded
+                .over_ceiling_bytes
+                .is_some_and(|bytes| bytes > OUTPUT_CAPTURE_CEILING_BYTES as u64),
+            "the dropped payload's size must survive as a flag: {bounded:?}"
         );
     }
 
@@ -2520,16 +2684,8 @@ mod tests {
     /// this on the console side, so the field set, the spelling of each key and
     /// the version literal are a contract rather than an implementation detail.
     ///
-    /// Asserted as a WHOLE VALUE on purpose: an added field, a removed field and
-    /// a renamed field all fail here, where a key-by-key read would notice only
-    /// the removal.
-    ///
-    /// The version is pinned to the LITERAL 1, never to
-    /// [`ROUTER_TAP_FORMAT_VERSION`]. Comparing the record against the constant
-    /// that produced it is a tautology that survives any bump, which is exactly
-    /// what an unasserted format version amounts to. Bumping the constant must
-    /// fail HERE, so whoever changes a field's meaning re-freezes these records
-    /// deliberately, in that same commit.
+    /// Asserted as a WHOLE TYPED RECORD on purpose: the publisher and named
+    /// consumer share one closed field set instead of two JSON interpretations.
     #[test]
     fn the_preview_record_is_frozen_for_its_named_consumer() {
         let claim = tap_claim();
@@ -2544,14 +2700,34 @@ mod tests {
             payload: &payload,
         };
 
-        let accepted: serde_json::Value = serde_json::from_slice(
-            &prepare_router_tap(&claim, &preview)
-                .expect("the ids name tokens")
-                .body,
-        )
-        .expect("the tap body is JSON");
+        let accepted = prepare_router_tap(&claim, &preview).expect("the ids name tokens");
+        let accepted_record: RouterTapRecord =
+            serde_json::from_slice(&accepted.body).expect("the tap body is JSON");
         assert_eq!(
-            accepted,
+            accepted_record,
+            RouterTapRecord {
+                delivery_id: "d-1".into(),
+                format_version: RouterTapFormatVersion::V1,
+                outcome: None,
+                over_ceiling_bytes: None,
+                payload: serde_json::json!({"plain": "visible"}),
+                phase: RouterTapRecordPhase::Accepted,
+                redacted: false,
+                source_id: "orders-http".into(),
+                source_kind: RouterTapSourceKind::Attachment,
+                wiring_id: "orders".into(),
+                wiring_version: 3,
+            },
+            "the accepted preview record is frozen for wamn-dggp.10"
+        );
+        assert_eq!(
+            serde_json::to_vec(&accepted_record).expect("serialize accepted record"),
+            accepted.body,
+            "the named reader round-trips the publisher's exact bytes"
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&accepted.body)
+                .expect("decode accepted record as its public wire value"),
             serde_json::json!({
                 "format-version": 1,
                 "phase": "accepted",
@@ -2563,26 +2739,47 @@ mod tests {
                 "redacted": false,
                 "payload": {"plain": "visible"},
             }),
-            "the accepted preview record is frozen for wamn-dggp.10"
+            "the accepted v1 wire stays byte-semantically frozen"
         );
 
         // A settled preview adds exactly one key. An accepted one carries no
         // `outcome` at all rather than a null, so the console can branch on
         // presence.
-        let settled: serde_json::Value = serde_json::from_slice(
-            &prepare_router_tap(
-                &claim,
-                &RouterTapPreview {
-                    phase: RouterTapPhase::Settled("respond"),
-                    ..preview
-                },
-            )
-            .expect("the ids name tokens")
-            .body,
+        let settled = prepare_router_tap(
+            &claim,
+            &RouterTapPreview {
+                phase: RouterTapPhase::Settled("respond"),
+                ..preview
+            },
         )
-        .expect("the tap body is JSON");
+        .expect("the ids name tokens");
+        let settled_record: RouterTapRecord =
+            serde_json::from_slice(&settled.body).expect("the tap body is JSON");
         assert_eq!(
-            settled,
+            settled_record,
+            RouterTapRecord {
+                delivery_id: "d-1".into(),
+                format_version: RouterTapFormatVersion::V1,
+                outcome: Some("respond".into()),
+                over_ceiling_bytes: None,
+                payload: serde_json::json!({"plain": "visible"}),
+                phase: RouterTapRecordPhase::Settled,
+                redacted: false,
+                source_id: "orders-http".into(),
+                source_kind: RouterTapSourceKind::Attachment,
+                wiring_id: "orders".into(),
+                wiring_version: 3,
+            },
+            "the settled preview record is frozen for wamn-dggp.10"
+        );
+        assert_eq!(
+            serde_json::to_vec(&settled_record).expect("serialize settled record"),
+            settled.body,
+            "the named reader round-trips the publisher's exact bytes"
+        );
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&settled.body)
+                .expect("decode settled record as its public wire value"),
             serde_json::json!({
                 "format-version": 1,
                 "phase": "settled",
@@ -2595,13 +2792,7 @@ mod tests {
                 "redacted": false,
                 "payload": {"plain": "visible"},
             }),
-            "the settled preview record is frozen for wamn-dggp.10"
-        );
-
-        assert_eq!(
-            ROUTER_TAP_FORMAT_VERSION, 1,
-            "bumping the wire version re-freezes both records above, in the \
-             same commit that changes a field's meaning"
+            "the settled v1 wire stays byte-semantically frozen"
         );
 
         assert_eq!(
@@ -2610,6 +2801,42 @@ mod tests {
             "the subject grammar is the other half of the frozen contract: \
              {ROUTER_TAP_PREFIX}.<tenant>.<project>.<environment>.<wiring>.<delivery>"
         );
+    }
+
+    #[test]
+    fn the_preview_record_refuses_unknown_versions_and_fields() {
+        let record = RouterTapRecord {
+            delivery_id: "d-1".into(),
+            format_version: RouterTapFormatVersion::V1,
+            outcome: None,
+            over_ceiling_bytes: None,
+            payload: serde_json::json!({"plain": "visible"}),
+            phase: RouterTapRecordPhase::Accepted,
+            redacted: false,
+            source_id: "orders-http".into(),
+            source_kind: RouterTapSourceKind::Attachment,
+            wiring_id: "orders".into(),
+            wiring_version: 3,
+        };
+        let mut future_version = serde_json::to_value(&record).expect("serialize record");
+        future_version["format-version"] = serde_json::Value::from(2);
+        assert!(serde_json::from_value::<RouterTapRecord>(future_version).is_err());
+
+        let mut unknown_field = serde_json::to_value(&record).expect("serialize record");
+        unknown_field["edge"] = serde_json::Value::String("invoke".to_owned());
+        assert!(serde_json::from_value::<RouterTapRecord>(unknown_field).is_err());
+
+        let mut unknown_source = serde_json::to_value(&record).expect("serialize record");
+        unknown_source["source-kind"] = serde_json::Value::String("schedule".to_owned());
+        assert!(serde_json::from_value::<RouterTapRecord>(unknown_source).is_err());
+
+        let mut impossible = record.clone();
+        impossible.outcome = Some("respond".into());
+        assert!(impossible.validate().is_err());
+
+        let mut impossible = record;
+        impossible.over_ceiling_bytes = Some((OUTPUT_CAPTURE_CEILING_BYTES + 1) as u64);
+        assert!(impossible.validate().is_err());
     }
 
     // NOT ASSERTED HERE, and deliberately: `publish_router_tap`'s early return

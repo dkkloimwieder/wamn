@@ -819,6 +819,8 @@ mod tests {
             "event_materializer_database_url": database_url(verification_url, &format!("wamn_dev_materializer_{process}")),
             "scheduler_nats_url": "nats://127.0.0.1:4222",
             "event_nats_url": "nats://127.0.0.1:4223",
+            "tempo_query_url": "http://127.0.0.1:3200",
+            "otel_exporter_otlp_endpoint": "http://127.0.0.1:4317",
             "component_artifact_base": "127.0.0.1:5000/wamn/components",
             "release_artifact_base": "127.0.0.1:5001/wamn/releases",
             "registry_auth_file": "/run/secrets/registry.json",

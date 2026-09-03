@@ -82,3 +82,17 @@ services:
       interval: 1s
       timeout: 2s
       retries: 60
+  receiving-dev-tempo:
+    profiles:
+      - receiving-route
+    image: grafana/tempo:2.6.1
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - type: bind
+        source: ./tempo-dev.yaml
+        target: /etc/tempo/tempo.yaml
+        read_only: true
+    ports:
+      - "127.0.0.1:${WAMN_RECEIVING_DEV_TEMPO_PORT:-3201}:3200"
+      - "127.0.0.1:${WAMN_RECEIVING_DEV_OTLP_PORT:-4319}:4317"

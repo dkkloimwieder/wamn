@@ -10,6 +10,9 @@ pub mod command;
 pub mod config;
 #[cfg(target_os = "linux")]
 pub mod coordinator;
+#[cfg(target_os = "linux")]
+pub mod observations;
+pub mod read;
 pub mod verification_database;
 pub mod verification_world;
 #[cfg(target_os = "linux")]
@@ -181,6 +184,27 @@ pub trait DevInvalidationSource {
 pub trait DevStageRunner {
     type Error: Error + Send + Sync + 'static;
 
+    /// Reset the exact suffix about to run while retaining its completed prefix.
+    fn reset(&mut self, _from: DevStage) {}
+
+    /// Report that one stage has begun.
+    fn stage_started(&mut self, _stage: DevStage) {}
+
+    /// Report that one stage completed successfully.
+    fn stage_completed(&mut self, _stage: DevStage) {}
+
+    /// Report the typed client-facing form of one stage failure.
+    fn stage_failed(&mut self, _stage: DevStage, _failure: DevStageFailure) {}
+
+    /// Translate an owner error once at the development-engine boundary.
+    fn classify_error(&self, error: &Self::Error) -> DevStageFailure {
+        DevStageFailure::new(
+            DevRunErrorKind::StageFailed.as_str(),
+            error.to_string(),
+            None,
+        )
+    }
+
     /// Execute exactly one stage.
     fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
@@ -199,6 +223,44 @@ impl DevRunErrorKind {
             Self::DirtyWorktree => DIRTY_WORKTREE_ERROR,
             Self::StageFailed => "dev-stage-failed",
         }
+    }
+}
+
+/// Cloneable client-facing context for one failed development stage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevStageFailure {
+    code: Box<str>,
+    detail: Box<str>,
+    remedy: Option<Box<str>>,
+}
+
+impl DevStageFailure {
+    /// Build one closed diagnostic without retaining a non-cloneable error source.
+    pub fn new(
+        code: impl Into<Box<str>>,
+        detail: impl Into<Box<str>>,
+        remedy: Option<&str>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            detail: detail.into(),
+            remedy: remedy.map(Into::into),
+        }
+    }
+
+    /// Stable refusal or failure code.
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// Actionable, credential-free failure context.
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+
+    /// Fixed remedy when the owning failure defines one.
+    pub fn remedy(&self) -> Option<&str> {
+        self.remedy.as_deref()
     }
 }
 
@@ -363,9 +425,7 @@ where
     P: DevSourceStateProvider + Send,
 {
     verification_database::run(config, |verification_database_url| async move {
-        verification_world::bootstrap(&verification_database_url, config.activation_identity())
-            .await
-            .map_err(|error| DevRunError::stage_failed(DevStage::Migrate, error))?;
+        bootstrap_verification_world(config, &verification_database_url, runner).await?;
         run_suffix_with_source_state_provider(DevStage::Migrate, runner, source_state_provider)
             .await
     })
@@ -404,21 +464,41 @@ where
     P: DevSourceStateProvider,
 {
     let first = from.position();
+    runner.reset(from);
     let mut completed = Vec::with_capacity(DEV_STAGE_ORDER.len() - first);
     for stage in DEV_STAGE_ORDER.into_iter().skip(first) {
+        runner.stage_started(stage);
         if stage.boundary() == DevStageBoundary::CommittedSource {
-            let source_state = source_state_provider
-                .source_state()
-                .await
-                .map_err(|error| DevRunError::stage_failed(stage, error))?;
+            let source_state = match source_state_provider.source_state().await {
+                Ok(source_state) => source_state,
+                Err(error) => {
+                    let failure = DevStageFailure::new(
+                        DevRunErrorKind::StageFailed.as_str(),
+                        error.to_string(),
+                        None,
+                    );
+                    runner.stage_failed(stage, failure);
+                    return Err(DevRunError::stage_failed(stage, error));
+                }
+            };
             if source_state == DevSourceState::Dirty {
+                runner.stage_failed(
+                    stage,
+                    DevStageFailure::new(
+                        DIRTY_WORKTREE_ERROR,
+                        "committed-source work cannot run from dirty bytes",
+                        Some(COMMIT_WORKTREE_REMEDY),
+                    ),
+                );
                 return Err(DevRunError::dirty_worktree(stage));
             }
         }
-        runner
-            .run(stage)
-            .await
-            .map_err(|error| DevRunError::stage_failed(stage, error))?;
+        if let Err(error) = runner.run(stage).await {
+            let failure = runner.classify_error(&error);
+            runner.stage_failed(stage, failure);
+            return Err(DevRunError::stage_failed(stage, error));
+        }
+        runner.stage_completed(stage);
         completed.push(stage);
     }
     Ok(DevRunReceipt {
@@ -446,12 +526,11 @@ where
 {
     verification_database::run(config, |verification_database_url| async move {
         if let Err(error) =
-            verification_world::bootstrap(&verification_database_url, config.activation_identity())
-                .await
+            bootstrap_verification_world(config, &verification_database_url, runner).await
         {
             observer.completed(DevWatchOutcome {
                 from: DevStage::Migrate,
-                result: Err(DevRunError::stage_failed(DevStage::Migrate, error)),
+                result: Err(error),
             });
             return Ok(());
         }
@@ -476,12 +555,11 @@ where
 {
     verification_database::run(config, |verification_database_url| async move {
         if let Err(error) =
-            verification_world::bootstrap(&verification_database_url, config.activation_identity())
-                .await
+            bootstrap_verification_world(config, &verification_database_url, runner).await
         {
             observer.completed(DevWatchOutcome {
                 from: DevStage::Migrate,
-                result: Err(DevRunError::stage_failed(DevStage::Migrate, error)),
+                result: Err(error),
             });
             return Ok(());
         }
@@ -489,6 +567,30 @@ where
             .await
     })
     .await
+}
+
+async fn bootstrap_verification_world<R>(
+    config: &DevConfig,
+    verification_database_url: &str,
+    runner: &mut R,
+) -> Result<(), DevRunError>
+where
+    R: DevStageRunner,
+{
+    if let Err(error) =
+        verification_world::bootstrap(verification_database_url, config.activation_identity()).await
+    {
+        runner.reset(DevStage::Migrate);
+        runner.stage_started(DevStage::Migrate);
+        let failure = DevStageFailure::new(
+            DevRunErrorKind::StageFailed.as_str(),
+            error.to_string(),
+            None,
+        );
+        runner.stage_failed(DevStage::Migrate, failure);
+        return Err(DevRunError::stage_failed(DevStage::Migrate, error));
+    }
+    Ok(())
 }
 
 async fn run_watch_loop<R, S, O>(
@@ -646,6 +748,48 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq, Eq)]
+    enum LifecycleEvent {
+        Reset(DevStage),
+        Started(DevStage),
+        Completed(DevStage),
+        Failed(DevStage, DevStageFailure),
+    }
+
+    #[derive(Debug)]
+    struct LifecycleRunner {
+        events: Vec<LifecycleEvent>,
+        fail_at: DevStage,
+    }
+
+    impl DevStageRunner for LifecycleRunner {
+        type Error = SyntheticStageError;
+
+        fn reset(&mut self, from: DevStage) {
+            self.events.push(LifecycleEvent::Reset(from));
+        }
+
+        fn stage_started(&mut self, stage: DevStage) {
+            self.events.push(LifecycleEvent::Started(stage));
+        }
+
+        fn stage_completed(&mut self, stage: DevStage) {
+            self.events.push(LifecycleEvent::Completed(stage));
+        }
+
+        fn stage_failed(&mut self, stage: DevStage, failure: DevStageFailure) {
+            self.events.push(LifecycleEvent::Failed(stage, failure));
+        }
+
+        async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+            if stage == self.fail_at {
+                Err(SyntheticStageError(stage))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     #[derive(Clone, Debug, Default)]
     struct FakeEvents(Arc<Mutex<VecDeque<DevInvalidation>>>);
 
@@ -777,6 +921,33 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "dev-stage-failed at virtualize: synthetic virtualize failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn runner_lifecycle_reports_the_exact_suffix_and_failure() {
+        let mut runner = LifecycleRunner {
+            events: Vec::new(),
+            fail_at: DevStage::Gate,
+        };
+
+        let error = run_suffix(DevStage::Admit, DevSourceState::Clean, &mut runner)
+            .await
+            .expect_err("the synthetic Gate failure must stop the suffix");
+
+        assert_eq!(error.stage(), DevStage::Gate);
+        assert_eq!(
+            runner.events,
+            [
+                LifecycleEvent::Reset(DevStage::Admit),
+                LifecycleEvent::Started(DevStage::Admit),
+                LifecycleEvent::Completed(DevStage::Admit),
+                LifecycleEvent::Started(DevStage::Gate),
+                LifecycleEvent::Failed(
+                    DevStage::Gate,
+                    DevStageFailure::new("dev-stage-failed", "synthetic gate failure", None)
+                ),
+            ]
         );
     }
 

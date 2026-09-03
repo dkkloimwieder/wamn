@@ -33,7 +33,7 @@ anyhow = { workspace = true }
 # closed WorkloadRoleFamily vocabulary, so arg ids and long names are computed
 # `String`s rather than typed-out literals.
 clap = { workspace = true, features = ["derive", "env", "string"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "process", "signal", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", "net", "process", "signal", "sync", "time"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

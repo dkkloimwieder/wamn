@@ -59,6 +59,9 @@
     "org": {
       "type": "string"
     },
+    "otel_exporter_otlp_endpoint": {
+      "type": "string"
+    },
     "package_sources": {
       "items": {
         "type": "string"
@@ -92,6 +95,9 @@
     "target_database_url": {
       "type": "string"
     },
+    "tempo_query_url": {
+      "type": "string"
+    },
     "tenant": {
       "type": "string"
     },
@@ -121,6 +127,7 @@
     "identity_database_url",
     "insecure_registry",
     "org",
+    "otel_exporter_otlp_endpoint",
     "package_sources",
     "project",
     "registry_auth_file",
@@ -131,6 +138,7 @@
     "schema",
     "system_database_url",
     "target_database_url",
+    "tempo_query_url",
     "tenant",
     "verification_database_url",
     "wasmtime_cache_dir"
