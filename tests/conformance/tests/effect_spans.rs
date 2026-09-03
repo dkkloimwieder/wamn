@@ -150,6 +150,24 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         "bindings::named_imports::wamn::postgres::client::HostCursor",
         &[("fetch", Surface::Effect), ("drop", DESTRUCTOR)],
     ),
+    // The SQL-by-reference world. A guest names a statement digest instead of
+    // sending text, but what crosses the host boundary is the same database
+    // round trip, so the classification is the same as `client::*` above.
+    (
+        POSTGRES,
+        "statement_wit::Host",
+        &[("run", Surface::Effect), ("begin", Surface::Effect)],
+    ),
+    (
+        POSTGRES,
+        "statement_wit::HostTransaction",
+        &[
+            ("run", Surface::Effect),
+            ("commit", Surface::Effect),
+            ("rollback", Surface::Effect),
+            ("drop", DESTRUCTOR),
+        ],
+    ),
     (HTTP, "http::Host", &[("send", Surface::Effect)]),
     (
         JETSTREAM,
