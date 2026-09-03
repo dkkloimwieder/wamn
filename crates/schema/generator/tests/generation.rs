@@ -2762,3 +2762,103 @@ fn additive_unused_column_on_consumed_relation_preserves_required_contract() {
         additive_weld["required_schema_contract"]
     );
 }
+
+/// A lineless command declares canonicalization without a line profile.
+///
+/// `line_order` names how a LINE SET is ordered before hashing, and its one
+/// spelling is `purchase_order_line_id_ascending` — another package's table.
+/// Requiring it of every command made the vocabulary un-nameable by the second
+/// application to arrive, which is the shape a two-package test exists to
+/// find. It is optional now, and absent means the command carries no lines.
+#[test]
+fn a_lineless_command_canonicalizes_without_a_line_profile() {
+    let mut manifest = shipped_manifest();
+    let command = manifest["custom_operations"]["receiving.record_receipt"]
+        .as_object_mut()
+        .expect("the shipped command is an object");
+
+    // Strip the line set and everything that describes one, leaving a command
+    // shaped like WMS's `inventory.move`.
+    command["input"]
+        .as_object_mut()
+        .expect("input")
+        .remove("line");
+    let fields = command["input"]["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .filter(|field| {
+            !field["path"]
+                .as_str()
+                .is_some_and(|path| path.contains("line[]"))
+        })
+        .cloned()
+        .collect::<Vec<Value>>();
+    command["input"]["fields"] = Value::Array(fields);
+    let canonicalization = command["canonicalization"]
+        .as_object_mut()
+        .expect("canonicalization");
+    canonicalization.remove("line_order");
+    canonicalization.remove("duplicate_line");
+
+    validate_operation_vocabulary(&parsed_manifest(&manifest))
+        .expect("a lineless command canonicalizes its top-level fields alone");
+}
+
+/// The INPUT decides. A line profile without a line set, or a line set without
+/// one, is a manifest that cannot mean what it says — so both refuse rather
+/// than one silently governing nothing.
+#[test]
+fn a_line_profile_and_a_line_input_must_agree() {
+    let strip_line_input = |manifest: &mut Value| {
+        manifest["custom_operations"]["receiving.record_receipt"]["input"]
+            .as_object_mut()
+            .expect("input")
+            .remove("line");
+    };
+    let strip_line_profile = |manifest: &mut Value| {
+        let canonicalization =
+            manifest["custom_operations"]["receiving.record_receipt"]["canonicalization"]
+                .as_object_mut()
+                .expect("canonicalization");
+        canonicalization.remove("line_order");
+        canonicalization.remove("duplicate_line");
+    };
+
+    for (label, mutate) in [
+        (
+            "a profile with no line input",
+            Box::new(strip_line_input) as Box<dyn Fn(&mut Value)>,
+        ),
+        ("a line input with no profile", Box::new(strip_line_profile)),
+    ] {
+        let mut manifest = shipped_manifest();
+        mutate(&mut manifest);
+        let refusal = validate_operation_vocabulary(&parsed_manifest(&manifest)).expect_err(label);
+        assert_eq!(
+            refusal.kind(),
+            GenerateErrorKind::InvalidOperation,
+            "{label}"
+        );
+    }
+}
+
+/// `line_order` and `duplicate_line` are declared together: a command that
+/// said how to order lines but not what a repeat costs would leave half a rule.
+#[test]
+fn the_two_line_members_are_declared_together() {
+    for member in ["line_order", "duplicate_line"] {
+        let mut manifest = shipped_manifest();
+        manifest["custom_operations"]["receiving.record_receipt"]["canonicalization"]
+            .as_object_mut()
+            .expect("canonicalization")
+            .remove(member);
+        let refusal = validate_operation_vocabulary(&parsed_manifest(&manifest))
+            .expect_err("half a line profile refuses");
+        assert_eq!(
+            refusal.kind(),
+            GenerateErrorKind::InvalidOperation,
+            "{member}"
+        );
+    }
+}

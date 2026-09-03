@@ -299,6 +299,16 @@
           }
         ]
       },
+      "canonicalization": {
+        "payload": "canonical_compact_json",
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ],
+        "uuid": "lowercase_hyphenated",
+        "timestamptz": "utc_rfc3339_six_fractional_digits",
+        "numeric": "postgresql_lexical_scale_preserved"
+      },
       "errors": [
         "invalid_input",
         "pallet_not_found",
