@@ -184,6 +184,19 @@ pub fn capability_row(import_name: &str) -> Option<&'static CapabilityRow> {
         .find(|row| row.package == package && row.version == version)
 }
 
+/// Whether this import's PACKAGE is a registered capability, at any version.
+///
+/// Distinct from [`import_posture`], which matches package AND version. Some
+/// callers need to know what KIND of thing an import is — a platform
+/// capability versus a cross-package application call — and that kind does not
+/// change with the version. A `wasi:clocks` import at an unregistered version
+/// is still a platform capability; it is admission's job to refuse the
+/// version, not this classifier's job to reclassify it as an application call.
+pub fn is_registered_package(import_name: &str) -> bool {
+    let package = import_pkg(import_name);
+    CAPABILITY_REGISTRY.iter().any(|row| row.package == package)
+}
+
 /// The declared posture of one full import name, or `None` if unregistered.
 pub fn import_posture(import_name: &str) -> Option<Posture> {
     capability_row(import_name).map(|row| row.posture)
@@ -265,7 +278,11 @@ pub fn analyze_tenant(
     // what a grant is allowed to say.
     let invalid_registry: Vec<_> = admitted_platform_packages
         .iter()
-        .filter(|package| !CAPABILITY_REGISTRY.iter().any(|row| row.package == *package))
+        .filter(|package| {
+            !CAPABILITY_REGISTRY
+                .iter()
+                .any(|row| row.package == *package)
+        })
         .cloned()
         .collect();
     if !invalid_registry.is_empty() {
@@ -543,7 +560,10 @@ mod tests {
     /// refused. This is the mutant target for the version half of the key.
     #[test]
     fn version_matching_is_exact() {
-        assert_eq!(import_posture("wasi:io/streams@0.2.12"), Some(Posture::Ambient));
+        assert_eq!(
+            import_posture("wasi:io/streams@0.2.12"),
+            Some(Posture::Ambient)
+        );
         for wrong in [
             "wasi:io/streams@0.2.9",
             "wasi:io/streams@0.2.13",

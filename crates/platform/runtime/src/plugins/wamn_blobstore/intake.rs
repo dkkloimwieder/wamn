@@ -187,7 +187,10 @@ mod tests {
         );
         assert_eq!(error.code(), "object_too_large");
         let rendered = error.to_string();
-        assert!(rendered.contains('4') && rendered.contains('5'), "{rendered}");
+        assert!(
+            rendered.contains('4') && rendered.contains('5'),
+            "{rendered}"
+        );
     }
 
     #[test]

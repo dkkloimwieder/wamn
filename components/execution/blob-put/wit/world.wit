@@ -1,0 +1,8 @@
+package wamn:blob-put@0.1.0;
+
+world blob-put {
+  import wasmcloud:blobstore/types@0.1.0;
+  import wasmcloud:blobstore/container@0.1.0;
+  import wasmcloud:blobstore/blobstore@0.1.0;
+  export wamn:node/handler@0.1.0;
+}

@@ -169,8 +169,14 @@ mod tests {
                 .owner
         };
 
-        assert_eq!(owner_of(ConnectionField::RelativeTarget), ConnectionFieldOwner::Author);
-        assert_eq!(owner_of(ConnectionField::Body), ConnectionFieldOwner::Author);
+        assert_eq!(
+            owner_of(ConnectionField::RelativeTarget),
+            ConnectionFieldOwner::Author
+        );
+        assert_eq!(
+            owner_of(ConnectionField::Body),
+            ConnectionFieldOwner::Author
+        );
         for walled in [
             ConnectionField::Authority,
             ConnectionField::Bucket,

@@ -7,6 +7,12 @@
   },
   "artifacts": [
     {
+      "package": "blob-put",
+      "workspace_manifest": "components/Cargo.toml",
+      "raw_file": "blob_put.wasm",
+      "output_file": "blob_put.wasm"
+    },
+    {
       "package": "client-acme-receiving",
       "workspace_manifest": "components/Cargo.toml",
       "raw_file": "client_acme_receiving.wasm",

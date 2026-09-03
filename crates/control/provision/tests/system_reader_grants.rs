@@ -474,7 +474,11 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
            ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = r), \
              'the probe role is superuser or bypasses RLS — that masks every denial below'; \n"
     );
-    for relation in ["identity.pats", "identity.principals", "identity.project_roles"] {
+    for relation in [
+        "identity.pats",
+        "identity.principals",
+        "identity.project_roles",
+    ] {
         probes.push_str(&format!(
             "  ASSERT has_table_privilege(r, '{relation}', 'SELECT'), \
                'the identity reader cannot read {relation}'; \n"
@@ -493,7 +497,11 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
                'the identity reader reaches the {schema} schema'; \n"
         ));
     }
-    for relation in ["registry.event_readers", "registry.orgs", "provisioning.sagas"] {
+    for relation in [
+        "registry.event_readers",
+        "registry.orgs",
+        "provisioning.sagas",
+    ] {
         probes.push_str(&format!(
             "  ASSERT NOT has_table_privilege(r, '{relation}', 'SELECT'), \
                'the identity reader can read {relation}'; \n"

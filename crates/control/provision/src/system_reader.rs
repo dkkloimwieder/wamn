@@ -395,8 +395,11 @@ mod tests {
                 SystemReader::Registry => SystemReader::Identity,
                 SystemReader::Identity => SystemReader::Registry,
             };
-            let error = parse(reader, &url(&role(other, CredentialGeneration::A), DATABASE))
-                .expect_err("a reader accepted the other reader's credential");
+            let error = parse(
+                reader,
+                &url(&role(other, CredentialGeneration::A), DATABASE),
+            )
+            .expect_err("a reader accepted the other reader's credential");
             assert_eq!(error.kind(), SystemReaderUrlErrorKind::Role);
         }
     }

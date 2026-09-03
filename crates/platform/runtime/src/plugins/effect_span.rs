@@ -157,6 +157,12 @@ effect_histogram!(
     "trusted HTTP connection effect latency in ms, by effect.operation"
 );
 effect_histogram!(
+    BLOBSTORE_DURATION_MS,
+    "wamn-blobstore",
+    "wamn.blobstore.duration_ms",
+    "wasmcloud:blobstore effect latency in ms, by effect.operation"
+);
+effect_histogram!(
     JETSTREAM_DURATION_MS,
     "wamn-jetstream",
     "wamn.jetstream.duration_ms",

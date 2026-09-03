@@ -111,7 +111,8 @@ impl QueueDepth {
     /// the depth is READ, so a project that is quiet — no doorbells published,
     /// nothing woken — still reports that its dispatcher is sweeping.
     pub fn observe(&self, project: &str, tenant: &str, depth: i64) {
-        self.samples.add(1, &queue_depth_attributes(tenant, project));
+        self.samples
+            .add(1, &queue_depth_attributes(tenant, project));
         if let Ok(mut by_project) = self.by_project.lock() {
             by_project.insert(
                 project.to_owned(),
@@ -532,7 +533,10 @@ pub fn register_queue_depth_gauge(meter: &Meter, depth: &DepthRegistry) {
         .with_callback(move |o| {
             if let Ok(d) = depth.by_project.lock() {
                 for (project, sample) in d.iter() {
-                    o.observe(sample.depth, &queue_depth_attributes(&sample.tenant, project));
+                    o.observe(
+                        sample.depth,
+                        &queue_depth_attributes(&sample.tenant, project),
+                    );
                 }
             }
         })

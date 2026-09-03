@@ -160,6 +160,21 @@ const EFFECTFUL_PROJECTION_HASH: &str =
     "sha256:7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c";
 const EFFECTFUL_STORE_ALIAS: &str = "receipts";
 const HTTP_IMPORT: &str = "wamn:connection/http@0.1.0";
+/// The blobstore capability's first consumer, refused by the same clause.
+///
+/// The HTTP candidate proves the clause fires for one registered effect. This
+/// proves it fires for `wasmcloud:blobstore` — the capability 2b added — so the
+/// gate's effect law is shown to key on POSTURE rather than on one known
+/// package. If the registry ever classified a new capability as ambient by
+/// accident, this is where it would surface.
+const BLOBSTORE_WIRING: &str = "labels-write";
+const BLOBSTORE_COMPONENT: &str = "blob-put";
+const BLOBSTORE_COMPONENT_DIGEST: &str =
+    "sha256:3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d";
+const BLOBSTORE_PROJECTION_HASH: &str =
+    "sha256:4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e";
+const BLOBSTORE_IMPORTS_FINGERPRINT: &str =
+    "sha256:5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f";
 /// Fixed loopback port for the gate. The gate is serial and env-gated, so a
 /// fixed port is simpler than plumbing an ephemeral one out of the listener.
 const BIND: &str = "127.0.0.1:18088";
@@ -517,6 +532,17 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
                      '{{\"create\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
                      '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PROJECTION_HASH}', '[]', \
                      '{CANDIDATE_IMPORTS_FINGERPRINT}', '[]'); \
+             INSERT INTO catalog.component_library \
+               (tenant_id, package_id, package_version, component, interface_version, operations, \
+                component_digest, projection_hash, imports, imports_fingerprint, effects) \
+             VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
+                     '{BLOBSTORE_COMPONENT}', '0.1', \
+                     '{{\"put\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
+                     '{BLOBSTORE_COMPONENT_DIGEST}', '{BLOBSTORE_PROJECTION_HASH}', \
+                     '[\"wasmcloud:blobstore/blobstore@0.1.0\"]', \
+                     '{BLOBSTORE_IMPORTS_FINGERPRINT}', \
+                     '[{{\"package\":\"wasmcloud:blobstore\",\"interfaces\":\
+[\"wasmcloud:blobstore/blobstore@0.1.0\"]}}]'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"
@@ -1135,14 +1161,17 @@ async fn nonempty_case_connection_component_without_release_or_binding_refuses_e
 }
 
 #[tokio::test]
+// LOUD, not silent (wamn-61d0). This returned early when the variable was
+// unset, so a default `cargo test` reported `ok. 1 passed ... 0.00s` for a
+// test that executed nothing — the self-skipping false green
+// `docs/operations/build-and-test.md` names. `#[ignore]` makes its absence
+// VISIBLE in the default run, and the `expect` below makes an explicit run
+// without the database fail loudly instead of passing vacuously. A test that
+// cannot tell "passed" from "never ran" is not evidence.
+#[ignore = "requires disposable PostgreSQL via WAMN_PLATFORM_IDENTITY_PG_URL"]
 async fn management_surface_authenticates_and_attributes_authoring_commands() {
-    let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
-        eprintln!(
-            "skipping management_surface_authenticates_and_attributes_authoring_commands \
-             (set WAMN_PLATFORM_IDENTITY_PG_URL to run)"
-        );
-        return;
-    };
+    let url = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL")
+        .expect("set WAMN_PLATFORM_IDENTITY_PG_URL to a disposable PostgreSQL superuser URL");
     let _serial = LIVE_GATE_SERIAL.lock().await;
 
     let (mut admin, admin_task) = connect(&url).await.expect("connect as the gate admin");
@@ -1814,6 +1843,45 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         ledger_rows(&admin).await.len(),
         ledger_before_effectful + 1,
         "a typed gate refusal was not attributed"
+    );
+    // THE SAME CLAUSE, AGAINST THE BLOBSTORE CAPABILITY (wamn-61d0). `ledger`
+    // above proves it fires for another registered effect. This proves it fires
+    // for `wasmcloud:blobstore`, the capability 2b added — so the effect law
+    // keys on POSTURE, not on one known package, and the registry's first new
+    // consumer is refused by it like any other effect.
+    let blobstore = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &gate_document_in(
+            "gate-blobstore",
+            PROJECT,
+            &candidate_graph(BLOBSTORE_WIRING, BLOBSTORE_COMPONENT, "put"),
+        ),
+    )
+    .await;
+    assert_eq!(blobstore.status, 200, "{}", blobstore.body);
+    assert_eq!(
+        outcome(&blobstore.body)["value"],
+        serde_json::json!({
+            "command": "gate",
+            "reason": {
+                "kind": "effectful-component-reached",
+                "components": [BLOBSTORE_COMPONENT],
+            },
+        }),
+        "a blobstore-effect candidate was not refused by its effect posture: {}",
+        blobstore.body
+    );
+
+    // The PURE candidate was ACCEPTED a few lines above, against the very same
+    // effective release and the very same posture read. That is what makes this a
+    // predicate rather than a blanket refusal: one document passes the clause
+    // and one does not, and the effects projection is the only difference.
+    assert_eq!(
+        outcome(&accepted.body)["status"],
+        serde_json::json!("completed"),
+        "the effect-free predicate refused the pure candidate too"
     );
     // Bytes that are not a wiring document are a typed product refusal, not a
     // 501 and not a fabricated report. This REPLACES the unknown-candidate arm

@@ -1,0 +1,49 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "__PACKAGE_ID__",
+    "package-version": "__PACKAGE_VERSION__"
+  },
+  "component": "blob-put",
+  "interface-version": "0.1.0",
+  "operations": {
+    "wamn:node/handler@0.1.0": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string", "minLength": 1 },
+              "body": { "type": "string" }
+            },
+            "required": ["key", "body"]
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "container": { "type": "string" },
+              "key": { "type": "string" }
+            },
+            "required": ["container", "key"]
+          }
+        }
+      ],
+      "parameters": [
+        {
+          "name": "store_alias",
+          "schema": { "type": "string", "minLength": 1 },
+          "required": true
+        }
+      ]
+    }
+  },
+  "connections": [
+    { "store-alias": "__STORE_ALIAS__", "requirement-type": "blobstore" }
+  ]
+}

@@ -1,0 +1,19 @@
+[package]
+name = "blob-put"
+version.workspace = true
+edition.workspace = true
+description = "Palette node writing one object at a caller-supplied deterministic key."
+
+[dependencies]
+serde_json = { workspace = true }
+# The `async` feature is gated HERE, on the one guest that needs it, rather
+# than on the workspace dependency. `wasmcloud:blobstore@0.1.0` is entirely
+# `async func`, and the futures runtime the feature pulls must not reach the
+# synchronous guests through feature unification.
+wit-bindgen = { workspace = true, features = ["async"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true

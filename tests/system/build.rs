@@ -34,4 +34,3 @@ fn main() {
     // it absolutely: a crate absent from [dependencies] cannot be imported at
     // all, and trying is E0432 at build time.
 }
-
