@@ -1582,6 +1582,28 @@ code:
   the journey PASSES. A green gate proving the wrong thing is worse than a red
   one.
 
+**Corollary: a matcher that widens its reach demands uniqueness.** Un-fusing
+an anchor often means matching on less — trimming whitespace, ignoring order,
+comparing content instead of a whole line. Every such widening lets the anchor
+reach places the narrower form could not, and the narrower form was usually
+excluding them by accident rather than by intent. A values-overlay anchor that
+matched a full indented line became a match on the line's content, which fixed
+a real coupling to a file the harness does not own — and simultaneously made
+`replicas: 3` able to match that key at any depth in the tree, not just the
+one meant.
+
+So widening comes with a count. The anchor must fire EXACTLY once, not at
+least once: a zero means the template drifted, a two means the anchor has
+found a second home, and the second is the dangerous one because the render
+still succeeds and produces a file nobody asked for. Prove it by planting the
+duplicate — take the key the anchor matches, add it a second time somewhere
+else in the document, and require the run to fail. An at-least-once guard
+passes that test, which is how you know it was never the guard you needed.
+
+The general form: whenever a match is loosened, ask what the strict form was
+excluding, and assert that the loosening did not admit it. Otherwise the
+un-fusing has removed one coupling and quietly built another.
+
 **The test of an un-fusing: a parameter no test can distinguish from the
 constant it replaced is the same fusion with extra steps.** Introducing the
 argument is not the work; proving it CHANGES something is. The statement-count
