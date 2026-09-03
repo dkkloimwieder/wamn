@@ -7,20 +7,23 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::Duration;
 
 use oci_client::Reference;
 use serde_json::Value;
 use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout_at};
+use tokio_postgres::Config as PostgresConfig;
 use url::Url;
+use wamn_pg_core::Identifier;
 use wamn_runtime::component_artifact::component_artifact_reference;
 
 /// Whole-startup budget shared by every configured reachability probe.
 pub const STARTUP_REACHABILITY_BUDGET: Duration = Duration::from_secs(5);
 
 const DOCUMENT_KEY: &str = "$";
-const VERIFICATION_DATABASE_URL: &str = "verification_database_url";
+pub(super) const VERIFICATION_DATABASE_URL: &str = "verification_database_url";
 const TARGET_DATABASE_URL: &str = "target_database_url";
 const SYSTEM_DATABASE_URL: &str = "system_database_url";
 const IDENTITY_DATABASE_URL: &str = "identity_database_url";
@@ -38,6 +41,9 @@ const GATE_URL: &str = "gate_url";
 const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
 const ROUTE_HOST: &str = "route_host";
 const FLOW_HTTP_WORKLOAD_IMAGE: &str = "flow_http_workload_image";
+
+pub(super) const POSTGRES_SYSTEM_DATABASES: [&str; 3] = ["postgres", "template0", "template1"];
+const POSTGRES_ROUTING_QUERY_KEYS: [&str; 5] = ["host", "hostaddr", "port", "dbname", "user"];
 
 const CONFIG_KEYS: [&str; 18] = [
     VERIFICATION_DATABASE_URL,
@@ -177,6 +183,10 @@ struct DatabaseIdentity {
 }
 
 impl DatabaseIdentity {
+    fn same_database_name(&self, other: &Self) -> bool {
+        self.database == other.database
+    }
+
     fn same_database(&self, other: &Self) -> bool {
         self.host == other.host && self.port == other.port && self.database == other.database
     }
@@ -437,14 +447,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         database_probe(VERIFICATION_DATABASE_URL, &verification_database_url)?;
     let (target_probe, target_identity) =
         database_probe(TARGET_DATABASE_URL, &target_database_url)?;
-    if verification_identity.same_database(&target_identity) {
-        return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::DatabaseCollision,
-            VERIFICATION_DATABASE_URL,
-            verification_probe.sanitized_endpoint.clone(),
-            "must name a database distinct from target_database_url",
-        ));
-    }
     let (system_probe, system_identity) =
         database_probe(SYSTEM_DATABASE_URL, &system_database_url)?;
     let (identity_probe, identity_identity) =
@@ -459,6 +461,19 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let (event_materializer_probe, event_materializer_identity) = database_probe(
         EVENT_MATERIALIZER_DATABASE_URL,
         &event_materializer_database_url,
+    )?;
+    validate_verification_database(
+        &verification_probe,
+        &verification_identity,
+        &[
+            &target_identity,
+            &system_identity,
+            &identity_identity,
+            &guest_identity,
+            &executor_platform_identity,
+            &http_admitter_identity,
+            &event_materializer_identity,
+        ],
     )?;
     validate_runtime_database_credentials(
         &[
@@ -626,21 +641,57 @@ fn database_probe(
 ) -> Result<(ReachabilityProbe, DatabaseIdentity), DevConfigError> {
     let parsed = parse_url(key, raw, &["postgres", "postgresql"])?;
     let probe = probe_from_url(key, &parsed, 5432, true)?;
-    let database = parsed.path().strip_prefix('/').unwrap_or_default();
+    if parsed
+        .query_pairs()
+        .any(|(name, _)| POSTGRES_ROUTING_QUERY_KEYS.contains(&name.as_ref()))
+    {
+        return Err(DevConfigError::endpoint(
+            DevConfigErrorKind::InvalidValue,
+            key,
+            probe.sanitized_endpoint.clone(),
+            "remove host, hostaddr, port, dbname, and user query overrides; use the URL authority and path",
+        ));
+    }
+    let database_path = parsed.path().strip_prefix('/').unwrap_or_default();
+    if database_path.is_empty() || database_path.contains('/') {
+        return Err(DevConfigError::endpoint(
+            DevConfigErrorKind::InvalidValue,
+            key,
+            probe.sanitized_endpoint.clone(),
+            "expected one explicit database name",
+        ));
+    }
+    let postgres = PostgresConfig::from_str(raw).map_err(|_| {
+        DevConfigError::endpoint(
+            DevConfigErrorKind::InvalidValue,
+            key,
+            probe.sanitized_endpoint.clone(),
+            "expected a PostgreSQL connection URL",
+        )
+    })?;
+    let database = postgres.get_dbname().unwrap_or_default();
     if database.is_empty() || database.contains('/') {
         return Err(DevConfigError::endpoint(
             DevConfigErrorKind::InvalidValue,
             key,
-            sanitized_url(&parsed, true, 5432),
+            probe.sanitized_endpoint.clone(),
             "expected one explicit database name",
         ));
     }
-    let user = parsed.username();
+    Identifier::new(database).map_err(|_| {
+        DevConfigError::endpoint(
+            DevConfigErrorKind::InvalidValue,
+            key,
+            probe.sanitized_endpoint.clone(),
+            "set an explicit database name of at most 63 bytes without NUL",
+        )
+    })?;
+    let user = postgres.get_user().unwrap_or_default();
     if user.is_empty() {
         return Err(DevConfigError::endpoint(
             DevConfigErrorKind::InvalidValue,
             key,
-            sanitized_url(&parsed, true, 5432),
+            probe.sanitized_endpoint.clone(),
             "expected one explicit database role",
         ));
     }
@@ -651,6 +702,36 @@ fn database_probe(
         user: user.into(),
     };
     Ok((probe, identity))
+}
+
+fn validate_verification_database(
+    probe: &ReachabilityProbe,
+    verification: &DatabaseIdentity,
+    protected: &[&DatabaseIdentity],
+) -> Result<(), DevConfigError> {
+    if POSTGRES_SYSTEM_DATABASES.contains(&verification.database.as_ref()) {
+        return Err(DevConfigError::endpoint(
+            DevConfigErrorKind::DatabaseCollision,
+            VERIFICATION_DATABASE_URL,
+            probe.sanitized_endpoint.clone(),
+            "set verification_database_url to a disposable database other than postgres, template0, or template1",
+        ));
+    }
+    // DNS, IP, and service aliases cannot be proven disjoint here. Refusing a
+    // reused name costs naming flexibility; trusting aliases could DROP a
+    // protected database when the disposable verification database is reset.
+    if protected
+        .iter()
+        .any(|identity| verification.same_database_name(identity))
+    {
+        return Err(DevConfigError::endpoint(
+            DevConfigErrorKind::DatabaseCollision,
+            VERIFICATION_DATABASE_URL,
+            probe.sanitized_endpoint.clone(),
+            "set verification_database_url to a disposable database distinct from every target, system, and runtime database",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_runtime_database_credentials(
@@ -1022,26 +1103,110 @@ mod tests {
     }
 
     #[test]
-    fn verification_and_target_database_roles_cannot_share_one_database() {
+    fn verification_database_cannot_alias_a_protected_database() {
+        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
+        for protected_key in [
+            TARGET_DATABASE_URL,
+            SYSTEM_DATABASE_URL,
+            IDENTITY_DATABASE_URL,
+            GUEST_DATABASE_URL,
+            EXECUTOR_PLATFORM_DATABASE_URL,
+            HTTP_ADMITTER_DATABASE_URL,
+            EVENT_MATERIALIZER_DATABASE_URL,
+        ] {
+            let mut document = complete_document(&addresses);
+            let mut alias = Url::parse(
+                document[protected_key]
+                    .as_str()
+                    .expect("protected URL fixture"),
+            )
+            .expect("parse protected URL fixture");
+            alias
+                .set_username("verifier")
+                .expect("replace fixture username");
+            alias
+                .set_password(Some("verify-secret"))
+                .expect("replace fixture password");
+            document[VERIFICATION_DATABASE_URL] = json!(alias.as_str());
+
+            let error = parse_config(&serde_json::to_vec(&document).expect("serialize collision"))
+                .expect_err("verification database alias must refuse");
+
+            assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
+            assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
+            let message = error.to_string();
+            assert!(message.contains("set verification_database_url"));
+            assert!(!message.contains("secret"));
+        }
+    }
+
+    #[test]
+    fn verification_database_refuses_postgres_system_names_and_encoded_aliases() {
+        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
+        for database in POSTGRES_SYSTEM_DATABASES {
+            let mut document = complete_document(&addresses);
+            document[VERIFICATION_DATABASE_URL] = json!(format!(
+                "postgresql://verifier:verify-secret@127.0.0.1:41000/{database}"
+            ));
+
+            let error =
+                parse_config(&serde_json::to_vec(&document).expect("serialize system name"))
+                    .expect_err("a PostgreSQL system database must refuse");
+
+            assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
+            assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
+            assert!(error.to_string().contains("set verification_database_url"));
+            assert!(!error.to_string().contains("verify-secret"));
+        }
+
+        let mut encoded_alias = complete_document(&addresses);
+        encoded_alias[VERIFICATION_DATABASE_URL] =
+            json!("postgresql://verifier:verify-secret@127.0.0.1:41000/shared%2Ddatabase");
+        encoded_alias[TARGET_DATABASE_URL] =
+            json!("postgresql://target:target-secret@127.0.0.1:41000/shared-database");
+        let error =
+            parse_config(&serde_json::to_vec(&encoded_alias).expect("serialize encoded alias"))
+                .expect_err("encoded database alias must refuse");
+        assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
+        assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
+    }
+
+    #[test]
+    fn verification_database_name_collision_refuses_across_distinct_host_labels() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         let mut document = complete_document(&addresses);
         document[VERIFICATION_DATABASE_URL] =
-            json!("postgresql://verifier:first-secret@127.0.0.1:41000/shared");
+            json!("postgresql://verifier:verify-secret@verification.invalid:41000/shared-database");
         document[TARGET_DATABASE_URL] =
-            json!("postgresql://target:second-secret@127.0.0.1:41000/shared");
+            json!("postgresql://target:target-secret@target.invalid:41000/shared-database");
 
         let error = parse_config(&serde_json::to_vec(&document).expect("serialize collision"))
-            .expect_err("two roles on one database must refuse");
+            .expect_err("host aliases cannot make a destructive database name safe");
 
         assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
         assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
-        assert_eq!(
-            error.sanitized_endpoint(),
-            Some("postgresql://127.0.0.1:41000/shared")
-        );
-        let message = error.to_string();
-        assert!(!message.contains("first-secret"));
-        assert!(!message.contains("second-secret"));
+        assert!(!error.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn postgres_identity_routing_query_overrides_refuse_without_leaking_values() {
+        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
+        for query_key in POSTGRES_ROUTING_QUERY_KEYS {
+            let mut document = complete_document(&addresses);
+            document[VERIFICATION_DATABASE_URL] = json!(format!(
+                "postgresql://verifier:verify-secret@127.0.0.1:41000/verification?{query_key}=override-secret"
+            ));
+
+            let error =
+                parse_config(&serde_json::to_vec(&document).expect("serialize routing override"))
+                    .expect_err("routing query override must refuse");
+
+            assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+            assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
+            assert!(error.to_string().contains("remove host, hostaddr, port"));
+            assert!(!error.to_string().contains("override-secret"));
+            assert!(!error.to_string().contains("verify-secret"));
+        }
     }
 
     #[test]
@@ -1049,15 +1214,15 @@ mod tests {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
 
         let mut privileged_reuse = complete_document(&addresses);
-        let verification_credential = privileged_reuse[VERIFICATION_DATABASE_URL].clone();
-        privileged_reuse[GUEST_DATABASE_URL] = verification_credential;
+        let target_credential = privileged_reuse[TARGET_DATABASE_URL].clone();
+        privileged_reuse[GUEST_DATABASE_URL] = target_credential;
         let error = parse_config(
             &serde_json::to_vec(&privileged_reuse).expect("serialize privileged reuse"),
         )
-        .expect_err("a runtime role must not reuse the verification credential");
+        .expect_err("a runtime role must not reuse the target credential");
         assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
         assert_eq!(error.key(), GUEST_DATABASE_URL);
-        assert!(!error.to_string().contains("verify-secret"));
+        assert!(!error.to_string().contains("target-secret"));
 
         let mut sibling_reuse = complete_document(&addresses);
         let platform_credential = sibling_reuse[EXECUTOR_PLATFORM_DATABASE_URL].clone();

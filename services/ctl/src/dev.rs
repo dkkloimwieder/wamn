@@ -6,9 +6,13 @@
 
 pub mod activation;
 pub mod config;
+pub mod verification_database;
 
 use std::error::Error;
 use std::fmt;
+
+use config::DevConfig;
+use verification_database::VerificationDatabaseError;
 
 /// Stable refusal code for a dirty worktree reaching committed-source work.
 pub const DIRTY_WORKTREE_ERROR: &str = "dev-worktree-dirty";
@@ -300,12 +304,26 @@ impl PendingRun {
     }
 }
 
-/// Run the fixed development stage sequence once.
+/// Run one fixed stage sequence in a fresh verification database.
 ///
 /// A dirty source may exercise saved-byte stages through the gate. The engine
 /// refuses before invoking the first stage that can mint committed provenance,
 /// so no later deployment side effect can run under a false source identity.
 pub async fn run_once<R>(
+    config: &DevConfig,
+    source_state: DevSourceState,
+    runner: &mut R,
+) -> Result<Result<DevRunReceipt, DevRunError>, VerificationDatabaseError>
+where
+    R: DevStageRunner + Send,
+{
+    verification_database::run(config, |_| async move {
+        run_once_stages(source_state, runner).await
+    })
+    .await
+}
+
+async fn run_once_stages<R>(
     source_state: DevSourceState,
     runner: &mut R,
 ) -> Result<DevRunReceipt, DevRunError>
@@ -315,8 +333,7 @@ where
     run_suffix(DevStage::Migrate, source_state, runner).await
 }
 
-/// Run the exact development stage suffix beginning at `from`.
-pub async fn run_suffix<R>(
+async fn run_suffix<R>(
     from: DevStage,
     source_state: DevSourceState,
     runner: &mut R,
@@ -343,13 +360,31 @@ where
     })
 }
 
-/// Consume invalidations and execute one affected suffix at a time.
+/// Watch for invalidations inside one fresh verification-database session.
 ///
 /// Events already queued together coalesce to the earliest affected stage. An
 /// event arriving during a run remains queued for the next run, so runs never
 /// overlap. Stage failures are reported and do not terminate the watch loop;
-/// only an invalidation-source failure does.
+/// only an invalidation-source failure does. Every suffix in this watch command
+/// shares the same run-scoped verification database and advisory lease.
 pub async fn run_watch<R, S, O>(
+    config: &DevConfig,
+    runner: &mut R,
+    source: &mut S,
+    observer: &mut O,
+) -> Result<Result<(), S::Error>, VerificationDatabaseError>
+where
+    R: DevStageRunner + Send,
+    S: DevInvalidationSource + Send,
+    O: DevWatchObserver + Send,
+{
+    verification_database::run(config, |_| async move {
+        run_watch_loop(runner, source, observer).await
+    })
+    .await
+}
+
+async fn run_watch_loop<R, S, O>(
     runner: &mut R,
     source: &mut S,
     observer: &mut O,
@@ -522,7 +557,7 @@ mod tests {
     async fn clean_source_completes_the_exact_stage_order() {
         let mut runner = RecordingRunner::default();
 
-        let receipt = run_once(DevSourceState::Clean, &mut runner)
+        let receipt = run_once_stages(DevSourceState::Clean, &mut runner)
             .await
             .expect("clean semantic runner completes");
 
@@ -534,7 +569,7 @@ mod tests {
     async fn stage_failure_stops_before_every_later_side_effect() {
         let mut runner = RecordingRunner::failing_at(DevStage::Virtualize);
 
-        let error = run_once(DevSourceState::Clean, &mut runner)
+        let error = run_once_stages(DevSourceState::Clean, &mut runner)
             .await
             .expect_err("synthetic virtualization failure must stop the run");
 
@@ -561,7 +596,7 @@ mod tests {
     async fn dirty_source_reaches_gate_then_refuses_before_publish() {
         let mut runner = RecordingRunner::default();
 
-        let error = run_once(DevSourceState::Dirty, &mut runner)
+        let error = run_once_stages(DevSourceState::Dirty, &mut runner)
             .await
             .expect_err("dirty source must not reach durable provenance stages");
 
@@ -607,7 +642,7 @@ mod tests {
         let mut runner = WatchRunner::default();
         let mut observer = RecordingObserver::default();
 
-        run_watch(&mut runner, &mut source, &mut observer)
+        run_watch_loop(&mut runner, &mut source, &mut observer)
             .await
             .expect("fake source is infallible");
 
@@ -641,7 +676,7 @@ mod tests {
         );
         let mut observer = RecordingObserver::default();
 
-        run_watch(&mut runner, &mut source, &mut observer)
+        run_watch_loop(&mut runner, &mut source, &mut observer)
             .await
             .expect("fake source is infallible");
 
@@ -680,7 +715,7 @@ mod tests {
         runner.fail_once_at = Some(DevStage::Gate);
         let mut observer = RecordingObserver::default();
 
-        run_watch(&mut runner, &mut source, &mut observer)
+        run_watch_loop(&mut runner, &mut source, &mut observer)
             .await
             .expect("fake source is infallible");
 
@@ -714,7 +749,7 @@ mod tests {
         let mut runner = WatchRunner::default();
         let mut observer = RecordingObserver::default();
 
-        run_watch(&mut runner, &mut source, &mut observer)
+        run_watch_loop(&mut runner, &mut source, &mut observer)
             .await
             .expect("fake source is infallible");
 

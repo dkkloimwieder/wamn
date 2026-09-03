@@ -55,6 +55,11 @@ The security half is proven. The "easier" half is not:
   publish → apply → ACL → release → activate) is ~12 steps. One programmatic
   stage engine owns orchestration; `wamn dev` and the loop console are clients,
   never separate control loops (owner ruling, `wamn-10yt.10.1`, 2026-09-02).
+  Each command owns one fresh disposable verification database: Migrate, Admit,
+  and Gate use it; Publish writes OCI/control facts and is a no-op for the
+  project projection. Only Apply and ACL mutate the durable database, while
+  Release derives from the verified closure. This prevents stale gate evidence
+  and keeps unverified work out of durable state.
   Without this,
   components are more secure *and* harder — a failed thesis.
   The fixed Admit → Gate → Publish → Apply order uses a disposable
