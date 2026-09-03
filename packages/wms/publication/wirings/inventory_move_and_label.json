@@ -1,0 +1,42 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "inventory_move_and_label",
+  "version": 1,
+  "entry": "move",
+  "nodes": {
+    "move": {
+      "component": "wms",
+      "interface-version": "0.1.0",
+      "operation": "wamn-wms:inventory/move@1.0.0"
+    },
+    "label": {
+      "component": "label-render",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "template_id": "pallet"
+      }
+    },
+    "store": {
+      "component": "blob-put",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "store_alias": "labels",
+        "key_field": "/movement_id",
+        "body_field": "/zpl"
+      },
+      "terminal": "respond"
+    }
+  },
+  "edges": [
+    {
+      "from": "move",
+      "to": "label"
+    },
+    {
+      "from": "label",
+      "to": "store"
+    }
+  ]
+}
