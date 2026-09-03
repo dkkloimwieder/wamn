@@ -1527,6 +1527,54 @@ call through the interface, and the test then verifies the import is present**
 names the import it caught. A fixture that only *declares* an import proves
 nothing about it.
 
+**Score a mutant by the proof's EXIT CODE, never by counting failure lines.**
+A mutant that makes the harness crash before it reaches its assertions prints
+no failures, so a line-counting score reads it as green — a survivor disguised
+as a kill, and the disguise is best exactly when the mutation is most
+damaging. This is not hypothetical: a first mutation pass over a lifted render
+harness scored `FAIL` lines and reported all four mutants killed. Rescored on
+exit code, two had survived, and both were properties the harness's own
+contract claimed — an anchor rule weakened from exactly-once to at-least-once,
+and a required-key check disabled. Neither was tested by anything.
+
+**A mutant scores killed only when the proof ran to completion and failed on
+the mutated property.** Both halves matter. Completion rules out the crash
+disguise; failing on the mutated property rules out a kill for an unrelated
+reason, which proves the mutant is detectable but not that the assertion you
+care about detects it.
+
+**Every guard's proof carries a negative control — a known-bad input that MUST
+fail it.** A check with no such input has not been shown to check anything.
+The nameref binding check above passed against a function that had been
+deliberately regressed to the exact defect it existed to catch, because the
+check itself was malformed; only adding the control — the internal parameter
+name, which must collide — revealed it. Run the control every time, not once
+when the check is written: a check can go inert later, when the code it probes
+moves out from under it.
+
+This is the same failure as asserting a count that can coincide, one level up.
+There, the assertion passed for the wrong reason; here, the whole check does.
+
+**The lift checklist.** Before extracting any block into a shared function,
+answer three questions, and answer them BEFORE the extraction rather than
+after:
+
+1. **Does it read anything it was not handed?** Every input becomes a
+   parameter, and a missing one is a named error rather than an empty string
+   that produces a subtly wrong result.
+2. **Can a caller collide with its parameter names?** Any indirection that
+   resolves a name at runtime can silently bind to the wrong variable. Prove
+   the binding with content, not names.
+3. **Does every guard it claims have a mutant that kills it?** A guard nothing
+   exercises is documentation, and lifting is exactly when contracts get
+   written and not tested.
+
+A corollary from running this: independent guards that overlap are not
+redundancy. While the nameref binding was under test, the collided render was
+caught by the unrelated exactly-once anchor rule, because decoy identity
+values derive anchors that match nothing. Defence in depth working as
+designed.
+
 **A test must assert the DISTINGUISHING STEP, not a count that can coincide.**
 An assertion can pass for a reason unrelated to the property it is named for,
 and a count is the commonest way. This has now bitten three times, each caught
