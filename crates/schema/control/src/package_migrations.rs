@@ -794,7 +794,11 @@ mod tests {
             "quality.create_inspection": {
                 "kind": "projection",
                 "visibility": "private",
-                "permission": "quality.create_inspection"
+                "permission": "quality.create_inspection",
+                "input": {"fields": []},
+                "result": {"class": "one", "fields": []},
+                "errors": [],
+                "error_details": {}
             }
         });
         directory.manifest_bytes = serde_json::to_vec(&manifest).expect("serialize manifest");

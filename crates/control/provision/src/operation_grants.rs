@@ -319,15 +319,17 @@ mod tests {
     const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../packages/receiving/wamn.json");
 
     #[test]
-    fn receiving_manifest_yields_the_six_canonical_operation_grants() {
+    fn receiving_manifest_yields_the_eight_canonical_operation_grants() {
         assert_eq!(
             operation_grant_tokens(RECEIVING_MANIFEST).expect("parse strict Receiving manifest"),
             [
+                "wamn-receiving:location/list@1.0.0",
                 "wamn-receiving:purchase-order/get@1.0.0",
                 "wamn-receiving:purchase-order/query@1.0.0",
                 "wamn-receiving:purchase-order/update@1.0.0",
                 "wamn-receiving:receipt/get@1.0.0",
                 "wamn-receiving:receipt/query@1.0.0",
+                "wamn-receiving:receiving/load-receipt-screen@1.0.0",
                 "wamn-receiving:receiving/record-receipt@1.0.0",
             ]
             .map(str::to_owned)
@@ -346,6 +348,14 @@ mod tests {
             .as_object_mut()
             .expect("operation is an object")
             .remove("permission");
+        operation["errors"]
+            .as_array_mut()
+            .expect("operation errors are an array")
+            .retain(|error| error != "permission_denied");
+        operation["error_details"]
+            .as_object_mut()
+            .expect("operation error details are an object")
+            .remove("permission_denied");
         let bytes = serde_json::to_vec(&manifest).expect("serialize private operation fixture");
 
         let grants = operation_grant_tokens(&bytes).expect("private operation remains valid");
@@ -354,7 +364,7 @@ mod tests {
                 .iter()
                 .any(|grant| grant == "wamn-receiving:receiving/record-receipt@1.0.0")
         );
-        assert_eq!(grants.len(), 5);
+        assert_eq!(grants.len(), 7);
     }
 
     #[test]
