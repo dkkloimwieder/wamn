@@ -33,18 +33,11 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ),
     ("wamn-ctl", "services/ctl/src/lib.rs"),
     ("wamn-dispatcher", "services/dispatcher/src/lib.rs"),
-    ("wamn-event-reg", "crates/events/registration/src/lib.rs"),
-    ("wamn-event-wire", "crates/events/wire/src/lib.rs"),
-    (
-        "wamn-execution-contract",
-        "crates/execution/contract/src/lib.rs",
-    ),
     ("wamn-execution-host", "crates/execution/host/src/lib.rs"),
     ("wamn-executor", "services/executor/src/lib.rs"),
     ("wamn-gate-harness", "test-support/harness/src/lib.rs"),
     ("wamn-gates", "tests/orchestrator/src/main.rs"),
     ("wamn-host", "services/host/src/main.rs"),
-    ("wamn-materializer", "crates/events/materializer/src/lib.rs"),
     ("wamn-pg-core", "crates/platform/pg-core/src/lib.rs"),
     (
         "wamn-platform-identity",
@@ -87,6 +80,19 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "components/execution/materializer/src/main.rs",
     ),
     ("blob-put", "components/execution/blob-put/src/lib.rs"),
+    (
+        "wamn-execution-contract",
+        "components/execution/contract/src/lib.rs",
+    ),
+    ("wamn-event-wire", "components/events/wire/src/lib.rs"),
+    (
+        "wamn-event-reg",
+        "components/events/registration/src/lib.rs",
+    ),
+    (
+        "wamn-materializer",
+        "components/events/materializer/src/lib.rs",
+    ),
     (
         "wamn-postgres-statements",
         "components/data/postgres-statements/src/lib.rs",

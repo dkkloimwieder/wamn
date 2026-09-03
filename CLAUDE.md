@@ -109,8 +109,8 @@ Almost all code here is Rust — consult the `rust-guidelines` skill when writin
 ## Repository structure
 
 - `services/{cdc-reader,ctl,dispatcher,executor,host,scenario-worker,waker}` — independently deployable binaries and their service-owned integration tests. `node-host` and `builder` were **deleted, not deferred**: `wamn-0h0g.6.3` (`f6bc01eb`, "delete custom component plane") removed both along with `crates/node`. There is therefore no in-tree OCI push path to reuse.
-- `crates/{authoring,catalog,control,data,events,execution,identity,platform,scenarios,schema}` — bounded-context libraries, organized by domain and then package.
-- `components/{execution,ingress}` — production wasm32-wasip2 guests; reusable test and example guests live under `components/{fixtures,samples}`. `components/nodes` went with the demo/POC surface (`wamn-0h0g.12.2`, `3554f140`).
+- `crates/{authoring,catalog,control,data,execution,identity,platform,scenarios,schema}` — bounded-context libraries, organized by domain and then package.
+- `components/{events,execution,ingress}` — production wasm32-wasip2 guests and the guest-consumed rlibs they link (relocated by wamn-10yt.10.29 so no guest dependency escapes the workspace); reusable test and example guests live under `components/{fixtures,samples}`. `components/nodes` went with the demo/POC surface (`wamn-0h0g.12.2`, `3554f140`).
 - `tests/{orchestrator,conformance,integration,system}` — proof owners, from orchestration helpers and static conformance through integration and system gates.
 - `test-support/{harness,fixtures,infrastructure}` — shared proof support that is not itself a deployable or proof owner.
 - `deploy/` — tiered (SR8, `deploy/README.md` holds the rules): `infra/` install-once infrastructure, `platform/` production manifests, `gates/` gate/bench Jobs, and `sql/` standalone SQL schemas. The former `poc/` tier was deleted by `wamn-0h0g.12.2` (`3554f140`); `deploy/mvp/` (bootstrap scripts) exists on disk but is not one of the tiers `deploy/README.md` names.

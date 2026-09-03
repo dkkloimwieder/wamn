@@ -291,8 +291,8 @@ fn profile_contract_matches_locked_metadata() {
         component_members.extend(members);
     }
 
-    assert_eq!(root_members.len(), 39);
-    assert_eq!(component_members.len(), 20);
+    assert_eq!(root_members.len(), 35);
+    assert_eq!(component_members.len(), 24);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -300,9 +300,6 @@ fn profile_contract_matches_locked_metadata() {
         "m1 additions",
         &string_array(&contract, "/profiles/root/m1_additions"),
         &[
-            "wamn-event-reg",
-            "wamn-event-wire",
-            "wamn-materializer",
             "wamn-cdc-reader",
         ],
     );
@@ -341,11 +338,11 @@ fn profile_contract_matches_locked_metadata() {
     );
 
     let profile_counts = [
-        ("m1", 22),
-        ("m2", 24),
-        ("deploy", 32),
-        ("full", 39),
-        ("ops", 39),
+        ("m1", 18),
+        ("m2", 20),
+        ("deploy", 28),
+        ("full", 35),
+        ("ops", 35),
     ];
     let mut profiles = BTreeMap::new();
     for (profile, expected_count) in profile_counts {
@@ -441,6 +438,10 @@ fn profile_contract_matches_locked_metadata() {
             "std-virtualization-probe",
             "transform",
             "wamn-client-acme-receiving-data-access",
+            "wamn-event-reg",
+            "wamn-event-wire",
+            "wamn-execution-contract",
+            "wamn-materializer",
             "wamn-postgres-statements",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
@@ -450,7 +451,7 @@ fn profile_contract_matches_locked_metadata() {
     );
     assert_eq!(set(&component_proof), set(&component_members));
     assert_eq!(component_m1.len(), 9);
-    assert_eq!(component_proof.len(), 20);
+    assert_eq!(component_proof.len(), 24);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(
@@ -466,6 +467,10 @@ fn profile_contract_matches_locked_metadata() {
             "sqlx-command",
             "std-virtualization-probe",
             "wamn-client-acme-receiving-data-access",
+            "wamn-event-reg",
+            "wamn-event-wire",
+            "wamn-execution-contract",
+            "wamn-materializer",
             "wamn-postgres-statements",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",

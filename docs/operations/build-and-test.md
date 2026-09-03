@@ -125,6 +125,10 @@ cargo test --workspace --no-fail-fast > sweep.txt 2>&1
   Measured at `1bffa614` from `cargo metadata --no-deps`: **17 default members
   of 35 workspace members.** The current `architecture/workspace-tiers.json`
   `full_ci` tier carries all 36 current members.
+  [relocation: `wamn-10yt.10.29` moved four guest-consumed rlibs out of the root
+  workspace into `components/`; the live counts are now 17 default of 35 root
+  members and 20 components members. The dated figures above are left as the
+  owner measured them.]
 
 **Measured state at `1bffa614`, by the owner, not re-run here: 168 binaries,
 1448 passed, 21 failed, 34 ignored, no compile errors. All 21 failures are
@@ -322,7 +326,7 @@ set -euo pipefail
 EFFECTIVE_RELEASE_CONTAINER=wamn-effective-release-pg18
 EFFECTIVE_RELEASE_PORT=54334
 EFFECTIVE_RELEASE_BASE_COMPONENT=components/target/virtualized/std-empty-environment/receiving.wasm
-EFFECTIVE_RELEASE_BASE_DIGEST=1c2925c2733096b822969fe5b11954ad05b69daa1d02f2432d88942fa72b7fef
+EFFECTIVE_RELEASE_BASE_DIGEST=498894030af16b22edaf7f0b2104b90673efdc0e32d2a85459368fa308ad8296
 if docker container inspect "$EFFECTIVE_RELEASE_CONTAINER" >/dev/null 2>&1; then
   echo "$EFFECTIVE_RELEASE_CONTAINER already exists" >&2
   exit 1
@@ -1079,6 +1083,50 @@ trap - EXIT
 The explicit service list keeps the anonymous std-virtualization PostgreSQL and
 registry services stopped. Cleanup removes only this Compose project, its
 volumes, and the validated scratch path.
+
+### `[GUEST-DIGEST-REPRODUCIBILITY]` — one commit, two checkouts, one digest
+
+A component digest must be a function of the bytes an author wrote. It was not:
+the same commit produced a different digest in every worktree, so a pin minted
+in one checkout was unreproducible in all the others and `[WAMN-DEV-LIVE]` could
+only pass from the directory the pin happened to be minted in
+(`wamn-10yt.10.29`). Two channels caused it, and both are closed —
+`-C metadata` derived from the absolute path of a path dependency that escaped
+the guest workspace, fixed by relocating those crates under `components/`; and
+absolute `file!()` strings baked in by `include!`d package sources, fixed by
+`--remap-path-prefix` in `tools/build-components`.
+
+`tests/conformance/tests/guest_workspace_closure.rs` asserts both properties
+structurally on every run. This gate proves the property they exist to protect.
+It builds one commit in two worktrees and compares every virtualized artifact.
+
+```bash
+set -euo pipefail
+GUEST_REPRO_COMMIT="$(git rev-parse HEAD)"
+GUEST_REPRO_A="$(mktemp -d /tmp/wamn-guest-repro-a.XXXXXX)"
+GUEST_REPRO_B="$(mktemp -d /tmp/wamn-guest-repro-b.XXXXXX)"
+git worktree add --detach "$GUEST_REPRO_A/tree" "$GUEST_REPRO_COMMIT"
+git worktree add --detach "$GUEST_REPRO_B/tree" "$GUEST_REPRO_COMMIT"
+for side in "$GUEST_REPRO_A" "$GUEST_REPRO_B"; do
+  ( cd "$side/tree" \
+    && CARGO_TARGET_DIR="$side/target" RUSTC_WRAPPER= \
+       ./tools/build-components build-only m1 > "$side/plan.json" \
+    && CARGO_TARGET_DIR="$side/target" RUSTC_WRAPPER= \
+       ./tools/build-components virtualize-only "$side/plan.json" >/dev/null )
+done
+WAMN_DIGEST_REPRO_A="$GUEST_REPRO_A/target/virtualized/std-empty-environment" \
+WAMN_DIGEST_REPRO_B="$GUEST_REPRO_B/target/virtualized/std-empty-environment" \
+  cargo test -p wamn-proof-conformance --test guest_workspace_closure \
+  one_commit_built_in_two_checkouts_yields_identical_guest_digests \
+  -- --ignored --exact --nocapture
+git worktree remove --force "$GUEST_REPRO_A/tree"
+git worktree remove --force "$GUEST_REPRO_B/tree"
+rm -rf -- "$GUEST_REPRO_A" "$GUEST_REPRO_B"
+```
+
+Run it whenever a guest workspace gains a member or a build flag changes. A
+failure means a component digest has started depending on the build directory
+again, and every pin minted since is a claim about a checkout.
 
 ### `[RECEIVING-ROUTE-JOURNEY]` — published base + overlay routes and traces
 

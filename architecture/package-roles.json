@@ -138,27 +138,27 @@
       }
     },
     {
-      "workspace": "root",
+      "workspace": "components",
       "name": "wamn-event-reg",
-      "manifest_path": "crates/events/registration/Cargo.toml",
+      "manifest_path": "components/events/registration/Cargo.toml",
       "role": "contract",
       "target_class": "shared",
       "bounded_context": "events",
       "deployable": false
     },
     {
-      "workspace": "root",
+      "workspace": "components",
       "name": "wamn-event-wire",
-      "manifest_path": "crates/events/wire/Cargo.toml",
+      "manifest_path": "components/events/wire/Cargo.toml",
       "role": "contract",
       "target_class": "shared",
       "bounded_context": "events",
       "deployable": false
     },
     {
-      "workspace": "root",
+      "workspace": "components",
       "name": "wamn-execution-contract",
-      "manifest_path": "crates/execution/contract/Cargo.toml",
+      "manifest_path": "components/execution/contract/Cargo.toml",
       "role": "contract",
       "target_class": "shared",
       "bounded_context": "execution",
@@ -234,9 +234,9 @@
       }
     },
     {
-      "workspace": "root",
+      "workspace": "components",
       "name": "wamn-materializer",
-      "manifest_path": "crates/events/materializer/Cargo.toml",
+      "manifest_path": "components/events/materializer/Cargo.toml",
       "role": "core",
       "target_class": "shared",
       "bounded_context": "events",

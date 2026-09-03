@@ -26,7 +26,7 @@ const CONTROL_URL_ENV: &str = "WAMN_EFFECTIVE_RELEASE_CONTROL_PG_URL";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const BASE_COMPONENT_DIGEST: &str =
-    "sha256:1c2925c2733096b822969fe5b11954ad05b69daa1d02f2432d88942fa72b7fef";
+    "sha256:498894030af16b22edaf7f0b2104b90673efdc0e32d2a85459368fa308ad8296";
 const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const BASE_WIRINGS: [&str; 8] = [

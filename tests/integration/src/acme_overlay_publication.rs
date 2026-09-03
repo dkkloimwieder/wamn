@@ -18,7 +18,7 @@ const PRIVATE_OPERATION: &str = "client-acme-receiving:quality/create-inspection
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;
 const BASE_COMPONENT_DIGEST: &str =
-    "sha256:1c2925c2733096b822969fe5b11954ad05b69daa1d02f2432d88942fa72b7fef";
+    "sha256:498894030af16b22edaf7f0b2104b90673efdc0e32d2a85459368fa308ad8296";
 struct DirectOperation {
     wiring: &'static str,
     token: &'static str,

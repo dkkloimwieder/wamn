@@ -45,7 +45,7 @@
       "role": "persistence"
     },
     "event-registration-model": {
-      "path": "crates/events/registration",
+      "path": "components/events/registration",
       "role": "semantic"
     },
     "run-state": {
@@ -57,7 +57,7 @@
       "role": "effect"
     },
     "execution-contract": {
-      "path": "crates/execution/contract",
+      "path": "components/execution/contract",
       "role": "semantic"
     },
     "catalog-model": {
@@ -119,7 +119,7 @@
       "note": "reader-only: the host's wiring-resolution and claim snapshots name catalog relations in production SQL but author none"
     },
     "event-materializer": {
-      "path": "crates/events/materializer",
+      "path": "components/events/materializer",
       "role": "reader",
       "note": "reader-only: the materializer guest's registration sweep SQL"
     },

@@ -12,7 +12,11 @@ members = [
     "application/receiving",
     "application/wms",
     "ingress/http-route",
+    "events/materializer",
+    "events/registration",
+    "events/wire",
     "execution/blob-put",
+    "execution/contract",
     "execution/materializer",
     "data/postgres-statements",
     "data/postgres-sqlx",
@@ -65,8 +69,15 @@ return_self_not_must_use = "allow"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
 
 [workspace.dependencies]
+# Inherited by the four relocated guest-consumed rlibs, pinned exactly as the
+# root workspace pins them so a crate resolves identically from either side.
+chrono = { version = "0.4", default-features = false }
+jmespath = "0.3"
+schemars = "0.8"
+sha2 = "0.11"
 base64 = "0.22"
 boon = "0.6"
 serde = "1"
@@ -86,16 +97,15 @@ sqlx-core = { version = "=0.9.0", default-features = false }
 wit-bindgen = { version = "0.61", default-features = false, features = ["macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.
-wamn-event-reg = { path = "../crates/events/registration", version = "0.1.0" }
-wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
-wamn-execution-contract = { path = "../crates/execution/contract", version = "0.1.0" }
-wamn-materializer = { path = "../crates/events/materializer", version = "0.1.0" }
+wamn-event-reg = { path = "events/registration", version = "0.1.0" }
+wamn-event-wire = { path = "events/wire", version = "0.1.0" }
+wamn-execution-contract = { path = "execution/contract", version = "0.1.0" }
+wamn-materializer = { path = "events/materializer", version = "0.1.0" }
 wamn-postgres-statements = { path = "data/postgres-statements", version = "0.1.0" }
 wamn-postgres-sqlx = { path = "data/postgres-sqlx", version = "0.1.0" }
 wamn-client-acme-receiving-data-access = { path = "data/client-acme-receiving-data", version = "0.1.0" }
 wamn-receiving-data-access = { path = "data/receiving-data", version = "0.1.0" }
 wamn-wms-data-access = { path = "data/wms-data", version = "0.1.0" }
-wamn-run-state = { path = "../crates/execution/run-state", version = "0.1.0" }
 
 [profile.release]
 opt-level = "s"

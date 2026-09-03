@@ -73,7 +73,7 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     // portable_http_target and ports, none of which carries a SCHEMA_VERSION —
     // so the constant has no subject and there is nothing to repoint to.
     GovernedLiteral {
-        path: "crates/events/registration/src/model.rs",
+        path: "components/events/registration/src/model.rs",
         exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
         expected_count: 1,
     },

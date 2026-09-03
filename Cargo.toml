@@ -1,13 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/receiving", "crates/authoring/model", "crates/catalog/model", "crates/execution/contract", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
+members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/receiving", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
   "crates/client/core",
   "crates/client/receiving",
   "crates/client/tui",
-  "crates/execution/contract",
   "crates/execution/host",
   "crates/execution/router",
   "crates/execution/run-state",
@@ -179,15 +178,15 @@ wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" 
 wamn-control-registry = { path = "crates/control/registry", version = "0.1.0" }
 wamn-ctl = { path = "services/ctl", version = "0.1.0" }
 wamn-dispatcher = { path = "services/dispatcher", version = "0.1.0" }
-wamn-event-reg = { path = "crates/events/registration", version = "0.1.0" }
-wamn-event-wire = { path = "crates/events/wire", version = "0.1.0" }
-wamn-execution-contract = { path = "crates/execution/contract", version = "0.1.0" }
+wamn-event-reg = { path = "components/events/registration", version = "0.1.0" }
+wamn-event-wire = { path = "components/events/wire", version = "0.1.0" }
+wamn-execution-contract = { path = "components/execution/contract", version = "0.1.0" }
 wamn-execution-host = { path = "crates/execution/host", version = "0.1.0" }
 wamn-executor = { path = "services/executor", version = "0.1.0" }
 wamn-gate-harness = { path = "test-support/harness", version = "0.1.0" }
 wamn-gates = { path = "tests/orchestrator", version = "0.1.0" }
 wamn-host = { path = "services/host", version = "0.1.0" }
-wamn-materializer = { path = "crates/events/materializer", version = "0.1.0" }
+wamn-materializer = { path = "components/events/materializer", version = "0.1.0" }
 wamn-pg-core = { path = "crates/platform/pg-core", version = "0.1.0" }
 wamn-platform-identity = { path = "crates/identity/platform", version = "0.1.0" }
 wamn-project-state = { path = "crates/identity/project-state", version = "0.1.0" }

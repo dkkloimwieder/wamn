@@ -44,15 +44,10 @@ crates/                 shared Rust workspace packages
     generator           wamn-schema-generator: package contracts and projections
     introspection       wamn-schema-introspection: migration policy + catalog IR
   execution/
-    contract            wamn-execution-contract: node contract, ports, cases
     host                shared native host for execution components
     router              wamn-router: host-side graph walk
     run-state           wamn-run-state: run history, queue, lease, and timer state
     scheduler           wamn-scheduler: pure cron, due-tick, and cadence decisions
-  events/
-    wire                wamn-event-wire: event envelope contract
-    registration        wamn-event-reg: event registration model
-    materializer        wamn-materializer: CDC materialization decisions
   control/
     registry            wamn-control-registry: org/project/environment model
     provision           wamn-control-provision: Postgres provisioning builders
@@ -65,7 +60,10 @@ components/             wasm32-wasip2 guests and guest libraries
   data/                 capability-shaped SQLx transport/transaction runner;
                         generated Receiving data-access kernel
   ingress/              product ingress components (flow-http)
-  execution/            product execution components (materializer)
+  events/               guest-consumed event rlibs (wamn-event-wire,
+                        wamn-event-reg, wamn-materializer)
+  execution/            product execution components (materializer) and the
+                        node contract rlib (wamn-execution-contract)
   fixtures/             non-product proof fixtures (busyloop,
                         connection-http-standard, sockprobe, sqlx-command)
   no-std/               SECOND cargo workspace: the no_std palette guests

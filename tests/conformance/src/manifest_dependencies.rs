@@ -336,7 +336,7 @@ fn the_self_dev_dependency_exemption_admits_nothing_else() {
         // Plain duplication of a workspace-owned identity.
         (
             "dev-dependencies",
-            "wamn-execution-contract = { path = \"../execution/contract\", version = \"0.1.0\" }",
+            "wamn-execution-contract = { path = \"execution/contract\", version = \"0.1.0\" }",
         ),
     ];
 

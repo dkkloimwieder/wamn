@@ -27,6 +27,7 @@ RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/regis
 FROM chef AS root-planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY components ./components
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests

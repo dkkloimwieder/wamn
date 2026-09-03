@@ -316,7 +316,13 @@ wamn_build() {
       arguments+=(-p "$package")
     done < <(jq -r --argjson leg "$leg" '.[$leg].packages[]' <<<"$WAMN_PLAN")
     leg_status=0
-    "$WAMN_CARGO" "${arguments[@]}" || leg_status=$?
+    # DIGEST STABILITY, second of two channels. Relocation (wamn-10yt.10.29) put
+    # every guest-consumed crate inside this workspace so `-C metadata` stops
+    # deriving from an absolute path; this closes the other channel, the
+    # `file!()` strings that `include!`d package sources bake into the artifact.
+    # `trim-paths` would say it at profile level but is unstable in Cargo 1.98.
+    RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$WAMN_REPOSITORY_ROOT=/wamn" \
+      "$WAMN_CARGO" "${arguments[@]}" || leg_status=$?
     if ((leg_status != 0)); then
       printf 'build-components: FAIL: %s (exit %d)\n' "$manifest" "$leg_status" >&2
       if ((exit_status == 0)); then

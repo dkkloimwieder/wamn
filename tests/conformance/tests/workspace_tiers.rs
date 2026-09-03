@@ -18,13 +18,12 @@ const COMPONENT_WORKSPACES: [(&str, &str); 2] = [
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
-const ROOT_DEFAULT_MEMBER_PATHS: [&str; 18] = [
+const ROOT_DEFAULT_MEMBER_PATHS: [&str; 17] = [
     "crates/authoring/model",
     "crates/catalog/model",
     "crates/client/core",
     "crates/client/receiving",
     "crates/client/tui",
-    "crates/execution/contract",
     "crates/execution/host",
     "crates/execution/router",
     "crates/execution/run-state",
@@ -1040,15 +1039,23 @@ fn workspace_tier_membership_matches_live_classification() {
     );
     assert!(manifest.tiers.release.non_cargo_inputs.is_empty());
 
+    let root_names = workspace_names(&root_metadata);
+    // The closure reaches path dependencies that are NOT root workspace members:
+    // since wamn-10yt.10.29 the guest-consumed rlibs are members of the
+    // components workspace and the root consumes them by path. A root tier list
+    // names root members, so only the root-member part of the closure is in
+    // scope here; the components side is asserted by its own tier lists below.
     let fast_closure = path_dependency_closure(
         &root_metadata,
         &names(&manifest.tiers.fast_developer_native.root_packages),
-    );
+    )
+    .intersection(&root_names)
+    .cloned()
+    .collect::<BTreeSet<_>>();
     assert!(
         fast_closure.is_subset(&names(&manifest.tiers.fast_developer_native.root_packages)),
         "fast developer selectors have a root path dependency outside the selected production set"
     );
-    let root_names = workspace_names(&root_metadata);
     let selected_products = names(&manifest.tiers.product_components.component_packages);
     for (workspace, owner) in &component_metadata {
         let selected = selected_products
