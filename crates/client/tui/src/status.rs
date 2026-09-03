@@ -119,6 +119,47 @@ mod tests {
         assert!(!line.contains("2026"), "{line}");
     }
 
+    /// The line is the client's own SENTENCE, not its debug form.
+    ///
+    /// Debug would pass the unauthenticated test — that variant carries no
+    /// detail to leak — while dumping a whole error detail object onto the
+    /// status line for every other case. Mutation testing found exactly that,
+    /// so the distinction is asserted directly: field names and struct syntax
+    /// must not reach the screen.
+    #[test]
+    fn the_line_renders_the_message_not_the_debug_form() {
+        let failed = StatusKind::Failed {
+            error: ClientError::ConcurrencyConflict {
+                expected_row_version: 4,
+                observed_row_version: 7,
+            },
+        };
+        let buffer = render_to_buffer(Status::new(&failed), 120, 1);
+        let line = row_text(&buffer, 0);
+        assert!(!line.contains("expected_row_version"), "{line}");
+        assert!(!line.contains("ConcurrencyConflict"), "{line}");
+        assert!(line.contains("revision"), "the sentence is missing: {line}");
+    }
+
+    /// An operation error's detail must not be dumped whole. It is a contract
+    /// object, sometimes large, and a status line is one row.
+    #[test]
+    fn an_operation_errors_detail_is_not_dumped_onto_the_line() {
+        let failed = StatusKind::Failed {
+            error: ClientError::from_item_error(&serde_json::json!({
+                "code": "invalid_input",
+                "detail": { "field": "value.quantity", "minimum": 1 },
+            })),
+        };
+        let buffer = render_to_buffer(Status::new(&failed), 120, 1);
+        let line = row_text(&buffer, 0);
+        assert!(line.contains("invalid_input"), "{line}");
+        assert!(
+            !line.contains("minimum"),
+            "the detail object reached the line: {line}"
+        );
+    }
+
     /// Idle renders nothing rather than a placeholder that reads as a result.
     #[test]
     fn idle_renders_nothing() {

@@ -17,6 +17,7 @@ wamn-client = { workspace = true }
 # dev-dependency and never a production one: a terminal must not link a code
 # generator, and the production graph here is wamn-client alone.
 wamn-schema-generator = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

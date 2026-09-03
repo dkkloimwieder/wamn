@@ -4982,6 +4982,7 @@ name = "wamn-client-tui"
 version = "0.1.0"
 dependencies = [
  "ratatui-core",
+ "serde_json",
  "wamn-client",
  "wamn-schema-generator",
 ]
