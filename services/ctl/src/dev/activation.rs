@@ -362,10 +362,12 @@ impl ActivationBackend for NativeActivationBackend {
         payload: &[u8],
         deadline: Instant,
     ) -> Result<Box<[u8]>, Self::Error> {
+        let request = async_nats::Request::new()
+            .timeout(Some(deadline.saturating_duration_since(Instant::now())))
+            .payload(payload.to_vec().into());
         let response = timeout_at(
             deadline,
-            self.client
-                .request(subject.to_owned(), payload.to_vec().into()),
+            self.client.send_request(subject.to_owned(), request),
         )
         .await
         .context("native workload request deadline expired")?
