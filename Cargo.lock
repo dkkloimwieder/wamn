@@ -4859,6 +4859,7 @@ dependencies = [
  "reqwest",
  "ring",
  "rustix",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",

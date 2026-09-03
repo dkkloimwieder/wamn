@@ -64,6 +64,15 @@ cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
   -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates
 ```
 
+Regenerate the checked-in `wamn dev` configuration schema from its owning Rust
+input type:
+
+```bash
+cargo test -p wamn-ctl --lib --locked --offline \
+  dev::config::tests::regenerate_checked_in_dev_config_schema \
+  -- --ignored --exact
+```
+
 Guests live in **two** Cargo workspaces and must not share one invocation —
 feature unification is additive-only and would force `std` into the `no_std`
 guests (`components/Cargo.toml` header, wamn-0h0g.11.56):

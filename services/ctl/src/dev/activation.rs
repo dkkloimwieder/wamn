@@ -1210,7 +1210,19 @@ mod tests {
                 "gate_url": "http://127.0.0.1:41013/authoring",
                 "gate_bearer_token": "gate-secret",
                 "route_host": "receiving.localhost",
-                "flow_http_workload_image": "127.0.0.1:41014/wamn/flow-http:dev"
+                "flow_http_workload_image": "127.0.0.1:41014/wamn/flow-http:dev",
+                "package_sources": [],
+                "tenant": "00000000-0000-0000-0000-000000000001",
+                "catalog": "default",
+                "environment": "receiving-dev",
+                "org": "acme",
+                "project": "receiving",
+                "schema": "receiving",
+                "host_group": "wamn-dev-receiving",
+                "host_name": "wamn-dev-receiving-1",
+                "runner": "wamn-dev-receiving-1",
+                "host_binary": "/opt/wamn/bin/wamn-host",
+                "wasmtime_cache_dir": "/tmp/wamn-dev-cache"
             }))
             .expect("serialize complete activation config"),
         )

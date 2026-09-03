@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Sole field authority for the strict deployment-owned `dev.json` document.",
+  "properties": {
+    "catalog": {
+      "type": "string"
+    },
+    "component_artifact_base": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "event_materializer_database_url": {
+      "type": "string"
+    },
+    "event_nats_url": {
+      "type": "string"
+    },
+    "executor_platform_database_url": {
+      "type": "string"
+    },
+    "flow_http_workload_image": {
+      "type": "string"
+    },
+    "gate_bearer_token": {
+      "type": "string"
+    },
+    "gate_url": {
+      "type": "string"
+    },
+    "guest_database_url": {
+      "type": "string"
+    },
+    "host_binary": {
+      "type": "string"
+    },
+    "host_group": {
+      "type": "string"
+    },
+    "host_name": {
+      "type": "string"
+    },
+    "http_admitter_database_url": {
+      "type": "string"
+    },
+    "identity_database_url": {
+      "type": "string"
+    },
+    "insecure_registry": {
+      "type": "boolean"
+    },
+    "org": {
+      "type": "string"
+    },
+    "package_sources": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "project": {
+      "type": "string"
+    },
+    "registry_auth_file": {
+      "type": "string"
+    },
+    "release_artifact_base": {
+      "type": "string"
+    },
+    "route_host": {
+      "type": "string"
+    },
+    "runner": {
+      "type": "string"
+    },
+    "scheduler_nats_url": {
+      "type": "string"
+    },
+    "schema": {
+      "type": "string"
+    },
+    "system_database_url": {
+      "type": "string"
+    },
+    "target_database_url": {
+      "type": "string"
+    },
+    "tenant": {
+      "type": "string"
+    },
+    "verification_database_url": {
+      "type": "string"
+    },
+    "wasmtime_cache_dir": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "catalog",
+    "component_artifact_base",
+    "environment",
+    "event_materializer_database_url",
+    "event_nats_url",
+    "executor_platform_database_url",
+    "flow_http_workload_image",
+    "gate_bearer_token",
+    "gate_url",
+    "guest_database_url",
+    "host_binary",
+    "host_group",
+    "host_name",
+    "http_admitter_database_url",
+    "identity_database_url",
+    "insecure_registry",
+    "org",
+    "package_sources",
+    "project",
+    "registry_auth_file",
+    "release_artifact_base",
+    "route_host",
+    "runner",
+    "scheduler_nats_url",
+    "schema",
+    "system_database_url",
+    "target_database_url",
+    "tenant",
+    "verification_database_url",
+    "wasmtime_cache_dir"
+  ],
+  "title": "DevConfigDocument",
+  "type": "object"
+}
