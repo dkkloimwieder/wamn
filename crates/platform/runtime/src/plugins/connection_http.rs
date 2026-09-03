@@ -393,7 +393,11 @@ fn require_direct_transport(
 
 /// Require the exact host-bound component and immutable wiring version/hash to
 /// be members of the digest-verified format-3 release manifest.
-fn authorize_release_closure(
+///
+/// Shared with the blobstore capability rather than reimplemented there: two
+/// spellings of "does this component belong to this release" could disagree,
+/// and the one that was wrong would authorize an effect.
+pub(crate) fn authorize_release_closure(
     manifest: &ServingManifest,
     invocation: &ConnectionInvocation,
     snapshot: &ConnectionEffectSnapshot,

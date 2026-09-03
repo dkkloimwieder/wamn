@@ -23,9 +23,14 @@ use crate::plugins::effect_span::{EffectIdentity, EffectWiring, effect_span, rec
 
 use super::binding::{self, BindingError};
 use super::store::BoundContainer;
-use crate::plugins::connection_http::{ConnectionExecutionClosure, ConnectionInvocation};
+use wamn_catalog::ServingManifest;
+
+use crate::plugins::connection_http::{
+    ConnectionExecutionClosure, ConnectionInvocation, authorize_release_closure,
+};
 use crate::plugins::wamn_credentials::WamnCredentials;
 use crate::plugins::wamn_postgres::{ConnectionEffectLookup, WamnPostgres};
+use crate::release_manifest::ReleaseManifestWeld;
 
 /// Plugin id, as the host registry knows it.
 pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
@@ -36,10 +41,71 @@ pub struct WamnBlobstore {
     vault: Arc<WamnCredentials>,
     pub(super) tenant: Box<str>,
     pub(super) project: Box<str>,
+    /// The mounted, digest-verified serving manifest, when this host serves a
+    /// release. A CANDIDATE closure carries its effective release and
+    /// environment in the invocation; a RELEASED one does not, and this is the
+    /// only thing that can supply them without guessing at the coordinates
+    /// that decide which binding authorizes.
+    release: Option<Arc<ReleaseManifestWeld>>,
     /// Component-store owner id to the invocation currently using that pooled
     /// instance. The driver binds before `handler.run` and revokes before
     /// returning the instance to the pool.
     invocations: RwLock<HashMap<String, ConnectionInvocation>>,
+}
+
+/// The effective release and environment one invocation authorizes under.
+///
+/// A CANDIDATE closure states them itself. A RELEASED one takes them from the
+/// mounted serving manifest, after TWO CHECKS — because a mounted manifest is
+/// an input like any other:
+///
+/// - it must belong to THIS tenant, or a manifest served for another one would
+///   hand a guest an effective release under which some other tenant's binding
+///   authorizes;
+/// - it must actually CONTAIN the package the invocation claims, or a release
+///   that never shipped this package would still supply coordinates for it.
+///
+/// Pure and separate from the plugin, so the decision gating every released
+/// effect can be asserted without a database or an object store.
+fn release_coordinates(
+    invocation: &ConnectionInvocation,
+    manifest: Option<&ServingManifest>,
+    tenant: &str,
+) -> Result<(i32, String), BindingError> {
+    match (&invocation.closure, manifest) {
+        (
+            ConnectionExecutionClosure::Candidate {
+                effective_release_id,
+                environment,
+                ..
+            },
+            None,
+        ) => Ok((
+            i32::try_from(*effective_release_id).map_err(|_| BindingError::Unauthorized)?,
+            environment.clone(),
+        )),
+        (ConnectionExecutionClosure::Released, Some(manifest)) => {
+            if manifest.release.tenant_id != tenant
+                || !manifest
+                    .release
+                    .packages
+                    .iter()
+                    .any(|package| package.package_id() == invocation.package_id.as_str())
+            {
+                return Err(BindingError::Unauthorized);
+            }
+            Ok((
+                i32::try_from(manifest.release.effective_release_id.get())
+                    .map_err(|_| BindingError::Unauthorized)?,
+                manifest.release.environment.clone(),
+            ))
+        }
+        // A released closure with no mounted manifest, or a candidate handed
+        // one, is a caller mismatch rather than a policy question. It refuses
+        // instead of picking whichever arm looks closer, because guessing here
+        // decides which binding authorizes.
+        _ => Err(BindingError::Unauthorized),
+    }
 }
 
 impl std::fmt::Debug for WamnBlobstore {
@@ -60,12 +126,14 @@ impl WamnBlobstore {
         vault: Arc<WamnCredentials>,
         tenant: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
+        release: Option<Arc<ReleaseManifestWeld>>,
     ) -> Self {
         Self {
             postgres,
             vault,
             tenant: tenant.into(),
             project: project.into(),
+            release,
             invocations: RwLock::new(HashMap::new()),
         }
     }
@@ -126,22 +194,21 @@ impl WamnBlobstore {
         let wiring_version =
             i32::try_from(invocation.wiring_version).map_err(|_| BindingError::Unauthorized)?;
 
-        // The release-closure path needs the mounted serving manifest to supply
-        // the effective release and environment. This plugin holds no manifest
-        // weld yet, so a released closure REFUSES rather than guessing at
-        // coordinates that decide which binding authorizes. Fail-closed until
-        // the weld is wired.
-        let (effective_release_id, environment) = match &invocation.closure {
-            ConnectionExecutionClosure::Candidate {
-                effective_release_id,
-                environment,
-                ..
-            } => (
-                i32::try_from(*effective_release_id).map_err(|_| BindingError::Unauthorized)?,
-                environment.clone(),
+        // A CANDIDATE closure carries its own coordinates. A RELEASED one takes
+        // them from the mounted, digest-verified serving manifest — the same
+        // source the HTTP capability uses, so a guest cannot reach an object
+        // store under a release its HTTP calls would be refused against.
+        let released_manifest = match &invocation.closure {
+            ConnectionExecutionClosure::Released => Some(
+                self.release
+                    .as_deref()
+                    .ok_or(BindingError::Unauthorized)?
+                    .manifest(),
             ),
-            ConnectionExecutionClosure::Released => return Err(BindingError::Unauthorized),
+            ConnectionExecutionClosure::Candidate { .. } => None,
         };
+        let (effective_release_id, environment) =
+            release_coordinates(&invocation, released_manifest, &self.tenant)?;
 
         let snapshot = self
             .postgres
@@ -167,6 +234,16 @@ impl WamnBlobstore {
                 BindingError::Unauthorized
             })?
             .ok_or(BindingError::Unauthorized)?;
+
+        // The coordinates said WHICH release; this says the component and its
+        // wiring are actually IN it. Deriving one without checking the other
+        // would authorize an effect for a component the release never shipped
+        // — the weaker half of the guarantee the HTTP capability makes. The
+        // same function makes it there, so the two cannot drift apart.
+        if let Some(manifest) = released_manifest {
+            authorize_release_closure(manifest, &invocation, &snapshot)
+                .map_err(|_| BindingError::Unauthorized)?;
+        }
 
         let bound = binding::resolve(&snapshot)?;
         let secret = self
@@ -282,4 +359,133 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
         linker,
         extract_active_ctx,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use wamn_catalog::{
+        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingRelease,
+    };
+
+    use super::*;
+    use crate::plugins::wamn_postgres::CandidateBindingWorld;
+
+    fn released() -> ConnectionInvocation {
+        ConnectionInvocation {
+            package_id: "package_a".to_string(),
+            wiring_id: "orders".to_string(),
+            wiring_version: 3,
+            node_id: "archive".to_string(),
+            occurrence: 1,
+            component_digest: format!("sha256:{}", "a".repeat(64)),
+            closure: ConnectionExecutionClosure::Released,
+        }
+    }
+
+    fn candidate() -> ConnectionInvocation {
+        ConnectionInvocation {
+            closure: ConnectionExecutionClosure::Candidate {
+                effective_release_id: 9,
+                environment: "staging".to_string(),
+                wiring_hash: format!("sha256:{}", "b".repeat(64)),
+                component: "archiver".to_string(),
+                interface_version: "0.1.0".to_string(),
+                binding_world: Arc::new(
+                    CandidateBindingWorld::from_json(serde_json::json!([]))
+                        .expect("an empty candidate binding world decodes"),
+                ),
+            },
+            ..released()
+        }
+    }
+
+    fn manifest(tenant: &str, package: &str) -> ServingManifest {
+        ServingManifest {
+            format_version: SERVING_MANIFEST_FORMAT_VERSION,
+            release: ServingRelease {
+                tenant_id: tenant.to_string(),
+                effective_release_id: EffectiveReleaseId::new(4).expect("a positive release id"),
+                environment: "warehouse-eu-3".to_string(),
+                packages: BTreeSet::from([
+                    PackageCoordinate::new(package, "1.0.0").expect("a canonical coordinate")
+                ]),
+            },
+            components: BTreeSet::new(),
+            wirings: BTreeSet::new(),
+            attachments: BTreeMap::new(),
+            registrations: BTreeMap::new(),
+        }
+    }
+
+    /// A candidate closure states its own coordinates and needs no manifest.
+    #[test]
+    fn a_candidate_closure_carries_its_own_coordinates() {
+        let coordinates =
+            release_coordinates(&candidate(), None, "tenant-a").expect("a candidate resolves");
+        assert_eq!(coordinates, (9, "staging".to_string()));
+    }
+
+    /// EXIT GATE: a released closure resolves through the mounted manifest,
+    /// where before it refused outright and the capability was unusable in any
+    /// released deployment.
+    ///
+    /// The fixture environment is deliberately UNGUESSABLE. A hardcoded
+    /// "prod" reads the same as a manifest lookup when the fixture itself says
+    /// "prod", and a mutant that hardcoded it survived this test until the
+    /// value was changed — the distinguishing-step law in miniature.
+    #[test]
+    fn a_released_closure_resolves_through_the_mounted_manifest() {
+        let manifest = manifest("tenant-a", "package_a");
+        let coordinates = release_coordinates(&released(), Some(&manifest), "tenant-a")
+            .expect("a released closure resolves");
+        assert_eq!(coordinates, (4, "warehouse-eu-3".to_string()));
+    }
+
+    /// A manifest for ANOTHER tenant must not supply coordinates: it would
+    /// hand this guest an effective release under which some other tenant's
+    /// binding authorizes — a cross-tenant reach wearing a mounted file.
+    #[test]
+    fn a_manifest_for_another_tenant_refuses() {
+        let manifest = manifest("tenant-b", "package_a");
+        assert_eq!(
+            release_coordinates(&released(), Some(&manifest), "tenant-a"),
+            Err(BindingError::Unauthorized)
+        );
+    }
+
+    /// A release that never shipped this package must not supply coordinates
+    /// for it.
+    #[test]
+    fn a_manifest_without_the_invoked_package_refuses() {
+        let manifest = manifest("tenant-a", "package_b");
+        assert_eq!(
+            release_coordinates(&released(), Some(&manifest), "tenant-a"),
+            Err(BindingError::Unauthorized)
+        );
+    }
+
+    /// No mounted manifest means no released coordinates. This is the
+    /// fail-closed arm the capability had for EVERY release before the weld
+    /// was wired, and it stays correct when the weld is absent.
+    #[test]
+    fn a_released_closure_without_a_manifest_refuses() {
+        assert_eq!(
+            release_coordinates(&released(), None, "tenant-a"),
+            Err(BindingError::Unauthorized)
+        );
+    }
+
+    /// A candidate closure handed a manifest is a caller mismatch, not a
+    /// policy question — it refuses rather than picking whichever arm looks
+    /// closer, because guessing here decides which binding authorizes.
+    #[test]
+    fn a_candidate_closure_handed_a_manifest_refuses() {
+        let manifest = manifest("tenant-a", "package_a");
+        assert_eq!(
+            release_coordinates(&candidate(), Some(&manifest), "tenant-a"),
+            Err(BindingError::Unauthorized)
+        );
+    }
 }

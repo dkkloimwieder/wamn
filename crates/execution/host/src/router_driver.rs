@@ -2087,14 +2087,17 @@ impl NodeInstance {
                     Arc::clone(&allowed_hosts),
                     Some(Arc::clone(&release)),
                 ));
-                // The blobstore capability. It takes no release weld: its
-                // released-closure path refuses until one is wired, rather than
-                // guessing the coordinates that decide which binding authorizes.
+                // The blobstore capability takes the SAME release weld as the
+                // HTTP one. Both resolve a released closure's effective
+                // release and environment from the one mounted manifest, so a
+                // guest cannot reach an object store under a release its HTTP
+                // calls would be refused against.
                 let blobstore = Arc::new(WamnBlobstore::new(
                     Arc::clone(&postgres),
                     Arc::clone(&credentials),
                     tenant_id,
                     config.project.as_str(),
+                    Some(Arc::clone(&release)),
                 ));
                 let nested = Arc::new(NestedOperationHost {
                     engine: Arc::new(engine.clone()),
