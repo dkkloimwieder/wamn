@@ -2383,6 +2383,141 @@
           ]
         }
       }
+    },
+    "inventory.aggregate": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "inventory.aggregate",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "product_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "location_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "available",
+              "held"
+            ]
+          },
+          {
+            "path": "quantity",
+            "type": "numeric",
+            "nullable": false
+          },
+          {
+            "path": "pallet_count",
+            "type": "int64",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "wms",
+          "table": "pallet",
+          "select_fields": [
+            "id",
+            "location_id",
+            "status"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "wms",
+          "table": "pallet_quantity",
+          "select_fields": [
+            "pallet_id",
+            "product_id",
+            "quantity",
+            "status"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "inventory_aggregate": {
+          "path": "query/inventory_aggregate.sql",
+          "fetch": "bounded_list",
+          "parameters": [],
+          "row": [
+            {
+              "name": "product_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "location_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "quantity",
+              "type": "numeric",
+              "nullable": false
+            },
+            {
+              "name": "pallet_count",
+              "type": "int64",
+              "nullable": false
+            }
+          ]
+        }
+      }
     }
   },
   "connections": {

@@ -420,5 +420,45 @@
       "mode": "pat"
     },
     "registered-operation": "wamn-wms:inventory/split@1.0.0"
+  },
+  "inventory-aggregate-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "wiring-id": "inventory_aggregate",
+    "wiring-version": 1,
+    "definition-hash": "sha256:c601e23b8d3b8610c2e1923e2ca6ac758081b8dc57aa7d6e4558e35ea70911e1",
+    "definition": {
+      "id": "inventory-aggregate-http",
+      "kind": "http",
+      "route": {
+        "path": "/inventory/aggregate",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "mode": "pat"
+    },
+    "registered-operation": "wamn-wms:inventory/aggregate@1.0.0"
   }
 }

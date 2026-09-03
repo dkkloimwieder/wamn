@@ -164,3 +164,40 @@ fn the_wirer_can_point_at_a_key_and_a_body() {
     );
     assert!(available.contains(&"zpl"), "{available:?}");
 }
+
+/// The aggregate excludes CONSUMED pallets, and its SQL says why.
+///
+/// This is a DOMAIN LAW, not a preference. The platform admits no `DELETE`
+/// (`sql_lex.rs` `refuse_unsupported_effects`), so a merge tombstones: the
+/// source pallet keeps its quantity rows as history of what it held when it
+/// was absorbed, while that same quantity now also sits on the target.
+/// Counting both double-counts every merge the warehouse has ever done.
+///
+/// Measured on a real database while authoring: one live pallet holding 100
+/// and one consumed pallet holding 40 aggregate to **100**, where a naive
+/// `sum(quantity)` over `pallet_quantity` returns 140. The assertion here
+/// pins the clause that makes the difference, because losing it would be
+/// silent — the totals would simply be wrong, with nothing failing.
+#[test]
+fn the_aggregate_excludes_consumed_pallets() {
+    let sql = std::fs::read_to_string(
+        repository_root().join("packages/wms/query/inventory_aggregate.sql"),
+    )
+    .expect("the aggregate query is authored");
+
+    let statement: String = sql
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("--"))
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    assert!(
+        statement.contains("pallet.status <> 'consumed'"),
+        "the aggregate counts tombstoned pallets, which double-counts every \
+         merge: {statement}"
+    );
+    // It must actually JOIN pallet to be able to filter on its status — a
+    // clause referencing a table the query never joined would not compile,
+    // but a query that dropped the join and kept a stale comment would.
+    assert!(statement.contains("JOIN pallet"), "{statement}");
+}
