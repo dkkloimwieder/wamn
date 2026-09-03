@@ -139,8 +139,8 @@ SELECT EXISTS (\
 /// projection and refuses a candidate that reaches a non-empty one.
 ///
 /// The join is the candidate's `nodes` object onto the library at the candidate's
-/// own applied package version, exactly as the store-alias diagnostic below
-/// resolves it, so a gate and a run agree on which components a document reaches.
+/// own applied package version, so compatibility and effect posture agree on
+/// which components a document reaches.
 /// A node naming no library row contributes nothing here because `run_gate`'s
 /// compatibility validation refuses it before this posture is read.
 ///
@@ -161,65 +161,7 @@ const SELECT_EFFECTFUL_COMPONENTS_SQL: &str = "WITH node AS ( \
      WHERE jsonb_array_length(library.effects) > 0 \
      ORDER BY 1";
 
-/// Name the store aliases the candidate requires and this environment cannot
-/// resolve.
-///
-/// This mirrors the `requirements` / `resolved_requirements` legs of run
-/// admission, including instance lifecycle and active generation, so a refusal
-/// names exactly the aliases whose absence would produce
-/// [`AdmissionResult::BindingWorldUnavailable`]. It is a diagnostic read only.
-const SELECT_UNRESOLVED_STORE_ALIASES_SQL: &str = "WITH node AS ( \
-        SELECT entry.value ->> 'component' AS component, \
-               entry.value ->> 'interface-version' AS interface_version, \
-               entry.value ->> 'operation' AS operation \
-          FROM jsonb_each($4::jsonb) AS entry \
-    ), component AS ( \
-        SELECT DISTINCT library.component_digest \
-          FROM node JOIN catalog.component_library AS library \
-            ON library.tenant_id = $1 AND library.package_id = $2 \
-           AND library.package_version = $3 \
-           AND library.component = node.component \
-           AND library.interface_version = node.interface_version \
-           AND library.operations ? node.operation \
-    ), release_scope AS ( \
-        SELECT head.effective_release_id \
-          FROM catalog.effective_release_heads AS head \
-          JOIN catalog.effective_release_packages AS member \
-            ON member.tenant_id = head.tenant_id \
-           AND member.effective_release_id = head.effective_release_id \
-           AND member.package_id = $2 AND member.package_version = $3 \
-         WHERE head.tenant_id = $1 AND head.environment = $5 \
-    ), requirement AS ( \
-        SELECT required.component_digest, required.store_alias \
-          FROM component JOIN catalog.connection_requirements AS required \
-            ON required.tenant_id = $1 \
-           AND required.component_digest = component.component_digest \
-    ) \
-    SELECT DISTINCT requirement.store_alias \
-      FROM requirement \
-      LEFT JOIN release_scope ON true \
-      LEFT JOIN catalog.connection_bindings AS binding \
-        ON binding.tenant_id = $1 \
-       AND binding.effective_release_id = release_scope.effective_release_id \
-       AND binding.component_digest = requirement.component_digest \
-       AND binding.store_alias = requirement.store_alias \
-       AND binding.environment = $5 AND binding.binding_status = 'active' \
-       AND binding.validation_status = 'valid' \
-      LEFT JOIN catalog.connection_instances AS instance \
-        ON instance.tenant_id = binding.tenant_id \
-       AND instance.environment = binding.environment \
-       AND instance.instance_id = binding.instance_id \
-       AND instance.lifecycle_status = 'enabled' \
-       AND instance.active_generation IS NOT NULL \
-      LEFT JOIN catalog.connection_generations AS generation \
-        ON generation.tenant_id = instance.tenant_id \
-       AND generation.environment = instance.environment \
-       AND generation.instance_id = instance.instance_id \
-       AND generation.generation = instance.active_generation \
-     WHERE generation.generation IS NULL \
-     ORDER BY 1";
-
-/// The exact candidate row one test-set command selects.
+/// The exact candidate projection one gate command judges.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CandidateWiring {
     pub package_id: String,
@@ -231,8 +173,7 @@ pub struct CandidateWiring {
     /// The candidate's own `cases` array, riding `graph_json`.
     pub cases: Vec<TestSetCase>,
     /// The candidate's `nodes` object, retained to resolve the components it
-    /// reaches: the effect posture that decides whether it may be gated at all,
-    /// and the aliases that diagnose an unresolvable binding world.
+    /// reaches and their effect posture.
     nodes: Value,
 }
 
@@ -548,29 +489,6 @@ impl AdmissionSurface {
             .context("name the candidate's effectful components")?;
         Ok(rows.iter().map(|row| row.get(0)).collect())
     }
-
-    /// Name the candidate's unresolvable store aliases, for one refusal.
-    pub async fn unresolved_store_aliases(
-        &self,
-        candidate: &CandidateWiring,
-        environment: &str,
-    ) -> anyhow::Result<Vec<String>> {
-        let rows = self
-            .client
-            .query(
-                SELECT_UNRESOLVED_STORE_ALIASES_SQL,
-                &[
-                    &self.tenant_id.as_ref(),
-                    &candidate.package_id,
-                    &candidate.package_version,
-                    &candidate.nodes_object(),
-                    &environment,
-                ],
-            )
-            .await
-            .context("name the candidate's unresolvable store aliases")?;
-        Ok(rows.iter().map(|row| row.get(0)).collect())
-    }
 }
 
 fn decode_component_json<T: DeserializeOwned>(
@@ -684,7 +602,6 @@ fn admission_acl_expectations() -> Vec<AclExpectation> {
 /// rather than accepted from the caller.
 #[derive(Clone, Copy, Debug)]
 pub struct GateRequest<'a> {
-    pub environment: &'a str,
     /// Package identity whose admitted component facts judge this document.
     pub package_id: &'a str,
     /// Exact package version those facts are read at.
@@ -729,7 +646,7 @@ pub enum GateJudgment {
 /// The durable report row keyed by `wiring_hash` is `wamn-0h0g.8.5.6`'s to
 /// construct.
 ///
-/// The order of the four legs is load-bearing and is the order they landed in:
+/// The order of the three legs is load-bearing and is the order they landed in:
 /// a candidate that does not resolve cannot be judged, a malformed `cases` array
 /// is refused before any posture is read, and **a nonempty case set's effect-free
 /// clause fires before anything else can act on the candidate**.
@@ -790,8 +707,9 @@ pub async fn run_gate(
     // to hold it was deleted, and it did not move out of the way.
     // With no cases there is no execution posture to read: treating the nodes'
     // effects alone as a refusal would turn this case contract into a blanket
-    // ban on effectful production wiring. The binding-world posture below still
-    // judges the document in either arm.
+    // ban on effectful production wiring. A connection requirement necessarily
+    // implies this same effect posture, so no separate runtime-binding judgment
+    // survives: empty cases execute nothing, and nonempty cases refuse here.
     if !candidate.cases.is_empty() {
         let effectful = admission.effectful_components(&candidate).await?;
         if !effectful.is_empty() {
@@ -801,20 +719,6 @@ pub async fn run_gate(
                 },
             ));
         }
-    }
-
-    // A candidate whose store aliases this environment cannot resolve reaches no
-    // binding world, so it cannot be judged against one. This used to be read
-    // out of the admission statement's `binding-world-unavailable`; with the
-    // admission leg deleted the diagnostic that always named the same aliases is
-    // the judgment itself.
-    let unresolved = admission
-        .unresolved_store_aliases(&candidate, request.environment)
-        .await?;
-    if !unresolved.is_empty() {
-        return Ok(GateJudgment::Refused(GateRefusal::DraftConnectionsDenied {
-            connection_names: unresolved,
-        }));
     }
 
     // The report identity is DERIVED, never minted: it IS the candidate's
@@ -910,8 +814,6 @@ mod tests {
     /// - `jsonb_array_length(...) > 0` is the non-empty test, so the empty
     ///   projection — the validator's POSITIVE "leaves the host nowhere" fact —
     ///   is the only thing that passes;
-    /// - the join keys are the same four the store-alias diagnostic uses, so a
-    ///   gate cannot resolve a different component set than a run does.
     #[test]
     fn the_effect_posture_read_is_the_admitted_projection_and_nothing_else() {
         let sql = SELECT_EFFECTFUL_COMPONENTS_SQL;
@@ -939,19 +841,6 @@ mod tests {
             assert!(
                 !sql.contains(mutation),
                 "the posture read performs {mutation}"
-            );
-        }
-        // It resolves components over the same four join keys the binding-world
-        // diagnostic does, so the two agree on what the document reaches.
-        for shared in [
-            "library.component = node.component",
-            "library.interface_version = node.interface_version",
-            "library.operations ? node.operation",
-            "library.package_version = $3",
-        ] {
-            assert!(
-                SELECT_UNRESOLVED_STORE_ALIASES_SQL.contains(shared),
-                "the two candidate resolutions disagree on {shared}"
             );
         }
     }
@@ -1023,8 +912,8 @@ mod tests {
         }
         assert_eq!(
             acl.len(),
-            20,
-            "schema + eight reads + seven inserts + omitted column + three table negatives"
+            14,
+            "schema + two reads + seven inserts + omitted column + three table negatives"
         );
     }
 

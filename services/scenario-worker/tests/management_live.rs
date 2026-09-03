@@ -44,6 +44,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio_postgres::{Client, NoTls};
 
+use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader,
     WorkloadRoleFamily, control_author_generation_role, management_admitter_generation_role, sql,
@@ -53,6 +54,7 @@ use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
     resolve_subject, revoke_pat,
 };
+use wamn_schema_control::connections::ComponentConnectionRequirement;
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
@@ -109,7 +111,7 @@ fn candidate_graph(wiring_id: &str, component: &str, operation: &str) -> serde_j
 
 /// The exact package version every seeded candidate is gated against.
 const CANDIDATE_PACKAGE_VERSION: &str = "1.0.0";
-/// The active effective release whose binding world the gate judges against.
+/// The active effective release exercised later by publication and release minting.
 const CANDIDATE_EFFECTIVE_RELEASE_ID: i32 = 1;
 /// The identity the SERVER will derive for one submitted document.
 ///
@@ -142,23 +144,28 @@ const CANDIDATE_PROJECTION_HASH: &str =
     "sha256:4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f";
 const CANDIDATE_IMPORTS_FINGERPRINT: &str =
     "sha256:3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e";
-/// A SECOND candidate, identical in every way that matters to admission except
-/// that the component its one node reaches carries a NON-EMPTY effects
-/// projection (wamn-0h0g.21.9). It exists to prove the constitutional clause
-/// FIRES rather than merely being written: gate cases are effect-free by
-/// contract, so this candidate must be refused, typed, with nothing admitted.
-const EFFECTFUL_WIRING: &str = "orders-charge";
-const EFFECTFUL_ZERO_CASE_WIRING: &str = "orders-charge-no-cases";
-const EFFECTFUL_COMPONENT: &str = "ledger";
+/// An admitted package that deliberately belongs to no effective release.
+/// Its component carries a real HTTP connection requirement, so the same
+/// document can prove both sides of the case-scoped effect judgment without a
+/// fabricated release or binding world (`wamn-10yt.10.14`).
+const EFFECTFUL_PACKAGE: &str = "effectful_package";
+const EFFECTFUL_MANIFEST_SHA256: &str =
+    "sha256:9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d";
+const EFFECTFUL_WIRING: &str = "erp-call";
+const EFFECTFUL_COMPONENT: &str = "http-client";
+const EFFECTFUL_OPERATION: &str = "send";
 const EFFECTFUL_COMPONENT_DIGEST: &str =
     "sha256:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
 const EFFECTFUL_PROJECTION_HASH: &str =
     "sha256:7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c";
-const EFFECTFUL_IMPORTS_FINGERPRINT: &str =
-    "sha256:6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b";
+const EFFECTFUL_STORE_ALIAS: &str = "receipts";
+const HTTP_IMPORT: &str = "wamn:connection/http@0.1.0";
 /// Fixed loopback port for the gate. The gate is serial and env-gated, so a
 /// fixed port is simpler than plumbing an ephemeral one out of the listener.
 const BIND: &str = "127.0.0.1:18088";
+/// Cluster-global roles, one project database, and one fixed listener make this
+/// live gate deliberately serial even when the Rust test harness is parallel.
+static LIVE_GATE_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const TTL: Duration = Duration::from_secs(3600);
 
 /// The one refusal every authentication and authorization failure must return.
@@ -385,6 +392,33 @@ fn admission_url(admin_url: &str) -> String {
     parsed.to_string()
 }
 
+async fn start_management_surface(admin_url: &str) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+    let (readiness_tx, readiness_rx) = tokio::sync::oneshot::channel();
+    let mut surface = tokio::spawn(wamn_scenario_worker::management::serve_with_readiness(
+        wamn_scenario_worker::management::ManagementServeArgs {
+            bind: BIND.to_owned(),
+            system_url: identity_reader_url(admin_url),
+            control_authoring_database_url: author_url(admin_url),
+            management_admission_database_url: admission_url(admin_url),
+            org: ORG.to_owned(),
+            project: PROJECT.to_owned(),
+            environment: ENVIRONMENT.to_owned(),
+            tenant: TENANT.to_owned(),
+            source_schema: SOURCE_SCHEMA.to_owned(),
+        },
+        readiness_tx,
+    ));
+    let bound = tokio::select! {
+        ready = readiness_rx => ready.expect("the management surface dropped readiness"),
+        stopped = &mut surface => {
+            let refused = stopped.expect("the surface task did not panic");
+            panic!("the management surface never listened: {refused:?}");
+        }
+    };
+    assert_eq!(bound.to_string(), BIND);
+    surface
+}
+
 /// Bring up the project-environment plane this gate admits runs into.
 ///
 /// A SEPARATE DATABASE, not a schema: residency is what distinguishes the two
@@ -453,13 +487,11 @@ async fn provision_project(
     Ok((project, task))
 }
 
-/// Seed one applied package and its active effective release.
+/// Seed one applied package and one unreleased, connection-bearing package.
 ///
-/// The candidate's component declares NO connection requirements, so its binding
-/// world is the empty array. That is deliberate: a stable empty world still
-/// proves the world is FROZEN at ordinal zero and re-presented by every later
-/// ordinal, without making the assertion depend on connection lifecycle the
-/// composition does not own.
+/// The primary candidate's component declares no connection requirements. The
+/// second package stores the production-normalized HTTP import/effect/
+/// requirement shape, but receives no release membership or binding facts.
 async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     project
         .batch_execute(&format!(
@@ -485,22 +517,13 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
                      '{{\"create\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
                      '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PROJECTION_HASH}', '[]', \
                      '{CANDIDATE_IMPORTS_FINGERPRINT}', '[]'); \
-             INSERT INTO catalog.component_library \
-               (tenant_id, package_id, package_version, component, interface_version, operations, \
-                component_digest, projection_hash, imports, imports_fingerprint, effects) \
-             VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
-                     '{EFFECTFUL_COMPONENT}', '0.1', \
-                     '{{\"charge\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
-                     '{EFFECTFUL_COMPONENT_DIGEST}', '{EFFECTFUL_PROJECTION_HASH}', \
-                     '[\"wamn:postgres/client@0.1.0\"]', '{EFFECTFUL_IMPORTS_FINGERPRINT}', \
-                     '[{{\"package\":\"wamn:postgres\",\"interfaces\":\
-[\"wamn:postgres/client@0.1.0\"]}}]'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"
         ))
         .await
         .context("seed the applied package, effective release, and environment policy")?;
+    seed_effectful_unreleased_candidate(project).await?;
     // AND NOTHING INTO `catalog.wirings` (wamn-0h0g.8.28).
     //
     // Two rows used to be inserted here by direct admin SQL so the gate could
@@ -514,7 +537,93 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     //
     // What IS seeded above stays seeded: the applied package, effective release,
     // component library, and environment policy are facts their owning verbs
-    // legitimately write, and they are the postures the gate judges against.
+    // legitimately write. Gate judges only the component facts.
+    Ok(())
+}
+
+/// Persist one production-valid connection/effect pair without release state.
+///
+/// Production admission refuses an HTTP requirement unless its audited
+/// import is present in the nonempty effect posture. This fixture preserves that
+/// exact pair; separating them would fabricate a state push-component cannot
+/// persist.
+async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result<()> {
+    let requirement = ComponentConnectionRequirement::new(
+        EFFECTFUL_COMPONENT_DIGEST,
+        EFFECTFUL_STORE_ALIAS,
+        ConnectionTypeDescriptor::http_v1(),
+    );
+    let operations = serde_json::Value::Object(
+        [(
+            EFFECTFUL_OPERATION.to_owned(),
+            serde_json::json!({"input-ports": [], "output-ports": [], "parameters": []}),
+        )]
+        .into_iter()
+        .collect(),
+    )
+    .to_string();
+    let imports = serde_json::json!([HTTP_IMPORT]);
+    let imports_fingerprint = wamn_execution_contract::canonical_json_sha256(&imports);
+    let imports = imports.to_string();
+    let effects = serde_json::json!([{
+        "package": "wamn:connection",
+        "interfaces": [HTTP_IMPORT],
+    }])
+    .to_string();
+
+    project
+        .execute(
+            "INSERT INTO catalog.packages \
+               (tenant_id, package_id, package_version, manifest_sha256) \
+             VALUES ($1, $2, $3, $4)",
+            &[
+                &TENANT,
+                &EFFECTFUL_PACKAGE,
+                &CANDIDATE_PACKAGE_VERSION,
+                &EFFECTFUL_MANIFEST_SHA256,
+            ],
+        )
+        .await
+        .context("seed the unreleased package root")?;
+    project
+        .execute(
+            "INSERT INTO catalog.component_library \
+               (tenant_id, package_id, package_version, component, interface_version, operations, \
+                component_digest, projection_hash, imports, imports_fingerprint, effects) \
+             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, \
+                     $11::text::jsonb)",
+            &[
+                &TENANT,
+                &EFFECTFUL_PACKAGE,
+                &CANDIDATE_PACKAGE_VERSION,
+                &EFFECTFUL_COMPONENT,
+                &"0.1",
+                &operations,
+                &EFFECTFUL_COMPONENT_DIGEST,
+                &EFFECTFUL_PROJECTION_HASH,
+                &imports,
+                &imports_fingerprint,
+                &effects,
+            ],
+        )
+        .await
+        .context("seed the normalized connection-bearing component")?;
+    let requirement_json = String::from_utf8(requirement.canonical_bytes())
+        .context("connection requirement is canonical UTF-8")?;
+    let requirement_hash = requirement.requirement_hash();
+    project
+        .execute(
+            wamn_schema_control::connections::insert_component_connection_requirement_sql(),
+            &[
+                &TENANT,
+                &requirement.component_digest(),
+                &requirement.store_alias(),
+                &requirement_json,
+                &requirement_hash,
+            ],
+        )
+        .await
+        .context("seed the generated HTTP connection requirement")?;
     Ok(())
 }
 
@@ -570,7 +679,12 @@ async fn minted_release_snapshot_count(project: &Client) -> i64 {
 /// The command carries the DOCUMENT and its package placement (wamn-0h0g.8.28).
 /// Nothing here names a stored row, which is why an empty `catalog.wirings` is
 /// no longer an obstacle to being gated.
-fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Value) -> String {
+fn gate_document_for_package_in(
+    command_id: &str,
+    project: &str,
+    package: &str,
+    document: &serde_json::Value,
+) -> String {
     serde_json::json!({
         "document": "request",
         "body": {
@@ -580,7 +694,7 @@ fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Valu
                 "kind": "gate",
                 "input": {
                     "scope": {"project-id": project, "environment": ENVIRONMENT},
-                    "package-id": CANDIDATE_PACKAGE,
+                    "package-id": package,
                     "package-version": CANDIDATE_PACKAGE_VERSION,
                     "document": document,
                 },
@@ -588,6 +702,10 @@ fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Valu
         },
     })
     .to_string()
+}
+
+fn gate_document_in(command_id: &str, project: &str, document: &serde_json::Value) -> String {
+    gate_document_for_package_in(command_id, project, CANDIDATE_PACKAGE, document)
 }
 
 /// One `gate` request document for one project, gating the pure candidate.
@@ -841,6 +959,181 @@ async fn stored_gate_report(
         .map(|row| (row.get(0), row.get(1)))
 }
 
+async fn effectful_candidate_runtime_state(project: &Client) -> (bool, bool, bool) {
+    let row = project
+        .query_one(
+            "SELECT \
+               EXISTS (SELECT 1 FROM catalog.connection_requirements \
+                        WHERE tenant_id = $1 AND component_digest = $2) AS has_requirement, \
+               EXISTS (SELECT 1 FROM catalog.effective_release_heads AS head \
+                         JOIN catalog.effective_release_packages AS member \
+                           ON member.tenant_id = head.tenant_id \
+                          AND member.effective_release_id = head.effective_release_id \
+                        WHERE head.tenant_id = $1 AND head.environment = $3 \
+                          AND member.package_id = $4 AND member.package_version = $5) \
+                 AS has_release_scope, \
+               EXISTS (SELECT 1 FROM catalog.connection_bindings \
+                        WHERE tenant_id = $1 AND component_digest = $2) AS has_binding",
+            &[
+                &TENANT,
+                &EFFECTFUL_COMPONENT_DIGEST,
+                &ENVIRONMENT,
+                &EFFECTFUL_PACKAGE,
+                &CANDIDATE_PACKAGE_VERSION,
+            ],
+        )
+        .await
+        .expect("read the effectful candidate's runtime state");
+    (row.get(0), row.get(1), row.get(2))
+}
+
+/// Empty cases judge only compatibility, even for an unbound effectful component.
+async fn empty_case_store_requirement_needs_no_runtime_binding_world(
+    admin: &Client,
+    project: &Client,
+    token: &str,
+) {
+    assert_eq!(
+        effectful_candidate_runtime_state(project).await,
+        (true, false, false),
+        "the proof fixture gained a fabricated release or binding world"
+    );
+    let mut document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
+    document["cases"] = serde_json::json!([]);
+    let wiring_hash = derived_hash(&document);
+    let response = post(
+        "/authoring",
+        Some(token),
+        &[],
+        &gate_document_for_package_in(
+            "gate-effectful-no-cases",
+            PROJECT,
+            EFFECTFUL_PACKAGE,
+            &document,
+        ),
+    )
+    .await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        outcome(&response.body)["status"],
+        serde_json::json!("completed"),
+        "an empty-case wiring consulted a runtime binding world: {}",
+        response.body
+    );
+    assert_eq!(
+        stored_gate_report(admin, &wiring_hash).await,
+        Some((true, serde_json::json!({"cases": 0}))),
+        "the empty-case judgment did not persist its exact case count"
+    );
+}
+
+/// Nonempty cases stop at the admitted effect posture before runtime bindings.
+///
+/// This is partial coverage only for wamn-61d0: it proves the common normalized
+/// connection posture participates in Gate. Blobstore normalization and
+/// blob-put behavior remain owned by that bead.
+async fn nonempty_case_store_requirement_refuses_effect_posture(
+    admin: &Client,
+    project: &Client,
+    token: &str,
+) {
+    assert_eq!(
+        effectful_candidate_runtime_state(project).await,
+        (true, false, false),
+        "the proof fixture gained a fabricated release or binding world"
+    );
+    let document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
+    let response = post(
+        "/authoring",
+        Some(token),
+        &[],
+        &gate_document_for_package_in("gate-effectful", PROJECT, EFFECTFUL_PACKAGE, &document),
+    )
+    .await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(
+        outcome(&response.body)["value"],
+        serde_json::json!({
+            "command": "gate",
+            "reason": {
+                "kind": "effectful-component-reached",
+                "components": [EFFECTFUL_COMPONENT],
+            },
+        }),
+        "a nonempty case bypassed the admitted effect posture: {}",
+        response.body
+    );
+    assert!(
+        stored_gate_report(admin, &derived_hash(&document))
+            .await
+            .is_none(),
+        "an effectful nonempty candidate was given a gate report"
+    );
+}
+
+#[derive(Clone, Copy)]
+enum ConnectionGateProof {
+    EmptyCases,
+    NonemptyCases,
+}
+
+async fn run_connection_gate_proof(proof: ConnectionGateProof) {
+    let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
+        eprintln!("skipping live connection Gate proof (set WAMN_PLATFORM_IDENTITY_PG_URL to run)");
+        return;
+    };
+    let _serial = LIVE_GATE_SERIAL.lock().await;
+    let (mut admin, admin_task) = connect(&url).await.expect("connect as the gate admin");
+    provision(&mut admin, &url)
+        .await
+        .expect("provision the gate");
+    let (project, project_task) = provision_project(&admin, &url)
+        .await
+        .expect("provision the project plane");
+    let principal = admitted_human(
+        &admin,
+        "connection-gate@example.com",
+        PROJECT,
+        "project-author",
+    )
+    .await
+    .expect("admit the connection Gate principal");
+    let surface = start_management_surface(&url).await;
+
+    match proof {
+        ConnectionGateProof::EmptyCases => {
+            empty_case_store_requirement_needs_no_runtime_binding_world(
+                &admin,
+                &project,
+                principal.token(),
+            )
+            .await;
+        }
+        ConnectionGateProof::NonemptyCases => {
+            nonempty_case_store_requirement_refuses_effect_posture(
+                &admin,
+                &project,
+                principal.token(),
+            )
+            .await;
+        }
+    }
+
+    surface.abort();
+    project_task.abort();
+    admin_task.abort();
+}
+
+#[tokio::test]
+async fn empty_case_connection_component_without_release_or_binding_reports_zero_cases() {
+    run_connection_gate_proof(ConnectionGateProof::EmptyCases).await;
+}
+
+#[tokio::test]
+async fn nonempty_case_connection_component_without_release_or_binding_refuses_effect_posture() {
+    run_connection_gate_proof(ConnectionGateProof::NonemptyCases).await;
+}
+
 #[tokio::test]
 async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
@@ -850,6 +1143,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         );
         return;
     };
+    let _serial = LIVE_GATE_SERIAL.lock().await;
 
     let (mut admin, admin_task) = connect(&url).await.expect("connect as the gate admin");
     provision(&mut admin, &url)
@@ -916,31 +1210,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("age one token past its expiry");
 
-    let (readiness_tx, readiness_rx) = tokio::sync::oneshot::channel();
-    let mut surface = tokio::spawn(wamn_scenario_worker::management::serve_with_readiness(
-        wamn_scenario_worker::management::ManagementServeArgs {
-            bind: BIND.to_owned(),
-            system_url: identity_reader_url(&url),
-            control_authoring_database_url: author_url(&url),
-            management_admission_database_url: admission_url(&url),
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
-            environment: ENVIRONMENT.to_owned(),
-            tenant: TENANT.to_owned(),
-            source_schema: SOURCE_SCHEMA.to_owned(),
-        },
-        readiness_tx,
-    ));
-    // Startup is observed at the production listener. If credential settlement
-    // refuses first, preserve that exact error instead of timing out elsewhere.
-    let bound = tokio::select! {
-        ready = readiness_rx => ready.expect("the management surface dropped readiness"),
-        stopped = &mut surface => {
-            let refused = stopped.expect("the surface task did not panic");
-            panic!("the management surface never listened: {refused:?}");
-        }
-    };
-    assert_eq!(bound.to_string(), BIND);
+    let surface = start_management_surface(&url).await;
 
     // ---- every untrusted presenter refuses, identically, before any command --
     let forged = format!("{PAT_TOKEN_PREFIX}0123456789abcdef_{}", "0".repeat(64));
@@ -1463,32 +1733,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a service-token re-drive admitted a run"
     );
 
-    // An effectful wiring with no cases executes nothing, so the case-scoped
-    // effect posture has nothing to refuse. The remaining validation and
-    // binding-world checks still run before the report is accepted.
-    let mut effectful_without_cases =
-        candidate_graph(EFFECTFUL_ZERO_CASE_WIRING, EFFECTFUL_COMPONENT, "charge");
-    effectful_without_cases["cases"] = serde_json::json!([]);
-    let effectful_without_cases_hash = derived_hash(&effectful_without_cases);
-    let zero_case = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &gate_document_in("gate-effectful-no-cases", PROJECT, &effectful_without_cases),
-    )
-    .await;
-    assert_eq!(zero_case.status, 200, "{}", zero_case.body);
-    assert_eq!(
-        outcome(&zero_case.body)["status"],
-        serde_json::json!("completed"),
-        "an effectful wiring with no gate cases was refused: {}",
-        zero_case.body
-    );
-    assert_eq!(
-        stored_gate_report(&admin, &effectful_without_cases_hash).await,
-        Some((true, serde_json::json!({"cases": 0}))),
-        "the zero-case judgment did not persist its exact case count"
-    );
+    empty_case_store_requirement_needs_no_runtime_binding_world(&admin, &project, alice.token())
+        .await;
     assert_eq!(
         project_case_runs(&project).await,
         runs,
@@ -1549,40 +1795,12 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // reaches a component whose admitted effects projection is non-empty is
     // refused TYPED and executes nothing.
     //
-    // This is the behavioural proof, not a source scan. The effectful candidate
-    // is identical to the gated one in every way admission cares about -- same
-    // tenant, same effective release, same well-formed nonempty case set, its
-    // own wiring hash and its own gate report -- and differs ONLY in the
-    // `effects` value of the component its node resolves to. It therefore
-    // cannot be refused for any other reason, and if the posture read were
-    // deleted this candidate would be ACCEPTED instead -- which is exactly what
-    // the mandatory mutation of this bead neuters the check to prove.
+    // This is the behavioural proof, not a source scan. The SAME unreleased
+    // connection-bearing component accepted above now carries cases, so its
+    // admitted effect posture becomes the exact refusing predicate.
     let runs_before_effectful = project_case_runs(&project).await;
     let ledger_before_effectful = ledger_rows(&admin).await.len();
-    let effectful = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &gate_document_in(
-            "gate-effectful",
-            PROJECT,
-            &candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, "charge"),
-        ),
-    )
-    .await;
-    assert_eq!(effectful.status, 200, "{}", effectful.body);
-    assert_eq!(
-        outcome(&effectful.body)["value"],
-        serde_json::json!({
-            "command": "gate",
-            "reason": {
-                "kind": "effectful-component-reached",
-                "components": [EFFECTFUL_COMPONENT],
-            },
-        }),
-        "an effectful candidate was not refused by its effect posture: {}",
-        effectful.body
-    );
+    nonempty_case_store_requirement_refuses_effect_posture(&admin, &project, alice.token()).await;
     // Nothing executed. The refusal precedes everything the verb could do with
     // the candidate, so there is no run and no queue row.
     assert_eq!(
@@ -1597,34 +1815,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         ledger_before_effectful + 1,
         "a typed gate refusal was not attributed"
     );
-    // But a refusal is NOT a report (wamn-0h0g.8.5.6). The effectful candidate
-    // has a wiring hash of its own, so a writer that persisted before consulting
-    // the judgment would leave a row under it -- and `get-report` would then
-    // certify a document the gate refused.
-    assert!(
-        stored_gate_report(
-            &admin,
-            &derived_hash(&candidate_graph(
-                EFFECTFUL_WIRING,
-                EFFECTFUL_COMPONENT,
-                "charge"
-            )),
-        )
-        .await
-        .is_none(),
-        "a refused candidate was given a gate report"
-    );
-
-    // The PURE candidate was ACCEPTED a few lines above, against the very same
-    // effective release and the very same posture read. That is what makes this a
-    // predicate rather than a blanket refusal: one document passes the clause
-    // and one does not, and the effects projection is the only difference.
-    assert_eq!(
-        outcome(&accepted.body)["status"],
-        serde_json::json!("completed"),
-        "the effect-free predicate refused the pure candidate too"
-    );
-
     // Bytes that are not a wiring document are a typed product refusal, not a
     // 501 and not a fabricated report. This REPLACES the unknown-candidate arm
     // (wamn-0h0g.8.28): a document the command carries cannot be "not found", so

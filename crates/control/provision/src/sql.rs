@@ -263,20 +263,12 @@ pub const DISPATCH_READER_RELATIONS: [&str; 2] = ["run_queue", "effect_attempts"
 
 /// Catalog relations read by the surviving management-admission surface.
 ///
-/// Publish reads the immutable wiring and package-owned component facts. Gate
-/// resolves those component facts against the environment's exact effective
-/// release and its connection world. This is the complete union of those
-/// production reads.
-pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 8] = [
-    "wirings",
-    "component_library",
-    "effective_release_heads",
-    "effective_release_packages",
-    "connection_requirements",
-    "connection_bindings",
-    "connection_instances",
-    "connection_generations",
-];
+/// Publish reads the immutable wiring and package-owned component facts; Gate
+/// reads the same component facts for compatibility and effect posture. Runtime
+/// connection state is deliberately absent: an empty case set executes nothing,
+/// while a nonempty set reaches the effect posture before any binding could be
+/// relevant (`wamn-10yt.10.14`).
+pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 2] = ["wirings", "component_library"];
 
 /// Catalog relations read by callable-HTTP connection authorization.
 ///

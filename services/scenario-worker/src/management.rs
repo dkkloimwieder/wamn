@@ -1114,7 +1114,6 @@ async fn gate(
             crate::store::admission::run_gate(
                 admission,
                 &crate::store::admission::GateRequest {
-                    environment: &scope.environment,
                     package_id: &input.package_id,
                     package_version: &input.package_version,
                     document,

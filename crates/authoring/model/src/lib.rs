@@ -339,10 +339,9 @@ pub struct ValidatedDraftRef {
 /// `catalog.wirings` not at all.
 ///
 /// `package_id` and `package_version` ride with it for the same reason
-/// `publish` carries them (wamn-0h0g.7.10): the postures that can refuse a
-/// candidate — the admitted effect projection and the resolvable binding world —
-/// are facts of one exact package coordinate, and neither value rides the
-/// document. They came off the stored row before; now they are stated.
+/// `publish` carries them (wamn-0h0g.7.10): compatibility and admitted effect
+/// posture are facts of one exact package coordinate, and neither value rides
+/// the document. They came off the stored row before; now they are stated.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Gate {
@@ -492,10 +491,6 @@ pub enum GateRefusal {
     #[schemars(rename_all = "kebab-case")]
     EffectfulComponentReached {
         components: Vec<String>,
-    },
-    #[schemars(rename_all = "kebab-case")]
-    DraftConnectionsDenied {
-        connection_names: Vec<String>,
     },
     CommandIdReuse,
 }
