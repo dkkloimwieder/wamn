@@ -49,7 +49,9 @@ fn check_compiles(package: &str, scratch_name: &str) -> String {
         let source = String::from_utf8(file.bytes().to_vec()).expect("emitted UTF-8");
         combined.push_str(&source);
         std::fs::write(scratch.join(format!("src/{module}.rs")), &source).expect("write module");
-        lib.push_str(&format!("pub mod {module};\n"));
+        lib.push_str("pub mod ");
+        lib.push_str(module);
+        lib.push_str(";\n");
     }
     std::fs::write(scratch.join("src/lib.rs"), lib).expect("write lib");
     std::fs::write(
@@ -57,10 +59,10 @@ fn check_compiles(package: &str, scratch_name: &str) -> String {
         format!(
             "[package]\nname = \"emitted-client-check\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
              \n[dependencies]\n\
-             wamn-client = {{ path = {:?} }}\n\
+             wamn-client = {{ path = \"{}\" }}\n\
              serde_json = \"1\"\nuuid = \"1\"\nchrono = \"0.4\"\nrust_decimal = \"1\"\n\
              \n[workspace]\n",
-            root.join("crates/client/core")
+            root.join("crates/client/core").display()
         ),
     )
     .expect("write manifest");

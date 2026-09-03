@@ -215,8 +215,21 @@ fn emit_operation(
     writeln!(source, "];").expect("write");
     writeln!(source).expect("write");
 
-    match &operation.route {
-        Some(route) => {
+    let Some(route) = &operation.route else {
+        // Stated, not silently omitted: a caller reading the binding must
+        // learn the operation exists and is not reachable over HTTP, rather
+        // than find a function mysteriously missing.
+        writeln!(
+            source,
+            "// `{}` is not published over HTTP by this release, so it has no route\n// and no invoke function. It remains listed for its types and descriptors.",
+            operation.operation
+        )
+        .expect("write");
+        writeln!(source).expect("write");
+        return Ok(());
+    };
+    {
+        {
             writeln!(
                 source,
                 "/// Where the release publishes `{}`.\n///\n/// Method and template only — the host and base URL are the client's\n/// deployment config, not this release's facts.",
@@ -236,19 +249,6 @@ fn emit_operation(
             writeln!(source, "    }}").expect("write");
             writeln!(source, "}}").expect("write");
             writeln!(source).expect("write");
-        }
-        None => {
-            // Stated, not silently omitted: a caller reading the binding must
-            // learn the operation exists and is not reachable over HTTP,
-            // rather than find a function mysteriously missing.
-            writeln!(
-                source,
-                "// `{}` is not published over HTTP by this release, so it has no route\n// and no invoke function. It remains listed for its types and descriptors.",
-                operation.operation
-            )
-            .expect("write");
-            writeln!(source).expect("write");
-            return Ok(());
         }
     }
 
