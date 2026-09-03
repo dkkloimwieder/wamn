@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{GenerateError, GenerateErrorKind};
 
-const CONTROL_OWNED_RELATION_TABLES: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
+pub(crate) const CONTROL_OWNED_RELATION_TABLES: [&str; 2] =
+    ["wamn_entities", "wamn_cdc_exclusions"];
 
 /// Strict package-owned behavior declaration parsed from `wamn.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

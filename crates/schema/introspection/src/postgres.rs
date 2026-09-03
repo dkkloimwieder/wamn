@@ -245,6 +245,14 @@ struct IndexRow {
 type TableKey = (String, String);
 type AttributeKey = (String, String, i16);
 
+fn relation_is_excluded(excluded_relations: &[(&str, &str)], schema: &str, table: &str) -> bool {
+    excluded_relations
+        .iter()
+        .any(|(excluded_schema, excluded_table)| {
+            *excluded_schema == schema && *excluded_table == table
+        })
+}
+
 const SCHEMAS_SQL: &str = r"
 WITH configured(schema_name) AS (
     SELECT unnest($1::text[])
@@ -308,7 +316,6 @@ SELECT namespace.nspname::text AS schema_name,
  WHERE namespace.nspname = ANY($1::text[])
    AND NOT trigger.tgisinternal
  ORDER BY namespace.nspname, relation.relname, trigger.tgname
- LIMIT 1
 ";
 
 const RULES_SQL: &str = r"
@@ -323,7 +330,6 @@ SELECT namespace.nspname::text AS schema_name,
  WHERE namespace.nspname = ANY($1::text[])
    AND rewrite.rulename <> '_RETURN'
  ORDER BY namespace.nspname, relation.relname, rewrite.rulename
- LIMIT 1
 ";
 
 const POLICIES_SQL: &str = r"
@@ -337,7 +343,6 @@ SELECT namespace.nspname::text AS schema_name,
     ON namespace.oid = relation.relnamespace
  WHERE namespace.nspname = ANY($1::text[])
  ORDER BY namespace.nspname, relation.relname, policy.polname
- LIMIT 1
 ";
 
 const TYPES_SQL: &str = r"
@@ -346,8 +351,10 @@ SELECT namespace.nspname::text AS schema_name,
        catalog_type.typtype::text AS type_kind,
        catalog_type.typacl IS NOT NULL AS has_acl,
        relation.relkind::text AS relation_kind,
+       relation.relname::text AS relation_name,
        element_namespace.nspname::text AS element_schema,
-       element_relation.relkind::text AS element_relation_kind
+       element_relation.relkind::text AS element_relation_kind,
+       element_relation.relname::text AS element_relation_name
   FROM pg_catalog.pg_type AS catalog_type
   JOIN pg_catalog.pg_namespace AS namespace
     ON namespace.oid = catalog_type.typnamespace
@@ -831,12 +838,19 @@ async fn refuse_routines(
 async fn refuse_triggers(
     client: &Client,
     schemas: &[String],
+    excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
-    let row = client
-        .query_opt(TRIGGERS_SQL, &[&schemas])
+    let rows = client
+        .query(TRIGGERS_SQL, &[&schemas])
         .await
         .map_err(|error| database_error("query configured-schema triggers", error))?;
-    let Some(row) = row else {
+    let Some(row) = rows.into_iter().find(|row| {
+        !relation_is_excluded(
+            excluded_relations,
+            &row.get::<_, String>("schema_name"),
+            &row.get::<_, String>("table_name"),
+        )
+    }) else {
         return Ok(());
     };
     let schema = row.get::<_, String>("schema_name");
@@ -853,12 +867,19 @@ async fn refuse_triggers(
 async fn refuse_rules(
     client: &Client,
     schemas: &[String],
+    excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
-    let row = client
-        .query_opt(RULES_SQL, &[&schemas])
+    let rows = client
+        .query(RULES_SQL, &[&schemas])
         .await
         .map_err(|error| database_error("query configured-schema rules", error))?;
-    let Some(row) = row else {
+    let Some(row) = rows.into_iter().find(|row| {
+        !relation_is_excluded(
+            excluded_relations,
+            &row.get::<_, String>("schema_name"),
+            &row.get::<_, String>("relation_name"),
+        )
+    }) else {
         return Ok(());
     };
     let schema = row.get::<_, String>("schema_name");
@@ -875,12 +896,19 @@ async fn refuse_rules(
 async fn refuse_policies(
     client: &Client,
     schemas: &[String],
+    excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
-    let row = client
-        .query_opt(POLICIES_SQL, &[&schemas])
+    let rows = client
+        .query(POLICIES_SQL, &[&schemas])
         .await
         .map_err(|error| database_error("query configured-schema policies", error))?;
-    let Some(row) = row else {
+    let Some(row) = rows.into_iter().find(|row| {
+        !relation_is_excluded(
+            excluded_relations,
+            &row.get::<_, String>("schema_name"),
+            &row.get::<_, String>("table_name"),
+        )
+    }) else {
         return Ok(());
     };
     let schema = row.get::<_, String>("schema_name");
@@ -897,6 +925,7 @@ async fn refuse_policies(
 async fn validate_types(
     client: &Client,
     schemas: &[String],
+    excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
     let rows = client
         .query(TYPES_SQL, &[&schemas])
@@ -907,12 +936,27 @@ async fn validate_types(
         let schema = row.get::<_, String>("schema_name");
         let name = row.get::<_, String>("type_name");
         let relation_kind = row.get::<_, Option<String>>("relation_kind");
+        let relation_name = row.get::<_, Option<String>>("relation_name");
         let element_schema = row.get::<_, Option<String>>("element_schema");
         let element_relation_kind = row.get::<_, Option<String>>("element_relation_kind");
+        let element_relation_name = row.get::<_, Option<String>>("element_relation_name");
         let is_table_row = relation_kind.as_deref() == Some("r");
         let is_table_row_array = element_schema.as_deref() == Some(schema.as_str())
             && element_relation_kind.as_deref() == Some("r");
         let is_generated_local_array = element_schema.as_deref() == Some(schema.as_str());
+
+        let excluded_table_row = relation_name
+            .as_deref()
+            .is_some_and(|table| relation_is_excluded(excluded_relations, &schema, table));
+        let excluded_table_row_array = element_schema
+            .as_deref()
+            .zip(element_relation_name.as_deref())
+            .is_some_and(|(element_schema, table)| {
+                relation_is_excluded(excluded_relations, element_schema, table)
+            });
+        if excluded_table_row || excluded_table_row_array {
+            continue;
+        }
 
         if is_table_row || is_table_row_array {
             if row.get::<_, bool>("has_acl") {
@@ -1745,29 +1789,71 @@ pub async fn read_catalog(
     client: &Client,
     application_schemas: &[&str],
 ) -> Result<CatalogIr, PostgresIntrospectionError> {
+    read_catalog_excluding_relations(client, application_schemas, &[]).await
+}
+
+/// Read configured application schemas while omitting explicitly named
+/// host-owned relations from the package IR.
+pub async fn read_catalog_excluding_relations(
+    client: &Client,
+    application_schemas: &[&str],
+    excluded_relations: &[(&str, &str)],
+) -> Result<CatalogIr, PostgresIntrospectionError> {
     let schemas = configured_schemas(application_schemas);
     if schemas.is_empty() {
         return Ok(CatalogIr::new(Vec::new()));
     }
 
     validate_schemas(client, &schemas).await?;
-    let relations = load_relations(client, &schemas).await?;
+    let relations = load_relations(client, &schemas)
+        .await?
+        .into_iter()
+        .filter(|relation| {
+            !relation_is_excluded(excluded_relations, &relation.schema, &relation.name)
+        })
+        .collect::<Vec<_>>();
     let mut tables = validate_relations(&relations)?;
     refuse_routines(client, &schemas).await?;
-    refuse_triggers(client, &schemas).await?;
-    refuse_rules(client, &schemas).await?;
-    refuse_policies(client, &schemas).await?;
-    validate_types(client, &schemas).await?;
+    refuse_triggers(client, &schemas, excluded_relations).await?;
+    refuse_rules(client, &schemas, excluded_relations).await?;
+    refuse_policies(client, &schemas, excluded_relations).await?;
+    validate_types(client, &schemas, excluded_relations).await?;
     refuse_default_acls(client, &schemas).await?;
 
-    let columns = load_columns(client, &schemas).await?;
+    let columns = load_columns(client, &schemas)
+        .await?
+        .into_iter()
+        .filter(|column| !relation_is_excluded(excluded_relations, &column.schema, &column.table))
+        .collect::<Vec<_>>();
     let attributes = map_columns(&columns, &mut tables)?;
-    let sequences = load_sequences(client, &schemas).await?;
+    let sequences = load_sequences(client, &schemas)
+        .await?
+        .into_iter()
+        .filter(|sequence| {
+            sequence
+                .table_schema
+                .as_deref()
+                .zip(sequence.table.as_deref())
+                .is_none_or(|(schema, table)| {
+                    !relation_is_excluded(excluded_relations, schema, table)
+                })
+        })
+        .collect::<Vec<_>>();
     validate_sequences(&sequences, &columns, &schemas)?;
 
-    let constraints = load_constraints(client, &schemas).await?;
+    let constraints = load_constraints(client, &schemas)
+        .await?
+        .into_iter()
+        .filter(|constraint| {
+            !relation_is_excluded(excluded_relations, &constraint.schema, &constraint.table)
+        })
+        .collect::<Vec<_>>();
     map_constraints(&constraints, &attributes, &mut tables)?;
-    let indexes = load_indexes(client, &schemas).await?;
+    let indexes = load_indexes(client, &schemas)
+        .await?
+        .into_iter()
+        .filter(|index| !relation_is_excluded(excluded_relations, &index.schema, &index.table))
+        .collect::<Vec<_>>();
     map_indexes(&indexes, &attributes, &mut tables)?;
 
     Ok(CatalogIr::new(

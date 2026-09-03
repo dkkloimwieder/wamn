@@ -7,11 +7,11 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context as _, Result, ensure};
 use tokio_postgres::NoTls;
 use wamn_schema_introspection::ir::CatalogIr;
-use wamn_schema_introspection::postgres::read_catalog;
+use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
 use crate::{
     AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
-    data_access::application_schemas, generate,
+    data_access::application_schemas, generate, manifest::CONTROL_OWNED_RELATION_TABLES,
 };
 
 const GENERATOR_ID: &str = "wamn-schema-generator/0.1.0";
@@ -58,7 +58,16 @@ pub async fn introspect_package(database_url: &str, package_root: &Path) -> Resu
         .context("connect to the already-migrated PostgreSQL database")?;
     let connection_task = tokio::spawn(connection);
     let schema_names = schemas.iter().map(String::as_str).collect::<Vec<_>>();
-    let catalog_result = read_catalog(&client, &schema_names).await;
+    let excluded_relations = schema_names
+        .iter()
+        .flat_map(|schema| {
+            CONTROL_OWNED_RELATION_TABLES
+                .iter()
+                .map(move |table| (*schema, *table))
+        })
+        .collect::<Vec<_>>();
+    let catalog_result =
+        read_catalog_excluding_relations(&client, &schema_names, &excluded_relations).await;
     drop(client);
     connection_task
         .await

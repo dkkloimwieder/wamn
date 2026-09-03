@@ -13,7 +13,9 @@ use tokio_postgres::{Client, Config, NoTls};
 
 use wamn_schema_introspection::ir::{ColumnDefault, ColumnGeneration, IdentityMode};
 use wamn_schema_introspection::migration_policy::validate_migration_file;
-use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};
+use wamn_schema_introspection::postgres::{
+    PostgresIntrospectionErrorKind, read_catalog, read_catalog_excluding_relations,
+};
 
 const APPLICATION_SCHEMA: &str = "receiving";
 const CONTROL_SCHEMA: &str = "wamn_control";
@@ -324,6 +326,59 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
             .all(|table| table.indexes().is_empty()),
         "constraint-backed indexes normalize into constraints, not ordinary indexes"
     );
+}
+
+async fn assert_control_owned_relations_are_outside_package_ir(client: &Client) {
+    let before = read_catalog(client, &[APPLICATION_SCHEMA])
+        .await
+        .expect("read application catalog before host maps");
+    client
+        .batch_execute(
+            "CREATE TABLE receiving.wamn_entities ( \
+               relation_oid oid PRIMARY KEY, \
+               package_id text NOT NULL, \
+               entity_id text NOT NULL, \
+               table_name text NOT NULL); \
+             CREATE TABLE receiving.wamn_cdc_exclusions ( \
+               relation_oid oid PRIMARY KEY, \
+               package_id text NOT NULL, \
+               relation_id text NOT NULL, \
+               table_name text NOT NULL)",
+        )
+        .await
+        .expect("create the exact host-owned relation maps");
+
+    let unscoped = read_catalog(client, &[APPLICATION_SCHEMA])
+        .await
+        .expect_err("raw catalog reader admitted a host-owned oid column");
+    assert_eq!(
+        unscoped.kind(),
+        PostgresIntrospectionErrorKind::UnsupportedColumnType
+    );
+
+    let excluded = [
+        (APPLICATION_SCHEMA, "wamn_entities"),
+        (APPLICATION_SCHEMA, "wamn_cdc_exclusions"),
+    ];
+    let scoped = read_catalog_excluding_relations(client, &[APPLICATION_SCHEMA], &excluded)
+        .await
+        .expect("package reader excludes exact host-owned relations");
+    let repeated = read_catalog_excluding_relations(client, &[APPLICATION_SCHEMA], &excluded)
+        .await
+        .expect("repeat exact host-owned relation exclusion");
+    assert_eq!(scoped.canonical_json_bytes(), before.canonical_json_bytes());
+    assert_eq!(
+        scoped.canonical_json_bytes(),
+        repeated.canonical_json_bytes()
+    );
+
+    client
+        .batch_execute(
+            "DROP TABLE receiving.wamn_cdc_exclusions; \
+             DROP TABLE receiving.wamn_entities",
+        )
+        .await
+        .expect("remove host-owned relation maps");
 }
 
 async fn add_supported_columns(client: &Client) {
@@ -906,6 +961,7 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
     )
     .await;
     assert_base_ir(&migration, &target_admin).await;
+    assert_control_owned_relations_are_outside_package_ir(&migration).await;
     add_supported_columns(&migration).await;
     assert_additive_columns(&migration).await;
     assert_refusal_matrix(&target_admin, &migration).await;
