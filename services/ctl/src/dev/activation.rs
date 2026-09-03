@@ -647,7 +647,17 @@ fn flow_http_request(
                     max_concurrency: 0,
                 }],
                 host_interfaces: vec![
-                    wit_interface("wasi", "http", "", "incoming-handler"),
+                    v2::WitInterface {
+                        namespace: "wasi".to_owned(),
+                        package: "http".to_owned(),
+                        version: String::new(),
+                        interfaces: vec!["incoming-handler".to_owned()],
+                        config: HashMap::from([(
+                            "host".to_owned(),
+                            request.config.route_host().to_owned(),
+                        )]),
+                        name: String::new(),
+                    },
                     wit_interface("wamn", "flow-http-routing", "0.1.0", "routing"),
                     wit_interface("wamn", "router-delivery", "0.1.0", "delivery"),
                 ],
@@ -1446,6 +1456,22 @@ mod tests {
         let actual_workload: v2::WorkloadStartRequest =
             serde_json::from_slice(&requests[0].1).expect("decode recorded start request");
         assert_eq!(actual_workload, expected_workload);
+        let incoming_http = actual_workload
+            .workload
+            .as_ref()
+            .and_then(|workload| workload.wit_world.as_ref())
+            .and_then(|world| {
+                world.host_interfaces.iter().find(|interface| {
+                    interface.namespace == "wasi"
+                        && interface.package == "http"
+                        && interface.interfaces == ["incoming-handler"]
+                })
+            })
+            .expect("flow-http declares the native incoming HTTP interface");
+        assert_eq!(
+            incoming_http.config,
+            HashMap::from([("host".to_owned(), "receiving.localhost".to_owned())])
+        );
         drop(requests);
 
         assert_eq!(
