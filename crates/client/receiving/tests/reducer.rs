@@ -128,13 +128,19 @@ fn the_highlight_saturates_rather_than_wrapping() {
             next: None,
         },
     );
-    let down = apply(
-        &state,
-        vec![Event::MoveDown, Event::MoveDown, Event::MoveDown],
-    );
-    assert_eq!(down.selected_order, Some(1), "ran past the end");
-    let up = apply(&down, vec![Event::MoveUp, Event::MoveUp, Event::MoveUp]);
-    assert_eq!(up.selected_order, Some(0), "ran past the start");
+    // The distinguishing step is the one PAST the edge: from the last row,
+    // one more press must stay put. A COUNT of presses can coincide with a
+    // wrap and prove nothing — three presses over two rows lands on the same
+    // index either way, which is how a wrapping mutant first survived this.
+    let at_end = reduce(&state, Event::MoveDown);
+    assert_eq!(at_end.selected_order, Some(1), "did not reach the last row");
+    let past_end = reduce(&at_end, Event::MoveDown);
+    assert_eq!(past_end.selected_order, Some(1), "wrapped past the end");
+
+    let at_start = reduce(&past_end, Event::MoveUp);
+    assert_eq!(at_start.selected_order, Some(0));
+    let past_start = reduce(&at_start, Event::MoveUp);
+    assert_eq!(past_start.selected_order, Some(0), "wrapped past the start");
 }
 
 /// Opening a receipt carries nothing over: lines, reference and location all
