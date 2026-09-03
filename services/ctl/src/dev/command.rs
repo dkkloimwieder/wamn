@@ -290,8 +290,10 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     }
     let mut session = DevSession::prepare(args).await?;
     let mut observer = CommandObserver;
-    if let Some(receipt) = session.run_with_observer(&mut observer, false).await? {
+    let receipt = session.run_with_observer(&mut observer, false).await?;
+    if let Some(receipt) = receipt {
         print_receipt("run", &receipt);
+        print_serving(&session);
     }
     Ok(())
 }
@@ -414,6 +416,22 @@ fn finish_with_cleanup<T>(
         (Err(error), Err(cleanup)) => {
             Err(error.context(format!("local activation cleanup also failed: {cleanup}")))
         }
+    }
+}
+
+/// Report where the completed run served the activated release.
+///
+/// Read off the same seam the interactive client reads, so the two cannot
+/// disagree about which endpoint the release was reachable on. Past tense on
+/// purpose: the one-shot loop has already torn the environment down by the time
+/// this prints, while --tui holds it and shows the same fact live.
+fn print_serving(session: &DevSession) {
+    if let Some(endpoint) = session.read_handle().snapshot().runtime_endpoint() {
+        println!(
+            "run served: {} host={}",
+            endpoint.base_url(),
+            endpoint.route_host()
+        );
     }
 }
 

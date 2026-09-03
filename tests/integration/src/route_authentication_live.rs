@@ -2023,6 +2023,34 @@ fn verify_dev_command_receipt(output: &std::process::Output) -> anyhow::Result<(
         receipts == [expected.as_str()],
         "wamn dev returned the wrong product receipt: {receipts:?}; stdout={stdout:?}"
     );
+    // The endpoint the activated release served, read off the public dev seam.
+    // Only the Activate stage can publish it, so dropping that publish leaves
+    // this line absent — which is the gate wamn-10yt.10.28 asked for, and it
+    // cannot be satisfied by anything the command knows before it activates.
+    let served = stdout
+        .lines()
+        .filter(|line| line.starts_with("run served: "))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        served.len() == 1,
+        "wamn dev reported no single served endpoint: {served:?}; stdout={stdout:?}"
+    );
+    let served = served[0].trim_start_matches("run served: ");
+    let (base_url, route_host) = served
+        .split_once(" host=")
+        .with_context(|| format!("the served line names a host: {served:?}"))?;
+    anyhow::ensure!(
+        base_url.starts_with("http://127.0.0.1:")
+            && base_url
+                .trim_start_matches("http://127.0.0.1:")
+                .parse::<u16>()
+                .is_ok_and(|port| port != 0),
+        "the served endpoint is not a loopback port the host actually bound: {base_url:?}"
+    );
+    anyhow::ensure!(
+        route_host == required_journey("WAMN_RECEIVING_ROUTE_HOST")?,
+        "the served route host is not the deployment-owned one: {route_host:?}"
+    );
     Ok(())
 }
 
