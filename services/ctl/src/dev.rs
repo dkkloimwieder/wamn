@@ -7,6 +7,7 @@
 pub mod activation;
 pub mod config;
 pub mod verification_database;
+pub mod verification_world;
 
 use std::error::Error;
 use std::fmt;
@@ -317,7 +318,10 @@ pub async fn run_once<R>(
 where
     R: DevStageRunner + Send,
 {
-    verification_database::run(config, |_| async move {
+    verification_database::run(config, |verification_database_url| async move {
+        verification_world::bootstrap(&verification_database_url)
+            .await
+            .map_err(|error| DevRunError::stage_failed(DevStage::Migrate, error))?;
         run_once_stages(source_state, runner).await
     })
     .await
@@ -378,7 +382,14 @@ where
     S: DevInvalidationSource + Send,
     O: DevWatchObserver + Send,
 {
-    verification_database::run(config, |_| async move {
+    verification_database::run(config, |verification_database_url| async move {
+        if let Err(error) = verification_world::bootstrap(&verification_database_url).await {
+            observer.completed(DevWatchOutcome {
+                from: DevStage::Migrate,
+                result: Err(DevRunError::stage_failed(DevStage::Migrate, error)),
+            });
+            return Ok(());
+        }
         run_watch_loop(runner, source, observer).await
     })
     .await
