@@ -265,7 +265,11 @@ pub fn analyze_tenant(
     // what a grant is allowed to say.
     let invalid_registry: Vec<_> = admitted_platform_packages
         .iter()
-        .filter(|package| !CAPABILITY_REGISTRY.iter().any(|row| row.package == *package))
+        .filter(|package| {
+            !CAPABILITY_REGISTRY
+                .iter()
+                .any(|row| row.package == *package)
+        })
         .cloned()
         .collect();
     if !invalid_registry.is_empty() {
@@ -543,7 +547,10 @@ mod tests {
     /// refused. This is the mutant target for the version half of the key.
     #[test]
     fn version_matching_is_exact() {
-        assert_eq!(import_posture("wasi:io/streams@0.2.12"), Some(Posture::Ambient));
+        assert_eq!(
+            import_posture("wasi:io/streams@0.2.12"),
+            Some(Posture::Ambient)
+        );
         for wrong in [
             "wasi:io/streams@0.2.9",
             "wasi:io/streams@0.2.13",

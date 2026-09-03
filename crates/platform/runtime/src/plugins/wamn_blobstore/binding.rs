@@ -56,14 +56,20 @@ impl BindingError {
 impl core::fmt::Display for BindingError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Unauthorized => formatter.write_str("connection is not authorized for this component"),
-            Self::NoDefinition => formatter.write_str("connection generation carries no definition"),
+            Self::Unauthorized => {
+                formatter.write_str("connection is not authorized for this component")
+            }
+            Self::NoDefinition => {
+                formatter.write_str("connection generation carries no definition")
+            }
             Self::MissingCoordinate { field } => write!(
                 formatter,
                 "connection generation is missing the required {field}; an absent confinement \
                  coordinate is refused rather than widened to a default"
             ),
-            Self::NoCredential => formatter.write_str("connection generation names no host-held credential"),
+            Self::NoCredential => {
+                formatter.write_str("connection generation names no host-held credential")
+            }
         }
     }
 }
@@ -101,7 +107,10 @@ pub fn resolve(snapshot: &ConnectionEffectSnapshot) -> Result<BlobstoreBinding, 
     )
     .map_err(|_| BindingError::Unauthorized)?;
 
-    let definition = snapshot.definition.as_ref().ok_or(BindingError::NoDefinition)?;
+    let definition = snapshot
+        .definition
+        .as_ref()
+        .ok_or(BindingError::NoDefinition)?;
     Ok(BlobstoreBinding {
         endpoint: coordinate(definition, "endpoint")?,
         container: coordinate(definition, "container")?,
@@ -181,10 +190,7 @@ mod tests {
         for field in ["endpoint", "container", "prefix"] {
             let mut snapshot = authorized_snapshot();
             let definition = snapshot.definition.as_mut().expect("definition");
-            definition
-                .as_object_mut()
-                .expect("object")
-                .remove(field);
+            definition.as_object_mut().expect("object").remove(field);
             assert_eq!(
                 resolve(&snapshot),
                 Err(BindingError::MissingCoordinate { field }),
@@ -210,7 +216,8 @@ mod tests {
     #[test]
     fn each_missing_authority_layer_refuses() {
         for break_it in [
-            (|s: &mut ConnectionEffectSnapshot| s.node_permitted = false) as fn(&mut ConnectionEffectSnapshot),
+            (|s: &mut ConnectionEffectSnapshot| s.node_permitted = false)
+                as fn(&mut ConnectionEffectSnapshot),
             |s| s.binding_active = false,
             |s| s.binding_valid = false,
             |s| s.instance_enabled = false,
@@ -246,7 +253,10 @@ mod tests {
     fn a_binding_carries_a_handle_and_never_a_secret() {
         let binding = resolve(&authorized_snapshot()).expect("binds");
         let rendered = format!("{binding:?}");
-        assert!(rendered.contains("vault://"), "the handle is carried: {rendered}");
+        assert!(
+            rendered.contains("vault://"),
+            "the handle is carried: {rendered}"
+        );
         assert!(
             !rendered.contains("ACCESS_KEY") && !rendered.contains("secret-value"),
             "no credential material may appear: {rendered}"

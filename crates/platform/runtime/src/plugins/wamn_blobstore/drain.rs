@@ -70,9 +70,8 @@ where
     // and a confident "0 bytes" here would be a second, quieter lie about the
     // same event.
     Ok(finished.await.unwrap_or_else(|_| {
-        Err(Intake::with_limit(limit).abort(
-            "stream collector was dropped without reporting; bytes received is unknown",
-        ))
+        Err(Intake::with_limit(limit)
+            .abort("stream collector was dropped without reporting; bytes received is unknown"))
     }))
 }
 

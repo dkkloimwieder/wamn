@@ -413,6 +413,15 @@
     },
     {
       "workspace": "components",
+      "name": "blob-put",
+      "manifest_path": "components/execution/blob-put/Cargo.toml",
+      "role": "component",
+      "target_class": "guest",
+      "bounded_context": "execution",
+      "deployable": true
+    },
+    {
+      "workspace": "components",
       "name": "client-acme-receiving",
       "manifest_path": "components/application/client-acme-receiving/Cargo.toml",
       "role": "component",

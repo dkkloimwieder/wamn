@@ -310,7 +310,7 @@ impl ConnectionHttp {
             }
             _ => return Err(ConnectionError::AttestationInvalid),
         }
-        authorize_snapshot(&snapshot, &HTTP_DESCRIPTOR)?;
+        authorize_snapshot(&snapshot, &http_descriptor())?;
 
         let definition = snapshot
             .definition
@@ -454,13 +454,17 @@ fn authorize_candidate_closure(
     Ok(())
 }
 
-/// The HTTP connection's own descriptor, built once.
+/// The HTTP connection's own descriptor.
 ///
-/// Its `requirement_type`/`contract` pair is what [`authorize_snapshot`]
-/// compares against, so the pair can never drift from the one component
-/// admission minted the requirement with.
-static HTTP_DESCRIPTOR: std::sync::LazyLock<ConnectionTypeDescriptor> =
-    std::sync::LazyLock::new(ConnectionTypeDescriptor::http_v1);
+/// Built PER CALL, never cached in a process-wide cell. `repo-lint`'s
+/// per-invocation-client leg refuses deferred-initialisation state anywhere in
+/// this file, and it is right to refuse it bluntly: the guard exists so a
+/// credentialed HTTP path cannot acquire cross-generation reuse, and a guard
+/// that accepts "but mine is only a descriptor" stops guarding. Constructing
+/// nine small ownership entries is nothing beside the request it authorizes.
+fn http_descriptor() -> ConnectionTypeDescriptor {
+    ConnectionTypeDescriptor::http_v1()
+}
 
 /// Authorize one connection effect against the descriptor for its type.
 ///
@@ -975,8 +979,8 @@ mod tests {
     /// contract nothing mints.
     #[test]
     fn the_pinned_contract_literal_matches_the_descriptor() {
-        assert_eq!(HTTP_DESCRIPTOR.contract, HTTP_CONTRACT);
-        assert_eq!(HTTP_DESCRIPTOR.requirement_type, "http");
+        assert_eq!(http_descriptor().contract, HTTP_CONTRACT);
+        assert_eq!(http_descriptor().requirement_type, "http");
     }
 
     /// The parameter must actually discriminate. A snapshot carrying a valid
@@ -986,7 +990,7 @@ mod tests {
     #[test]
     fn a_valid_http_snapshot_is_refused_against_another_capabilitys_descriptor() {
         let valid = snapshot();
-        authorize_snapshot(&valid, &HTTP_DESCRIPTOR).expect("valid against its own descriptor");
+        authorize_snapshot(&valid, &http_descriptor()).expect("valid against its own descriptor");
         assert!(
             matches!(
                 authorize_snapshot(&valid, &ConnectionTypeDescriptor::blobstore_v1()),
@@ -999,33 +1003,34 @@ mod tests {
     #[test]
     fn component_grain_snapshot_refuses_each_missing_authority_layer() {
         let valid = snapshot();
-        authorize_snapshot(&valid, &HTTP_DESCRIPTOR).expect("the fixture snapshot carries every authority layer");
+        authorize_snapshot(&valid, &http_descriptor())
+            .expect("the fixture snapshot carries every authority layer");
 
         let mut missing_node = valid.clone();
         missing_node.node_permitted = false;
         assert!(matches!(
-            authorize_snapshot(&missing_node, &HTTP_DESCRIPTOR),
+            authorize_snapshot(&missing_node, &http_descriptor()),
             Err(ConnectionError::AttestationInvalid)
         ));
 
         let mut inactive_binding = valid.clone();
         inactive_binding.binding_active = false;
         assert!(matches!(
-            authorize_snapshot(&inactive_binding, &HTTP_DESCRIPTOR),
+            authorize_snapshot(&inactive_binding, &http_descriptor()),
             Err(ConnectionError::Unbound)
         ));
 
         let mut stale_generation = valid.clone();
         stale_generation.generation = Some(6);
         assert!(matches!(
-            authorize_snapshot(&stale_generation, &HTTP_DESCRIPTOR),
+            authorize_snapshot(&stale_generation, &http_descriptor()),
             Err(ConnectionError::CredentialUnavailable)
         ));
 
         let mut wrong_contract = valid;
         wrong_contract.contract = Some("wamn:connection/postgres@0.1.0".to_string());
         assert!(matches!(
-            authorize_snapshot(&wrong_contract, &HTTP_DESCRIPTOR),
+            authorize_snapshot(&wrong_contract, &http_descriptor()),
             Err(ConnectionError::Incompatible)
         ));
     }

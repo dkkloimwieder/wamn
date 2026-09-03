@@ -11,6 +11,7 @@ members = [
     "application/client-acme-receiving",
     "application/receiving",
     "ingress/http-route",
+    "execution/blob-put",
     "execution/materializer",
     "data/postgres-statements",
     "data/postgres-sqlx",

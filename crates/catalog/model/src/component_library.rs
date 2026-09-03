@@ -86,8 +86,10 @@ pub enum ComponentConnectionType {
 }
 
 /// Every connection type. A new variant does not compile until it is listed.
-const CONNECTION_TYPES: [ComponentConnectionType; 2] =
-    [ComponentConnectionType::Http, ComponentConnectionType::Blobstore];
+const CONNECTION_TYPES: [ComponentConnectionType; 2] = [
+    ComponentConnectionType::Http,
+    ComponentConnectionType::Blobstore,
+];
 
 impl ComponentConnectionType {
     /// Exact WIT `namespace:package` whose import this connection type needs.

@@ -100,7 +100,11 @@ impl core::fmt::Debug for BoundContainer {
 
 impl BoundContainer {
     /// Bind a component to one container and prefix.
-    pub fn new(store: Arc<dyn ObjectStore>, container: impl Into<String>, prefix: impl Into<String>) -> Self {
+    pub fn new(
+        store: Arc<dyn ObjectStore>,
+        container: impl Into<String>,
+        prefix: impl Into<String>,
+    ) -> Self {
         Self {
             store,
             container: container.into(),
@@ -115,7 +119,8 @@ impl BoundContainer {
     }
 
     fn path(&self, author_key: &str) -> Result<Path, StoreError> {
-        let resolved = confinement::resolve_key(&self.prefix, author_key).map_err(StoreError::Confinement)?;
+        let resolved =
+            confinement::resolve_key(&self.prefix, author_key).map_err(StoreError::Confinement)?;
         Ok(Path::from(resolved))
     }
 
@@ -271,7 +276,11 @@ mod tests {
     fn bound(prefix: &str) -> (BoundContainer, Arc<InMemory>) {
         let store = Arc::new(InMemory::new());
         (
-            BoundContainer::new(Arc::clone(&store) as Arc<dyn ObjectStore>, "wamn-labels", prefix),
+            BoundContainer::new(
+                Arc::clone(&store) as Arc<dyn ObjectStore>,
+                "wamn-labels",
+                prefix,
+            ),
             store,
         )
     }
@@ -281,10 +290,16 @@ mod tests {
         let (container, _store) = bound("acme/labels");
 
         assert!(!container.has("a.zpl").await.expect("has succeeds"));
-        container.put("a.zpl", b"^XA^XZ".to_vec()).await.expect("put");
+        container
+            .put("a.zpl", b"^XA^XZ".to_vec())
+            .await
+            .expect("put");
         assert!(container.has("a.zpl").await.expect("has succeeds"));
         assert_eq!(container.get("a.zpl").await.expect("get"), b"^XA^XZ");
-        assert_eq!(container.list().await.expect("list"), vec!["a.zpl".to_string()]);
+        assert_eq!(
+            container.list().await.expect("list"),
+            vec!["a.zpl".to_string()]
+        );
 
         container.delete("a.zpl").await.expect("delete");
         assert!(!container.has("a.zpl").await.expect("has succeeds"));
@@ -297,15 +312,24 @@ mod tests {
     async fn a_redelivery_overwrites_rather_than_duplicating() {
         let (container, _store) = bound("p");
 
-        container.put("pallet/PAL-42.zpl", b"first".to_vec()).await.expect("put");
-        container.put("pallet/PAL-42.zpl", b"second".to_vec()).await.expect("redelivery");
+        container
+            .put("pallet/PAL-42.zpl", b"first".to_vec())
+            .await
+            .expect("put");
+        container
+            .put("pallet/PAL-42.zpl", b"second".to_vec())
+            .await
+            .expect("redelivery");
 
         assert_eq!(
             container.list().await.expect("list"),
             vec!["pallet/PAL-42.zpl".to_string()],
             "a redelivery under the same key must not create a second object"
         );
-        assert_eq!(container.get("pallet/PAL-42.zpl").await.expect("get"), b"second");
+        assert_eq!(
+            container.get("pallet/PAL-42.zpl").await.expect("get"),
+            b"second"
+        );
     }
 
     /// Listing must not hand back the prefix. A component that cannot NAME the
@@ -315,7 +339,10 @@ mod tests {
     async fn listing_returns_author_relative_keys_and_never_the_prefix() {
         let (container, _store) = bound("acme/labels");
         container.put("a.zpl", b"x".to_vec()).await.expect("put");
-        container.put("deep/b.zpl", b"x".to_vec()).await.expect("put");
+        container
+            .put("deep/b.zpl", b"x".to_vec())
+            .await
+            .expect("put");
 
         let keys = container.list().await.expect("list");
         assert_eq!(keys, vec!["a.zpl".to_string(), "deep/b.zpl".to_string()]);
@@ -338,7 +365,10 @@ mod tests {
             .await
             .expect("plant");
 
-        let error = container.get("../tenant-b/secret").await.expect_err("must refuse");
+        let error = container
+            .get("../tenant-b/secret")
+            .await
+            .expect_err("must refuse");
         assert_eq!(error.code(), "key_parent_traversal");
         assert!(
             container.list().await.expect("list").is_empty(),
@@ -350,7 +380,10 @@ mod tests {
     #[tokio::test]
     async fn deleting_an_absent_object_succeeds() {
         let (container, _store) = bound("p");
-        container.delete("never-existed").await.expect("delete is idempotent");
+        container
+            .delete("never-existed")
+            .await
+            .expect("delete is idempotent");
     }
 
     #[tokio::test]
@@ -367,12 +400,19 @@ mod tests {
         let a = BoundContainer::new(Arc::clone(&store), "wamn-labels", "tenant-a");
         let b = BoundContainer::new(Arc::clone(&store), "wamn-labels", "tenant-b");
 
-        a.put("shared-name.zpl", b"a's".to_vec()).await.expect("put");
-        b.put("shared-name.zpl", b"b's".to_vec()).await.expect("put");
+        a.put("shared-name.zpl", b"a's".to_vec())
+            .await
+            .expect("put");
+        b.put("shared-name.zpl", b"b's".to_vec())
+            .await
+            .expect("put");
 
         assert_eq!(a.get("shared-name.zpl").await.expect("get"), b"a's");
         assert_eq!(b.get("shared-name.zpl").await.expect("get"), b"b's");
-        assert_eq!(a.list().await.expect("list"), vec!["shared-name.zpl".to_string()]);
+        assert_eq!(
+            a.list().await.expect("list"),
+            vec!["shared-name.zpl".to_string()]
+        );
     }
 
     #[tokio::test]

@@ -163,10 +163,12 @@ mod tests {
     #[test]
     fn a_denied_backend_is_access_denied() {
         assert!(matches!(
-            to_wit(&StoreError::Backend(object_store::Error::PermissionDenied {
-                path: "p".to_owned(),
-                source: "no".into(),
-            })),
+            to_wit(&StoreError::Backend(
+                object_store::Error::PermissionDenied {
+                    path: "p".to_owned(),
+                    source: "no".into(),
+                }
+            )),
             WitError::AccessDenied
         ));
     }

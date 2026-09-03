@@ -119,14 +119,12 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
     const DELIBERATELY_ABSENT: [&str; 2] = ["wasi:sockets", "wasi:http"];
 
     let vendored = vendored_wasi_versions(&repository_root());
-    let registered: BTreeSet<&str> = CAPABILITY_REGISTRY
-        .iter()
-        .map(|row| row.package)
-        .collect();
+    let registered: BTreeSet<&str> = CAPABILITY_REGISTRY.iter().map(|row| row.package).collect();
 
     for package in vendored.keys() {
         assert!(
-            registered.contains(package.as_str()) || DELIBERATELY_ABSENT.contains(&package.as_str()),
+            registered.contains(package.as_str())
+                || DELIBERATELY_ABSENT.contains(&package.as_str()),
             "{package} is vendored in the tree but neither registered nor listed as \
              deliberately absent; a new WASI dependency needs a ruling, not silence"
         );

@@ -196,7 +196,9 @@ pub fn render_workload_secret_manifest(
 
 /// The effect-writer credential's own annotation block — the one family whose
 /// Secret carries a frozen document rather than a url.
-fn effect_writer_annotations(credential: &EffectWriterCredential) -> serde_json::Map<String, Value> {
+fn effect_writer_annotations(
+    credential: &EffectWriterCredential,
+) -> serde_json::Map<String, Value> {
     let document = serde_json::to_value(credential).expect("effect-writer credential serializes");
     let field = |name: &str| {
         document[name]

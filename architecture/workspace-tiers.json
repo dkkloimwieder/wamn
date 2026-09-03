@@ -16,7 +16,7 @@
       {
         "workspace": "components",
         "manifest": "components/Cargo.toml",
-        "package_count": 13
+        "package_count": 14
       },
       {
         "workspace": "components-no-std",
@@ -67,6 +67,7 @@
     "product_components": {
       "root_packages": [],
       "component_packages": [
+        "blob-put",
         "client-acme-receiving",
         "http-request",
         "http-route",
@@ -133,6 +134,7 @@
         "wamn-waker"
       ],
       "component_packages": [
+        "blob-put",
         "busyloop",
         "client-acme-receiving",
         "connection-http-standard",
@@ -147,8 +149,8 @@
         "std-virtualization-probe",
         "transform",
         "wamn-client-acme-receiving-data-access",
-        "wamn-postgres-statements",
         "wamn-postgres-sqlx",
+        "wamn-postgres-statements",
         "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
@@ -172,6 +174,7 @@
         "wamn-waker"
       ],
       "component_packages": [
+        "blob-put",
         "busyloop",
         "client-acme-receiving",
         "connection-http-standard",
@@ -186,8 +189,8 @@
         "std-virtualization-probe",
         "transform",
         "wamn-client-acme-receiving-data-access",
-        "wamn-postgres-statements",
         "wamn-postgres-sqlx",
+        "wamn-postgres-statements",
         "wamn-receiving-data-access"
       ],
       "non_cargo_inputs": [],
@@ -205,6 +208,7 @@
         "wamn-waker"
       ],
       "component_packages": [
+        "blob-put",
         "client-acme-receiving",
         "http-request",
         "http-route",
@@ -257,8 +261,8 @@
       "m1_inventory_tier": "product_components",
       "proof_inventory_tier": "full_ci",
       "expected_package_counts": {
-        "m1": 7,
-        "proof": 17
+        "m1": 8,
+        "proof": 18
       }
     }
   },
@@ -280,7 +284,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "the 13 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
+      "selected_packages": "the 14 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     },
     {

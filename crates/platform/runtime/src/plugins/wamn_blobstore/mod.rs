@@ -29,9 +29,9 @@
 
 pub mod binding;
 pub mod bindings;
+pub mod confinement;
 pub mod drain;
 pub mod host;
-pub mod confinement;
 pub mod intake;
 pub mod plugin;
 pub mod store;

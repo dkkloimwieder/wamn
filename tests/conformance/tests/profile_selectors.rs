@@ -292,7 +292,7 @@ fn profile_contract_matches_locked_metadata() {
     }
 
     assert_eq!(root_members.len(), 36);
-    assert_eq!(component_members.len(), 17);
+    assert_eq!(component_members.len(), 18);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -411,6 +411,7 @@ fn profile_contract_matches_locked_metadata() {
         "component m1",
         &component_m1,
         &[
+            "blob-put",
             "client-acme-receiving",
             "http-route",
             "http-request",
@@ -424,6 +425,7 @@ fn profile_contract_matches_locked_metadata() {
         "component proof",
         &component_proof,
         &[
+            "blob-put",
             "busyloop",
             "client-acme-receiving",
             "connection-http-standard",
@@ -444,8 +446,8 @@ fn profile_contract_matches_locked_metadata() {
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 7);
-    assert_eq!(component_proof.len(), 17);
+    assert_eq!(component_m1.len(), 8);
+    assert_eq!(component_proof.len(), 18);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(

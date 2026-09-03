@@ -277,9 +277,7 @@ fn parent_context(trace_id: &str, span_id: &str) -> anyhow::Result<opentelemetry
 /// injecting returns `None` here exactly as it would in production, and the
 /// caller refuses to touch the network. Reading the header back out of the map
 /// is how this proof observes what leaves the host.
-fn capture_effect_traceparent(
-    parent: &opentelemetry::Context,
-) -> anyhow::Result<Option<String>> {
+fn capture_effect_traceparent(parent: &opentelemetry::Context) -> anyhow::Result<Option<String>> {
     let span = tracing::info_span!("wamn.connection_http");
     span.set_parent(parent.clone())
         .context("attach controlled parent to the effect span")?;

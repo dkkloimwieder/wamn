@@ -19,9 +19,7 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::plugins::effect_span::{
-    EffectIdentity, EffectWiring, effect_span, record_wiring,
-};
+use crate::plugins::effect_span::{EffectIdentity, EffectWiring, effect_span, record_wiring};
 
 use super::binding::{self, BindingError};
 use super::store::BoundContainer;

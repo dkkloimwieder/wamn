@@ -28,12 +28,12 @@ use wamn_runtime::component_artifact_source::{
     ComponentArtifactFetchErrorKind, ComponentArtifactSource,
 };
 use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
-use wamn_runtime::plugins::wamn_blobstore::plugin::{WAMN_BLOBSTORE_ID, WamnBlobstore};
-use wamn_runtime::plugins::wamn_blobstore::plugin as wamn_blobstore_plugin;
 use wamn_runtime::plugins::connection_http::{
     self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
 };
 use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
+use wamn_runtime::plugins::wamn_blobstore::plugin as wamn_blobstore_plugin;
+use wamn_runtime::plugins::wamn_blobstore::plugin::{WAMN_BLOBSTORE_ID, WamnBlobstore};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -2069,134 +2069,138 @@ impl NodeInstance {
         tenant_id: &str,
         component_fact: &AdmittedComponent,
     ) -> anyhow::Result<Self> {
-        let (mut store, mut workload, connection_http, blobstore, nested, statement_scope) = async {
-            let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
-            wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-            let local = wash_runtime::types::LocalResources {
-                allowed_hosts: Arc::clone(&allowed_hosts),
-                ..Default::default()
-            };
-            let connection_http = Arc::new(ConnectionHttp::new(
-                Arc::clone(&postgres),
-                Arc::clone(&credentials),
-                tenant_id,
-                config.project.as_str(),
-                Arc::clone(&allowed_hosts),
-                Some(Arc::clone(&release)),
-            ));
-            // The blobstore capability. It takes no release weld: its
-            // released-closure path refuses until one is wired, rather than
-            // guessing the coordinates that decide which binding authorizes.
-            let blobstore = Arc::new(WamnBlobstore::new(
-                Arc::clone(&postgres),
-                Arc::clone(&credentials),
-                tenant_id,
-                config.project.as_str(),
-            ));
-            let nested = Arc::new(NestedOperationHost {
-                engine: Arc::new(engine.clone()),
-                postgres: Arc::clone(&postgres),
-                credentials: Arc::clone(&credentials),
-                logging: Arc::clone(&logging),
-                allowed_hosts: Arc::clone(&allowed_hosts),
-                release: Arc::clone(&release),
-                compiled_components,
-                config: config.clone(),
-                tenant_id: tenant_id.into(),
-                components,
-                invocation: std::sync::Mutex::new(None),
-            });
-            add_nested_operation_links(&mut linker, Arc::clone(&nested), component_fact)?;
-            let loopback = Arc::new(std::sync::Mutex::new(
-                wash_runtime::sockets::loopback::Network::default(),
-            ));
-            let mut workload = WorkloadComponent::new(
-                "router-driver",
-                "router-driver",
-                "wamn",
-                component_fact.component.as_str(),
-                component,
-                linker,
-                Vec::new(),
-                local,
-                loopback,
-                InstancePolicy::Ephemeral,
-            );
-            let imports = workload.world().imports;
-            // The driver has one credential-exact project. Route every named
-            // Postgres instance through that same trusted project rather than
-            // bypassing the plugin's `(implements ...)` binder with a raw linker.
-            let imports: HashSet<_> = imports
-                .into_iter()
-                .map(|mut interface| {
-                    if interface.namespace == "wamn"
-                        && interface.package == "postgres"
-                        && interface.name.is_some()
-                    {
+        let (mut store, mut workload, connection_http, blobstore, nested, statement_scope) =
+            async {
+                let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
+                wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+                let local = wash_runtime::types::LocalResources {
+                    allowed_hosts: Arc::clone(&allowed_hosts),
+                    ..Default::default()
+                };
+                let connection_http = Arc::new(ConnectionHttp::new(
+                    Arc::clone(&postgres),
+                    Arc::clone(&credentials),
+                    tenant_id,
+                    config.project.as_str(),
+                    Arc::clone(&allowed_hosts),
+                    Some(Arc::clone(&release)),
+                ));
+                // The blobstore capability. It takes no release weld: its
+                // released-closure path refuses until one is wired, rather than
+                // guessing the coordinates that decide which binding authorizes.
+                let blobstore = Arc::new(WamnBlobstore::new(
+                    Arc::clone(&postgres),
+                    Arc::clone(&credentials),
+                    tenant_id,
+                    config.project.as_str(),
+                ));
+                let nested = Arc::new(NestedOperationHost {
+                    engine: Arc::new(engine.clone()),
+                    postgres: Arc::clone(&postgres),
+                    credentials: Arc::clone(&credentials),
+                    logging: Arc::clone(&logging),
+                    allowed_hosts: Arc::clone(&allowed_hosts),
+                    release: Arc::clone(&release),
+                    compiled_components,
+                    config: config.clone(),
+                    tenant_id: tenant_id.into(),
+                    components,
+                    invocation: std::sync::Mutex::new(None),
+                });
+                add_nested_operation_links(&mut linker, Arc::clone(&nested), component_fact)?;
+                let loopback = Arc::new(std::sync::Mutex::new(
+                    wash_runtime::sockets::loopback::Network::default(),
+                ));
+                let mut workload = WorkloadComponent::new(
+                    "router-driver",
+                    "router-driver",
+                    "wamn",
+                    component_fact.component.as_str(),
+                    component,
+                    linker,
+                    Vec::new(),
+                    local,
+                    loopback,
+                    InstancePolicy::Ephemeral,
+                );
+                let imports = workload.world().imports;
+                // The driver has one credential-exact project. Route every named
+                // Postgres instance through that same trusted project rather than
+                // bypassing the plugin's `(implements ...)` binder with a raw linker.
+                let imports: HashSet<_> = imports
+                    .into_iter()
+                    .map(|mut interface| {
+                        if interface.namespace == "wamn"
+                            && interface.package == "postgres"
+                            && interface.name.is_some()
+                        {
+                            interface
+                                .config
+                                .insert("project".to_owned(), config.project.clone());
+                        }
                         interface
-                            .config
-                            .insert("project".to_owned(), config.project.clone());
+                    })
+                    .collect();
+                {
+                    let mut item = WorkloadItem::Component(&mut workload);
+                    postgres
+                        .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
+                        .await?;
+                    logging
+                        .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
+                        .await?;
+                    if WitInterfaces::new(&imports).contains("wamn", "connection", &["http"]) {
+                        connection_http::add_to_linker(item.linker())?;
                     }
-                    interface
-                })
-                .collect();
-            {
-                let mut item = WorkloadItem::Component(&mut workload);
-                postgres
-                    .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
-                    .await?;
-                logging
-                    .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
-                    .await?;
-                if WitInterfaces::new(&imports).contains("wamn", "connection", &["http"]) {
-                    connection_http::add_to_linker(item.linker())?;
+                    if WitInterfaces::new(&imports).contains(
+                        "wasmcloud",
+                        "blobstore",
+                        &["types", "container", "blobstore"],
+                    ) {
+                        wamn_blobstore_plugin::add_to_linker(item.linker())?;
+                    }
                 }
-                if WitInterfaces::new(&imports).contains(
-                    "wasmcloud",
-                    "blobstore",
-                    &["types", "container", "blobstore"],
-                ) {
-                    wamn_blobstore_plugin::add_to_linker(item.linker())?;
-                }
+                let scope: Box<str> = workload.id().into();
+                // Linker setup is not an identity bind. In particular WamnLogging's
+                // plugin hook seeds even an empty claim. Clear every registry before
+                // component instantiation so start functions cannot exercise tenant
+                // authority; `bind_acquisition` is the sole identity and provenance
+                // installation point.
+                postgres.revoke_session_claims(&scope);
+                logging.clear_claim(&scope);
+                connection_http.revoke_invocation(&scope);
+                blobstore.revoke_invocation(&scope);
+                nested.revoke();
+                let pending_statement_scope = PendingStatementScope::bind(
+                    Arc::clone(&postgres),
+                    scope.clone(),
+                    component_fact,
+                )?;
+                let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
+                    HashMap::new();
+                plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
+                plugins.insert(WAMN_LOGGING_ID, Arc::clone(&logging) as _);
+                plugins.insert(CONNECTION_HTTP_ID, Arc::clone(&connection_http) as _);
+                plugins.insert(WAMN_BLOBSTORE_ID, Arc::clone(&blobstore) as _);
+                let ctx = Ctx::builder(scope.to_string(), scope.to_string())
+                    .with_plugins(plugins)
+                    .build();
+                let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
+                // Instantiation executes guest start code, so it needs the same bounded
+                // ceiling as a call. One tick is only 10 ms and interrupts valid
+                // virtualized std components before their instance is ready.
+                store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
+                Ok::<_, anyhow::Error>((
+                    store,
+                    workload,
+                    connection_http,
+                    blobstore,
+                    nested,
+                    (scope, pending_statement_scope),
+                ))
             }
-            let scope: Box<str> = workload.id().into();
-            // Linker setup is not an identity bind. In particular WamnLogging's
-            // plugin hook seeds even an empty claim. Clear every registry before
-            // component instantiation so start functions cannot exercise tenant
-            // authority; `bind_acquisition` is the sole identity and provenance
-            // installation point.
-            postgres.revoke_session_claims(&scope);
-            logging.clear_claim(&scope);
-            connection_http.revoke_invocation(&scope);
-            blobstore.revoke_invocation(&scope);
-            nested.revoke();
-            let pending_statement_scope =
-                PendingStatementScope::bind(Arc::clone(&postgres), scope.clone(), component_fact)?;
-            let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
-                HashMap::new();
-            plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
-            plugins.insert(WAMN_LOGGING_ID, Arc::clone(&logging) as _);
-            plugins.insert(CONNECTION_HTTP_ID, Arc::clone(&connection_http) as _);
-            plugins.insert(WAMN_BLOBSTORE_ID, Arc::clone(&blobstore) as _);
-            let ctx = Ctx::builder(scope.to_string(), scope.to_string())
-                .with_plugins(plugins)
-                .build();
-            let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
-            // Instantiation executes guest start code, so it needs the same bounded
-            // ceiling as a call. One tick is only 10 ms and interrupts valid
-            // virtualized std components before their instance is ready.
-            store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
-            Ok::<_, anyhow::Error>((
-                store,
-                workload,
-                connection_http,
-                blobstore,
-                nested,
-                (scope, pending_statement_scope),
-            ))
-        }
-        .instrument(tracing::info_span!("wamn.component.linker_setup"))
-        .await?;
+            .instrument(tracing::info_span!("wamn.component.linker_setup"))
+            .await?;
         let (scope, pending_statement_scope) = statement_scope;
         let compiled = workload.component().clone();
         let pre = tracing::info_span!("wamn.component.link")

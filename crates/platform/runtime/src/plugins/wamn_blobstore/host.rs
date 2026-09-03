@@ -38,8 +38,10 @@
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
-use super::bindings::wasmcloud::blobstore::container::{Container, HostContainer, HostContainerWithStore};
 use super::bindings::wasmcloud::blobstore::blobstore::HostWithStore;
+use super::bindings::wasmcloud::blobstore::container::{
+    Container, HostContainer, HostContainerWithStore,
+};
 use super::bindings::wasmcloud::blobstore::types::{
     ContainerMetadata, Error as WitError, ObjectId, ObjectMetadata,
 };
@@ -62,14 +64,7 @@ fn container_of<T>(
 where
     T: 'static,
 {
-    accessor.with(|mut access| {
-        access
-            .get()
-            .table
-            .get(handle)
-            .cloned()
-            .map_err(Into::into)
-    })
+    accessor.with(|mut access| access.get().table.get(handle).cloned().map_err(Into::into))
 }
 
 // The marker traits attach to the store's DATA type (`ActiveCtx`), while the
@@ -117,7 +112,9 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         name: String,
         start: u64,
         end: u64,
-    ) -> wash_runtime::wasmtime::Result<Result<wash_runtime::wasmtime::component::StreamReader<u8>, WitError>> {
+    ) -> wash_runtime::wasmtime::Result<
+        Result<wash_runtime::wasmtime::component::StreamReader<u8>, WitError>,
+    > {
         let container = container_of(accessor, &handle)?;
         let body = match instrumented(accessor, "get-data", container.get(&name)).await? {
             Ok(body) => body,
@@ -151,15 +148,19 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
             Ok(body) => body,
             Err(error) => return Ok(Err(to_wit(&StoreError::Intake(error)))),
         };
-        Ok(instrumented(accessor, "write-data", container.put(&name, body))
-            .await?
-            .map_err(|error| to_wit(&error)))
+        Ok(
+            instrumented(accessor, "write-data", container.put(&name, body))
+                .await?
+                .map_err(|error| to_wit(&error)),
+        )
     }
 
     async fn list_objects(
         accessor: &Accessor<T, Self>,
         handle: Resource<Container>,
-    ) -> wash_runtime::wasmtime::Result<Result<wash_runtime::wasmtime::component::StreamReader<String>, WitError>> {
+    ) -> wash_runtime::wasmtime::Result<
+        Result<wash_runtime::wasmtime::component::StreamReader<String>, WitError>,
+    > {
         let container = container_of(accessor, &handle)?;
         let keys = match instrumented(accessor, "list-objects", container.list()).await? {
             Ok(keys) => keys,
@@ -177,9 +178,11 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
         let container = container_of(accessor, &handle)?;
-        Ok(instrumented(accessor, "delete-object", container.delete(&name))
-            .await?
-            .map_err(|error| to_wit(&error)))
+        Ok(
+            instrumented(accessor, "delete-object", container.delete(&name))
+                .await?
+                .map_err(|error| to_wit(&error)),
+        )
     }
 
     async fn delete_objects(
@@ -322,8 +325,7 @@ impl<T: 'static + Send> HostWithStore<T> for SharedCtx {
 
 /// Why the two object-id verbs are refused. One literal, so both refusals
 /// carry the same reason and neither can drift.
-pub const REFUSED_OBJECT_ID_REASON: &str =
-    "object ids are bare strings carrying no backend or binding discriminator, so bucket and \
+pub const REFUSED_OBJECT_ID_REASON: &str = "object ids are bare strings carrying no backend or binding discriminator, so bucket and \
      prefix confinement cannot hold across them";
 
 /// The plugin and the calling component, for instrumentation and resolution.

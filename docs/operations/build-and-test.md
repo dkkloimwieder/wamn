@@ -1339,6 +1339,17 @@ worktree, so a test validates the wrong tree; artifact collision overwrites in
 place, so a later run executes the other tree's code; and fingerprint thrash
 serialises every lane on one flock. Give each worktree its own directory.
 
+**A guest fixture must PROVE its import survives.** An interface a guest never
+calls is elided by the component encoder, so the fixture silently stops
+carrying the surface its test names. This has now bitten three times: the
+`wasi:sockets` admission fixture asserted the egress guard while importing no
+socket at all; a blobstore probe componentized with no blobstore import; and a
+second probe repeated it. **Standing law: every new guest fixture makes a real
+call through the interface, and the test then verifies the import is present**
+— by `wasm-tools component wit` on the artifact, or by asserting the refusal
+names the import it caught. A fixture that only *declares* an import proves
+nothing about it.
+
 **A wrong package name greps as zero failures.** `cargo test -p <nonexistent>`
 errors out — it does not run and report zero. Measured at `1bffa614`:
 
