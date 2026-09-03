@@ -1,0 +1,21 @@
+[package]
+name = "wamn-receiving-tui"
+description = "The Receiving operator terminal: purchase order list and receipt entry over published routes."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The APPLICATION half of the ratatui 0.30 split: this crate owns the terminal,
+# so it takes the backend the widget library deliberately does not.
+ratatui = { workspace = true }
+serde_json = { workspace = true }
+wamn-client = { workspace = true }
+wamn-client-tui = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+async-trait = { workspace = true }
+
+[lints]
+workspace = true
