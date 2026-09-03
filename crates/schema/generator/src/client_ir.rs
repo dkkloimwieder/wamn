@@ -366,7 +366,9 @@ fn build_model(
 ) -> Result<ModelIr, ClientIrError> {
     let mut built = Vec::with_capacity(operations.len());
     for (operation_name, parts) in operations {
-        built.push(build_operation(name, &operation_name, parts)?);
+        if let Some(operation) = build_operation(name, &operation_name, parts)? {
+            built.push(operation);
+        }
     }
     // The model's descriptor set is the union of what its operations return.
     // Unioned rather than taken from one operation, because `get` and `query`
@@ -384,17 +386,32 @@ fn build_model(
     })
 }
 
+/// One operation, or `None` when the contract describes something a client
+/// cannot call.
+///
+/// A package's contract directory is not a client surface. It also carries
+/// PRIVATE operations — `client_acme_receiving`'s `quality/create_inspection`
+/// is an `event_handler` with `visibility: private`, a null `grant` and a null
+/// `permission_token` — which the platform invokes internally and no caller
+/// ever addresses. Projecting one would put an operation in a client that has
+/// no grant to present, no route to reach, and no caller.
 fn build_operation(
     module: &str,
     name: &str,
     parts: OperationParts,
-) -> Result<OperationIr, ClientIrError> {
+) -> Result<Option<OperationIr>, ClientIrError> {
     let operation = parts.operation.ok_or_else(|| {
         ClientIrError::new(
             ClientIrErrorKind::MissingMember,
             format!("{module}/{name} has no operation contract"),
         )
     })?;
+    // Excluded by DECLARATION, never by a missing member: a public operation
+    // whose grant is absent is a malformed contract and must still refuse
+    // below, not vanish from the client because a member failed to parse.
+    if operation.get("visibility").and_then(Value::as_str) == Some("private") {
+        return Ok(None);
+    }
     let member = |key: &str| -> Result<String, ClientIrError> {
         operation
             .get(key)
@@ -415,7 +432,7 @@ fn build_operation(
         .result
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
-    Ok(OperationIr {
+    Ok(Some(OperationIr {
         name: name.to_owned(),
         operation: member("operation")?,
         grant: member("grant")?,
@@ -425,7 +442,7 @@ fn build_operation(
             .and_then(Value::as_str)
             .unwrap_or("none")
             .to_owned(),
-        input_fields: fields_of(&input),
+        input_fields: input_fields_of(&input),
         // A `.result.json` is the exception, not the rule: exactly one shipped
         // operation has one. Every generated CRUD operation declares a result
         // CLASS in its operation contract and describes the result's shape in
@@ -442,7 +459,7 @@ fn build_operation(
         envelope: input.get("envelope").cloned(),
         paging: paging_of(&input),
         errors: errors_of(parts.errors.as_ref()),
-    })
+    }))
 }
 
 /// Result descriptors from a `.result.json` when present, else from the SQL
@@ -477,6 +494,67 @@ fn result_fields(result: &Value, operation: &Value) -> Vec<FieldIr> {
     columns.sort();
     columns.dedup();
     columns
+}
+
+/// Input descriptors from a command contract's `fields` array, else from the
+/// scalar members a generated CRUD contract declares.
+///
+/// TWO SHAPES, both authored by the generator, and reading only one leaves
+/// seven of the twelve shipped operations with no input at all. A COMMAND
+/// contract (`receiving/record_receipt`) carries a `fields` array. A generated
+/// CRUD contract (`purchase_order/get`) instead names each input as a
+/// top-level member carrying `{required, type}` — `id`, `request_id`,
+/// `expected_row_version` — and lists the three-state updatable ones under
+/// `writable_fields`.
+///
+/// A writable field is NULLABLE in the descriptor sense: `omitted: unchanged`
+/// means a caller may leave it out, which is exactly the optionality a control
+/// or a request struct needs to model. Its `explicit_null` disposition is a
+/// refusal rule, not a shape, and stays in the contract where it is enforced.
+fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
+    let declared = fields_of(contract);
+    if !declared.is_empty() {
+        return declared;
+    }
+    let Some(members) = contract.as_object() else {
+        return Vec::new();
+    };
+    let mut fields: Vec<FieldIr> = members
+        .iter()
+        .filter_map(|(name, member)| {
+            Some(FieldIr {
+                path: name.clone(),
+                type_name: member.get("type")?.as_str()?.to_owned(),
+                // A scalar input member declares `required`; absent reads as
+                // optional, which is the safer direction — a client that sends
+                // an optional field is refused by the contract, one that omits
+                // a required field never builds.
+                nullable: !member
+                    .get("required")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                values: string_list(member.get("values")),
+            })
+        })
+        .collect();
+    fields.extend(
+        contract
+            .get("writable_fields")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|field| {
+                Some(FieldIr {
+                    path: field.get("field")?.as_str()?.to_owned(),
+                    type_name: field.get("type")?.as_str()?.to_owned(),
+                    nullable: true,
+                    values: string_list(field.get("values")),
+                })
+            }),
+    );
+    fields.sort();
+    fields.dedup();
+    fields
 }
 
 fn fields_of(contract: &Value) -> Vec<FieldIr> {
@@ -598,6 +676,166 @@ mod tests {
     fn receiving_ir() -> ClientContractIr {
         ClientContractIr::from_contract_directory("receiving", &receiving_contracts())
             .expect("the shipped Receiving contract projection reads as an IR")
+    }
+
+    fn overlay_ir() -> ClientContractIr {
+        ClientContractIr::from_contract_directory(
+            "client_acme_receiving",
+            &repository_root().join("packages/client_acme_receiving/generated/contracts"),
+        )
+        .expect("the shipped Acme overlay projection reads as an IR")
+    }
+
+    fn operation_names(ir: &ClientContractIr) -> Vec<String> {
+        ir.models
+            .iter()
+            .flat_map(|model| {
+                model
+                    .operations
+                    .iter()
+                    .map(move |operation| format!("{}/{}", model.name, operation.name))
+            })
+            .collect()
+    }
+
+    fn operation<'a>(ir: &'a ClientContractIr, module: &str, name: &str) -> &'a OperationIr {
+        ir.models
+            .iter()
+            .find(|model| model.name == module)
+            .unwrap_or_else(|| panic!("no {module} model in {:?}", operation_names(ir)))
+            .operations
+            .iter()
+            .find(|operation| operation.name == name)
+            .unwrap_or_else(|| panic!("no {module}/{name} in {:?}", operation_names(ir)))
+    }
+
+    /// A private operation is not a client operation.
+    ///
+    /// The overlay's `quality/create_inspection` is an `event_handler` the
+    /// platform invokes internally: `visibility: private`, null `grant`, null
+    /// `permission_token`. Before this was excluded, projecting the overlay
+    /// package failed outright — so this test also proves the overlay, the
+    /// only package carrying the `/acme` routes, projects at all.
+    #[test]
+    fn a_private_operation_is_not_a_client_operation() {
+        let names = operation_names(&overlay_ir());
+        assert!(
+            !names.iter().any(|name| name == "quality/create_inspection"),
+            "a private event handler reached the client IR: {names:?}"
+        );
+        // Guard the guard: exclusion must remove ONE operation, not silence a
+        // whole module. `create_inspection`'s siblings must survive.
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "quality/approve_inspection"),
+            "exclusion swallowed a callable sibling: {names:?}"
+        );
+        assert_eq!(names.len(), 5, "{names:?}");
+    }
+
+    /// Exclusion is by DECLARATION, never by a member that failed to parse.
+    ///
+    /// A public operation whose grant is missing is a malformed contract and
+    /// must still refuse. Were the rule "skip anything without a grant", this
+    /// contract would vanish from the client instead — a caller would find the
+    /// operation simply absent, with nothing naming why.
+    #[test]
+    fn a_public_operation_missing_its_grant_still_refuses() {
+        let scratch = std::env::temp_dir().join("wamn-client-ir-grantless");
+        let _ = std::fs::remove_dir_all(&scratch);
+        copy_tree(&receiving_contracts(), &scratch);
+        let contract = scratch.join("purchase_order/get.operation.json");
+        let mut document: Value =
+            serde_json::from_slice(&std::fs::read(&contract).expect("read")).expect("parse");
+        document
+            .as_object_mut()
+            .expect("an operation contract is an object")
+            .remove("grant");
+        std::fs::write(&contract, serde_json::to_vec(&document).expect("serialize"))
+            .expect("write");
+
+        let refusal = ClientContractIr::from_contract_directory("receiving", &scratch)
+            .expect_err("a public operation with no grant is malformed");
+        assert_eq!(refusal.kind, ClientIrErrorKind::MissingMember);
+        assert!(refusal.to_string().contains("grant"), "{refusal}");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A generated CRUD contract states its inputs as scalar members, not as a
+    /// `fields` array — and reading only the array left seven of the twelve
+    /// shipped operations with no input at all.
+    #[test]
+    fn a_generated_crud_contract_yields_its_scalar_inputs() {
+        let ir = receiving_ir();
+        let update = operation(&ir, "purchase_order", "update");
+        let paths: Vec<&str> = update
+            .input_fields
+            .iter()
+            .map(|field| field.path.as_str())
+            .collect();
+        assert_eq!(
+            paths,
+            ["expected_row_version", "id", "request_id", "supplier_id"],
+            "the three-state update's inputs"
+        );
+
+        let by_path = |name: &str| {
+            update
+                .input_fields
+                .iter()
+                .find(|field| field.path == name)
+                .unwrap_or_else(|| panic!("no {name}"))
+                .clone()
+        };
+        // Required scalars are not nullable; a writable field is, because
+        // `omitted: unchanged` is exactly the optionality a caller models.
+        assert_eq!(by_path("id").type_name, "uuid");
+        assert!(!by_path("id").nullable);
+        assert_eq!(by_path("expected_row_version").type_name, "int64");
+        assert!(!by_path("expected_row_version").nullable);
+        assert_eq!(by_path("supplier_id").type_name, "uuid");
+        assert!(
+            by_path("supplier_id").nullable,
+            "a writable field is optional"
+        );
+    }
+
+    /// The scalar fallback must not displace a command contract's own array.
+    #[test]
+    fn a_command_contract_still_reads_its_fields_array() {
+        let ir = receiving_ir();
+        let record = operation(&ir, "receiving", "record_receipt");
+        assert_eq!(record.input_fields.len(), 8, "{:?}", record.input_fields);
+        // A nested array path is the proof the ARRAY was read: the scalar
+        // fallback walks top-level members and could never produce one.
+        assert!(
+            record
+                .input_fields
+                .iter()
+                .any(|field| field.path == "value.line[].quantity"),
+            "the command contract's own fields array was not read: {:?}",
+            record.input_fields
+        );
+    }
+
+    /// Every operation a client can see must carry inputs it can construct.
+    /// This is the arithmetic the two shapes exist to satisfy; it caught the
+    /// original hole and would catch either shape regressing.
+    #[test]
+    fn every_projected_operation_has_input_fields() {
+        for ir in [receiving_ir(), overlay_ir()] {
+            for model in &ir.models {
+                for operation in &model.operations {
+                    assert!(
+                        !operation.input_fields.is_empty(),
+                        "{}/{} projects no inputs",
+                        model.name,
+                        operation.name
+                    );
+                }
+            }
+        }
     }
 
     /// EXIT GATE 1a: regeneration is byte-identical on an unchanged release.
