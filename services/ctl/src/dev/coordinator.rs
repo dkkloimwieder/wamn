@@ -26,7 +26,7 @@ use wamn_authoring_model::{
 use wamn_catalog::{PackageCoordinate, WiringDocument};
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_generator::{MaterializeMode, PackageManifest};
-use wamn_schema_introspection::ir::CatalogIr;
+use wamn_schema_introspection::ir::{CatalogIr, Table};
 
 use super::activation::{self, DevActivation, DevActivationRequest};
 use super::config::{DevConfig, ResolvedDevPackages, VerifiedBaseComponentDigest};
@@ -195,6 +195,125 @@ struct PackageInput {
     manifest: PackageManifest,
 }
 
+fn project_catalog_for_package(
+    catalog: &CatalogIr,
+    target: &PackageManifest,
+    installed: &[PackageInput],
+) -> Result<CatalogIr, ProductionDevStageError> {
+    let mut relation_owners = BTreeMap::<(String, String), String>::new();
+    let mut field_owners = BTreeMap::<(String, String, String), String>::new();
+    let mut constraint_owners = BTreeMap::<(String, String, String), String>::new();
+    for package in installed {
+        for model in package.manifest.models.values() {
+            relation_owners
+                .entry((model.schema.clone(), model.table.clone()))
+                .or_insert_with(|| model.owner.clone());
+            for (field, owner) in &model.field_owners {
+                field_owners.insert(
+                    (model.schema.clone(), model.table.clone(), field.clone()),
+                    owner.clone(),
+                );
+            }
+            for (constraint, owner) in &model.constraint_owners {
+                constraint_owners.insert(
+                    (
+                        model.schema.clone(),
+                        model.table.clone(),
+                        constraint.clone(),
+                    ),
+                    owner.clone(),
+                );
+            }
+        }
+        for relation in package.manifest.internal_relations.values() {
+            relation_owners.insert(
+                (relation.schema.clone(), relation.table.clone()),
+                package.manifest.package.id.clone(),
+            );
+        }
+    }
+
+    let admitted_owners = std::iter::once(target.package.id.as_str())
+        .chain(
+            target
+                .base_dependencies
+                .values()
+                .map(|dependency| dependency.package.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    let mut tables = Vec::new();
+    for table in catalog.tables() {
+        let coordinate = (table.schema().to_owned(), table.name().to_owned());
+        let relation_owner = relation_owners.get(&coordinate).ok_or_else(|| {
+            ProductionDevStageError::invalid(
+                "project package catalog",
+                format!(
+                    "{}.{} has no installed package definition owner",
+                    table.schema(),
+                    table.name()
+                ),
+            )
+        })?;
+        if !admitted_owners.contains(relation_owner.as_str()) {
+            continue;
+        }
+
+        let columns = table
+            .columns()
+            .iter()
+            .filter(|column| {
+                let owner = field_owners
+                    .get(&(
+                        table.schema().to_owned(),
+                        table.name().to_owned(),
+                        column.name().to_owned(),
+                    ))
+                    .unwrap_or(relation_owner);
+                admitted_owners.contains(owner.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let column_names = columns
+            .iter()
+            .map(|column| column.name())
+            .collect::<BTreeSet<_>>();
+        let constraints = table
+            .constraints()
+            .iter()
+            .filter(|constraint| {
+                let owner = constraint_owners
+                    .get(&(
+                        table.schema().to_owned(),
+                        table.name().to_owned(),
+                        constraint.name().to_owned(),
+                    ))
+                    .unwrap_or(relation_owner);
+                admitted_owners.contains(owner.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let indexes = table
+            .indexes()
+            .iter()
+            .filter(|index| {
+                index
+                    .columns()
+                    .iter()
+                    .all(|column| column_names.contains(column.name()))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        tables.push(Table::new(
+            table.schema(),
+            table.name(),
+            columns,
+            constraints,
+            indexes,
+        ));
+    }
+    Ok(CatalogIr::new(tables))
+}
+
 #[derive(Clone, Debug)]
 struct WiringInput {
     package_id: Box<str>,
@@ -345,13 +464,14 @@ impl ProductionDevStageRunner {
     async fn introspect(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Introspect);
         let packages = self.package_inputs()?;
-        for package in packages {
+        for package in &packages {
             let catalog = wamn_schema_generator::introspect_package(
                 self.config.verification_database_url(),
                 &package.root,
             )
             .await
             .map_err(|source| ProductionDevStageError::owner("introspect package", source))?;
+            let catalog = project_catalog_for_package(&catalog, &package.manifest, &packages)?;
             self.catalogs
                 .insert(package.manifest.package.id.clone(), catalog);
         }
@@ -1271,6 +1391,7 @@ impl Drop for TemporaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_schema_introspection::ir::{Column, ColumnDefault, ColumnType, Constraint};
 
     fn package(id: &str, version: &str, component: &str) -> PackageInput {
         let manifest = serde_json::from_value(serde_json::json!({
@@ -1317,6 +1438,108 @@ mod tests {
         assert_eq!(first_publish, repeated_publish);
         assert_ne!(first_gate, first_publish);
         assert_ne!(first_publish, next_commit_publish);
+    }
+
+    #[test]
+    fn package_catalog_projection_keeps_base_contract_additive() {
+        let base = PackageInput {
+            root: PathBuf::from("/packages/receiving"),
+            manifest: PackageManifest::from_slice(include_bytes!(
+                "../../../../packages/receiving/wamn.json"
+            ))
+            .expect("parse shipped base manifest"),
+        };
+        let overlay = PackageInput {
+            root: PathBuf::from("/packages/client_acme_receiving"),
+            manifest: PackageManifest::from_slice(include_bytes!(
+                "../../../../packages/client_acme_receiving/wamn.json"
+            ))
+            .expect("parse shipped overlay manifest"),
+        };
+        let catalog = CatalogIr::new(vec![
+            Table::new(
+                "receiving",
+                "purchase_order",
+                vec![
+                    Column::new("id", ColumnType::Uuid, false, None, None),
+                    Column::new("supplier_id", ColumnType::Uuid, false, None, None),
+                    Column::new(
+                        "acme_inspection_required",
+                        ColumnType::Boolean,
+                        false,
+                        Some(ColumnDefault::BooleanFalse),
+                        None,
+                    ),
+                    Column::new(
+                        "acme_quality_status",
+                        ColumnType::Text,
+                        false,
+                        Some(ColumnDefault::TextNotRequired),
+                        None,
+                    ),
+                ],
+                vec![
+                    Constraint::primary_key("purchase_order_id_pkey", ["id"])
+                        .expect("base primary key"),
+                    Constraint::check(
+                        "purchase_order_acme_quality_status_check",
+                        "acme_quality_status = ANY (ARRAY['not_required'::text, 'pending'::text, 'approved'::text])",
+                    )
+                    .expect("overlay quality constraint"),
+                ],
+                Vec::new(),
+            ),
+            Table::new(
+                "receiving",
+                "quality_inspection",
+                vec![Column::new(
+                    "receipt_id",
+                    ColumnType::Uuid,
+                    false,
+                    None,
+                    None,
+                )],
+                vec![
+                    Constraint::primary_key("quality_inspection_receipt_id_pkey", ["receipt_id"])
+                        .expect("overlay primary key"),
+                ],
+                Vec::new(),
+            ),
+        ]);
+        let installed = [base.clone(), overlay.clone()];
+
+        let base_catalog = project_catalog_for_package(&catalog, &base.manifest, &installed)
+            .expect("project base");
+        assert_eq!(base_catalog.tables().len(), 1);
+        let base_purchase_order = &base_catalog.tables()[0];
+        assert_eq!(base_purchase_order.name(), "purchase_order");
+        assert_eq!(
+            base_purchase_order
+                .columns()
+                .iter()
+                .map(|column| column.name())
+                .collect::<Vec<_>>(),
+            ["id", "supplier_id"]
+        );
+        assert_eq!(
+            base_purchase_order
+                .constraints()
+                .iter()
+                .map(|constraint| constraint.name())
+                .collect::<Vec<_>>(),
+            ["purchase_order_id_pkey"]
+        );
+
+        let overlay_catalog = project_catalog_for_package(&catalog, &overlay.manifest, &installed)
+            .expect("project overlay");
+        assert_eq!(overlay_catalog.tables().len(), 2);
+        let overlay_purchase_order = overlay_catalog
+            .tables()
+            .iter()
+            .find(|table| table.name() == "purchase_order")
+            .expect("overlay includes the extended base relation");
+        assert_eq!(overlay_purchase_order.columns().len(), 4);
+        assert_eq!(overlay_purchase_order.constraints().len(), 2);
     }
 
     #[test]
