@@ -5323,6 +5323,7 @@ dependencies = [
  "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
+ "wamn-catalog",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-schema-introspection",

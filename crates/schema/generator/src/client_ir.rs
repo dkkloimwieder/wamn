@@ -76,6 +76,10 @@ pub enum ClientIrErrorKind {
     MalformedContract,
     /// A required contract member was absent.
     MissingMember,
+    /// One operation is published at more than one route.
+    AmbiguousRoute,
+    /// A route is not in the form publication would normalize it to.
+    UnnormalizedRoute,
 }
 
 impl ClientIrErrorKind {
@@ -86,6 +90,8 @@ impl ClientIrErrorKind {
             Self::UnreadableProjection => "unreadable_projection",
             Self::MalformedContract => "malformed_contract",
             Self::MissingMember => "missing_member",
+            Self::AmbiguousRoute => "ambiguous_route",
+            Self::UnnormalizedRoute => "unnormalized_route",
         }
     }
 }
@@ -122,6 +128,31 @@ pub struct ModelIr {
     pub operations: Vec<OperationIr>,
 }
 
+/// Where one operation is published, as its release attached it.
+///
+/// METHOD AND TEMPLATE ONLY. The input this is read from cannot carry a host:
+/// publication refuses one outright — `validate_authored_attachment_routes`
+/// (`services/ctl/src/publish_release.rs:1293`) rejects an authored
+/// `route.host` with "remove it and pass --route-host", and the host is
+/// stamped in later at release mint from that flag. So the client's base URL
+/// and host stay construction-time deployment config, and generated code
+/// carries no deployment fact — not by our restraint, but because the fact is
+/// structurally absent from what we read.
+///
+/// The template keeps its AUTHORED parameter names. This is deliberately NOT
+/// `canonical_http_route_template` (`crates/schema/control/src/exposure.rs:351`):
+/// that collapses `{id}` to `{}` to build a route-COLLISION key, and a client
+/// handed the collapsed form would have no name to substitute into.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RouteIr {
+    /// HTTP method exactly as the attachment publishes it, e.g. `POST`.
+    pub method: String,
+    /// Authored path template, parameter names intact, e.g.
+    /// `/purchase_order/{id}`.
+    pub template: String,
+}
+
 /// One field descriptor.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -149,6 +180,16 @@ pub struct OperationIr {
     pub grant: String,
     /// Permission token this operation is authorized by.
     pub permission_token: String,
+    /// Where this operation is published, when the release exposes it over
+    /// HTTP.
+    ///
+    /// Absent is a FACT, not a gap: an operation may be attached `internal` or
+    /// `studio` rather than `http`, and a client that fabricated a path for one
+    /// would call a route the deployment does not serve. No shipped package
+    /// exercises the absent arm today — every callable operation in both
+    /// packages is attached over HTTP.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route: Option<RouteIr>,
     /// Result class, e.g. `one`, `page`.
     pub result_class: String,
     /// Input field descriptors, ordered by path.
@@ -258,7 +299,48 @@ impl ClientContractIr {
     /// # Errors
     ///
     /// [`ClientIrError`] naming which contract could not be read.
+    /// Project one package's release into an IR: its contracts AND the routes
+    /// its publication attaches them to.
+    ///
+    /// Two inputs, not one. Route templates are RELEASE facts — the base
+    /// package publishes `wamn-receiving:purchase-order/get@1.0.0` at
+    /// `/purchase_order/get` while the overlay publishes its own
+    /// `client-acme-receiving:purchase-order/get@3.0.0` at
+    /// `/acme/purchase_order/get` — so an IR built from contracts alone could
+    /// only guess where an operation lives, and generated code that guessed
+    /// would be wrong the first time it moved.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientIrError`] naming the input that could not be read, the
+    /// attachment whose route is malformed or un-normalized, or the operation
+    /// published at more than one route.
+    pub fn from_release(
+        package: &str,
+        contracts: &Path,
+        attachments: &Path,
+    ) -> Result<Self, ClientIrError> {
+        Self::project(package, contracts, &route_index(attachments)?)
+    }
+
+    /// Project a package with no published routes.
+    ///
+    /// Every operation's route is absent. Separate from [`Self::from_release`]
+    /// rather than an `Option` argument, so "this release publishes nothing"
+    /// and "I forgot to pass the attachments" can never look identical.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientIrError`] naming the contract that could not be read.
     pub fn from_contract_directory(package: &str, contracts: &Path) -> Result<Self, ClientIrError> {
+        Self::project(package, contracts, &BTreeMap::new())
+    }
+
+    fn project(
+        package: &str,
+        contracts: &Path,
+        routes: &BTreeMap<String, RouteIr>,
+    ) -> Result<Self, ClientIrError> {
         let mut modules: BTreeMap<String, BTreeMap<String, OperationParts>> = BTreeMap::new();
         let mut cursor = None;
 
@@ -287,7 +369,7 @@ impl ClientContractIr {
 
         let models = modules
             .into_iter()
-            .map(|(name, operations)| build_model(&name, operations))
+            .map(|(name, operations)| build_model(&name, operations, routes))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             format_version: CLIENT_IR_FORMAT_VERSION,
@@ -295,6 +377,118 @@ impl ClientContractIr {
             cursor,
             models,
         })
+    }
+}
+
+/// Operation identity -> published route, from one release's attachment map.
+///
+/// The join key is the attachment's `registered-operation`, which is the same
+/// string the operation contract carries as `operation` — read verbatim on
+/// both sides, never reconstructed from package, module and action, because a
+/// reconstruction is a second identity that can drift from the first.
+///
+/// # Normalization
+///
+/// This reads the AUTHORED publication input, which publication normalizes on
+/// a copy downstream (`normalize_http_route`, uppercasing the method and
+/// trimming the path). This layer is a sibling reader of those bytes, not a
+/// consumer of the normalized output, so an authored `"post"` would reach a
+/// generated client as `post` and call a method the deployment does not serve.
+///
+/// It cannot simply normalize: `normalize_http_route` lives in
+/// `wamn-schema-control`, which DEPENDS on this crate, so reaching for it
+/// would be a dependency cycle — and re-implementing it here would make a
+/// second normalization authority, which is worse than either. So an
+/// un-normalized route REFUSES by name, and the author is told to write the
+/// form publication would produce. Fail-closed, one authority, no cycle.
+fn route_index(attachments: &Path) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
+    let published: BTreeMap<String, wamn_catalog::ServingAttachment> =
+        serde_json::from_value(read_json(attachments)?).map_err(|error| {
+            ClientIrError::new(
+                ClientIrErrorKind::MalformedContract,
+                format!(
+                    "{} is not a serving attachment map: {error}",
+                    attachments.display()
+                ),
+            )
+        })?;
+
+    let mut index: BTreeMap<String, RouteIr> = BTreeMap::new();
+    for (id, attachment) in published {
+        // Only `http` publishes a route a package client can call. `internal`
+        // carries none by construction, and `studio` is the authoring surface
+        // — a generated package client that acquired a studio path would call
+        // a control-plane route it was never generated for.
+        if attachment.kind != wamn_catalog::AttachmentKind::Http {
+            continue;
+        }
+        // No registered operation means the attachment invokes no package
+        // operation. Nothing to join to, and not an error.
+        let Some(operation) = attachment.registered_operation.clone() else {
+            continue;
+        };
+        let member = |key: &str| -> Result<String, ClientIrError> {
+            attachment
+                .definition
+                .get("route")
+                .and_then(|route| route.get(key))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    ClientIrError::new(
+                        ClientIrErrorKind::MissingMember,
+                        format!("http attachment {id:?} has no route {key:?}"),
+                    )
+                })
+        };
+        let route = RouteIr {
+            method: member("method")?,
+            template: member("template").or_else(|_| member("path"))?,
+        };
+        if route.method != route.method.to_ascii_uppercase()
+            || route.template != normalized_template(&route.template)
+        {
+            return Err(ClientIrError::new(
+                ClientIrErrorKind::UnnormalizedRoute,
+                format!(
+                    "attachment {id:?} publishes {} {:?}; author it as publication would \
+                     normalize it, {} {:?}",
+                    route.method,
+                    route.template,
+                    route.method.to_ascii_uppercase(),
+                    normalized_template(&route.template),
+                ),
+            ));
+        }
+        if let Some(existing) = index.insert(operation.clone(), route.clone())
+            && existing != route
+        {
+            // Publication keys route uniqueness on (template, method), never
+            // on the operation, so one operation at two paths is a shape it
+            // ACCEPTS. A client cannot carry two answers to "where is this",
+            // and picking one silently would drop a published route, so this
+            // refuses and the ambiguity is ruled rather than guessed.
+            return Err(ClientIrError::new(
+                ClientIrErrorKind::AmbiguousRoute,
+                format!(
+                    "operation {operation:?} is published at both {} {:?} and {} {:?}",
+                    existing.method, existing.template, route.method, route.template
+                ),
+            ));
+        }
+    }
+    Ok(index)
+}
+
+/// The path form publication would normalize to: no trailing slash below the
+/// root. Used only to REPORT the expected form in a refusal — never to rewrite
+/// a route, which would make this a second normalization authority.
+fn normalized_template(template: &str) -> String {
+    let trimmed = template.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_owned()
+    } else {
+        trimmed.to_owned()
     }
 }
 
@@ -363,10 +557,11 @@ fn read_json(path: &Path) -> Result<Value, ClientIrError> {
 fn build_model(
     name: &str,
     operations: BTreeMap<String, OperationParts>,
+    routes: &BTreeMap<String, RouteIr>,
 ) -> Result<ModelIr, ClientIrError> {
     let mut built = Vec::with_capacity(operations.len());
     for (operation_name, parts) in operations {
-        if let Some(operation) = build_operation(name, &operation_name, parts)? {
+        if let Some(operation) = build_operation(name, &operation_name, parts, routes)? {
             built.push(operation);
         }
     }
@@ -399,6 +594,7 @@ fn build_operation(
     module: &str,
     name: &str,
     parts: OperationParts,
+    routes: &BTreeMap<String, RouteIr>,
 ) -> Result<Option<OperationIr>, ClientIrError> {
     let operation = parts.operation.ok_or_else(|| {
         ClientIrError::new(
@@ -432,9 +628,11 @@ fn build_operation(
         .result
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
+    let identity = member("operation")?;
     Ok(Some(OperationIr {
         name: name.to_owned(),
-        operation: member("operation")?,
+        route: routes.get(&identity).cloned(),
+        operation: identity,
         grant: member("grant")?,
         permission_token: member("permission_token")?,
         result_class: operation
@@ -836,6 +1034,180 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn attachments(package: &str) -> std::path::PathBuf {
+        repository_root().join(format!("packages/{package}/publication/attachments.json"))
+    }
+
+    fn released(package: &str) -> ClientContractIr {
+        ClientContractIr::from_release(
+            package,
+            &repository_root().join(format!("packages/{package}/generated/contracts")),
+            &attachments(package),
+        )
+        .unwrap_or_else(|error| panic!("{package} projects with its routes: {error}"))
+    }
+
+    /// EXIT GATE (.5.8): an operation's published route reaches the IR from the
+    /// release, with its method and its authored template.
+    #[test]
+    fn an_operation_carries_the_route_its_release_publishes() {
+        let ir = released("receiving");
+        let get = operation(&ir, "purchase_order", "get");
+        assert_eq!(
+            get.route,
+            Some(RouteIr {
+                method: "POST".to_owned(),
+                template: "/purchase_order/get".to_owned(),
+            })
+        );
+    }
+
+    /// The SAME module and action sit at different paths in different
+    /// packages, which is why a route cannot be derived from the operation
+    /// name and must come from the release.
+    #[test]
+    fn the_overlay_publishes_its_own_path_for_its_own_operation() {
+        let base = released("receiving");
+        let overlay = released("client_acme_receiving");
+
+        let base_get = operation(&base, "purchase_order", "get");
+        let overlay_get = operation(&overlay, "purchase_order", "get");
+
+        assert_eq!(
+            base_get.route.as_ref().map(|route| route.template.as_str()),
+            Some("/purchase_order/get")
+        );
+        assert_eq!(
+            overlay_get
+                .route
+                .as_ref()
+                .map(|route| route.template.as_str()),
+            Some("/acme/purchase_order/get")
+        );
+        // Same module and action, different operation identity AND different
+        // path — a client that derived the path from the name would call the
+        // base route from an overlay client.
+        assert_ne!(base_get.operation, overlay_get.operation);
+        assert_ne!(base_get.route, overlay_get.route);
+    }
+
+    /// Every callable operation in both shipped packages is published, and
+    /// each carries the exact route its attachment declares. Arithmetic, so a
+    /// route silently going missing cannot pass.
+    #[test]
+    fn every_shipped_operation_carries_its_published_route() {
+        for package in ["receiving", "client_acme_receiving"] {
+            let ir = released(package);
+            let published: BTreeMap<String, (String, String)> =
+                serde_json::from_value::<BTreeMap<String, wamn_catalog::ServingAttachment>>(
+                    read_json(&attachments(package)).expect("attachments read"),
+                )
+                .expect("attachments decode")
+                .into_values()
+                .filter_map(|attachment| {
+                    let route = attachment.definition.get("route")?;
+                    Some((
+                        attachment.registered_operation?,
+                        (
+                            route.get("method")?.as_str()?.to_owned(),
+                            route.get("path")?.as_str()?.to_owned(),
+                        ),
+                    ))
+                })
+                .collect();
+
+            for model in &ir.models {
+                for operation in &model.operations {
+                    let expected = published.get(&operation.operation).unwrap_or_else(|| {
+                        panic!("{package}: {} is not published", operation.operation)
+                    });
+                    let route = operation.route.as_ref().unwrap_or_else(|| {
+                        panic!("{package}: {} carries no route", operation.operation)
+                    });
+                    assert_eq!(
+                        (route.method.as_str(), route.template.as_str()),
+                        (expected.0.as_str(), expected.1.as_str()),
+                        "{package}: {}",
+                        operation.operation
+                    );
+                }
+            }
+        }
+    }
+
+    /// Without a release, every route is absent — and absent is stated, not
+    /// invented.
+    #[test]
+    fn a_package_with_no_release_carries_no_routes() {
+        let ir = receiving_ir();
+        assert!(
+            ir.models
+                .iter()
+                .flat_map(|model| &model.operations)
+                .all(|operation| operation.route.is_none()),
+            "a contracts-only projection invented a route"
+        );
+    }
+
+    /// One operation published at two paths REFUSES. Publication keys route
+    /// uniqueness on (template, method) and never on the operation, so this is
+    /// a shape it accepts; a client cannot carry two answers, and silently
+    /// taking one would drop a published route.
+    #[test]
+    fn an_operation_published_twice_refuses() {
+        let scratch = std::env::temp_dir().join("wamn-client-ir-ambiguous-route");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch");
+        let file = scratch.join("attachments.json");
+
+        let mut published: BTreeMap<String, Value> =
+            serde_json::from_value(read_json(&attachments("receiving")).expect("read"))
+                .expect("decode");
+        let (_, mut alias) = published
+            .iter()
+            .next()
+            .map(|(id, attachment)| (id.clone(), attachment.clone()))
+            .expect("the shipped map is not empty");
+        alias["definition"]["route"]["path"] = Value::String("/v2/purchase_order/get".to_owned());
+        published.insert("receiving-purchase-order-get-v2".to_owned(), alias);
+        std::fs::write(&file, serde_json::to_vec(&published).expect("serialize")).expect("write");
+
+        let refusal = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
+            .expect_err("one operation at two paths refuses");
+        assert_eq!(refusal.kind, ClientIrErrorKind::AmbiguousRoute);
+        assert!(
+            refusal.to_string().contains("/v2/purchase_order/get"),
+            "{refusal}"
+        );
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// An un-normalized route refuses rather than reaching a client. This
+    /// layer reads the AUTHORED bytes, which publication normalizes only on a
+    /// downstream copy, so a lowercase method would otherwise generate a
+    /// client calling a method the deployment does not serve.
+    #[test]
+    fn an_unnormalized_route_refuses_and_names_the_form_publication_would_use() {
+        let scratch = std::env::temp_dir().join("wamn-client-ir-unnormalized-route");
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch");
+        let file = scratch.join("attachments.json");
+
+        let mut published: BTreeMap<String, Value> =
+            serde_json::from_value(read_json(&attachments("receiving")).expect("read"))
+                .expect("decode");
+        let first = published.keys().next().cloned().expect("not empty");
+        published.get_mut(&first).expect("present")["definition"]["route"]["method"] =
+            Value::String("post".to_owned());
+        std::fs::write(&file, serde_json::to_vec(&published).expect("serialize")).expect("write");
+
+        let refusal = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
+            .expect_err("a lowercase method refuses");
+        assert_eq!(refusal.kind, ClientIrErrorKind::UnnormalizedRoute);
+        assert!(refusal.to_string().contains("POST"), "{refusal}");
+        let _ = std::fs::remove_dir_all(&scratch);
     }
 
     /// EXIT GATE 1a: regeneration is byte-identical on an unchanged release.
