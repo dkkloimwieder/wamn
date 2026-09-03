@@ -944,6 +944,129 @@ docker rm -f wamn-route-auth-pg # BY EXPLICIT NAME. Never prune.
 It owns the fresh server: control/project databases and cluster-wide roles are
 created and reset. The frozen cluster is never a valid target.
 
+### `[WAMN-DEV-LIVE]` — clean twelve-stage product command and cleanup
+
+This gate runs the literal `wamn dev` product command through all twelve
+stages. It uses the Receiving route journey's disposable PostgreSQL 18 and
+authenticated loopback registry services plus the committed
+`receiving-dev-nats` service. The proof owns the production scenario-worker
+Gate/Publish surface, validates the clean source commit in the release, checks
+that system and durable-environment database ACLs are unchanged, and requires
+the command to remove its verification database and stop its native host. Run
+it only from a clean worktree. Never point it at shared infrastructure or the
+frozen cluster.
+
+The installed upstream `wash` binary publishes the shipped flow-http workload;
+`wamn dev` remains the sole stage runner. Registry credentials live only in the
+mode-0700 scratch directory and are never printed.
+
+```bash
+set -euo pipefail
+umask 077
+
+WAMN_DEV_LIVE_ROOT="$(pwd -P)"
+test "$(git -C "$WAMN_DEV_LIVE_ROOT" rev-parse --show-toplevel)" = "$WAMN_DEV_LIVE_ROOT"
+test -z "$(git -C "$WAMN_DEV_LIVE_ROOT" status --porcelain=v1 --untracked-files=all)"
+command -v wash >/dev/null
+
+WAMN_DEV_LIVE_SCRATCH="$(mktemp -d /tmp/wamn-dev-live.XXXXXX)"
+WAMN_DEV_LIVE_TARGET="$WAMN_DEV_LIVE_SCRATCH/target"
+WAMN_DEV_LIVE_PROJECT="wamn-dev-live-$$"
+WAMN_DEV_LIVE_COMPOSE="$WAMN_DEV_LIVE_ROOT/test-support/infrastructure/std-virtualization.compose.yaml"
+WAMN_DEV_LIVE_PG_PORT=54332
+WAMN_DEV_LIVE_REGISTRY_PORT=5004
+WAMN_DEV_LIVE_NATS_PORT=4224
+WAMN_DEV_LIVE_AUTHORITY="127.0.0.1:${WAMN_DEV_LIVE_REGISTRY_PORT}"
+WAMN_DEV_LIVE_USERNAME=wamn-dev-live
+WAMN_DEV_LIVE_PASSWORD="$(openssl rand -hex 32)"
+WAMN_DEV_LIVE_HTPASSWD="$WAMN_DEV_LIVE_SCRATCH/htpasswd"
+WAMN_DEV_LIVE_DOCKER_AUTH="$WAMN_DEV_LIVE_SCRATCH/.dockerconfigjson"
+WAMN_DEV_LIVE_FLOW_HTTP_IMAGE="$WAMN_DEV_LIVE_AUTHORITY/wamn/flow-http:dev"
+
+wamn_dev_live_cleanup() {
+  docker compose --profile receiving-route -p "$WAMN_DEV_LIVE_PROJECT" \
+    -f "$WAMN_DEV_LIVE_COMPOSE" down --volumes --remove-orphans \
+    >/dev/null 2>&1 || true
+  if [[ "$WAMN_DEV_LIVE_SCRATCH" == /tmp/wamn-dev-live.* ]]; then
+    rm -rf -- "$WAMN_DEV_LIVE_SCRATCH"
+  fi
+}
+trap wamn_dev_live_cleanup EXIT
+
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
+  cargo build -p wamn-ctl --bin wamn --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
+  cargo build -p wamn-host --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
+  cargo build --manifest-path "$WAMN_DEV_LIVE_ROOT/components/Cargo.toml" \
+    -p http-route --target wasm32-wasip2 --locked --offline
+WAMN_DEV_LIVE_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn"
+WAMN_DEV_LIVE_HOST_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn-host"
+WAMN_DEV_LIVE_FLOW_HTTP="$WAMN_DEV_LIVE_TARGET/wasm32-wasip2/debug/http_route.wasm"
+test -x "$WAMN_DEV_LIVE_BIN"
+test -x "$WAMN_DEV_LIVE_HOST_BIN"
+test -s "$WAMN_DEV_LIVE_FLOW_HTTP"
+
+printf '%s\n' "$WAMN_DEV_LIVE_PASSWORD" \
+  | docker run --rm -i --entrypoint htpasswd httpd:2-alpine \
+      -Bni "$WAMN_DEV_LIVE_USERNAME" >"$WAMN_DEV_LIVE_HTPASSWD"
+jq -n --arg authority "$WAMN_DEV_LIVE_AUTHORITY" \
+  --arg username "$WAMN_DEV_LIVE_USERNAME" \
+  --arg password "$WAMN_DEV_LIVE_PASSWORD" \
+  '{auths:{($authority):{username:$username,password:$password}}}' \
+  >"$WAMN_DEV_LIVE_DOCKER_AUTH"
+jq -e --arg authority "$WAMN_DEV_LIVE_AUTHORITY" '
+  .auths[$authority]
+  | (.username | type == "string" and length > 0)
+    and (.password | type == "string" and length > 0)
+' "$WAMN_DEV_LIVE_DOCKER_AUTH" >/dev/null
+
+WAMN_STD_VIRT_PG_PORT="$WAMN_DEV_LIVE_PG_PORT"
+WAMN_STD_VIRT_REGISTRY_PORT=5003
+WAMN_RECEIVING_ROUTE_REGISTRY_PORT="$WAMN_DEV_LIVE_REGISTRY_PORT"
+WAMN_RECEIVING_ROUTE_REGISTRY_HTPASSWD="$WAMN_DEV_LIVE_HTPASSWD"
+WAMN_RECEIVING_DEV_NATS_PORT="$WAMN_DEV_LIVE_NATS_PORT"
+export WAMN_STD_VIRT_PG_PORT WAMN_STD_VIRT_REGISTRY_PORT
+export WAMN_RECEIVING_ROUTE_REGISTRY_PORT WAMN_RECEIVING_ROUTE_REGISTRY_HTPASSWD
+export WAMN_RECEIVING_DEV_NATS_PORT
+docker compose --profile receiving-route -p "$WAMN_DEV_LIVE_PROJECT" \
+  -f "$WAMN_DEV_LIVE_COMPOSE" up --detach --wait --wait-timeout 60 \
+  receiving-route-postgres authenticated-registry receiving-dev-nats
+PGPASSWORD=probe psql \
+  "postgresql://postgres@127.0.0.1:${WAMN_DEV_LIVE_PG_PORT}/postgres" \
+  -Atqc 'select 1' >/dev/null
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "http://${WAMN_DEV_LIVE_AUTHORITY}/v2/")" = 401
+
+WASH_REG_USER="$WAMN_DEV_LIVE_USERNAME" \
+WASH_REG_PASSWORD="$WAMN_DEV_LIVE_PASSWORD" \
+  wash push "$WAMN_DEV_LIVE_FLOW_HTTP_IMAGE" "$WAMN_DEV_LIVE_FLOW_HTTP" \
+    --insecure
+unset WAMN_DEV_LIVE_PASSWORD
+
+CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
+RUSTC_WRAPPER= \
+WAMN_RECEIVING_ROUTE_PG18_URL="postgresql://postgres:probe@127.0.0.1:${WAMN_DEV_LIVE_PG_PORT}/postgres" \
+WAMN_RECEIVING_DEV_BIN="$WAMN_DEV_LIVE_BIN" \
+WAMN_RECEIVING_DEV_HOST_BIN="$WAMN_DEV_LIVE_HOST_BIN" \
+WAMN_RECEIVING_DEV_NATS_URL="nats://127.0.0.1:${WAMN_DEV_LIVE_NATS_PORT}" \
+WAMN_RECEIVING_DEV_FLOW_HTTP_WORKLOAD_IMAGE="$WAMN_DEV_LIVE_FLOW_HTTP_IMAGE" \
+WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE="$WAMN_DEV_LIVE_AUTHORITY/wamn/components" \
+WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE="$WAMN_DEV_LIVE_AUTHORITY/wamn/releases" \
+WAMN_RECEIVING_ROUTE_HOST=receiving.localhost \
+WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE="$WAMN_DEV_LIVE_DOCKER_AUTH" \
+  cargo test -p wamn-proof-integration --lib --locked --offline \
+  route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup \
+  -- --ignored --exact --nocapture --test-threads=1
+
+wamn_dev_live_cleanup
+trap - EXIT
+```
+
+The explicit service list keeps the anonymous std-virtualization PostgreSQL and
+registry services stopped. Cleanup removes only this Compose project, its
+volumes, and the validated scratch path.
+
 ### `[RECEIVING-ROUTE-JOURNEY]` — published base + overlay routes and traces
 
 This gate builds the virtualized Receiving base and Acme overlay components
