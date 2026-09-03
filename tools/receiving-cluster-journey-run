@@ -40,6 +40,8 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 source "$script_dir/journey-host-values.sh"
 # shellcheck source=tools/journey-host-secrets.sh
 source "$script_dir/journey-host-secrets.sh"
+# shellcheck source=tools/journey-rendered-identity.sh
+source "$script_dir/journey-rendered-identity.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -906,33 +908,16 @@ for expected in "$namespace" "$component_artifact_base" "$release_artifact_base"
   }
 done
 # The identity the overlay CLAIMS, asserted rather than substituted. Nothing
-# above rewrites WAMN_ORG, WAMN_PROJECT or WAMN_SCHEMA -- the template has no
-# anchor for them at all -- so a template copied from another application
-# keeps that application's claims. The host would then mount THIS journey's
-# credentials while deriving its environment-scoped service subject from the
-# OTHER application's org and project, and route authorization would resolve
-# against the wrong tenant with the journey still green.
-for claim in "WAMN_ORG=$app_org" "WAMN_PROJECT=$app_project" \
-    "WAMN_SCHEMA=$app_schema"; do
-  claimed=$(awk -v key="${claim%%=*}" '
-    {
-      body = $0
-      sub(/^[ \t]+/, "", body)
-      if (body !~ ("^- \\{ name: " key ",")) next
-      if (!match(body, /value: [^ },]+/)) next
-      print substr(body, RSTART + 7, RLENGTH - 7)
-      found = 1
-    }
-    END { exit(found ? 0 : 1) }
-  ' "$host_overlay") || {
-    echo "rendered host overlay declares no ${claim%%=*}" >&2
-    exit 1
-  }
-  if [[ "$claimed" != "${claim#*=}" ]]; then
-    echo "rendered host overlay claims ${claim%%=*}=$claimed, but this journey declares ${claim#*=}" >&2
-    exit 1
-  fi
-done
+# above rewrites these -- the template has no anchor for them at all -- so a
+# template copied from another application keeps that application's claims,
+# and the host would mount THIS journey's credentials while resolving route
+# authorization against the other one's tenant, with the journey still green.
+declare -A app_identity_claims=(
+  [WAMN_ORG]=$app_org
+  [WAMN_PROJECT]=$app_project
+  [WAMN_SCHEMA]=$app_schema
+)
+assert_rendered_identity "$host_overlay" app_identity_claims
 
 for expected in 'OTEL_EXPORTER_OTLP_ENDPOINT' "$nats_url"; do
   grep -F -- "$expected" "$host_overlay" >/dev/null || {

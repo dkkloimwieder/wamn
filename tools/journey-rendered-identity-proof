@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-rendered-identity.sh. No cluster; the function reads
+# one file and one array.
+#
+# Every guard has an ISOLATING negative control, and each control asserts the
+# guard's own MESSAGE. Refusal alone is not enough: three of these guards
+# reject overlapping inputs, and a control caught by the neighbour proves the
+# neighbour.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-rendered-identity.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+# Refused, AND for the stated reason. The message is what distinguishes one
+# guard from its neighbours.
+refused_saying() { # <file> <claims-name> <substring>
+  local err
+  err=$(assert_rendered_identity "$1" "$2" 2>&1 >/dev/null) && return 1
+  [[ $err == *"$3"* ]]
+}
+
+overlay() { # <path> <org> <project> <schema>
+  cat >"$1" <<YAML
+runtime:
+  hostGroups:
+    - name: default
+      env:
+        - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
+        - { name: WAMN_ORG, value: $2 }
+        - { name: WAMN_PROJECT, value: $3 }
+        - { name: WAMN_SCHEMA, value: $4 }
+YAML
+}
+
+# Unguessable on purpose: a hardcoded stand-in cannot match these.
+declare -A rcv=([WAMN_ORG]=acme [WAMN_PROJECT]=receiving [WAMN_SCHEMA]=receiving)
+declare -A wms=([WAMN_ORG]=acme [WAMN_PROJECT]=wms [WAMN_SCHEMA]=wms)
+overlay "$work/rcv.yaml" acme receiving receiving
+overlay "$work/wms.yaml" acme wms wms
+
+echo "1. the matrix — matched pairs pass, crossed pairs fail by name"
+assert_rendered_identity "$work/rcv.yaml" rcv; check "Receiving overlay, Receiving declaration" $?
+assert_rendered_identity "$work/wms.yaml" wms; check "WMS overlay, WMS declaration" $?
+refused_saying "$work/rcv.yaml" wms "claims WAMN_PROJECT=receiving"
+check "control: Receiving overlay under a WMS declaration is refused, naming the claim" $?
+refused_saying "$work/wms.yaml" rcv "claims WAMN_PROJECT=wms"
+check "control: WMS overlay under a Receiving declaration is refused, naming the claim" $?
+
+echo "2. absent — fails closed, and says so"
+grep -v WAMN_SCHEMA "$work/rcv.yaml" >"$work/no-schema.yaml"
+refused_saying "$work/no-schema.yaml" rcv "declares no WAMN_SCHEMA"
+check "control: a missing claim is refused as MISSING, not as a mismatch" $?
+# A template in an unexpected YAML form must report absence, not silently pass.
+cat >"$work/block-form.yaml" <<'YAML'
+runtime:
+  hostGroups:
+    - env:
+        - name: WAMN_ORG
+          value: acme
+        - { name: WAMN_PROJECT, value: receiving }
+        - { name: WAMN_SCHEMA, value: receiving }
+YAML
+refused_saying "$work/block-form.yaml" rcv "declares no WAMN_ORG"
+check "control: a claim in block form is reported absent, not assumed correct" $?
+
+echo "3. repeated — the uniqueness corollary at claim grain"
+# Same value twice: the file is not wrong, but it is not what was checked.
+{ cat "$work/rcv.yaml"; echo '        - { name: WAMN_ORG, value: acme }'; } >"$work/twice-same.yaml"
+refused_saying "$work/twice-same.yaml" rcv "declares WAMN_ORG 2 times"
+check "control: a claim declared twice with the SAME value is refused" $?
+# Two different values: whichever the host reads, one of them is a lie.
+{ cat "$work/rcv.yaml"; echo '        - { name: WAMN_ORG, value: globex }'; } >"$work/twice-diff.yaml"
+refused_saying "$work/twice-diff.yaml" rcv "declares WAMN_ORG 2 times"
+check "control: a claim declared twice with DIFFERENT values is refused" $?
+
+echo "4. the anchor is a whole-key match, not a substring"
+# What the strict anchor EXCLUDES, which nothing else in this proof exercises:
+# a key that CONTAINS a claim's name, and a value that equals one. A matcher
+# loosened to a bare substring test finds both, reports the claim twice, and
+# refuses a file that is perfectly correct. The assertion here is therefore a
+# PASS -- the guard's job is to not see these.
+cat >"$work/lookalikes.yaml" <<'YAML'
+runtime:
+  hostGroups:
+    - env:
+        - { name: WAMN_ORG_LEGACY, value: globex }
+        - { name: WAMN_ORG, value: acme }
+        - { name: WAMN_PROJECT, value: receiving }
+        - { name: WAMN_SCHEMA, value: receiving }
+        - { name: WAMN_NOTE, value: WAMN_ORG }
+YAML
+assert_rendered_identity "$work/lookalikes.yaml" rcv
+check "a superstring key and a value naming the claim are both ignored" $?
+
+echo "5. the arguments themselves"
+refused_saying "$work/absent-file.yaml" rcv "no rendered file at"
+check "control: a missing rendered file is refused" $?
+declare -A empty_claims=()
+refused_saying "$work/rcv.yaml" empty_claims "no claims declared to check"
+check "control: an empty claim set is refused rather than passing vacuously" $?
+
+echo "6. nameref binding"
+binds() { # <name the caller uses>
+  local n=$1
+  declare -gA "$n"
+  eval "$n=([WAMN_ORG]=DECOY [WAMN_PROJECT]=DECOY [WAMN_SCHEMA]=DECOY)"
+  collide() {
+    eval "local -A $n=([WAMN_ORG]=acme [WAMN_PROJECT]=receiving [WAMN_SCHEMA]=receiving)"
+    assert_rendered_identity "$work/rcv.yaml" "$n"
+  }
+  collide 2>/dev/null
+}
+for n in claims spec config identity app_identity_claims; do
+  binds "$n"; check "a caller array named '$n' binds to the caller" $?
+done
+! binds _ari_claims; check "control: colliding on the internal name is detected" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-rendered-identity: all properties hold"; else
+  echo "journey-rendered-identity: $failures failed"; exit 1; fi
