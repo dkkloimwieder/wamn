@@ -90,6 +90,7 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 [workspace.dependencies]
 ratatui-core = { version = "0.1.2", default-features = false, features = ["std"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.29", default-features = false, features = ["event-stream", "events"] }
 # Vanilla upstream v2.8.0. Fork policy and verification evidence are recorded
 # in docs/architecture/native-alignment-ledger.md; this revision carries no patch.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.

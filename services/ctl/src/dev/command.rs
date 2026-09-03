@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use clap::Args;
 use serde::Deserialize;
 use tokio::process::Command;
+use tokio::sync::watch;
 
 use super::config::{DevConfig, parse_config, preflight_config, resolve_dev_packages};
 use super::coordinator::{ProductionDevStageError, ProductionDevStageRunner};
@@ -36,6 +37,10 @@ pub struct DevCommandArgs {
     /// Keep the disposable verification session open and rerun affected suffixes.
     #[arg(long)]
     watch: bool,
+
+    /// Render the development session in the interactive terminal client.
+    #[arg(long)]
+    tui: bool,
 }
 
 impl DevCommandArgs {
@@ -45,7 +50,19 @@ impl DevCommandArgs {
             config,
             overlay_root,
             watch,
+            tui: false,
         }
+    }
+
+    /// Select the interactive terminal client.
+    #[must_use]
+    pub const fn with_tui(mut self, tui: bool) -> Self {
+        self.tui = tui;
+        self
+    }
+
+    const fn tui(&self) -> bool {
+        self.tui
     }
 }
 
@@ -79,6 +96,7 @@ impl Error for CommandInvalidationError {
 struct CommandInvalidations<S> {
     initial: Option<DevInvalidation>,
     source: S,
+    shutdown: watch::Receiver<bool>,
 }
 
 impl<S> DevInvalidationSource for CommandInvalidations<S>
@@ -88,6 +106,9 @@ where
     type Error = CommandInvalidationError;
 
     async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+        if *self.shutdown.borrow_and_update() {
+            return Ok(None);
+        }
         if let Some(initial) = self.initial.take() {
             return Ok(Some(initial));
         }
@@ -101,10 +122,14 @@ where
                 })?;
                 Ok(None)
             }
+            () = wait_for_shutdown(&mut self.shutdown) => Ok(None),
         }
     }
 
     fn try_next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+        if *self.shutdown.borrow_and_update() {
+            return Ok(None);
+        }
         if let Some(initial) = self.initial.take() {
             return Ok(Some(initial));
         }
@@ -131,6 +156,22 @@ impl DevWatchObserver for SilentObserver {
     fn completed(&mut self, _outcome: DevWatchOutcome) {}
 }
 
+/// Cooperative stop handle for an interactive development session.
+///
+/// A stop request never aborts an effectful stage. The engine observes it at
+/// the next stage/watch boundary and still runs the existing exact cleanup.
+#[derive(Clone, Debug)]
+pub struct DevSessionControl {
+    shutdown: watch::Sender<bool>,
+}
+
+impl DevSessionControl {
+    /// Ask the session to finish its current stage and shut down cleanly.
+    pub fn request_shutdown(&self) {
+        let _already_requested = self.shutdown.send_replace(true);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BuildWatchRoots {
@@ -146,6 +187,8 @@ pub struct DevSession {
     watch: bool,
     runner: ProductionDevStageRunner,
     git: GitSource,
+    control: DevSessionControl,
+    shutdown: watch::Receiver<bool>,
 }
 
 impl DevSession {
@@ -168,6 +211,7 @@ impl DevSession {
             .start_observations()
             .await
             .context("start development observation readers")?;
+        let (shutdown, shutdown_receiver) = watch::channel(false);
 
         Ok(Self {
             config,
@@ -175,6 +219,8 @@ impl DevSession {
             watch: args.watch,
             runner,
             git,
+            control: DevSessionControl { shutdown },
+            shutdown: shutdown_receiver,
         })
     }
 
@@ -183,32 +229,52 @@ impl DevSession {
         self.runner.read_handle()
     }
 
+    /// Clone the cooperative stop handle used by interactive clients.
+    pub fn control(&self) -> DevSessionControl {
+        self.control.clone()
+    }
+
     /// Run without terminal output; state remains available through the handle.
     pub async fn run(mut self) -> anyhow::Result<Option<DevRunReceipt>> {
-        self.run_with_observer(&mut SilentObserver).await
+        self.run_with_observer(&mut SilentObserver, false).await
+    }
+
+    /// Run and retain the activated local environment until the client stops it.
+    ///
+    /// The one-shot loop holds after activation; watch mode continues receiving
+    /// invalidations. Both leave through the same native cleanup path.
+    pub async fn run_until_shutdown(mut self) -> anyhow::Result<Option<DevRunReceipt>> {
+        self.run_with_observer(&mut SilentObserver, true).await
     }
 
     async fn run_with_observer<O>(
         &mut self,
         observer: &mut O,
+        hold_after_one_shot: bool,
     ) -> anyhow::Result<Option<DevRunReceipt>>
     where
         O: DevWatchObserver + Send,
     {
         let result = if self.watch {
+            let shutdown = self.shutdown.clone();
             run_watch_command(
                 &self.config,
                 &self.overlay_root,
                 &mut self.runner,
                 &mut self.git,
                 observer,
+                shutdown,
             )
             .await
             .map(|()| None)
         } else {
-            run_once_command(&self.config, &mut self.runner, &mut self.git)
+            let result = run_once_command(&self.config, &mut self.runner, &mut self.git)
                 .await
-                .map(Some)
+                .map(Some);
+            if hold_after_one_shot && result.is_ok() {
+                wait_for_shutdown(&mut self.shutdown).await;
+            }
+            result
         };
         let cleanup = self.runner.shutdown().await;
         finish_with_cleanup(result, cleanup)
@@ -217,9 +283,14 @@ impl DevSession {
 
 /// Execute the product development command through the shared stage engine.
 pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
+    if args.tui() {
+        // The interactive client holds a whole session future; box it so the
+        // one-shot caller does not carry it on the stack.
+        return Box::pin(super::tui::run(args)).await;
+    }
     let mut session = DevSession::prepare(args).await?;
     let mut observer = CommandObserver;
-    if let Some(receipt) = session.run_with_observer(&mut observer).await? {
+    if let Some(receipt) = session.run_with_observer(&mut observer, false).await? {
         print_receipt("run", &receipt);
     }
     Ok(())
@@ -242,6 +313,7 @@ async fn run_watch_command(
     runner: &mut ProductionDevStageRunner,
     git: &mut GitSource,
     observer: &mut (impl DevWatchObserver + Send),
+    shutdown: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let packages = resolve_dev_packages(config, overlay_root)
         .context("resolve the manifest-declared package closure")?;
@@ -267,11 +339,23 @@ async fn run_watch_command(
             source_state,
         }),
         source: filesystem,
+        shutdown,
     };
     run_watch_with_source_state_provider(config, runner, &mut source, observer, git)
         .await
         .context("own the disposable verification database")??;
     Ok(())
+}
+
+async fn wait_for_shutdown(receiver: &mut watch::Receiver<bool>) {
+    loop {
+        if *receiver.borrow_and_update() {
+            return;
+        }
+        if receiver.changed().await.is_err() {
+            return;
+        }
+    }
 }
 
 async fn component_build_watch_roots(repository_root: &Path) -> anyhow::Result<Vec<PathBuf>> {
@@ -333,7 +417,7 @@ fn finish_with_cleanup<T>(
     }
 }
 
-fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
+pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
     let completed = receipt
         .completed()
         .iter()
@@ -388,6 +472,7 @@ mod tests {
             PathBuf::from("packages/client_acme_receiving")
         );
         assert!(parsed.args.watch);
+        assert!(!parsed.args.tui);
 
         let one_shot = TestCli::try_parse_from([
             "wamn-dev",
@@ -398,6 +483,18 @@ mod tests {
         ])
         .expect("parse the default one-shot command");
         assert!(!one_shot.args.watch);
+        assert!(!one_shot.args.tui);
+
+        let tui = TestCli::try_parse_from([
+            "wamn-dev",
+            "--config",
+            "dev.json",
+            "--overlay-root",
+            "packages/client_acme_receiving",
+            "--tui",
+        ])
+        .expect("parse the interactive terminal client");
+        assert!(tui.args.tui);
 
         let missing = TestCli::try_parse_from(["wamn-dev", "--config", "dev.json"])
             .expect_err("an omitted overlay root must refuse");
@@ -420,6 +517,7 @@ mod tests {
         let mut source = CommandInvalidations {
             initial: Some(initial),
             source: QueueSource(VecDeque::from([queued])),
+            shutdown: watch::channel(false).1,
         };
         assert_eq!(
             source.next().await.expect("read initial event"),
@@ -427,5 +525,17 @@ mod tests {
         );
         assert_eq!(source.try_next().expect("read queued event"), Some(queued));
         assert_eq!(source.try_next().expect("source drains"), None);
+    }
+
+    #[tokio::test]
+    async fn an_interactive_stop_closes_the_watch_source_without_dropping_cleanup() {
+        let (shutdown, receiver) = watch::channel(false);
+        let mut source = CommandInvalidations {
+            initial: None,
+            source: QueueSource(VecDeque::new()),
+            shutdown: receiver,
+        };
+        shutdown.send_replace(true);
+        assert_eq!(source.next().await.expect("stop is a clean close"), None);
     }
 }

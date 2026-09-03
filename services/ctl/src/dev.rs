@@ -13,6 +13,8 @@ pub mod coordinator;
 #[cfg(target_os = "linux")]
 pub mod observations;
 pub mod read;
+#[cfg(target_os = "linux")]
+pub mod tui;
 pub mod verification_database;
 pub mod verification_world;
 #[cfg(target_os = "linux")]

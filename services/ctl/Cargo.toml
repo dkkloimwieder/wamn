@@ -50,6 +50,8 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 oci-client = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 futures-util = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
 rustix = { workspace = true }
 wamn-authoring-model = { workspace = true }
