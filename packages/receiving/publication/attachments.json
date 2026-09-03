@@ -8,24 +8,40 @@
     "definition": {
       "id": "purchase-order-get-http",
       "kind": "http",
-      "route": {"path": "/purchase_order/get", "method": "POST"},
-      "raw-body-bytes": {"maximum": 1048576},
+      "route": {
+        "path": "/purchase_order/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
       "input-schema": {
         "type": "array",
         "minItems": 1,
         "maxItems": 100,
         "items": {
           "type": "object",
-          "required": ["request_id", "id"],
+          "required": [
+            "request_id",
+            "id"
+          ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {"type": "string", "minLength": 1},
-            "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
           }
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {
+      "mode": "pat"
+    },
     "registered-operation": "wamn-receiving:purchase-order/get@1.0.0"
   },
   "purchase-order-query-http": {
@@ -37,42 +53,89 @@
     "definition": {
       "id": "purchase-order-query-http",
       "kind": "http",
-      "route": {"path": "/purchase_order/query", "method": "POST"},
-      "raw-body-bytes": {"maximum": 1048576},
+      "route": {
+        "path": "/purchase_order/query",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
       "input-schema": {
         "type": "array",
         "minItems": 1,
         "maxItems": 100,
         "items": {
           "type": "object",
-          "required": ["request_id"],
+          "required": [
+            "request_id"
+          ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {"type": "string", "minLength": 1},
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
             "filter": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "supplier_id": {"type": "array", "items": {"type": "string"}},
-                "status": {"type": "array", "items": {"enum": ["open", "complete", "cancelled"]}}
+                "supplier_id": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "status": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "open",
+                      "complete",
+                      "cancelled"
+                    ]
+                  }
+                }
               }
             },
             "sort": {
               "type": "object",
-              "required": ["field", "direction"],
+              "required": [
+                "field",
+                "direction"
+              ],
               "additionalProperties": false,
               "properties": {
-                "field": {"enum": ["purchase_order_number", "status", "created_at"]},
-                "direction": {"enum": ["ascending", "descending"]}
+                "field": {
+                  "enum": [
+                    "purchase_order_number",
+                    "status",
+                    "created_at"
+                  ]
+                },
+                "direction": {
+                  "enum": [
+                    "ascending",
+                    "descending"
+                  ]
+                }
               }
             },
-            "cursor": {"type": "string", "minLength": 1},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
           }
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {
+      "mode": "pat"
+    },
     "registered-operation": "wamn-receiving:purchase-order/query@1.0.0"
   },
   "purchase-order-update-http": {
@@ -84,32 +147,59 @@
     "definition": {
       "id": "purchase-order-update-http",
       "kind": "http",
-      "route": {"path": "/purchase_order/update", "method": "POST"},
-      "raw-body-bytes": {"maximum": 1048576},
+      "route": {
+        "path": "/purchase_order/update",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
       "input-schema": {
         "type": "array",
         "minItems": 1,
         "maxItems": 100,
         "items": {
           "type": "object",
-          "required": ["request_id", "id", "expected_row_version", "change"],
+          "required": [
+            "request_id",
+            "id",
+            "expected_row_version",
+            "change"
+          ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {"type": "string", "minLength": 1},
-            "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},
-            "expected_row_version": {"type": "string", "pattern": "^-?(0|[1-9][0-9]*)$"},
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "expected_row_version": {
+              "type": "string",
+              "pattern": "^-?(0|[1-9][0-9]*)$"
+            },
             "change": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "supplier_id": {"type": ["string", "null"], "x-wamn-explicit-null": "invalid_input"}
+                "supplier_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-wamn-explicit-null": "invalid_input"
+                }
               }
             }
           }
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {
+      "mode": "pat"
+    },
     "registered-operation": "wamn-receiving:purchase-order/update@1.0.0"
   },
   "receipt-get-http": {
@@ -121,24 +211,40 @@
     "definition": {
       "id": "receipt-get-http",
       "kind": "http",
-      "route": {"path": "/receipt/get", "method": "POST"},
-      "raw-body-bytes": {"maximum": 1048576},
+      "route": {
+        "path": "/receipt/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
       "input-schema": {
         "type": "array",
         "minItems": 1,
         "maxItems": 100,
         "items": {
           "type": "object",
-          "required": ["request_id", "id"],
+          "required": [
+            "request_id",
+            "id"
+          ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {"type": "string", "minLength": 1},
-            "id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
           }
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {
+      "mode": "pat"
+    },
     "registered-operation": "wamn-receiving:receipt/get@1.0.0"
   },
   "receipt-query-http": {
@@ -150,25 +256,44 @@
     "definition": {
       "id": "receipt-query-http",
       "kind": "http",
-      "route": {"path": "/receipt/query", "method": "POST"},
-      "raw-body-bytes": {"maximum": 1048576},
+      "route": {
+        "path": "/receipt/query",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
       "input-schema": {
         "type": "array",
         "minItems": 1,
         "maxItems": 100,
         "items": {
           "type": "object",
-          "required": ["request_id"],
+          "required": [
+            "request_id"
+          ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {"type": "string", "minLength": 1},
-            "cursor": {"type": "string", "minLength": 1},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cursor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
           }
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {
+      "mode": "pat"
+    },
     "registered-operation": "wamn-receiving:receipt/query@1.0.0"
   },
   "receiving-record-receipt-http": {
@@ -180,39 +305,76 @@
     "definition": {
       "id": "receiving-record-receipt-http",
       "kind": "http",
-      "route": {"path": "/receiving/record_receipt", "method": "POST"},
-      "raw-body-bytes": {"maximum": 1048576},
+      "route": {
+        "path": "/receiving/record_receipt",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
       "input-schema": {
         "type": "array",
         "minItems": 1,
         "maxItems": 100,
         "items": {
           "type": "object",
-          "required": ["request_id", "value"],
+          "required": [
+            "request_id",
+            "value"
+          ],
           "additionalProperties": false,
           "properties": {
-            "request_id": {"type": "string", "minLength": 1},
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
             "value": {
               "type": "object",
-              "required": ["idempotency_key", "purchase_order_id", "receipt_reference", "occurred_at", "line"],
+              "required": [
+                "idempotency_key",
+                "purchase_order_id",
+                "receipt_reference",
+                "occurred_at",
+                "line"
+              ],
               "additionalProperties": false,
               "properties": {
-                "idempotency_key": {"type": "string", "minLength": 1},
-                "purchase_order_id": {"type": "string"},
-                "receipt_reference": {"type": "string", "minLength": 1},
-                "occurred_at": {"type": "string"},
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "purchase_order_id": {
+                  "type": "string"
+                },
+                "receipt_reference": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "occurred_at": {
+                  "type": "string"
+                },
                 "line": {
                   "type": "array",
                   "minItems": 1,
                   "maxItems": 100,
                   "items": {
                     "type": "object",
-                    "required": ["purchase_order_line_id", "quantity", "location_id"],
+                    "required": [
+                      "purchase_order_line_id",
+                      "quantity",
+                      "location_id"
+                    ],
                     "additionalProperties": false,
                     "properties": {
-                      "purchase_order_line_id": {"type": "string"},
-                      "quantity": {"type": "string"},
-                      "location_id": {"type": "string"}
+                      "purchase_order_line_id": {
+                        "type": "string"
+                      },
+                      "quantity": {
+                        "type": "string"
+                      },
+                      "location_id": {
+                        "type": "string"
+                      }
                     }
                   }
                 }
@@ -222,7 +384,94 @@
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {
+      "mode": "pat"
+    },
     "registered-operation": "wamn-receiving:receiving/record-receipt@1.0.0"
+  },
+  "receiving-load-receipt-screen-http": {
+    "kind": "http",
+    "package-id": "wamn_receiving",
+    "wiring-id": "receiving_load_receipt_screen",
+    "wiring-version": 1,
+    "definition-hash": "sha256:0dd9f8c483a2b853dae53fc10a040f1410dd930144ef94487cf3f7abacdeb66a",
+    "definition": {
+      "id": "receiving-load-receipt-screen-http",
+      "kind": "http",
+      "route": {
+        "path": "/receiving/load_receipt_screen",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "purchase_order_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "purchase_order_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "mode": "pat"
+    },
+    "registered-operation": "wamn-receiving:receiving/load-receipt-screen@1.0.0"
+  },
+  "location-list-http": {
+    "kind": "http",
+    "package-id": "wamn_receiving",
+    "wiring-id": "location_list",
+    "wiring-version": 1,
+    "definition-hash": "sha256:32c3d76d30f7ccc227867201f327d9855e5ebf159da7093fea835b05e9b8288a",
+    "definition": {
+      "id": "location-list-http",
+      "kind": "http",
+      "route": {
+        "path": "/location/list",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "mode": "pat"
+    },
+    "registered-operation": "wamn-receiving:location/list@1.0.0"
   }
 }

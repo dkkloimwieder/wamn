@@ -1272,17 +1272,23 @@ mod tests {
         let file = attachments_with_first("wamn-client-ir-studio", |attachment| {
             attachment["kind"] = Value::String("studio".to_owned());
         });
+        let routed = |ir: &ClientContractIr| {
+            ir.models
+                .iter()
+                .flat_map(|model| &model.operations)
+                .filter(|operation| operation.route.is_some())
+                .count()
+        };
+        let published = released("receiving");
         let ir = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
             .expect("a studio attachment projects");
-        let routed = ir
-            .models
-            .iter()
-            .flat_map(|model| &model.operations)
-            .filter(|operation| operation.route.is_some())
-            .count();
+        // The DELTA is the invariant, not a count: turning exactly one http
+        // attachment into a studio one must remove exactly one client route,
+        // and stays true as the package publishes more operations.
         assert_eq!(
-            routed, 5,
-            "a studio attachment contributed a client route; only the five http ones may"
+            routed(&ir) + 1,
+            routed(&published),
+            "converting one attachment to studio did not remove exactly one route"
         );
         let _ = std::fs::remove_dir_all(file.parent().expect("scratch"));
     }

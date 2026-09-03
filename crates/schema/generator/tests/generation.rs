@@ -44,7 +44,7 @@ const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
 ];
 
 const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../packages/receiving/wamn.json");
-const RECEIVING_SOURCES: [AuthoredSql<'static>; 15] = [
+const RECEIVING_SOURCES: [AuthoredSql<'static>; 17] = [
     AuthoredSql::new(
         "command/record_receipt/claim_command.sql",
         include_bytes!("../../../../packages/receiving/command/record_receipt/claim_command.sql"),
@@ -126,6 +126,14 @@ const RECEIVING_SOURCES: [AuthoredSql<'static>; 15] = [
         include_bytes!(
             "../../../../packages/receiving/query/open_purchase_order_by_created_at_descending.sql"
         ),
+    ),
+    AuthoredSql::new(
+        "query/load_receipt_screen.sql",
+        include_bytes!("../../../../packages/receiving/query/load_receipt_screen.sql"),
+    ),
+    AuthoredSql::new(
+        "query/location.sql",
+        include_bytes!("../../../../packages/receiving/query/location.sql"),
     ),
 ];
 
@@ -2136,7 +2144,11 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
         .iter()
         .find(|relation| relation["table"] == "location")
         .unwrap();
-    assert_eq!(location["select_fields"], json!(["id"]));
+    // `location.list` reads the code, so the derived ACL grants SELECT on it.
+    // The invariant this pins is that location is never WRITTEN: a read
+    // operation may widen the select set and must not touch the rest.
+    assert_eq!(location["select_fields"], json!(["id", "location_code"]));
+    assert_eq!(location["insert_fields"], json!([]));
     assert_eq!(location["update_fields"], json!([]));
     assert_eq!(location["lock"], true);
     assert_eq!(location["lock_update_field"], "id");

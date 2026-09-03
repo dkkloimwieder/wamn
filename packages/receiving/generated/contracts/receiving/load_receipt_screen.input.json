@@ -1,0 +1,1 @@
+{"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"purchase_order_id","type":"uuid","values":[]}]}

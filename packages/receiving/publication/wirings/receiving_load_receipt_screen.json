@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "receiving_load_receipt_screen",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "receiving",
+      "interface-version": "0.1.0",
+      "operation": "wamn-receiving:receiving/load-receipt-screen@1.0.0",
+      "terminal": "respond"
+    }
+  }
+}
