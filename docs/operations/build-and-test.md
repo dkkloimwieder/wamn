@@ -1543,6 +1543,22 @@ disguise; failing on the mutated property rules out a kill for an unrelated
 reason, which proves the mutant is detectable but not that the assertion you
 care about detects it.
 
+**And a mutant must prove it LANDED before its survival means anything.** A
+substitution that matched nothing changes no code, so the proof passes and the
+result reads as a survivor — identical output, opposite meaning. The same is
+true of a substitution that matched more times than intended, which mutates
+somewhere you were not looking. So every scripted mutation asserts its match
+count before applying, and reports a zero-match apply as VOID rather than as a
+result.
+
+The form matters for anything carrying regex metacharacters. A `sed` pattern
+for an `awk` program full of `/`, `[`, `\` and `{` failed to compile and
+reported no match; re-applied as an exact-string substitution with an asserted
+count, the same mutant was killed immediately. Prefer exact-string replacement
+with a counted match over a regex whenever the target contains metacharacters
+— the regex is one more thing that can be wrong in the direction that looks
+like success.
+
 **Every guard's proof carries a negative control — a known-bad input that MUST
 fail it.** A check with no such input has not been shown to check anything.
 The nameref binding check above passed against a function that had been
@@ -1600,6 +1616,11 @@ after:
 3. **Does every guard it claims have a mutant that kills it?** A guard nothing
    exercises is documentation, and lifting is exactly when contracts get
    written and not tested.
+4. **Does it return rather than exit?** A shared function that calls `exit`
+   seizes its caller's control flow, so the caller cannot add context, clean
+   up, or decide that this failure is tolerable. This is question one seen
+   from the output side: a block may not reach for anything it was not handed,
+   and it may not take anything the caller did not offer either.
 
 A corollary from running this: independent guards that overlap are not
 redundancy. While the nameref binding was under test, the collided render was
