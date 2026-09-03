@@ -62,6 +62,10 @@ app_tenant=receiving-route-auth
 app_role_families=(executor-platform identity-reader http-admitter event-materializer)
 app_guest_secret_anchor=wamn-host-db
 app_guest_secret_file=guest-sql.json
+# The host values overlay THIS application deploys. Per-app by ruling: the
+# file is per-app-named, lives in the production tier, and each carries its
+# own trusted identity claims, which the render asserts rather than rewrites.
+app_host_values_overlay=deploy/platform/values-host-receiving-pat.yaml
 # How many SQL statements THIS application's probe route issues. Everything
 # else trace_is_complete checks is platform shape -- authenticate, resolve,
 # pull, compile, link, instantiate, the two authority classes -- and holds for
@@ -993,7 +997,7 @@ awk -v anchor_map="$host_overlay_anchor_map" \
     }
     if (wrong) exit 1
   }
-' "$repo_root/deploy/platform/values-host-receiving-pat.yaml" >"$host_overlay"
+' "$repo_root/$app_host_values_overlay" >"$host_overlay"
 for expected in "$namespace" "$component_artifact_base" "$release_artifact_base" \
     "$manifest_digest" "$guest_secret_name" "${host_secret_name_by_family[@]}"; do
   grep -F -- "$expected" "$host_overlay" >/dev/null || {
@@ -1001,6 +1005,35 @@ for expected in "$namespace" "$component_artifact_base" "$release_artifact_base"
     exit 1
   }
 done
+# The identity the overlay CLAIMS, asserted rather than substituted. Nothing
+# above rewrites WAMN_ORG, WAMN_PROJECT or WAMN_SCHEMA -- the template has no
+# anchor for them at all -- so a template copied from another application
+# keeps that application's claims. The host would then mount THIS journey's
+# credentials while deriving its environment-scoped service subject from the
+# OTHER application's org and project, and route authorization would resolve
+# against the wrong tenant with the journey still green.
+for claim in "WAMN_ORG=$app_org" "WAMN_PROJECT=$app_project" \
+    "WAMN_SCHEMA=$app_schema"; do
+  claimed=$(awk -v key="${claim%%=*}" '
+    {
+      body = $0
+      sub(/^[ \t]+/, "", body)
+      if (body !~ ("^- \\{ name: " key ",")) next
+      if (!match(body, /value: [^ },]+/)) next
+      print substr(body, RSTART + 7, RLENGTH - 7)
+      found = 1
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$host_overlay") || {
+    echo "rendered host overlay declares no ${claim%%=*}" >&2
+    exit 1
+  }
+  if [[ "$claimed" != "${claim#*=}" ]]; then
+    echo "rendered host overlay claims ${claim%%=*}=$claimed, but this journey declares ${claim#*=}" >&2
+    exit 1
+  fi
+done
+
 for expected in 'OTEL_EXPORTER_OTLP_ENDPOINT' "$nats_url"; do
   grep -F -- "$expected" "$host_overlay" >/dev/null || {
     echo "rendered host overlay omitted $expected" >&2

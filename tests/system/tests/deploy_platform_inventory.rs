@@ -143,7 +143,11 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
 /// keys (`registry` + `repository` + `tag`), which is why it cannot be scanned
 /// for an `image:` line like the rest.
 const HOST_VALUES_FILE: &str = "values-host-default.yaml";
-const HELM_VALUES_FILES: [&str; 2] = [HOST_VALUES_FILE, "values-host-receiving-pat.yaml"];
+const HELM_VALUES_FILES: [&str; 3] = [
+    HOST_VALUES_FILE,
+    "values-host-receiving-pat.yaml",
+    "values-host-wms-pat.yaml",
+];
 const HELM_VALUES_IMAGE_PARTS: [(&str, &str); 3] = [
     ("registry", "\"\""),
     ("repository", "wamn-host"),
