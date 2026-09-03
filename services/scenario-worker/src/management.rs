@@ -718,8 +718,20 @@ async fn route(
         _ => Ok(empty(StatusCode::NOT_FOUND)),
     };
     Ok(handled.unwrap_or_else(|error| {
-        // The client learns nothing about an infrastructure fault.
         tracing::error!(%error, "management request failed");
+        if let Some(unavailable) =
+            error.downcast_ref::<crate::store::admission::AdmissionEndpointUnavailable>()
+        {
+            return json(
+                StatusCode::SERVICE_UNAVAILABLE,
+                &serde_json::json!({
+                    "kind": unavailable.code(),
+                    "config-key": unavailable.config_key(),
+                    "endpoint": unavailable.endpoint(),
+                }),
+            );
+        }
+        // Other infrastructure faults remain opaque.
         empty(StatusCode::INTERNAL_SERVER_ERROR)
     }))
 }
@@ -904,8 +916,9 @@ async fn publish_route(
         return Ok(empty(StatusCode::BAD_REQUEST));
     }
     let mut backend = surface.backend.lock().await;
-    let admission = surface.admission.lock().await;
-    let outcome_bytes = publish(&mut backend, &admission, author, &scope, command, input).await?;
+    let mut admission = surface.admission.lock().await;
+    let outcome_bytes =
+        publish(&mut backend, &mut admission, author, &scope, command, input).await?;
     drop(admission);
     drop(backend);
     Ok(json_bytes(StatusCode::OK, outcome_bytes))
@@ -918,7 +931,7 @@ async fn publish_route(
 /// act and is never called from this transport.
 async fn publish(
     backend: &mut InternalAuthoringBackend,
-    admission: &crate::store::admission::AdmissionSurface,
+    admission: &mut crate::store::admission::AdmissionSurface,
     author: &AuthorizedAuthor,
     scope: &CommandScope,
     command: &AuthoringRequest,
@@ -1040,8 +1053,8 @@ async fn gate_route(
         return Ok(empty(StatusCode::BAD_REQUEST));
     }
     let mut backend = surface.backend.lock().await;
-    let admission = surface.admission.lock().await;
-    let outcome_bytes = gate(&mut backend, &admission, author, &scope, command, input).await?;
+    let mut admission = surface.admission.lock().await;
+    let outcome_bytes = gate(&mut backend, &mut admission, author, &scope, command, input).await?;
     drop(admission);
     drop(backend);
     Ok(json_bytes(StatusCode::OK, outcome_bytes))
@@ -1071,7 +1084,7 @@ async fn gate_route(
 /// receipt.
 async fn gate(
     backend: &mut InternalAuthoringBackend,
-    admission: &crate::store::admission::AdmissionSurface,
+    admission: &mut crate::store::admission::AdmissionSurface,
     author: &AuthorizedAuthor,
     scope: &CommandScope,
     command: &AuthoringRequest,

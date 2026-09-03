@@ -36,10 +36,18 @@
 //! predicates on reads and the surface-owned `tenant_id` value on Publish are
 //! what narrow every operation back down.
 
+use std::error::Error;
+use std::fmt;
+use std::time::Duration;
+
 use anyhow::{Context as _, bail};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tokio_postgres::{Client, NoTls};
+use tokio::time::{sleep, timeout};
+use tokio_postgres::config::Host;
+use tokio_postgres::error::SqlState;
+use tokio_postgres::types::ToSql;
+use tokio_postgres::{Client, Config, NoTls, Row};
 
 use wamn_authoring_model::GateRefusal;
 use wamn_catalog::{
@@ -82,6 +90,18 @@ use wamn_runtime::plugins::wamn_postgres::{
 /// `wamn_authority`'s own function bodies close the same way.
 const ADMISSION_SCOPE_SQL: &str =
     "SELECT pg_catalog.set_config('search_path', 'pg_catalog', false)";
+
+/// Deployment key owning the fixed project-admission endpoint.
+pub(crate) const MANAGEMENT_ADMISSION_DATABASE_URL_KEY: &str = "WAMN_MANAGEMENT_ADMISSION_PG_URL";
+
+/// Stable service-level refusal returned when the fixed endpoint cannot recover.
+pub(crate) const MANAGEMENT_ADMISSION_UNAVAILABLE: &str = "management-admission-unavailable";
+
+/// One request never waits indefinitely for a dead admission endpoint.
+const ADMISSION_CONNECT_ATTEMPTS: usize = 3;
+const ADMISSION_OPERATION_ATTEMPTS: usize = ADMISSION_CONNECT_ATTEMPTS;
+const ADMISSION_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const ADMISSION_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 /// Read the same complete admitted component facts the compatibility validator
 /// receives on the CLI authoring path.
@@ -239,17 +259,67 @@ pub(crate) enum AppendPublishResult {
     ExecutableDrift,
 }
 
-/// One running management surface's project-database admission connection.
-pub struct AdmissionSurface {
-    client: Client,
-    connection_task: tokio::task::JoinHandle<()>,
-    tenant_id: Box<str>,
+/// Bounded refusal after the pinned admission endpoint could not reconnect.
+///
+/// The endpoint is credential-free by construction. The original URL and its
+/// userinfo are retained only inside [`CredentialExactnessProbe`], whose debug
+/// representation is redacted.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AdmissionEndpointUnavailable {
+    endpoint: Box<str>,
 }
 
-impl Drop for AdmissionSurface {
+impl AdmissionEndpointUnavailable {
+    /// Credential-free endpoint an operator must restore.
+    pub(crate) fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// Configuration key that owns the endpoint.
+    pub(crate) const fn config_key(&self) -> &'static str {
+        MANAGEMENT_ADMISSION_DATABASE_URL_KEY
+    }
+
+    /// Stable service-level refusal code.
+    pub(crate) const fn code(&self) -> &'static str {
+        MANAGEMENT_ADMISSION_UNAVAILABLE
+    }
+}
+
+impl fmt::Display for AdmissionEndpointUnavailable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} at config key {:?} ({}) after {ADMISSION_CONNECT_ATTEMPTS} attempts",
+            self.code(),
+            self.config_key(),
+            self.endpoint
+        )
+    }
+}
+
+impl Error for AdmissionEndpointUnavailable {}
+
+/// One currently open and independently driven PostgreSQL connection.
+struct AdmissionConnection {
+    client: Client,
+    connection_task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for AdmissionConnection {
     fn drop(&mut self) {
         self.connection_task.abort();
     }
+}
+
+/// One running management surface's reconnectable project admission endpoint.
+pub struct AdmissionSurface {
+    /// The explicit credential and exact server-side predicates are retained so
+    /// every replacement physical connection is checked identically.
+    probe: CredentialExactnessProbe,
+    connection: Option<AdmissionConnection>,
+    sanitized_endpoint: Box<str>,
+    tenant_id: Box<str>,
 }
 
 impl AdmissionSurface {
@@ -293,39 +363,192 @@ impl AdmissionSurface {
             generation = connection.generation().as_str(),
             "management admission credential accepted"
         );
-        let (client, driver) = probe
-            .connection_config()
-            .connect(NoTls)
+        let sanitized_endpoint = sanitized_postgres_endpoint(&probe.connection_config());
+        let mut surface = Self {
+            probe,
+            connection: None,
+            sanitized_endpoint,
+            tenant_id: tenant_id.into(),
+        };
+        surface.reconnect().await?;
+        Ok(surface)
+    }
+
+    /// Open, prove and scope one replacement connection.
+    ///
+    /// The probe precedes the scope statement and every admission operation on
+    /// every connection, including recovery after the verification database is
+    /// intentionally recreated by `wamn dev`.
+    async fn open_connection(&self) -> anyhow::Result<AdmissionConnection> {
+        let config = self.probe.connection_config();
+        let connect = config.connect(NoTls);
+        let (client, driver) = timeout(ADMISSION_CONNECT_TIMEOUT, connect)
             .await
+            .context("project admission database connection attempt timed out")?
             .context("connect dedicated project admission database credential")?;
         let connection_task = tokio::spawn(async move {
             if let Err(error) = driver.await {
-                tracing::error!(%error, "project admission database connection failed");
+                tracing::warn!(%error, "project admission database connection ended");
             }
         });
-        let surface = Self {
+        let connection = AdmissionConnection {
             client,
             connection_task,
-            tenant_id: tenant_id.into(),
         };
         // Held BEFORE the scope injection and before any admission read: a
         // session the server does not agree is this generation never reaches a
         // statement of ours at all. `Drop` aborts the driver task on refusal.
-        probe.probe_pooled(&surface.client).await.map_err(|error| {
-            // The refusal carries a predicate and a kind, never credential
-            // material or server detail.
-            anyhow::anyhow!("management admission credential exactness refused: {error}")
-        })?;
-        surface.scope().await?;
-        Ok(surface)
-    }
-
-    async fn scope(&self) -> anyhow::Result<()> {
-        self.client
+        self.probe
+            .probe_pooled(&connection.client)
+            .await
+            .map_err(|error| {
+                // The refusal carries a predicate and a kind, never credential
+                // material or server detail.
+                anyhow::anyhow!("management admission credential exactness refused: {error}")
+            })?;
+        connection
+            .client
             .query_one(ADMISSION_SCOPE_SQL, &[])
             .await
             .context("pin the admission session search path")?;
-        Ok(())
+        Ok(connection)
+    }
+
+    async fn reconnect(&mut self) -> Result<(), AdmissionEndpointUnavailable> {
+        self.connection.take();
+        for attempt in 1..=ADMISSION_CONNECT_ATTEMPTS {
+            match self.open_connection().await {
+                Ok(connection) => {
+                    self.connection = Some(connection);
+                    tracing::info!(
+                        endpoint = %self.sanitized_endpoint,
+                        attempt,
+                        "project admission database connection ready"
+                    );
+                    return Ok(());
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        endpoint = %self.sanitized_endpoint,
+                        attempt,
+                        attempts = ADMISSION_CONNECT_ATTEMPTS,
+                        %error,
+                        "project admission database reconnect failed"
+                    );
+                    if attempt < ADMISSION_CONNECT_ATTEMPTS {
+                        sleep(ADMISSION_RETRY_DELAY).await;
+                    }
+                }
+            }
+        }
+        Err(self.endpoint_unavailable())
+    }
+
+    fn endpoint_unavailable(&self) -> AdmissionEndpointUnavailable {
+        AdmissionEndpointUnavailable {
+            endpoint: self.sanitized_endpoint.clone(),
+        }
+    }
+
+    async fn ensure_connection(&mut self) -> Result<(), AdmissionEndpointUnavailable> {
+        if self
+            .connection
+            .as_ref()
+            .is_some_and(|connection| !connection.client.is_closed())
+        {
+            return Ok(());
+        }
+        self.reconnect().await
+    }
+
+    async fn query(
+        &mut self,
+        statement: &str,
+        parameters: &[&(dyn ToSql + Sync)],
+        action: &'static str,
+    ) -> anyhow::Result<Vec<Row>> {
+        for attempt in 1..=ADMISSION_OPERATION_ATTEMPTS {
+            self.ensure_connection().await?;
+            let result = self
+                .connection
+                .as_ref()
+                .expect("ensure_connection installs a connection")
+                .client
+                .query(statement, parameters)
+                .await;
+            match result {
+                Ok(rows) => return Ok(rows),
+                Err(error) if connection_was_lost(&error) => {
+                    self.connection.take();
+                    tracing::warn!(attempt, %error, "project admission query lost its connection");
+                    if attempt < ADMISSION_OPERATION_ATTEMPTS {
+                        sleep(ADMISSION_RETRY_DELAY).await;
+                    }
+                }
+                Err(error) => return Err(error).context(action),
+            }
+        }
+        Err(self.endpoint_unavailable().into())
+    }
+
+    async fn query_one(
+        &mut self,
+        statement: &str,
+        parameters: &[&(dyn ToSql + Sync)],
+        action: &'static str,
+    ) -> anyhow::Result<Row> {
+        for attempt in 1..=ADMISSION_OPERATION_ATTEMPTS {
+            self.ensure_connection().await?;
+            let result = self
+                .connection
+                .as_ref()
+                .expect("ensure_connection installs a connection")
+                .client
+                .query_one(statement, parameters)
+                .await;
+            match result {
+                Ok(row) => return Ok(row),
+                Err(error) if connection_was_lost(&error) => {
+                    self.connection.take();
+                    tracing::warn!(attempt, %error, "project admission query lost its connection");
+                    if attempt < ADMISSION_OPERATION_ATTEMPTS {
+                        sleep(ADMISSION_RETRY_DELAY).await;
+                    }
+                }
+                Err(error) => return Err(error).context(action),
+            }
+        }
+        Err(self.endpoint_unavailable().into())
+    }
+
+    async fn execute(
+        &mut self,
+        statement: &str,
+        parameters: &[&(dyn ToSql + Sync)],
+        action: &'static str,
+    ) -> anyhow::Result<u64> {
+        for attempt in 1..=ADMISSION_OPERATION_ATTEMPTS {
+            self.ensure_connection().await?;
+            let result = self
+                .connection
+                .as_ref()
+                .expect("ensure_connection installs a connection")
+                .client
+                .execute(statement, parameters)
+                .await;
+            match result {
+                Ok(changed) => return Ok(changed),
+                Err(error) if connection_was_lost(&error) => {
+                    self.connection.take();
+                    tracing::warn!(attempt, %error, "project admission write lost its connection");
+                    if attempt < ADMISSION_OPERATION_ATTEMPTS {
+                        sleep(ADMISSION_RETRY_DELAY).await;
+                    }
+                }
+                Err(error) => return Err(error).context(action),
+            }
+        }
+        Err(self.endpoint_unavailable().into())
     }
 
     /// Parse, validate and derive the immutable facts for management `Publish`.
@@ -335,7 +558,7 @@ impl AdmissionSurface {
     /// store's gate report. The caller may pass it to [`Self::append_publish`]
     /// only after that exact report exists and is green.
     pub(crate) async fn prepare_publish(
-        &self,
+        &mut self,
         package_id: &str,
         package_version: &str,
         submitted_document: &Value,
@@ -386,17 +609,17 @@ impl AdmissionSurface {
     /// Append one validated publication after the management verb's green-report
     /// guard, converging an exact retry and refusing conflicting immutable facts.
     pub(crate) async fn append_publish(
-        &self,
+        &mut self,
         publication: &PreparedWiringPublication,
     ) -> anyhow::Result<AppendPublishResult> {
         if publication.tenant_id.as_ref() != self.tenant_id.as_ref() {
             bail!("prepared publication belongs to another admission tenant");
         }
-        let tenant_id = self.tenant_id.as_ref();
-        let package_id = publication.package_id.as_ref();
-        let package_version = publication.package_version.as_ref();
-        let wiring_id = publication.wiring_id();
-        let wiring_hash = publication.wiring_hash();
+        let tenant_id = self.tenant_id.to_string();
+        let package_id = publication.package_id.to_string();
+        let package_version = publication.package_version.to_string();
+        let wiring_id = publication.wiring_id().to_owned();
+        let wiring_hash = publication.wiring_hash().to_owned();
         let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
             &tenant_id,
             &package_id,
@@ -406,15 +629,19 @@ impl AdmissionSurface {
             &publication.graph_json,
             &wiring_hash,
         ];
-        self.client
-            .execute(INSERT_WIRING_SQL, &parameters)
-            .await
-            .context("append the gated wiring definition")?;
+        self.execute(
+            INSERT_WIRING_SQL,
+            &parameters,
+            "append the gated wiring definition",
+        )
+        .await?;
         let exact: bool = self
-            .client
-            .query_one(EXACT_WIRING_SQL, &parameters)
-            .await
-            .context("verify the stored wiring definition")?
+            .query_one(
+                EXACT_WIRING_SQL,
+                &parameters,
+                "verify the stored wiring definition",
+            )
+            .await?
             .get(0);
         Ok(if exact {
             AppendPublishResult::Published
@@ -424,17 +651,16 @@ impl AdmissionSurface {
     }
 
     async fn component_facts(
-        &self,
+        &mut self,
         scope: &ComponentPackageScope,
     ) -> anyhow::Result<Vec<AdmittedComponent>> {
         let rows = self
-            .client
             .query(
                 SELECT_COMPONENT_FACTS_SQL,
                 &[&scope.tenant_id, &scope.package_id, &scope.package_version],
+                "read the publication scope's admitted component facts",
             )
-            .await
-            .context("read the publication scope's admitted component facts")?;
+            .await?;
         rows.into_iter()
             .map(|row| {
                 let component: String = row.get(0);
@@ -471,24 +697,55 @@ impl AdmissionSurface {
     /// carries the empty effects projection, which is the POSITIVE fact the
     /// validator derived rather than the absence of one.
     pub async fn effectful_components(
-        &self,
+        &mut self,
         candidate: &CandidateWiring,
     ) -> anyhow::Result<Vec<String>> {
+        let tenant_id = self.tenant_id.to_string();
+        let nodes = candidate.nodes_object();
         let rows = self
-            .client
             .query(
                 SELECT_EFFECTFUL_COMPONENTS_SQL,
                 &[
-                    &self.tenant_id.as_ref(),
+                    &tenant_id,
                     &candidate.package_id,
                     &candidate.package_version,
-                    &candidate.nodes_object(),
+                    &nodes,
                 ],
+                "name the candidate's effectful components",
             )
-            .await
-            .context("name the candidate's effectful components")?;
+            .await?;
         Ok(rows.iter().map(|row| row.get(0)).collect())
     }
+}
+
+fn sanitized_postgres_endpoint(config: &Config) -> Box<str> {
+    let host = match config.get_hosts().first() {
+        Some(Host::Tcp(host)) if host.contains(':') => format!("[{host}]"),
+        Some(Host::Tcp(host)) => host.clone(),
+        #[cfg(unix)]
+        Some(Host::Unix(_)) => "<unix-socket>".to_owned(),
+        None => "<missing-host>".to_owned(),
+    };
+    let port = config.get_ports().first().copied().unwrap_or(5432);
+    let database = config.get_dbname().unwrap_or("<missing-database>");
+    format!("postgresql://{host}:{port}/{database}").into()
+}
+
+/// PostgreSQL can deliver the forced-drop reason before marking the client
+/// closed. These operator-termination states therefore trigger the same
+/// reconnect as `Error::is_closed` instead of escaping as a statement error.
+fn connection_was_lost(error: &tokio_postgres::Error) -> bool {
+    error.is_closed()
+        || error.code().is_some_and(|code| {
+            [
+                SqlState::ADMIN_SHUTDOWN,
+                SqlState::CRASH_SHUTDOWN,
+                SqlState::CANNOT_CONNECT_NOW,
+                SqlState::DATABASE_DROPPED,
+                SqlState::IDLE_SESSION_TIMEOUT,
+            ]
+            .contains(code)
+        })
 }
 
 fn decode_component_json<T: DeserializeOwned>(
@@ -651,7 +908,7 @@ pub enum GateJudgment {
 /// is refused before any posture is read, and **a nonempty case set's effect-free
 /// clause fires before anything else can act on the candidate**.
 pub async fn run_gate(
-    admission: &AdmissionSurface,
+    admission: &mut AdmissionSurface,
     request: &GateRequest<'_>,
 ) -> anyhow::Result<GateJudgment> {
     // The candidate is the DOCUMENT (wamn-0h0g.8.28). It arrives already through
@@ -964,5 +1221,28 @@ mod tests {
             .expect("an in-scope admission URL");
         admission_credential_probe(&url, &connection, "tenant-a")
             .expect("the parsed identity is the expected identity");
+    }
+
+    /// Runtime endpoint refusals expose enough deployment context to act while
+    /// retaining none of the credential carried by the pinned URL.
+    #[test]
+    fn the_reconnect_refusal_names_only_the_sanitized_pinned_endpoint() {
+        let config: Config = "postgres://admitter:top-secret@[::1]:6543/project_verification"
+            .parse()
+            .expect("a PostgreSQL connection URL");
+        let refusal = AdmissionEndpointUnavailable {
+            endpoint: sanitized_postgres_endpoint(&config),
+        };
+        assert_eq!(refusal.code(), MANAGEMENT_ADMISSION_UNAVAILABLE);
+        assert_eq!(refusal.config_key(), MANAGEMENT_ADMISSION_DATABASE_URL_KEY);
+        assert_eq!(
+            refusal.endpoint(),
+            "postgresql://[::1]:6543/project_verification"
+        );
+        let rendered = refusal.to_string();
+        assert!(rendered.contains(MANAGEMENT_ADMISSION_DATABASE_URL_KEY));
+        assert!(rendered.contains(refusal.endpoint()));
+        assert!(!rendered.contains("admitter"));
+        assert!(!rendered.contains("top-secret"));
     }
 }

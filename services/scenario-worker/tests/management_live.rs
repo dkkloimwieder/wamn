@@ -407,6 +407,21 @@ fn admission_url(admin_url: &str) -> String {
     parsed.to_string()
 }
 
+fn sanitized_admission_endpoint(admin_url: &str) -> String {
+    let parsed = url::Url::parse(&admission_url(admin_url)).expect("the admission URL parses");
+    let host = parsed.host_str().expect("the admission URL names a host");
+    let host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    };
+    format!(
+        "postgresql://{host}:{}/{}",
+        parsed.port().unwrap_or(5432),
+        PROJECT_DATABASE
+    )
+}
+
 async fn start_management_surface(admin_url: &str) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     let (readiness_tx, readiness_rx) = tokio::sync::oneshot::channel();
     let mut surface = tokio::spawn(wamn_scenario_worker::management::serve_with_readiness(
@@ -1158,6 +1173,94 @@ async fn empty_case_connection_component_without_release_or_binding_reports_zero
 #[tokio::test]
 async fn nonempty_case_connection_component_without_release_or_binding_refuses_effect_posture() {
     run_connection_gate_proof(ConnectionGateProof::NonemptyCases).await;
+}
+
+/// The external Gate retains one deployment-pinned endpoint while `wamn dev`
+/// deliberately replaces the disposable database beneath it. Exhaustion is a
+/// typed, credential-free refusal; the next request reconnects, re-probes the
+/// generation and scope, and succeeds without a database selector in its body.
+#[tokio::test]
+async fn management_surface_reconnects_after_the_verification_database_is_recreated() {
+    let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
+        eprintln!(
+            "skipping management_surface_reconnects_after_the_verification_database_is_recreated \
+             (set WAMN_PLATFORM_IDENTITY_PG_URL to run)"
+        );
+        return;
+    };
+    let _serial = LIVE_GATE_SERIAL.lock().await;
+    let (mut admin, admin_task) = connect(&url).await.expect("connect as the gate admin");
+    provision(&mut admin, &url)
+        .await
+        .expect("provision the gate");
+    let (project, project_task) = provision_project(&admin, &url)
+        .await
+        .expect("provision the first verification database");
+    let principal = admitted_human(&admin, "reconnect@example.com", PROJECT, "project-author")
+        .await
+        .expect("admit the reconnect proof principal");
+    let surface = start_management_surface(&url).await;
+
+    let before = post(
+        "/authoring",
+        Some(principal.token()),
+        &[],
+        &gate_document("gate-before-verification-recreate"),
+    )
+    .await;
+    assert_eq!(before.status, 200, "{}", before.body);
+    assert_eq!(outcome(&before.body)["status"], "completed");
+
+    drop(project);
+    project_task.abort();
+    admin
+        .simple_query(&format!(
+            "DROP DATABASE \"{PROJECT_DATABASE}\" WITH (FORCE)"
+        ))
+        .await
+        .expect("drop the verification database beneath the external Gate");
+
+    let command = gate_document("gate-across-verification-recreate");
+    let unavailable = post("/authoring", Some(principal.token()), &[], &command).await;
+    assert_eq!(unavailable.status, 503, "{}", unavailable.body);
+    assert_eq!(
+        as_json(&unavailable.body),
+        serde_json::json!({
+            "kind": "management-admission-unavailable",
+            "config-key": "WAMN_MANAGEMENT_ADMISSION_PG_URL",
+            "endpoint": sanitized_admission_endpoint(&url),
+        })
+    );
+    assert!(!unavailable.body.contains(ADMITTER_PASSWORD));
+    assert!(!unavailable.body.contains(&admitter_role()));
+
+    let (replacement, replacement_task) = provision_project(&admin, &url)
+        .await
+        .expect("recreate and reprovision the verification database");
+    replacement
+        .batch_execute(&format!(
+            "GRANT INSERT ON catalog.wirings TO \"{}\"",
+            admitter_role()
+        ))
+        .await
+        .expect("introduce a forbidden privilege on the replacement connection");
+    let reprobe_refusal = post("/authoring", Some(principal.token()), &[], &command).await;
+    assert_eq!(reprobe_refusal.status, 503, "{}", reprobe_refusal.body);
+    replacement
+        .batch_execute(&format!(
+            "REVOKE INSERT ON catalog.wirings FROM \"{}\"",
+            admitter_role()
+        ))
+        .await
+        .expect("restore the exact admission grant set");
+    let recovered = post("/authoring", Some(principal.token()), &[], &command).await;
+    assert_eq!(recovered.status, 200, "{}", recovered.body);
+    assert_eq!(outcome(&recovered.body)["status"], "completed");
+
+    surface.abort();
+    drop(replacement);
+    replacement_task.abort();
+    admin_task.abort();
 }
 
 #[tokio::test]
