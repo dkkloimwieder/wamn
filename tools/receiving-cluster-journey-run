@@ -42,6 +42,32 @@ cluster=wamn-receiving-journey
 context=kind-wamn-receiving-journey
 namespace=wamn-receiving-journey
 system_namespace=wamn-system
+
+# The APPLICATION'S OWN IDENTITY, named once and derived from everywhere else.
+# These decide which tenant's data route authorization resolves against, so a
+# renderer that hardcoded them would deploy a second application under the
+# first one's tenant -- and the journey would PASS, proving the wrong thing.
+app_org=acme
+app_project=receiving
+app_environment=dev
+app_schema=receiving
+app_tenant=receiving-route-auth
+# The workload role families THIS application's host mounts. WorkloadRoleFamily
+# is a closed twelve-variant PLATFORM enum; which subset a host mounts is the
+# APPLICATION's declaration. Every secret anchor below is derived from this
+# list as wamn-<family>-<org>--<project>--<env>, never spelled out. The App
+# family is named separately because it is the one variant whose cli_stem and
+# component_stem disagree: its anchor is the platform-fixed wamn-host-db and
+# its emitted file is guest-sql.json.
+app_role_families=(executor-platform identity-reader http-admitter event-materializer)
+app_guest_secret_anchor=wamn-host-db
+app_guest_secret_file=guest-sql.json
+# How many SQL statements THIS application's probe route issues. Everything
+# else trace_is_complete checks is platform shape -- authenticate, resolve,
+# pull, compile, link, instantiate, the two authority classes -- and holds for
+# any caller. This one is the route's own, and a consumer whose route issues a
+# different number would fail inside a platform-sounding assertion.
+app_probe_statement_spans=1
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 chart_version=2.8.0
 route_host=receiving.localhost
@@ -598,7 +624,7 @@ if [[ ! "$instance_suffix" =~ ^[a-z0-9]{8}$ ]]; then
   echo "production provisioning emitted an invalid project instance suffix" >&2
   exit 1
 fi
-project_database=wamn-db-acme--receiving--dev--$instance_suffix
+project_database=wamn-db-${app_org}--${app_project}--${app_environment}--$instance_suffix
 project_url=postgresql://postgres:probe@$postgres_ip:5432/$project_database
 ctl=$cargo_target_dir/debug/wamn-ctl
 
@@ -609,7 +635,7 @@ registry_reader_secret=$work_dir/registry-reader.json
 if [[ "$measure_startup" != true ]]; then
 cdc_password=$(openssl rand -hex 32)
 run_sensitive enable-cdc-project-env "$ctl" enable-cdc-project-env \
-  --org acme --project receiving --env dev --schema receiving \
+  --org "$app_org" --project "$app_project" --env "$app_environment" --schema "$app_schema" \
   --system-database-url "$system_url" --cluster route-auth-pg18 \
   --replication-password "$cdc_password" --db-host "$postgres_ip" --db-port 5432 \
   --namespace "$namespace" --secret-namespace "$namespace" \
@@ -620,7 +646,7 @@ run_sensitive apply-cdc-stream env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 \
   -h "$postgres_ip" -p 5432 -U postgres -d "$project_database" -f "$cdc_sql"
 unset cdc_password
 run_sensitive prepare-registry-reader "$ctl" provision-project-env \
-  --org acme --project receiving --env dev --tenant receiving-route-auth \
+  --org "$app_org" --project "$app_project" --env "$app_environment" --tenant "$app_tenant" \
   --system-database-url "$system_url" --namespace "$namespace" \
   --prepare-registry-reader-generation a \
   --emit-registry-reader-secret "$registry_reader_secret"
@@ -640,11 +666,13 @@ registry_reader_url=$(jq -er '.stringData.url' "$registry_reader_secret")
 reader_binary=$cargo_target_dir/debug/wamn-cdc-reader
 record_command env WAMN_SYSTEM_URL='<registry-reader credential redacted>' \
   WAMN_CDC_URL='<replication credential redacted>' "$reader_binary" \
-  --log-level info --org acme --project receiving --env dev --nats-url "$nats_url" \
+  --log-level info --org "$app_org" --project "$app_project" --env "$app_environment" \
+  --nats-url "$nats_url" \
   --sslmode disable --stream-replicas 1 --dup-window-secs 120 --feedback-secs 1 \
   --stall-threshold-secs 30 --slot-poll-secs 0 --slot-safe-wal-warn-bytes 268435456
 WAMN_SYSTEM_URL="$registry_reader_url" WAMN_CDC_URL="$cdc_url" \
-  "$reader_binary" --log-level info --org acme --project receiving --env dev \
+  "$reader_binary" --log-level info --org "$app_org" --project "$app_project" \
+  --env "$app_environment" \
   --nats-url "$nats_url" --sslmode disable --stream-replicas 1 \
   --dup-window-secs 120 --feedback-secs 1 --stall-threshold-secs 30 \
   --slot-poll-secs 0 --slot-safe-wal-warn-bytes 268435456 \
@@ -693,21 +721,24 @@ if [[ ${#digest_lines[@]} -ne 1 ]]; then
 fi
 manifest_digest=${digest_lines[0]#*=}
 
-guest_secret=$host_secret_directory/guest-sql.json
-executor_platform_secret=$host_secret_directory/executor-platform.json
-event_materializer_secret=$host_secret_directory/event-materializer.json
-identity_secret=$host_secret_directory/identity-reader.json
-http_secret=$host_secret_directory/http-admitter.json
+# The host credentials THIS application declares, derived from its family
+# list rather than listed twice. The count is whatever the application named,
+# so the assertion below reads the declaration instead of restating it.
+declare -A host_secret_by_family=()
+for family in "${app_role_families[@]}"; do
+  host_secret_by_family[$family]=$host_secret_directory/$family.json
+done
+guest_secret=$host_secret_directory/$app_guest_secret_file
 mapfile -t emitted_host_secrets < <(find "$host_secret_directory" -maxdepth 1 -type f \
   -name '*.json' -printf '%f\n' | sort)
-expected_host_secrets=(event-materializer.json executor-platform.json guest-sql.json http-admitter.json identity-reader.json)
+mapfile -t expected_host_secrets < <(printf '%s\n' "$app_guest_secret_file" \
+  "${app_role_families[@]/%/.json}" | sort)
 if [[ "${emitted_host_secrets[*]}" != "${expected_host_secrets[*]}" ]]; then
-  echo "production journey did not emit exactly the five host credential Secrets" >&2
+  echo "production journey emitted ${#emitted_host_secrets[@]} host credential Secrets, not the ${#expected_host_secrets[@]} this application declares" >&2
   exit 1
 fi
 
-for secret in "$guest_secret" "$executor_platform_secret" "$event_materializer_secret" \
-    "$identity_secret" "$http_secret"; do
+for secret in "$guest_secret" "${host_secret_by_family[@]}"; do
   jq -e --arg namespace "$namespace" --arg host "$postgres_ip" '
     .metadata.namespace == $namespace and
     (.metadata.name | type == "string" and length > 0) and
@@ -716,10 +747,11 @@ for secret in "$guest_secret" "$executor_platform_secret" "$event_materializer_s
   run "${kube[@]}" apply -f "$secret"
 done
 guest_secret_name=$(jq -er '.metadata.name' "$guest_secret")
-executor_platform_secret_name=$(jq -er '.metadata.name' "$executor_platform_secret")
-event_materializer_secret_name=$(jq -er '.metadata.name' "$event_materializer_secret")
-identity_secret_name=$(jq -er '.metadata.name' "$identity_secret")
-http_secret_name=$(jq -er '.metadata.name' "$http_secret")
+declare -A host_secret_name_by_family=()
+for family in "${app_role_families[@]}"; do
+  host_secret_name_by_family[$family]=$(jq -er '.metadata.name' \
+    "${host_secret_by_family[$family]}")
+done
 
 registry_pull=$work_dir/registry-pull.yaml
 record_command "${kube[@]}" -n "$namespace" create secret generic wamn-registry-pull \
@@ -816,39 +848,78 @@ run "${kube[@]}" apply -f "$environment_certs"
 run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
   certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s
 
-host_replicas=3
+# What the checked-in templates say TODAY. An anchor that hardcodes the
+# template's current text is fused to it, and a template that drifts makes the
+# match silently miss. Naming the template's own values here is what lets the
+# END rule below turn that miss into a failure.
+host_template_tag=dev
+host_template_replicas=3
+
+# Two distinct facts that used to share one name. The RENDER input is what Helm
+# is asked to deploy; the EXPECTATION is what the deployment must show
+# afterwards. They diverge in the measure-startup arm, which deploys zero and
+# then scales to one outside Helm -- so one name silently meant two things, and
+# lifting the render would have disconnected the reassignment from it by
+# accident rather than by design.
+host_render_replicas=3
 if [[ "$measure_startup" == true ]]; then
-  host_replicas=0
+  host_render_replicas=0
 fi
+host_replicas=$host_render_replicas
+
+host_base_anchor_map=$(printf '%s\n' \
+  "    tag: ${host_template_tag}=    tag: ${host_tag}" \
+  "      namespace: ${system_namespace}=      namespace: ${namespace}" \
+  "      replicas: ${host_template_replicas}=      replicas: ${host_render_replicas}")
 host_base=$work_dir/host-base.yaml
-awk -v target_namespace="$namespace" -v tag="$host_tag" -v replicas="$host_replicas" '
-  /^    tag: dev$/ { print "    tag: " tag; next }
-  /^      namespace: wamn-system$/ { print "      namespace: " target_namespace; next }
-  /^      replicas: 3$/ { print "      replicas: " replicas; next }
+awk -v anchor_map="$host_base_anchor_map" '
+  BEGIN {
+    rows = split(anchor_map, row, "\n")
+    for (i = 1; i <= rows; i++) {
+      if (row[i] == "") continue
+      cut = index(row[i], "=")
+      replacement[substr(row[i], 1, cut - 1)] = substr(row[i], cut + 1)
+    }
+  }
+  $0 in replacement { print replacement[$0]; fired[$0] = 1; next }
   { print }
+  END {
+    for (anchor in replacement) {
+      if (anchor in fired) continue
+      printf "values overlay anchor never matched: [%s]\n", anchor > "/dev/stderr"
+      missed = 1
+    }
+    if (missed) exit 1
+  }
 ' "$repo_root/deploy/platform/values-host-default.yaml" >"$host_base"
+# Every secret anchor DERIVED, never spelled out. The generating rule is
+# workload_secret_name: wamn-<family>-<org>--<project>--<env>. A second
+# application declares its own families and identity and gets its own anchors;
+# nothing here reads as Receiving. The App family is separate because its
+# anchor is the platform-fixed wamn-host-db, not a derived name.
+host_overlay_anchor_map=$(
+  printf '%s\n' \
+    "      namespace: ${system_namespace}=      namespace: ${namespace}" \
+    "      replicas: ${host_template_replicas}=      replicas: ${host_render_replicas}" \
+    "              name: ${app_guest_secret_anchor}=              name: ${guest_secret_name}"
+  for family in "${app_role_families[@]}"; do
+    printf '%s\n' "              name: wamn-${family}-${app_org}--${app_project}--${app_environment}=              name: ${host_secret_name_by_family[$family]}"
+  done
+)
 host_overlay=$work_dir/host-receiving.yaml
-awk -v target_namespace="$namespace" -v component_base="$component_artifact_base" \
+awk -v anchor_map="$host_overlay_anchor_map" \
+    -v component_base="$component_artifact_base" \
     -v release_base="$release_artifact_base" -v digest="$manifest_digest" \
-    -v replicas="$host_replicas" -v nats_url="$nats_url" \
-    -v guest="$guest_secret_name" -v executor="$executor_platform_secret_name" \
-    -v materializer="$event_materializer_secret_name" \
-    -v identity="$identity_secret_name" -v http="$http_secret_name" '
-  /^      namespace: wamn-system$/ { print "      namespace: " target_namespace; next }
-  /^      replicas: 3$/ { print "      replicas: " replicas; next }
-  /^              name: wamn-host-db$/ { print "              name: " guest; next }
-  /^              name: wamn-executor-platform-acme--receiving--dev$/ {
-    print "              name: " executor; next
+    -v nats_url="$nats_url" '
+  BEGIN {
+    rows = split(anchor_map, row, "\n")
+    for (i = 1; i <= rows; i++) {
+      if (row[i] == "") continue
+      cut = index(row[i], "=")
+      replacement[substr(row[i], 1, cut - 1)] = substr(row[i], cut + 1)
+    }
   }
-  /^              name: wamn-identity-reader-acme--receiving--dev$/ {
-    print "              name: " identity; next
-  }
-  /^              name: wamn-http-admitter-acme--receiving--dev$/ {
-    print "              name: " http; next
-  }
-  /^              name: wamn-event-materializer-acme--receiving--dev$/ {
-    print "              name: " materializer; next
-  }
+  $0 in replacement { print replacement[$0]; fired[$0] = 1; next }
   /name: WAMN_WASMTIME_CACHE_DIR/ {
     print
     print "        - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector.wamn-system.svc.cluster.local:4317 }"
@@ -874,10 +945,17 @@ awk -v target_namespace="$namespace" -v component_base="$component_artifact_base
     next
   }
   { print }
+  END {
+    for (anchor in replacement) {
+      if (anchor in fired) continue
+      printf "values overlay anchor never matched: [%s]\n", anchor > "/dev/stderr"
+      missed = 1
+    }
+    if (missed) exit 1
+  }
 ' "$repo_root/deploy/platform/values-host-receiving-pat.yaml" >"$host_overlay"
 for expected in "$namespace" "$component_artifact_base" "$release_artifact_base" \
-    "$manifest_digest" "$guest_secret_name" "$executor_platform_secret_name" \
-    "$event_materializer_secret_name" "$identity_secret_name" "$http_secret_name"; do
+    "$manifest_digest" "$guest_secret_name" "${host_secret_name_by_family[@]}"; do
   grep -F -- "$expected" "$host_overlay" >/dev/null || {
     echo "rendered host overlay omitted $expected" >&2
     exit 1
@@ -1013,22 +1091,6 @@ jq -e --arg namespace "$namespace" --argjson replicas "$host_replicas" '
     (.hostId | length > 0) and (.hostname | length > 0) and .httpPort == 80 and
     any(.status.conditions[]?; .type == "Ready" and .status == "True"))
 ' >/dev/null "$evidence_dir/hosts.json"
-
-# The APPLICATION'S OWN IDENTITY, named here and nowhere else. These four
-# decide which tenant's data route authorization resolves against, so a
-# renderer that hardcoded them would deploy a second application under the
-# first one's tenant — and the journey would PASS, proving the wrong thing.
-# They are passed in for the same reason every other value here is.
-app_tenant=receiving-route-auth
-app_environment=dev
-app_project=receiving
-app_schema=receiving
-# How many SQL statements THIS application's probe route issues. Everything
-# else `trace_is_complete` checks is platform shape — authenticate, resolve,
-# pull, compile, link, instantiate, the two authority classes — and holds for
-# any caller. This one is the route's own, and a consumer whose route issues a
-# different number would fail inside a platform-sounding assertion.
-app_probe_statement_spans=1
 
 workload_manifest=$work_dir/flow-http.yaml
 awk -v target_namespace="$namespace" -v image="$flow_http_ref" -v host="$route_host" \
