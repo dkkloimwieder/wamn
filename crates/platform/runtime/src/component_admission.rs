@@ -317,6 +317,13 @@ mod tests {
 
     const OPERATION: &str = "wamn:node/handler@0.1.0";
 
+    // Every node component imports this: the handler signature is written in
+    // terms of the ABI's own types, so the import is structural, carries no
+    // application dependency and leaves the host not at all. It is filtered
+    // out of the operation-dependency comparison and reaches component policy
+    // like any other non-dependency import.
+    const NODE_TYPES_IMPORT: &str = "wamn:node/types@0.1.0";
+
     const DEPENDENCY_WITS: [(&str, &str); 5] = [
         (
             "wasi-clocks.wit",
@@ -444,7 +451,7 @@ mod tests {
             .component;
 
         assert_eq!(admitted.component_digest, component_digest(&bytes));
-        assert!(admitted.imports.is_empty());
+        assert_eq!(admitted.imports, [NODE_TYPES_IMPORT]);
         let operation = admitted.operation(OPERATION).expect("operation admits");
         assert_eq!(operation.input_ports[0].name, "input");
         assert!(operation.parameters[0].required);
@@ -556,7 +563,13 @@ mod tests {
             .expect("an exact operation dependency admits")
             .component;
 
-        assert_eq!(component.imports, [DEPENDENCY_OPERATION.to_string()]);
+        assert_eq!(
+            component.imports,
+            [
+                DEPENDENCY_OPERATION.to_string(),
+                NODE_TYPES_IMPORT.to_string()
+            ]
+        );
         assert_eq!(
             component.operations[OPERATION].dependencies,
             [dependency(DEPENDENCY_OPERATION)]
