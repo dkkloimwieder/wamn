@@ -1198,6 +1198,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-wms-data-access"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "uuid",
+ "wamn-execution-contract",
+ "wamn-postgres-statements",
+]
+
+[[package]]
 name = "wasm-bindgen"
 version = "0.2.127"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1369,6 +1381,15 @@ dependencies = [
  "serde_json",
  "unicode-ident",
  "wasmparser",
+]
+
+[[package]]
+name = "wms"
+version = "0.1.0"
+dependencies = [
+ "futures-executor",
+ "wamn-wms-data-access",
+ "wit-bindgen",
 ]
 
 [[package]]

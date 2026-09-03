@@ -10,6 +10,7 @@ resolver = "2"
 members = [
     "application/client-acme-receiving",
     "application/receiving",
+    "application/wms",
     "ingress/http-route",
     "execution/blob-put",
     "execution/materializer",
@@ -17,6 +18,7 @@ members = [
     "data/postgres-sqlx",
     "data/client-acme-receiving-data",
     "data/receiving-data",
+  "data/wms-data",
     "fixtures/busyloop",
     "fixtures/connection-http-standard",
     "fixtures/sockprobe",
@@ -92,6 +94,7 @@ wamn-postgres-statements = { path = "data/postgres-statements", version = "0.1.0
 wamn-postgres-sqlx = { path = "data/postgres-sqlx", version = "0.1.0" }
 wamn-client-acme-receiving-data-access = { path = "data/client-acme-receiving-data", version = "0.1.0" }
 wamn-receiving-data-access = { path = "data/receiving-data", version = "0.1.0" }
+wamn-wms-data-access = { path = "data/wms-data", version = "0.1.0" }
 wamn-run-state = { path = "../crates/execution/run-state", version = "0.1.0" }
 
 [profile.release]
