@@ -769,10 +769,24 @@ fn operation_dependency_imports(
     Ok(pins.into_keys().collect())
 }
 
+/// Whether an import is a cross-package APPLICATION call rather than a
+/// platform capability.
+///
+/// Keyed on the capability registry, not on a namespace. This was the LAST
+/// namespace heuristic in the tree, and §2a missed it while deleting
+/// `is_effect_package`: it read "not `wasi` and not `wamn` ⇒ an application
+/// call", which silently misclassified `wasmcloud:blobstore` as a cross-package
+/// operation dependency and made every blobstore-effect component fail its
+/// stored projection with `OperationDependencyMismatch`. §2a's claim that
+/// interfaces carry name, shape AND posture with no second classifier was not
+/// true until this moved.
+///
+/// Matching is on the registered PACKAGE, at any version, because this asks
+/// what KIND of import it is and kind does not change with version. A
+/// `wasi:clocks` import at an unregistered version is still a platform
+/// capability; refusing the version is admission's job, not this classifier's.
 fn is_application_operation_import(name: &str) -> bool {
-    wamn_component_policy::import_pkg(name)
-        .split_once(':')
-        .is_some_and(|(namespace, _)| !matches!(namespace, "wasi" | "wamn"))
+    !wamn_component_policy::is_registered_package(name)
 }
 
 /// Sort and deduplicate derived effects, pinning them to platform imports.
