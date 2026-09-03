@@ -292,7 +292,7 @@ fn profile_contract_matches_locked_metadata() {
     }
 
     assert_eq!(root_members.len(), 39);
-    assert_eq!(component_members.len(), 18);
+    assert_eq!(component_members.len(), 20);
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -419,6 +419,7 @@ fn profile_contract_matches_locked_metadata() {
             "materializer",
             "receiving",
             "transform",
+            "wms",
         ],
     );
     assert_exact_set(
@@ -443,11 +444,13 @@ fn profile_contract_matches_locked_metadata() {
             "wamn-postgres-statements",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
+            "wamn-wms-data-access",
+            "wms",
         ],
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 8);
-    assert_eq!(component_proof.len(), 18);
+    assert_eq!(component_m1.len(), 9);
+    assert_eq!(component_proof.len(), 20);
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(
@@ -466,6 +469,7 @@ fn profile_contract_matches_locked_metadata() {
             "wamn-postgres-statements",
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
+            "wamn-wms-data-access",
         ]
         .into_iter()
         .map(str::to_string)

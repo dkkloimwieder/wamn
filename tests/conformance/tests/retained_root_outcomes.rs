@@ -108,6 +108,11 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "wamn-client-acme-receiving-data-access",
         "components/data/client-acme-receiving-data/src/lib.rs",
     ),
+    ("wms", "components/application/wms/src/lib.rs"),
+    (
+        "wamn-wms-data-access",
+        "components/data/wms-data/src/lib.rs",
+    ),
     ("busyloop", "components/fixtures/busyloop/src/main.rs"),
     (
         "connection-http-standard",

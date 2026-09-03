@@ -18,7 +18,7 @@ members = [
     "data/postgres-sqlx",
     "data/client-acme-receiving-data",
     "data/receiving-data",
-  "data/wms-data",
+    "data/wms-data",
     "fixtures/busyloop",
     "fixtures/connection-http-standard",
     "fixtures/sockprobe",

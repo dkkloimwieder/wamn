@@ -8,10 +8,11 @@ use std::path::{Path, PathBuf};
 
 const AUTHORITY_COPY: &str = "crates/platform/runtime/wit/deps/wamn-postgres/package.wit";
 
-const EXPECTED_COPIES: [&str; 5] = [
+const EXPECTED_COPIES: [&str; 6] = [
     "components/data/postgres-statements/wit/deps/wamn-postgres/package.wit",
     "components/data/postgres-sqlx/wit/deps/wamn-postgres/package.wit",
     "components/data/receiving-data/wit/deps/wamn-postgres/package.wit",
+    "components/data/wms-data/wit/deps/wamn-postgres/package.wit",
     "components/execution/materializer/wit/deps/wamn-postgres/package.wit",
     AUTHORITY_COPY,
 ];
