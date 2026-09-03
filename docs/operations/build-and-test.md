@@ -1359,6 +1359,35 @@ call through the interface, and the test then verifies the import is present**
 names the import it caught. A fixture that only *declares* an import proves
 nothing about it.
 
+**A test must assert the DISTINGUISHING STEP, not a count that can coincide.**
+An assertion can pass for a reason unrelated to the property it is named for,
+and a count is the commonest way. This has now bitten three times, each caught
+by mutation testing rather than by review:
+
+- A generator seed mutant survived because the duplicate and reorder stages
+  still consumed the seed, so dropping it from id generation changed nothing
+  the test looked at.
+- An IR byte-stability gate passed by reading the same files twice and
+  comparing — trivially stable, and blind to the reordering it existed to
+  detect. Strengthened to reorder-then-compare, it immediately found a real
+  passthrough bug.
+- A TUI highlight test pressed down three times over two rows and asserted the
+  final index. Three presses over two rows land on the same index whether the
+  highlight saturates or wraps, so a wrapping mutant survived a test named
+  `the_highlight_saturates_rather_than_wrapping`.
+
+**Standing law: assert the step at which the correct and incorrect behaviours
+first differ, not an aggregate they may agree on.** For the highlight that is
+"from the last row, one more press stays put"; for byte stability it is
+"reorder the non-semantic lists and compare"; for a seed it is "vary only the
+seed with every other knob off". The test that survives a mutant is the one
+that names the difference, and the way to find out is to write the mutant.
+
+Corollary, from the same three: canonical means order-independent **only for
+sets**, so a reorder-and-compare test must know which of its lists are sets
+and which are orderings. Reversing an ordering correctly fails a correct
+implementation.
+
 **A wrong package name greps as zero failures.** `cargo test -p <nonexistent>`
 errors out — it does not run and report zero. Measured at `1bffa614`:
 
