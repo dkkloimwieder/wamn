@@ -71,6 +71,7 @@ pub struct HttpResponse {
 #[derive(Debug)]
 pub struct WamnClient {
     base_url: String,
+    host: Option<String>,
     credentials: Arc<dyn CredentialProvider>,
     transport: Arc<dyn Transport>,
 }
@@ -78,17 +79,24 @@ pub struct WamnClient {
 impl WamnClient {
     /// Bind to one deployment.
     ///
-    /// The base URL and credential provider are construction-time, not
+    /// Base URL, host and credential provider are construction-time, not
     /// per-call: a client that could be pointed elsewhere mid-flight would let
     /// one screen's requests reach two deployments.
+    ///
+    /// `host` is the header the deployment routes on, when it routes by host.
+    /// It sits HERE and not on a route because a release does not record one —
+    /// publication refuses an authored `route.host` and the deployment stamps
+    /// it in at mint — so it is deployment config exactly like the base URL.
     #[must_use]
     pub fn new(
         base_url: impl Into<String>,
+        host: Option<String>,
         credentials: Arc<dyn CredentialProvider>,
         transport: Arc<dyn Transport>,
     ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_owned(),
+            host,
             credentials,
             transport,
         }
@@ -127,7 +135,7 @@ impl WamnClient {
         let mut headers = BTreeMap::new();
         headers.insert("content-type".to_owned(), "application/json".to_owned());
         headers.insert("authorization".to_owned(), format!("Bearer {bearer}"));
-        if let Some(host) = &route.host {
+        if let Some(host) = &self.host {
             headers.insert("host".to_owned(), host.clone());
         }
 

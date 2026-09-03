@@ -50,6 +50,7 @@ impl Transport for FakeTransport {
 fn client(transport: Arc<FakeTransport>) -> WamnClient {
     WamnClient::new(
         "http://flow-http.wamn-system.svc/",
+        Some("receiving.localhost".to_owned()),
         Arc::new(StaticPat::new("pat-abc").expect("token")) as Arc<dyn CredentialProvider>,
         transport as Arc<dyn Transport>,
     )
@@ -59,7 +60,6 @@ fn route() -> RouteMetadata {
     RouteMetadata {
         method: "POST".to_owned(),
         template: "/purchase_order/update".to_owned(),
-        host: Some("receiving.localhost".to_owned()),
     }
 }
 
@@ -85,6 +85,8 @@ async fn the_request_carries_the_bearer_the_host_and_a_canonical_envelope() {
     assert_eq!(sent.headers["host"], "receiving.localhost");
     assert_eq!(sent.headers["content-type"], "application/json");
 
+    // The host header comes from the CLIENT's deployment config, not from the
+    // route: a release records no host, so a route could not supply one.
     // The body is an ARRAY envelope, and canonical — the same bytes the
     // platform hashes elsewhere.
     let body: serde_json::Value = serde_json::from_slice(&sent.body).expect("body is JSON");
@@ -186,7 +188,6 @@ async fn a_missing_route_parameter_refuses_before_sending() {
     let parameterised = RouteMetadata {
         method: "POST".to_owned(),
         template: "/purchase_order/{id}".to_owned(),
-        host: None,
     };
     let error = client(Arc::clone(&transport))
         .invoke(&parameterised, &BTreeMap::new(), &[item("r1")])
@@ -196,5 +197,51 @@ async fn a_missing_route_parameter_refuses_before_sending() {
     assert!(
         transport.seen.lock().expect("lock").is_none(),
         "nothing may be sent when the route could not be built"
+    );
+}
+
+/// The host is CLIENT config, not route config.
+///
+/// Two clients pointed at different deployments send the same release-derived
+/// route to different hosts. This is the seam ruling 3 requires: a release
+/// records no host — publication refuses an authored `route.host` — so a route
+/// cannot supply one, and only the client can.
+#[tokio::test]
+async fn the_same_route_reaches_different_hosts_from_different_clients() {
+    let mut seen = Vec::new();
+    for host in ["receiving.localhost", "receiving.staging.internal"] {
+        let transport = FakeTransport::replying(200, r#"[{"request_id":"r1","value":null}]"#);
+        WamnClient::new(
+            "http://flow-http.wamn-system.svc",
+            Some(host.to_owned()),
+            Arc::new(StaticPat::new("pat-abc").expect("token")) as Arc<dyn CredentialProvider>,
+            Arc::clone(&transport) as Arc<dyn Transport>,
+        )
+        .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+        .await
+        .expect("call");
+        seen.push(transport.request().headers["host"].clone());
+    }
+    assert_eq!(seen, ["receiving.localhost", "receiving.staging.internal"]);
+}
+
+/// A client with no host sends none. A deployment that routes by path alone
+/// must not receive a fabricated header.
+#[tokio::test]
+async fn a_client_with_no_host_sends_no_host_header() {
+    let transport = FakeTransport::replying(200, r#"[{"request_id":"r1","value":null}]"#);
+    WamnClient::new(
+        "http://flow-http.wamn-system.svc",
+        None,
+        Arc::new(StaticPat::new("pat-abc").expect("token")) as Arc<dyn CredentialProvider>,
+        Arc::clone(&transport) as Arc<dyn Transport>,
+    )
+    .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+    .await
+    .expect("call");
+    assert!(
+        !transport.request().headers.contains_key("host"),
+        "a host header was fabricated: {:?}",
+        transport.request().headers
     );
 }

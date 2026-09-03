@@ -68,15 +68,20 @@ impl core::fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
-/// One published route, as the deployment describes it.
+/// One published route, as the RELEASE declares it.
+///
+/// Method and template only — both release facts, both emittable from the
+/// client-contract IR. The host deliberately is NOT here: publication refuses
+/// an authored `route.host` and stamps one in at release mint, so a host is
+/// deployment fact and lives on the client beside its base URL. Carrying it
+/// in this struct put a deployment fact in the same value as two release
+/// facts, which is the mixing ruling 3 exists to prevent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteMetadata {
     /// HTTP method, e.g. `POST`.
     pub method: String,
     /// Authored path template, e.g. `/purchase_order/{id}`.
     pub template: String,
-    /// Host header the deployment routes on, when it routes by host.
-    pub host: Option<String>,
 }
 
 impl RouteMetadata {
@@ -144,7 +149,6 @@ mod tests {
         RouteMetadata {
             method: "POST".to_owned(),
             template: template.to_owned(),
-            host: Some("receiving.localhost".to_owned()),
         }
     }
 
