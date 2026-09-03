@@ -211,8 +211,7 @@ fn the_aggregate_excludes_consumed_pallets() {
 #[test]
 fn the_composed_wiring_is_a_three_node_graph() {
     let document = read_json(
-        &repository_root()
-            .join("packages/wms/publication/wirings/inventory_move_and_label.json"),
+        &repository_root().join("packages/wms/publication/wirings/inventory_move_and_label.json"),
     );
     let wiring = wamn_catalog::WiringDocument::parse(&document)
         .expect("the composed wiring is a valid document");
@@ -247,8 +246,7 @@ fn the_composed_wiring_is_a_three_node_graph() {
 #[test]
 fn the_wirings_params_carry_the_mapping() {
     let document = read_json(
-        &repository_root()
-            .join("packages/wms/publication/wirings/inventory_move_and_label.json"),
+        &repository_root().join("packages/wms/publication/wirings/inventory_move_and_label.json"),
     );
     let wiring = wamn_catalog::WiringDocument::parse(&document).expect("parses");
 

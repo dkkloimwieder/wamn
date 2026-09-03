@@ -1,0 +1,17 @@
+[package]
+name = "wamn-wms-data-access"
+version.workspace = true
+edition.workspace = true
+description = "Typed WMS data-access kernel over wamn:postgres"
+license = "Apache-2.0"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid = "1"
+wamn-execution-contract = { workspace = true }
+wamn-postgres-statements = { workspace = true }
+
+[lints]
+workspace = true
