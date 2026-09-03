@@ -102,6 +102,12 @@ pub struct GeneratedFile {
 }
 
 impl GeneratedFile {
+    /// One generated artifact. Sibling modules emit their own files; the
+    /// fields stay private so a path and its bytes are always set together.
+    pub(crate) fn new(path: Box<str>, bytes: Box<[u8]>) -> Self {
+        Self { path, bytes }
+    }
+
     /// Package-relative artifact path.
     pub fn path(&self) -> &str {
         &self.path

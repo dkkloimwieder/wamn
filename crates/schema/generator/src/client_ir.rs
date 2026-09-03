@@ -568,12 +568,35 @@ fn build_model(
     // The model's descriptor set is the union of what its operations return.
     // Unioned rather than taken from one operation, because `get` and `query`
     // may each project a subset and a control needs the whole field.
-    let mut fields: Vec<FieldIr> = built
+    //
+    // UNIONED BY PATH, and nullability WIDENS. One operation's result may
+    // admit null where another's does not — `update` returns the row it did
+    // not write as null while `get` always projects it — and a plain sort and
+    // dedup keeps both, so a table over this model would render the same
+    // column twice with contradictory nullability. A control must assume the
+    // weaker guarantee: a field null in ANY projection can arrive null.
+    let mut merged: BTreeMap<String, FieldIr> = BTreeMap::new();
+    for field in built
         .iter()
-        .flat_map(|operation| operation.result_fields.clone())
-        .collect();
-    fields.sort();
-    fields.dedup();
+        .flat_map(|operation| operation.result_fields.iter())
+    {
+        merged
+            .entry(field.path.clone())
+            .and_modify(|existing| {
+                existing.nullable |= field.nullable;
+                // A closed domain stated anywhere is the model's domain; two
+                // different closed domains for one path union rather than one
+                // silently winning.
+                for value in &field.values {
+                    if !existing.values.contains(value) {
+                        existing.values.push(value.clone());
+                    }
+                }
+                existing.values.sort();
+            })
+            .or_insert_with(|| field.clone());
+    }
+    let fields: Vec<FieldIr> = merged.into_values().collect();
     Ok(ModelIr {
         name: name.to_owned(),
         fields,

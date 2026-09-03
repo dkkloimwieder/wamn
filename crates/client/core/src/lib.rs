@@ -19,6 +19,7 @@
 
 pub mod credentials;
 pub mod cursor;
+pub mod descriptor;
 pub mod error;
 pub mod route;
 
@@ -27,6 +28,7 @@ use std::sync::Arc;
 
 pub use credentials::{CredentialProvider, StaticPat};
 pub use cursor::Cursor;
+pub use descriptor::FieldDescriptor;
 pub use error::{ClientError, ItemOutcome};
 pub use route::{RouteError, RouteMetadata};
 
