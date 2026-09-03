@@ -868,9 +868,9 @@ fi
 host_replicas=$host_render_replicas
 
 host_base_anchor_map=$(printf '%s\n' \
-  "    tag: ${host_template_tag}=    tag: ${host_tag}" \
-  "      namespace: ${system_namespace}=      namespace: ${namespace}" \
-  "      replicas: ${host_template_replicas}=      replicas: ${host_render_replicas}")
+  "tag: ${host_template_tag}=tag: ${host_tag}" \
+  "namespace: ${system_namespace}=namespace: ${namespace}" \
+  "replicas: ${host_template_replicas}=replicas: ${host_render_replicas}")
 host_base=$work_dir/host-base.yaml
 awk -v anchor_map="$host_base_anchor_map" '
   BEGIN {
@@ -881,15 +881,35 @@ awk -v anchor_map="$host_base_anchor_map" '
       replacement[substr(row[i], 1, cut - 1)] = substr(row[i], cut + 1)
     }
   }
-  $0 in replacement { print replacement[$0]; fired[$0] = 1; next }
+  {
+    # Match the line CONTENT and re-emit at the file own indentation. The
+    # anchors used to carry the template exact leading spaces, which coupled
+    # the harness to a file it does not own: re-indenting the template made
+    # every match miss at once. Content is what the anchor means; the indent
+    # belongs to the template.
+    body = $0
+    sub(/^[ \t]+/, "", body)
+    if (body in replacement) {
+      indent = substr($0, 1, length($0) - length(body))
+      print indent replacement[body]
+      fired[body]++
+      next
+    }
+  }
   { print }
   END {
+    # EXACTLY once, not at least once. Matching on content rather than on the
+    # full indented line widens what an anchor can reach, so the count is what
+    # keeps it honest: a never-fired anchor is a drifted template, and a
+    # twice-fired one is an anchor that has started matching a second place in
+    # the tree. Both are silent corruption of the rendered values otherwise.
     for (anchor in replacement) {
-      if (anchor in fired) continue
-      printf "values overlay anchor never matched: [%s]\n", anchor > "/dev/stderr"
-      missed = 1
+      if (fired[anchor] == 1) continue
+      printf "values overlay anchor matched %d times, want 1: [%s]\n", \
+        fired[anchor], anchor > "/dev/stderr"
+      wrong = 1
     }
-    if (missed) exit 1
+    if (wrong) exit 1
   }
 ' "$repo_root/deploy/platform/values-host-default.yaml" >"$host_base"
 # Every secret anchor DERIVED, never spelled out. The generating rule is
@@ -899,11 +919,11 @@ awk -v anchor_map="$host_base_anchor_map" '
 # anchor is the platform-fixed wamn-host-db, not a derived name.
 host_overlay_anchor_map=$(
   printf '%s\n' \
-    "      namespace: ${system_namespace}=      namespace: ${namespace}" \
-    "      replicas: ${host_template_replicas}=      replicas: ${host_render_replicas}" \
-    "              name: ${app_guest_secret_anchor}=              name: ${guest_secret_name}"
+    "namespace: ${system_namespace}=namespace: ${namespace}" \
+    "replicas: ${host_template_replicas}=replicas: ${host_render_replicas}" \
+    "name: ${app_guest_secret_anchor}=name: ${guest_secret_name}"
   for family in "${app_role_families[@]}"; do
-    printf '%s\n' "              name: wamn-${family}-${app_org}--${app_project}--${app_environment}=              name: ${host_secret_name_by_family[$family]}"
+    printf '%s\n' "name: wamn-${family}-${app_org}--${app_project}--${app_environment}=name: ${host_secret_name_by_family[$family]}"
   done
 )
 host_overlay=$work_dir/host-receiving.yaml
@@ -919,7 +939,21 @@ awk -v anchor_map="$host_overlay_anchor_map" \
       replacement[substr(row[i], 1, cut - 1)] = substr(row[i], cut + 1)
     }
   }
-  $0 in replacement { print replacement[$0]; fired[$0] = 1; next }
+  {
+    # Match the line CONTENT and re-emit at the file own indentation. The
+    # anchors used to carry the template exact leading spaces, which coupled
+    # the harness to a file it does not own: re-indenting the template made
+    # every match miss at once. Content is what the anchor means; the indent
+    # belongs to the template.
+    body = $0
+    sub(/^[ \t]+/, "", body)
+    if (body in replacement) {
+      indent = substr($0, 1, length($0) - length(body))
+      print indent replacement[body]
+      fired[body]++
+      next
+    }
+  }
   /name: WAMN_WASMTIME_CACHE_DIR/ {
     print
     print "        - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector.wamn-system.svc.cluster.local:4317 }"
@@ -946,12 +980,18 @@ awk -v anchor_map="$host_overlay_anchor_map" \
   }
   { print }
   END {
+    # EXACTLY once, not at least once. Matching on content rather than on the
+    # full indented line widens what an anchor can reach, so the count is what
+    # keeps it honest: a never-fired anchor is a drifted template, and a
+    # twice-fired one is an anchor that has started matching a second place in
+    # the tree. Both are silent corruption of the rendered values otherwise.
     for (anchor in replacement) {
-      if (anchor in fired) continue
-      printf "values overlay anchor never matched: [%s]\n", anchor > "/dev/stderr"
-      missed = 1
+      if (fired[anchor] == 1) continue
+      printf "values overlay anchor matched %d times, want 1: [%s]\n", \
+        fired[anchor], anchor > "/dev/stderr"
+      wrong = 1
     }
-    if (missed) exit 1
+    if (wrong) exit 1
   }
 ' "$repo_root/deploy/platform/values-host-receiving-pat.yaml" >"$host_overlay"
 for expected in "$namespace" "$component_artifact_base" "$release_artifact_base" \
