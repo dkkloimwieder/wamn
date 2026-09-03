@@ -4,6 +4,7 @@ set -euo pipefail
 readonly WAMN_USAGE='usage:
   tools/build-components m1 | proof
   tools/build-components build-only m1 | proof
+  tools/build-components watch-roots m1 | proof
   tools/build-components virtualize-only ARTIFACT_PLAN'
 
 wamn_fail() {
@@ -31,6 +32,14 @@ case "$#:${1:-}" in
     ;;
   2:build-only)
     WAMN_MODE='build-only'
+    WAMN_PROFILE="$2"
+    case "$WAMN_PROFILE" in
+      m1 | proof) ;;
+      *) wamn_usage_error "unknown component profile '$WAMN_PROFILE'" ;;
+    esac
+    ;;
+  2:watch-roots)
+    WAMN_MODE='watch-roots'
     WAMN_PROFILE="$2"
     case "$WAMN_PROFILE" in
       m1 | proof) ;;
@@ -180,6 +189,19 @@ WAMN_PLAN="$(
   ' "$WAMN_TIER_MANIFEST" -
 )" || wamn_fail 65 'component profile, canonical inventory, and locked metadata drifted'
 readonly WAMN_PLAN
+
+if [[ "$WAMN_MODE" == watch-roots ]]; then
+  jq -nceS --arg profile "$WAMN_PROFILE" --argjson build "$WAMN_PLAN" '
+    {profile: $profile,
+     workspace_roots:
+       [$build[].manifest
+        | select(endswith("/Cargo.toml"))
+        | sub("/Cargo.toml$"; "")]
+       | sort}
+    | select(.workspace_roots | length == ($build | length))
+  '
+  exit 0
+fi
 
 # This is an allowlist, not discovery: upstream import filtering does not cover
 # filesystem imports, so an undeclared std guest must remain raw and fail its

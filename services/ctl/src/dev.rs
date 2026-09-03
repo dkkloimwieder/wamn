@@ -5,6 +5,8 @@
 //! publication owners and enter through [`DevStageRunner`].
 
 pub mod activation;
+#[cfg(target_os = "linux")]
+pub mod command;
 pub mod config;
 #[cfg(target_os = "linux")]
 pub mod coordinator;
