@@ -1498,6 +1498,13 @@ rather than on what you name. Each of these has cost real work in one session:
   to revert a mutant, and it silently discards everything else uncommitted in
   that file. Commit before mutation testing, then `git checkout` restores the
   commit rather than deleting the work.
+  **And git cannot restore what it does not TRACK.** A mutant applied to a new,
+  untracked file leaves `git checkout` failing with a pathspec error — which
+  looks like a command that did nothing, because it did, while the mutation is
+  still in place and the next test run measures the mutant. Restoring an
+  untracked file is written by hand, or the file is committed first. Measured
+  on the WMS aggregate: `WHERE true` survived a "restore" and only the explicit
+  re-read caught it.
 
 The common shape: a command whose subject is "the current state" rather than
 an argument you wrote. In a single-agent repository these are conveniences; in
