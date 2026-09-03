@@ -1555,6 +1555,38 @@ moves out from under it.
 This is the same failure as asserting a count that can coincide, one level up.
 There, the assertion passed for the wrong reason; here, the whole check does.
 
+**And the control has to ISOLATE, or it proves the neighbour.** Overlapping
+guards are defence in depth in production and a measurement hazard in test: if
+a known-bad input is refused by two guards, the refusal says nothing about
+which one fired, so deleting the guard under test leaves the proof green. That
+is a survivor produced by a control that looked exactly right.
+
+Measured instance. A shared function refused an empty role-family declaration
+by its own explicit check — and *also*, incidentally, by a later declared-set
+comparison, because an empty list built a garbage `.json` expectation that
+then failed to match. Deleting the explicit check changed no outcome. A first
+attempt to isolate it, by seeding a directory the declared-set guard would
+accept, was still caught by the declared-set guard for the second reason and
+proved nothing.
+
+**The general fix is to assert the MESSAGE, not the refusal.** What the
+narrower guard is worth is naming the true cause rather than letting a
+confusing downstream mismatch stand in for it, so that is the property to
+assert — the error text names *this* guard's reason. It makes the guard
+non-equivalent, which is exactly the thing a surviving mutant was telling you
+it was not. Where a guard genuinely cannot be isolated even by its message, it
+is equivalent to its neighbour: say so and delete one, rather than keeping two
+claims and testing neither.
+
+**A guard nothing can reach is a claim, not a guard — delete it, and record
+why where it stood.** The deletion rule at guard grain. The same pass found an
+`-f` existence check that no input could reach: the declared set had already
+been compared against the directory listing, so every path the loop opened was
+one the listing produced. Removing it changed nothing because nothing could
+reach it. A surviving mutant means one of three things — the assertion is
+missing, the control does not isolate, or the code is dead — and they are
+distinguished by asking what input would reach it.
+
 **The lift checklist.** Before extracting any block into a shared function,
 answer three questions, and answer them BEFORE the extraction rather than
 after:
