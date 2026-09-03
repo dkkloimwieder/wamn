@@ -1609,6 +1609,48 @@ distinguish "generic" from "has only ever had one caller" — only a second
 caller with different values can, which is why a second application is worth
 more as a review of the first than as a feature.
 
+**A fusion does not only distort structure — it can CORRUPT EVIDENCE, and that
+instance is the one to keep.** The values-overlay block substituted a replica
+count with the awk pattern `/^      replicas: 3$/`, hardcoding the template's
+own current value. A template that drifted made the match silently miss, and
+the line passed through unchanged. In the `--measure-startup` arm that is not
+a cosmetic defect: the arm asks for `0` replicas so it can scale from zero and
+time a cold start, and the missed anchor rendered `3`. The host was never
+scaled to zero, so "cold startup" was measured against an already-running
+host — and the run stayed green, because both post-render verification loops
+checked the five secret names and neither checked `replicas`.
+
+The distinction worth carrying: a fusion that only couples code is a
+maintenance cost, and a reviewer will find it. A fusion sitting between a
+measurement and the state it measures manufactures a plausible number and
+reports success. Nothing downstream can tell that number from a real one. So
+when un-fusing anything a proof READS, ask which of its substitutions are
+checked afterwards — the guarded ones fail loudly and were never the risk; the
+unguarded one is where the false measurement lives. The fix is two changes,
+not one: derive the anchor, AND assert that every declared anchor fired.
+Measured against the same mutant, the old block exits 0 having rendered the
+wrong count, and the new block exits 1 naming the anchor.
+
+**A variable that means both "input to a render" and "expected state after an
+imperative step" is two variables wearing one name.** `host_replicas` was set
+to 3, or to 0 under `--measure-startup`, and passed to both renders. Then the
+measure arm deployed zero replicas through Helm, scaled to one imperatively
+outside Helm, and REASSIGNED the same variable to 1 — after which four
+downstream assertions read it as the expectation. Both readings are correct
+and they are not the same fact, so the name was true only because nothing
+between the two uses looked at it.
+
+This shape is specifically dangerous to LIFT. Extracting the render into a
+function that takes `replicas` as a parameter severs the later reassignment
+from it — which is the right outcome, arrived at by accident rather than by
+design, and silently. The reader who later reintroduces a single name will not
+find a test that objects. Split the name before extracting, not after:
+`host_render_replicas` is frozen once the arm is chosen, `host_replicas` is
+the expectation and may be reassigned. The general rule is that a lift is safe
+only when every name it captures means exactly one thing across its whole
+lifetime, and the way to check is to look for reassignment BETWEEN the uses,
+not at the uses.
+
 **Standing law: a shared block reads only what it is passed.** No closure over
 caller state, no constant belonging to one consumer. Where a block is genuinely
 mixed, UN-FUSE IT IN PLACE FIRST — as its own change, proven by the existing
