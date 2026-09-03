@@ -1,0 +1,161 @@
+{
+  "pallet-get-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "wiring-id": "pallet_get",
+    "wiring-version": 1,
+    "definition-hash": "sha256:570982058b020e74d6611b335936c9afcc84c7721557a2758936edc4a35984b1",
+    "definition": {
+      "id": "pallet-get-http",
+      "kind": "http",
+      "route": {
+        "path": "/pallet/get",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "mode": "pat"
+    },
+    "registered-operation": "wamn-wms:pallet/get@1.0.0"
+  },
+  "pallet-query-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "wiring-id": "pallet_query",
+    "wiring-version": 1,
+    "definition-hash": "sha256:942858512eb73ea49041a552c7539684113d720c395d8e535b3da71549f66091",
+    "definition": {
+      "id": "pallet-query-http",
+      "kind": "http",
+      "route": {
+        "path": "/pallet/query",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "mode": "pat"
+    },
+    "registered-operation": "wamn-wms:pallet/query@1.0.0"
+  },
+  "inventory-move-http": {
+    "kind": "http",
+    "package-id": "wamn_wms",
+    "wiring-id": "inventory_move",
+    "wiring-version": 1,
+    "definition-hash": "sha256:e828d1908ab670d3c36a8eb9d4c50d737645f3f84f3c0629659f6425f0af26a2",
+    "definition": {
+      "id": "inventory-move-http",
+      "kind": "http",
+      "route": {
+        "path": "/inventory/move",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "value"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "object",
+              "required": [
+                "idempotency_key",
+                "pallet_id",
+                "to_location_id",
+                "expected_row_version",
+                "occurred_at"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "idempotency_key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "pallet_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "to_location_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                },
+                "expected_row_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "occurred_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "mode": "pat"
+    },
+    "registered-operation": "wamn-wms:inventory/move@1.0.0"
+  }
+}

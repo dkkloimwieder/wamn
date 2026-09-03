@@ -26,3 +26,5 @@ pub mod trusted_http_route;
 #[cfg(test)]
 mod virtualized_std_guest;
 pub mod walbench;
+#[cfg(test)]
+mod wms_publication;
