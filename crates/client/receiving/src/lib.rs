@@ -1,4 +1,4 @@
-//! The Receiving operator terminal.
+//! The Receiving operator screens.
 //!
 //! Two screens — a purchase order list and receipt entry — over the routes the
 //! release publishes. The interesting parts are [`model`] and [`reduce`]: a
@@ -9,6 +9,11 @@
 //! [`request`] builds the `record_receipt` envelope, and [`screen`] renders a
 //! state through the primitive controls. Neither decides anything the reducer
 //! has not already decided.
+//!
+//! No terminal is entered here and no binary runs these screens yet. The
+//! driver that would — raw mode, the alternate screen, an event stream —
+//! currently lives with the developer client in services/ctl and moves out
+//! when this crate takes a binary (wamn-10yt.5.9).
 
 pub mod model;
 pub mod reduce;
