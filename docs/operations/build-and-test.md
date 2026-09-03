@@ -1582,6 +1582,33 @@ code:
   the journey PASSES. A green gate proving the wrong thing is worse than a red
   one.
 
+**The test of an un-fusing: a parameter no test can distinguish from the
+constant it replaced is the same fusion with extra steps.** Introducing the
+argument is not the work; proving it CHANGES something is. The statement-count
+un-fusing above was proven by evaluating the extracted `jq` program twice —
+expecting 1 passes, expecting 8 fails — because a parameter that only ever
+receives the old literal has moved the coupling without removing it, and reads
+as fixed to every later reader.
+
+**A constant is only proven generic when a SECOND CONSUMER with different
+values passes through it.** This is the working definition of the second-app
+problem, and it was learned three times on one file. Each block read as
+platform code; each turned out to carry one application's values:
+
+- `trace_is_complete()` — generic span names, and one statement count.
+- The workload renderer — generic namespace and image, and four identity claims.
+- A five-file secret assertion that looked like a platform invariant asserted
+  over app-produced output. It is not a platform invariant at all: the
+  platform owns a twelve-variant role-family vocabulary, the journey emits
+  five of them, and the values overlay substitutes each by a name carrying
+  `org--project--env`. Reading the ASSERTION made it look platform; reading
+  its CONSUMER showed it is not.
+
+The lesson is about method, not about these three blocks. Inspection cannot
+distinguish "generic" from "has only ever had one caller" — only a second
+caller with different values can, which is why a second application is worth
+more as a review of the first than as a feature.
+
 **Standing law: a shared block reads only what it is passed.** No closure over
 caller state, no constant belonging to one consumer. Where a block is genuinely
 mixed, UN-FUSE IT IN PLACE FIRST — as its own change, proven by the existing
