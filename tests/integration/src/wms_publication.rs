@@ -24,7 +24,7 @@ struct Operation {
     route: &'static str,
 }
 
-const OPERATIONS: [Operation; 3] = [
+const OPERATIONS: [Operation; 6] = [
     Operation {
         wiring: "pallet_get",
         token: "wamn-wms:pallet/get@1.0.0",
@@ -36,6 +36,24 @@ const OPERATIONS: [Operation; 3] = [
         token: "wamn-wms:pallet/query@1.0.0",
         attachment: "pallet-query-http",
         route: "/pallet/query",
+    },
+    Operation {
+        wiring: "inventory_adjust",
+        token: "wamn-wms:inventory/adjust@1.0.0",
+        attachment: "inventory-adjust-http",
+        route: "/inventory/adjust",
+    },
+    Operation {
+        wiring: "inventory_merge",
+        token: "wamn-wms:inventory/merge@1.0.0",
+        attachment: "inventory-merge-http",
+        route: "/inventory/merge",
+    },
+    Operation {
+        wiring: "inventory_split",
+        token: "wamn-wms:inventory/split@1.0.0",
+        attachment: "inventory-split-http",
+        route: "/inventory/split",
     },
     Operation {
         wiring: "inventory_move",
@@ -69,7 +87,7 @@ fn declaration() -> ComponentDeclaration {
 }
 
 #[test]
-fn package_owned_inputs_declare_the_exact_three_route_closure() {
+fn package_owned_inputs_declare_the_exact_six_route_closure() {
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_value(read_json(&publication_root().join("attachments.json")))
             .expect("the WMS attachment map decodes");
