@@ -8,6 +8,8 @@ pub mod activation;
 pub mod config;
 pub mod verification_database;
 pub mod verification_world;
+#[cfg(target_os = "linux")]
+pub mod watch;
 
 use std::error::Error;
 use std::fmt;
@@ -117,6 +119,30 @@ pub enum DevStageBoundary {
 pub enum DevSourceState {
     Clean,
     Dirty,
+}
+
+/// Supplies the current Git-backed source state at provenance boundaries.
+///
+/// Watch invalidations carry the state observed with the filesystem event, but
+/// a run may itself change governed files. Production callers therefore use
+/// this seam to re-read the worktree immediately before every committed-source
+/// stage.
+pub trait DevSourceStateProvider {
+    type Error: Error + Send + Sync + 'static;
+
+    /// Read the current state of the originating source repository.
+    fn source_state(&mut self) -> impl Future<Output = Result<DevSourceState, Self::Error>> + Send;
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FixedSourceState(DevSourceState);
+
+impl DevSourceStateProvider for FixedSourceState {
+    type Error = std::convert::Infallible;
+
+    async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
+        Ok(self.0)
+    }
 }
 
 /// One client-owned invalidation delivered to the watch engine.
@@ -318,11 +344,26 @@ pub async fn run_once<R>(
 where
     R: DevStageRunner + Send,
 {
+    let mut source_state_provider = FixedSourceState(source_state);
+    run_once_with_source_state_provider(config, runner, &mut source_state_provider).await
+}
+
+/// Run once while re-reading source state at each committed-source boundary.
+pub async fn run_once_with_source_state_provider<R, P>(
+    config: &DevConfig,
+    runner: &mut R,
+    source_state_provider: &mut P,
+) -> Result<Result<DevRunReceipt, DevRunError>, VerificationDatabaseError>
+where
+    R: DevStageRunner + Send,
+    P: DevSourceStateProvider + Send,
+{
     verification_database::run(config, |verification_database_url| async move {
         verification_world::bootstrap(&verification_database_url)
             .await
             .map_err(|error| DevRunError::stage_failed(DevStage::Migrate, error))?;
-        run_once_stages(source_state, runner).await
+        run_suffix_with_source_state_provider(DevStage::Migrate, runner, source_state_provider)
+            .await
     })
     .await
 }
@@ -345,13 +386,30 @@ async fn run_suffix<R>(
 where
     R: DevStageRunner,
 {
+    let mut source_state_provider = FixedSourceState(source_state);
+    run_suffix_with_source_state_provider(from, runner, &mut source_state_provider).await
+}
+
+async fn run_suffix_with_source_state_provider<R, P>(
+    from: DevStage,
+    runner: &mut R,
+    source_state_provider: &mut P,
+) -> Result<DevRunReceipt, DevRunError>
+where
+    R: DevStageRunner,
+    P: DevSourceStateProvider,
+{
     let first = from.position();
     let mut completed = Vec::with_capacity(DEV_STAGE_ORDER.len() - first);
     for stage in DEV_STAGE_ORDER.into_iter().skip(first) {
-        if source_state == DevSourceState::Dirty
-            && stage.boundary() == DevStageBoundary::CommittedSource
-        {
-            return Err(DevRunError::dirty_worktree(stage));
+        if stage.boundary() == DevStageBoundary::CommittedSource {
+            let source_state = source_state_provider
+                .source_state()
+                .await
+                .map_err(|error| DevRunError::stage_failed(stage, error))?;
+            if source_state == DevSourceState::Dirty {
+                return Err(DevRunError::dirty_worktree(stage));
+            }
         }
         runner
             .run(stage)
@@ -395,6 +453,34 @@ where
     .await
 }
 
+/// Watch while re-reading Git state at every committed-source boundary.
+pub async fn run_watch_with_source_state_provider<R, S, O, P>(
+    config: &DevConfig,
+    runner: &mut R,
+    source: &mut S,
+    observer: &mut O,
+    source_state_provider: &mut P,
+) -> Result<Result<(), S::Error>, VerificationDatabaseError>
+where
+    R: DevStageRunner + Send,
+    S: DevInvalidationSource + Send,
+    O: DevWatchObserver + Send,
+    P: DevSourceStateProvider + Send,
+{
+    verification_database::run(config, |verification_database_url| async move {
+        if let Err(error) = verification_world::bootstrap(&verification_database_url).await {
+            observer.completed(DevWatchOutcome {
+                from: DevStage::Migrate,
+                result: Err(DevRunError::stage_failed(DevStage::Migrate, error)),
+            });
+            return Ok(());
+        }
+        run_watch_loop_with_source_state_provider(runner, source, observer, source_state_provider)
+            .await
+    })
+    .await
+}
+
 async fn run_watch_loop<R, S, O>(
     runner: &mut R,
     source: &mut S,
@@ -405,6 +491,36 @@ where
     S: DevInvalidationSource,
     O: DevWatchObserver,
 {
+    run_watch_loop_inner::<R, S, O, FixedSourceState>(runner, source, observer, None).await
+}
+
+async fn run_watch_loop_with_source_state_provider<R, S, O, P>(
+    runner: &mut R,
+    source: &mut S,
+    observer: &mut O,
+    source_state_provider: &mut P,
+) -> Result<(), S::Error>
+where
+    R: DevStageRunner,
+    S: DevInvalidationSource,
+    O: DevWatchObserver,
+    P: DevSourceStateProvider,
+{
+    run_watch_loop_inner(runner, source, observer, Some(source_state_provider)).await
+}
+
+async fn run_watch_loop_inner<R, S, O, P>(
+    runner: &mut R,
+    source: &mut S,
+    observer: &mut O,
+    mut source_state_provider: Option<&mut P>,
+) -> Result<(), S::Error>
+where
+    R: DevStageRunner,
+    S: DevInvalidationSource,
+    O: DevWatchObserver,
+    P: DevSourceStateProvider,
+{
     while let Some(first) = source.next().await? {
         let mut pending = None;
         PendingRun::include(&mut pending, first);
@@ -413,7 +529,11 @@ where
         }
 
         if let Some(pending) = pending {
-            let result = run_suffix(pending.from, pending.source_state, runner).await;
+            let result = if let Some(provider) = source_state_provider.as_deref_mut() {
+                run_suffix_with_source_state_provider(pending.from, runner, provider).await
+            } else {
+                run_suffix(pending.from, pending.source_state, runner).await
+            };
             observer.completed(DevWatchOutcome {
                 from: pending.from,
                 result,
@@ -453,6 +573,53 @@ mod tests {
                 invoked: Vec::new(),
                 fail_at: Some(stage),
             }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct SharedSourceState(Arc<Mutex<DevSourceState>>);
+
+    impl DevSourceStateProvider for SharedSourceState {
+        type Error = Infallible;
+
+        async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
+            Ok(*self.0.lock().expect("shared source-state lock"))
+        }
+    }
+
+    #[derive(Debug)]
+    struct SourceDirtyingRunner {
+        invoked: Vec<DevStage>,
+        source_state: SharedSourceState,
+    }
+
+    impl DevStageRunner for SourceDirtyingRunner {
+        type Error = Infallible;
+
+        async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+            self.invoked.push(stage);
+            if stage == DevStage::Generate {
+                *self
+                    .source_state
+                    .0
+                    .lock()
+                    .expect("shared source-state lock") = DevSourceState::Dirty;
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct SequencedSourceState(VecDeque<DevSourceState>);
+
+    impl DevSourceStateProvider for SequencedSourceState {
+        type Error = Infallible;
+
+        async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
+            Ok(self
+                .0
+                .pop_front()
+                .expect("one source state exists for every reached boundary"))
         }
     }
 
@@ -630,6 +797,45 @@ mod tests {
                 DevStage::Gate,
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn source_state_is_re_read_after_generate_before_publish() {
+        let source_state = SharedSourceState(Arc::new(Mutex::new(DevSourceState::Clean)));
+        let mut runner = SourceDirtyingRunner {
+            invoked: Vec::new(),
+            source_state: source_state.clone(),
+        };
+        let mut provider = source_state;
+
+        let error =
+            run_suffix_with_source_state_provider(DevStage::Migrate, &mut runner, &mut provider)
+                .await
+                .expect_err("generated dirty bytes must refuse before publication");
+
+        assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
+        assert_eq!(error.stage(), DevStage::Publish);
+        assert_eq!(runner.invoked, DEV_STAGE_ORDER[..7]);
+    }
+
+    #[tokio::test]
+    async fn every_reached_committed_stage_rechecks_source_state() {
+        let mut provider = SequencedSourceState(VecDeque::from([
+            DevSourceState::Clean,
+            DevSourceState::Clean,
+            DevSourceState::Dirty,
+        ]));
+        let mut runner = RecordingRunner::default();
+
+        let error =
+            run_suffix_with_source_state_provider(DevStage::Publish, &mut runner, &mut provider)
+                .await
+                .expect_err("a later dirty boundary must refuse before its stage");
+
+        assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
+        assert_eq!(error.stage(), DevStage::Acl);
+        assert_eq!(runner.invoked, [DevStage::Publish, DevStage::Apply]);
+        assert!(provider.0.is_empty());
     }
 
     #[tokio::test]
