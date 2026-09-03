@@ -1,0 +1,22 @@
+[package]
+name = "wamn-client-tui"
+description = "Descriptor-driven terminal primitives: tables, forms, filters, paging and status, rendered from contract field descriptors."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Widget library, not application: ratatui 0.30 split `ratatui-core` out for
+# exactly this. No backend here — the terminal belongs to the app that runs it.
+ratatui-core = { workspace = true }
+wamn-client = { workspace = true }
+
+[dev-dependencies]
+# TEST-ONLY. The controls are proven against the descriptors the shipped
+# contracts actually declare, not against a fixture shaped to agree. This is a
+# dev-dependency and never a production one: a terminal must not link a code
+# generator, and the production graph here is wamn-client alone.
+wamn-schema-generator = { workspace = true }
+
+[lints]
+workspace = true

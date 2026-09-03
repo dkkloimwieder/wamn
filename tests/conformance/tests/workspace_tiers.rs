@@ -18,10 +18,11 @@ const COMPONENT_WORKSPACES: [(&str, &str); 2] = [
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
-const ROOT_DEFAULT_MEMBER_PATHS: [&str; 16] = [
+const ROOT_DEFAULT_MEMBER_PATHS: [&str; 17] = [
     "crates/authoring/model",
     "crates/catalog/model",
     "crates/client/core",
+    "crates/client/tui",
     "crates/execution/contract",
     "crates/execution/host",
     "crates/execution/router",
