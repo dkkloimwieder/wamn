@@ -215,8 +215,14 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 2] = [
 ///
 /// These carry an `<org>--<project>--<env>` suffix, so they cannot be listed as
 /// literals without pinning the demo triple into the proof.
-const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 4] = [
+const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 6] = [
     "wamn-authoring-",
+    // `values-host-receiving-pat.yaml` mounts all four `provision-project-env`
+    // outputs with `optional: false`, but only two were listed here. The
+    // overlay's own header has named the set as four since it was written; this
+    // table lagged it (`wamn-10yt.3.5.2`).
+    "wamn-event-materializer-",
+    "wamn-executor-platform-",
     "wamn-http-admitter-",
     "wamn-identity-reader-",
     "wamn-mgmt-admitter-",
