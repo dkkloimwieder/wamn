@@ -38,6 +38,8 @@ repo_root=$(cd -- "$script_dir/.." && pwd)
 # handed; see tools/journey-host-values.sh for the contract.
 # shellcheck source=tools/journey-host-values.sh
 source "$script_dir/journey-host-values.sh"
+# shellcheck source=tools/journey-host-secrets.sh
+source "$script_dir/journey-host-secrets.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -729,36 +731,29 @@ if [[ ${#digest_lines[@]} -ne 1 ]]; then
 fi
 manifest_digest=${digest_lines[0]#*=}
 
-# The host credentials THIS application declares, derived from its family
-# list rather than listed twice. The count is whatever the application named,
-# so the assertion below reads the declaration instead of restating it.
-declare -A host_secret_by_family=()
-for family in "${app_role_families[@]}"; do
-  host_secret_by_family[$family]=$host_secret_directory/$family.json
-done
-guest_secret=$host_secret_directory/$app_guest_secret_file
-mapfile -t emitted_host_secrets < <(find "$host_secret_directory" -maxdepth 1 -type f \
-  -name '*.json' -printf '%f\n' | sort)
-mapfile -t expected_host_secrets < <(printf '%s\n' "$app_guest_secret_file" \
-  "${app_role_families[@]/%/.json}" | sort)
-if [[ "${emitted_host_secrets[*]}" != "${expected_host_secrets[*]}" ]]; then
-  echo "production journey emitted ${#emitted_host_secrets[@]} host credential Secrets, not the ${#expected_host_secrets[@]} this application declares" >&2
-  exit 1
-fi
+# Derivation and validation are the shared harness's; APPLYING is this
+# journey's. They were one loop, which made the pure half unprovable without a
+# cluster -- a fusion of kind rather than of value, and the lift checklist is
+# what surfaced it.
+declare -A host_secret_spec=(
+  [secret_directory]=$host_secret_directory
+  [role_families]=${app_role_families[*]}
+  [guest_secret_file]=$app_guest_secret_file
+  [namespace]=$namespace
+  [database_host]=$postgres_ip
+)
+declare -A host_secrets=()
+derive_host_secrets host_secret_spec host_secrets
 
-for secret in "$guest_secret" "${host_secret_by_family[@]}"; do
-  jq -e --arg namespace "$namespace" --arg host "$postgres_ip" '
-    .metadata.namespace == $namespace and
-    (.metadata.name | type == "string" and length > 0) and
-    (.stringData.url | type == "string" and contains("@" + $host + ":5432/"))
-  ' >/dev/null "$secret"
-  run "${kube[@]}" apply -f "$secret"
+for family in guest "${app_role_families[@]}"; do
+  run "${kube[@]}" apply -f "${host_secrets[path:$family]}"
 done
-guest_secret_name=$(jq -er '.metadata.name' "$guest_secret")
+
+guest_secret=${host_secrets[path:guest]}
+guest_secret_name=${host_secrets[name:guest]}
 declare -A host_secret_name_by_family=()
 for family in "${app_role_families[@]}"; do
-  host_secret_name_by_family[$family]=$(jq -er '.metadata.name' \
-    "${host_secret_by_family[$family]}")
+  host_secret_name_by_family[$family]=${host_secrets[name:$family]}
 done
 
 registry_pull=$work_dir/registry-pull.yaml
