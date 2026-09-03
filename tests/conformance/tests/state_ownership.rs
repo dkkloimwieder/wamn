@@ -867,6 +867,7 @@ fn scan_repository_writers(
             std::fs::read_to_string(&path).map_err(|error| format!("read {relative}: {error}"))?;
         let extension = path.extension().and_then(|value| value.to_str());
         let literals = match extension {
+            Some("rs") if is_test_gated_module(repository, &relative) => continue,
             Some("rs") => rust_string_literals(production_rust_source(&source)),
             Some("sql") => vec![(1, strip_sql_comments(&source))],
             _ => continue,
@@ -928,6 +929,79 @@ fn is_excluded(path: &str, exclusions: &[ScanExclusion]) -> bool {
                 .any(|component| component.as_os_str() == exclusion.value.as_str()),
             _ => false,
         })
+}
+
+/// Is this file a module its parent gates with `#[cfg(test)]`?
+///
+/// [`production_rust_source`] sees one file at a time, so it strips a
+/// `#[cfg(test)] mod tests` block but cannot know that a whole FILE is test
+/// source because the `mod` declaration naming it is gated in its parent. That
+/// blind spot is how a proof fixture's seeding INSERT came to demand a
+/// declared production writer (`wamn-p3lf`). Recurses, because a module under a
+/// test-gated module is test source too.
+fn is_test_gated_module(repository: &Path, relative: &str) -> bool {
+    let path = Path::new(relative);
+    let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    // A crate root has no `mod` declaration naming it.
+    if matches!(stem, "lib" | "main" | "build") {
+        return false;
+    }
+    let Some(directory) = path.parent() else {
+        return false;
+    };
+    // `a/b/mod.rs` is named by `mod b;` one level further up.
+    let (name, directory) = if stem == "mod" {
+        match (
+            directory.file_name().and_then(|name| name.to_str()),
+            directory.parent(),
+        ) {
+            (Some(name), Some(parent)) => (name, parent),
+            _ => return false,
+        }
+    } else {
+        (stem, directory)
+    };
+    let candidates = [
+        directory.with_extension("rs"),
+        directory.join("mod.rs"),
+        directory.join("lib.rs"),
+        directory.join("main.rs"),
+    ];
+    for parent in candidates {
+        let Some(parent) = parent.to_str() else {
+            continue;
+        };
+        let Ok(source) = std::fs::read_to_string(repository.join(parent)) else {
+            continue;
+        };
+        if declares_module_under_cfg_test(&source, name) {
+            return true;
+        }
+        return is_test_gated_module(repository, parent);
+    }
+    false
+}
+
+/// Does `source` declare `mod <name>;` immediately under a `#[cfg(test)]`?
+fn declares_module_under_cfg_test(source: &str, name: &str) -> bool {
+    let declarations = [format!("mod {name};"), format!("pub mod {name};")];
+    let mut gated = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        if declarations
+            .iter()
+            .any(|declaration| trimmed == declaration)
+        {
+            return gated;
+        }
+        gated = trimmed == "#[cfg(test)]";
+    }
+    false
 }
 
 fn production_rust_source(source: &str) -> &str {
