@@ -6,6 +6,18 @@
 //! sits at a different path in a different deployment and generated code that
 //! knew the path would be wrong the first time it moved.
 //!
+//! # Why this layer refuses rather than normalizes
+//!
+//! Route metadata reaches here already canonical, because the projection that
+//! produces it refuses anything else. It cannot normalize on the client's
+//! behalf: `normalize_http_route` lives in `wamn-schema-control`, which
+//! depends on the generator that builds the IR, so reusing it is a dependency
+//! cycle — and reimplementing it would create a second normalization
+//! authority that can disagree with the first. So an un-normalized route is
+//! refused where it is read, not silently rewritten here. A client that
+//! guessed at the canonical form would call a route the deployment does not
+//! serve, and would do it silently.
+//!
 //! Parameter segments follow the platform's authored form — `{name}` for one
 //! segment, `{*name}` for a trailing capture — the same shape
 //! `canonical_http_route_template` collapses when it checks for collisions.
