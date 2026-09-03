@@ -11,6 +11,7 @@ const PACKAGE_ROLES: &str = "architecture/package-roles.json";
 const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-authoring-model", "crates/authoring/model/src/lib.rs"),
     ("wamn-catalog", "crates/catalog/model/src/lib.rs"),
+    ("wamn-client", "crates/client/core/src/lib.rs"),
     ("wamn-cdc-reader", "services/cdc-reader/src/lib.rs"),
     (
         "wamn-component-policy",

@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/authoring/model", "crates/catalog/model", "crates/execution/contract", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
+members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/authoring/model", "crates/catalog/model", "crates/execution/contract", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
+  "crates/client/core",
   "crates/execution/contract",
   "crates/execution/host",
   "crates/execution/router",
@@ -163,6 +164,7 @@ wasi-virt = { version = "=0.2.0", git = "https://github.com/bytecodealliance/WAS
 # Every project crate has one canonical path + version identity (M-CRATES-IN-WORKSPACE).
 wamn-authoring-model = { path = "crates/authoring/model", version = "0.1.0" }
 wamn-catalog = { path = "crates/catalog/model", version = "0.1.0" }
+wamn-client = { path = "crates/client/core", version = "0.1.0" }
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }
 wamn-component-virtualizer = { path = "crates/platform/component-virtualizer", version = "0.1.0" }

@@ -42,6 +42,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-client",
+      "manifest_path": "crates/client/core/Cargo.toml",
+      "role": "core",
+      "target_class": "native",
+      "bounded_context": "client",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-component-policy",
       "manifest_path": "crates/platform/component-policy/Cargo.toml",
       "role": "core",

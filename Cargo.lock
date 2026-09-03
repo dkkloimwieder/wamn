@@ -4809,6 +4809,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-client"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tokio",
+ "wamn-execution-contract",
+]
+
+[[package]]
 name = "wamn-component-policy"
 version = "0.1.0"
 
