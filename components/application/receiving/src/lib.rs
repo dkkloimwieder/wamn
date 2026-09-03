@@ -5,11 +5,13 @@
 
 //! One package-grain component exporting every Receiving operation.
 
+use exports::wamn_receiving::location::list::Guest as LocationList;
 use exports::wamn_receiving::purchase_order::get::Guest as PurchaseOrderGet;
 use exports::wamn_receiving::purchase_order::query::Guest as PurchaseOrderQuery;
 use exports::wamn_receiving::purchase_order::update::Guest as PurchaseOrderUpdate;
 use exports::wamn_receiving::receipt::get::Guest as ReceiptGet;
 use exports::wamn_receiving::receipt::query::Guest as ReceiptQuery;
+use exports::wamn_receiving::receiving::load_receipt_screen::Guest as LoadReceiptScreen;
 use exports::wamn_receiving::receiving::record_receipt::Guest as RecordReceipt;
 use wamn::node::types::{Emission, NodeContext, NodeError};
 
@@ -36,6 +38,12 @@ where
                 code: Some(error.code().to_owned()),
             })
         })
+}
+
+impl LocationList for Component {
+    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(wamn_receiving_data_access::operation::location_list(&input))
+    }
 }
 
 impl PurchaseOrderGet for Component {
@@ -69,6 +77,14 @@ impl ReceiptGet for Component {
 impl ReceiptQuery for Component {
     fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
         invoke_operation(wamn_receiving_data_access::operation::receipt_query(&input))
+    }
+}
+
+impl LoadReceiptScreen for Component {
+    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        invoke_operation(wamn_receiving_data_access::operation::receiving_load_receipt_screen(
+            &input,
+        ))
     }
 }
 

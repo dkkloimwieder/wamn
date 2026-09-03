@@ -108,10 +108,6 @@ const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = [
         "migrations/0001_initial.sql",
     ),
 ];
-const DEV_ADDITIONAL_BASE_OPERATIONS: [&str; 2] = [
-    "wamn-receiving:location/list@1.0.0",
-    "wamn-receiving:receiving/load-receipt-screen@1.0.0",
-];
 const ORG: &str = "acme";
 const PROJECT: &str = "receiving";
 const OTHER_PROJECT: &str = "other";
@@ -131,7 +127,8 @@ const OVERLAY_COMPONENT: &str = "client_acme_receiving";
 const RELEASE_ID: u32 = 1;
 const RAW_BODY_LIMIT: usize = 1024 * 1024;
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
-const BASE_OPERATIONS: [(&str, &str); 6] = [
+const BASE_OPERATIONS: [(&str, &str); 8] = [
+    ("location_list", "wamn-receiving:location/list@1.0.0"),
     (
         "purchase_order_get",
         "wamn-receiving:purchase-order/get@1.0.0",
@@ -146,6 +143,10 @@ const BASE_OPERATIONS: [(&str, &str); 6] = [
     ),
     ("receipt_get", "wamn-receiving:receipt/get@1.0.0"),
     ("receipt_query", "wamn-receiving:receipt/query@1.0.0"),
+    (
+        "receiving_load_receipt_screen",
+        "wamn-receiving:receiving/load-receipt-screen@1.0.0",
+    ),
     (
         "receiving_record_receipt",
         "wamn-receiving:receiving/record-receipt@1.0.0",
@@ -195,7 +196,14 @@ struct JourneyAttachment {
 
 // Deployment-owned route spellings live in this one publication table rather
 // than leaking into operation or component identity.
-const JOURNEY_ATTACHMENTS: [JourneyAttachment; 11] = [
+const JOURNEY_ATTACHMENTS: [JourneyAttachment; 13] = [
+    JourneyAttachment {
+        id: "location-list-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "location_list",
+        path: "/location/list",
+        operation: "wamn-receiving:location/list@1.0.0",
+    },
     JourneyAttachment {
         id: "purchase-order-get-http",
         package_id: BASE_PACKAGE_ID,
@@ -237,6 +245,13 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 11] = [
         wiring_id: "receiving_record_receipt",
         path: "/receiving/record_receipt",
         operation: BASE_RECORD_RECEIPT,
+    },
+    JourneyAttachment {
+        id: "receiving-load-receipt-screen-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "receiving_load_receipt_screen",
+        path: "/receiving/load_receipt_screen",
+        operation: "wamn-receiving:receiving/load-receipt-screen@1.0.0",
     },
     JourneyAttachment {
         id: "client-acme-receiving-purchase-order-get-http",
@@ -680,8 +695,8 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     );
     assert_eq!(
         observed.len(),
-        6,
-        "Receiving declares exactly six operations"
+        8,
+        "Receiving declares exactly eight operations"
     );
     assert!(
         !observed.contains(RESIDUE),
@@ -2144,11 +2159,6 @@ async fn verify_dev_target_package_and_acl_state(project: &Client) -> anyhow::Re
         .iter()
         .map(|(_, token)| (*token).to_owned())
         .chain(
-            DEV_ADDITIONAL_BASE_OPERATIONS
-                .iter()
-                .map(|token| (*token).to_owned()),
-        )
-        .chain(
             OVERLAY_OPERATIONS
                 .iter()
                 .map(|(_, token)| (*token).to_owned())
@@ -2297,8 +2307,7 @@ async fn verify_dev_release_state(
     let expected_publish_count = JOURNEY_PACKAGES
         .iter()
         .map(|package| package.operations.len())
-        .sum::<usize>()
-        + DEV_ADDITIONAL_BASE_OPERATIONS.len();
+        .sum::<usize>();
     anyhow::ensure!(
         publish_audits.len() == expected_publish_count,
         "wamn dev recorded {} Publish audits, expected {expected_publish_count}",
@@ -3301,8 +3310,7 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
 
 #[tokio::test]
 #[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts"]
-async fn production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces()
--> anyhow::Result<()> {
+async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {
     let system_url = required_journey(JOURNEY_URL_ENV)?;
     let inputs = JourneyInputs::required()?;
     let scratch = ScratchRoot::create()?;
@@ -3429,6 +3437,55 @@ async fn production_two_package_release_serves_all_eleven_pat_routes_with_correl
             && value["acme_inspection_required"] == false
             && value["acme_quality_status"] == "not_required",
         "cold Acme receiving.record_receipt returned the wrong result: {value}"
+    );
+
+    let (_, traceparent) = journey_trace(15);
+    let response = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        "/location/list",
+        Some(&route.token),
+        &traceparent,
+        Bytes::from_static(br#"[{"request_id":"location-list"}]"#),
+    )
+    .await?;
+    let value = successful_value(&response, "location-list")?;
+    anyhow::ensure!(
+        value["rows"].as_array().is_some_and(|rows| {
+            rows.len() == 1
+                && rows[0]["id"] == "00000000-0000-0000-0000-000000000201"
+                && rows[0]["location_code"] == "DOCK-1"
+        }),
+        "location.list returned the wrong rows: {value}"
+    );
+
+    let (_, traceparent) = journey_trace(16);
+    let response = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        "/receiving/load_receipt_screen",
+        Some(&route.token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"load-receipt-screen","purchase_order_id":"00000000-0000-0000-0000-000000000301"}]"#,
+        ),
+    )
+    .await?;
+    let value = successful_value(&response, "load-receipt-screen")?;
+    anyhow::ensure!(
+        value["rows"].as_array().is_some_and(|rows| {
+            rows.len() == 1
+                && rows[0]["purchase_order_id"] == "00000000-0000-0000-0000-000000000301"
+                && rows[0]["line_id"] == "00000000-0000-0000-0000-000000000501"
+                && rows[0]["remaining_quantity"] == "5.0000"
+        }),
+        "receiving.load_receipt_screen returned the wrong rows: {value}"
     );
 
     let (trace_id, traceparent) = journey_trace(2);

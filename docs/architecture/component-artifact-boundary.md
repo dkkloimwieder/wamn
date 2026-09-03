@@ -58,7 +58,7 @@ wamn-10yt.8 (155 MiB per host).
 ## Acceptance
 
 Generator emits one component per declared group; catalog fact and
-dispatch handle export sets; all six Receiving routes green against the
+dispatch handle export sets; all eight Receiving routes green against the
 single component; a manifest naming a component with an identical
 requirement set refuses with a typed literal; host artifact bytes
 measured and recorded on 10yt.8.

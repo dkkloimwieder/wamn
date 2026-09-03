@@ -2,6 +2,14 @@
 
 /// Runtime projections carrying only admitted statement digests.
 pub(crate) mod wamn {
+    /// Generated `location.list` projection.
+    pub(crate) mod location_list {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../packages/receiving/generated/wamn/location_list.rs"
+        ));
+    }
+
     /// Generated `purchase_order` projection and statement digests.
     pub(crate) mod purchase_order {
         include!(concat!(
@@ -23,6 +31,14 @@ pub(crate) mod wamn {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs"
+        ));
+    }
+
+    /// Generated `receiving.load_receipt_screen` projection.
+    pub(crate) mod receiving_load_receipt_screen {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../packages/receiving/generated/wamn/receiving_load_receipt_screen.rs"
         ));
     }
 }

@@ -3,10 +3,12 @@ package wamn:receiving-component@0.1.0;
 world receiving {
   import wamn:postgres/types@0.1.0;
   import wamn:postgres/statements@0.1.0;
+  export wamn-receiving:location/%list@1.0.0;
   export wamn-receiving:purchase-order/get@1.0.0;
   export wamn-receiving:purchase-order/query@1.0.0;
   export wamn-receiving:purchase-order/update@1.0.0;
   export wamn-receiving:receipt/get@1.0.0;
   export wamn-receiving:receipt/query@1.0.0;
+  export wamn-receiving:receiving/load-receipt-screen@1.0.0;
   export wamn-receiving:receiving/record-receipt@1.0.0;
 }

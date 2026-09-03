@@ -322,7 +322,7 @@ set -euo pipefail
 EFFECTIVE_RELEASE_CONTAINER=wamn-effective-release-pg18
 EFFECTIVE_RELEASE_PORT=54334
 EFFECTIVE_RELEASE_BASE_COMPONENT=components/target/virtualized/std-empty-environment/receiving.wasm
-EFFECTIVE_RELEASE_BASE_DIGEST=8e04f7f2463c08fe7b969309304328731371c1d0c869a450575106680345a5b8
+EFFECTIVE_RELEASE_BASE_DIGEST=1c2925c2733096b822969fe5b11954ad05b69daa1d02f2432d88942fa72b7fef
 if docker container inspect "$EFFECTIVE_RELEASE_CONTAINER" >/dev/null 2>&1; then
   echo "$EFFECTIVE_RELEASE_CONTAINER already exists" >&2
   exit 1
@@ -550,7 +550,7 @@ Every substrate below is a **throwaway** Postgres — see the next section.
 This gate builds the Receiving package component through the pinned
 virtualization stage, virtualizes the std probe with that same tool, then reads
 the resulting component bytes. It requires the component's exact four-package
-import set and six exact operation-instance exports before exercising sentinel
+import set and eight exact operation-instance exports before exercising sentinel
 isolation and panic-to-typed-refusal mapping through the production
 router/ingress path.
 
@@ -1071,8 +1071,8 @@ volumes, and the validated scratch path.
 
 This gate builds the virtualized Receiving base and Acme overlay components
 plus shipped `flow-http`, then drives production apply, installed-set ACL
-reconciliation, push, twelve wiring gates/authorships, one exact two-package
-release mint/attestation/load, eleven PAT routes, and PostgreSQL effects. It
+reconciliation, push, fourteen wiring gates/authorships, one exact two-package
+release mint/attestation/load, thirteen PAT routes, and PostgreSQL effects. It
 asserts the overlay registration's exact owner/source/entity/operation set and
 proves the overlay `record_receipt` span invokes its pinned base digest with the
 same originating principal. That nested route is the first package invocation
@@ -1183,7 +1183,7 @@ WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$RECEIVING_ROUTE_SECRET_OUTPUT_DIR
 WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT" \
 WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE="$RECEIVING_ROUTE_SECRET_NAMESPACE" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
-  route_authentication_live::production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces \
+  route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes \
   -- --ignored --exact --nocapture --test-threads=1
 
 receiving_route_cleanup

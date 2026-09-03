@@ -1,13 +1,16 @@
-//! Shared wire adapter for the six operations exported by the Receiving component.
+//! Shared wire adapter for the eight operations exported by the Receiving component.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use wamn_postgres_statements::Connection;
+use wamn_postgres_statements::{Connection, Uuid as WamnUuid};
 
-use crate::error::{AccessError, AccessErrorKind};
+use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
 use crate::record_receipt::{RecordReceiptError, RecordReceiptErrorKind};
-use crate::{purchase_order, receipt, record_receipt};
+use crate::{
+    generated::wamn::{location_list as location_sql, receiving_load_receipt_screen as screen_sql},
+    purchase_order, receipt, record_receipt,
+};
 
 const MAX_ENVELOPE_ITEMS: usize = 100;
 
@@ -80,6 +83,16 @@ fn prepare_envelope(input: &str) -> Result<Box<[EnvelopeItem]>, InvocationError>
 #[serde(deny_unknown_fields)]
 struct GetInput {
     id: Box<str>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListInput {}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoadReceiptScreenInput {
+    purchase_order_id: Box<str>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -411,6 +424,65 @@ struct ReceiptValue {
     created_at: Box<str>,
 }
 
+#[derive(Debug, Serialize)]
+struct RowsValue<T> {
+    rows: Box<[T]>,
+}
+
+#[derive(Debug, Serialize)]
+struct LocationValue {
+    id: Box<str>,
+    location_code: Box<str>,
+}
+
+impl From<location_sql::ListLocationsRow> for LocationValue {
+    fn from(row: location_sql::ListLocationsRow) -> Self {
+        Self {
+            id: row.id.0.into_boxed_str(),
+            location_code: row.location_code.into_boxed_str(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ReceiptScreenValue {
+    purchase_order_id: Box<str>,
+    purchase_order_number: Box<str>,
+    purchase_order_status: Box<str>,
+    supplier_id: Box<str>,
+    row_version: Box<str>,
+    line_id: Option<Box<str>>,
+    line_number: Option<i32>,
+    item_id: Option<Box<str>>,
+    item_number: Option<Box<str>>,
+    ordered_quantity: Option<Box<str>>,
+    received_quantity: Option<Box<str>>,
+    remaining_quantity: Option<Box<str>>,
+}
+
+impl From<screen_sql::LoadReceiptScreenRow> for ReceiptScreenValue {
+    fn from(row: screen_sql::LoadReceiptScreenRow) -> Self {
+        Self {
+            purchase_order_id: row.purchase_order_id.0.into_boxed_str(),
+            purchase_order_number: row.purchase_order_number.into_boxed_str(),
+            purchase_order_status: row.purchase_order_status.into_boxed_str(),
+            supplier_id: row.supplier_id.0.into_boxed_str(),
+            row_version: row.row_version.to_string().into_boxed_str(),
+            line_id: row.line_id.map(|value| value.0.into_boxed_str()),
+            line_number: row.line_number,
+            item_id: row.item_id.map(|value| value.0.into_boxed_str()),
+            item_number: row.item_number.map(String::into_boxed_str),
+            ordered_quantity: row.ordered_quantity.map(|value| value.0.into_boxed_str()),
+            received_quantity: row
+                .received_quantity
+                .map(|value| value.0.into_boxed_str()),
+            remaining_quantity: row
+                .remaining_quantity
+                .map(|value| value.0.into_boxed_str()),
+        }
+    }
+}
+
 impl From<receipt::ReceiptRow> for ReceiptValue {
     fn from(row: receipt::ReceiptRow) -> Self {
         Self {
@@ -479,6 +551,14 @@ fn parse_item<T: DeserializeOwned>(item: &EnvelopeItem) -> Result<T, OperationEr
     serde_json::from_value(item.body.clone()).map_err(|_| invalid_input("input"))
 }
 
+fn parse_uuid(value: &str, field: &'static str) -> Result<WamnUuid, AccessError> {
+    uuid::Uuid::parse_str(value)
+        .ok()
+        .filter(|parsed| parsed.hyphenated().to_string() == value)
+        .map(|parsed| WamnUuid(parsed.hyphenated().to_string()))
+        .ok_or_else(|| AccessError::invalid("input is not a canonical UUID", field))
+}
+
 fn invalid_input(field: &'static str) -> OperationError {
     OperationError {
         code: "invalid_input",
@@ -494,7 +574,7 @@ fn invalid_input(field: &'static str) -> OperationError {
 fn access_error(
     error: &AccessError,
     operation: &'static str,
-    id: Option<&str>,
+    not_found: Option<(&'static str, &str)>,
     expected_row_version: Option<i64>,
 ) -> OperationError {
     let empty = || ErrorDetail::Empty(EmptyDetail {});
@@ -515,11 +595,11 @@ fn access_error(
             })
         }
         AccessErrorKind::NotFound => {
-            let Some(id) = id else {
+            let Some((field, id)) = not_found else {
                 return internal();
             };
             ErrorDetail::FieldId(FieldIdDetail {
-                field: "id",
+                field,
                 id: id.into(),
             })
         }
@@ -555,6 +635,133 @@ fn access_error(
         code: error.kind().literal(),
         detail,
     }
+}
+
+/// Execute only `location.list`.
+pub async fn location_list(input: &str) -> Result<String, InvocationError> {
+    let items = prepare_envelope(input)?;
+    let mut connection = Connection::new();
+    let mut output: Vec<ItemResult<RowsValue<LocationValue>>> = Vec::with_capacity(items.len());
+    for item in items.into_vec() {
+        if let Err(error) = parse_item::<ListInput>(&item) {
+            output.push(refused(item.request_id, error));
+            continue;
+        }
+        let result = async {
+            let mut transaction = connection.begin().await.map_err(|source| {
+                AccessError::from_statement(
+                    "begin location list",
+                    &source,
+                    AllowedConstraints::NONE,
+                )
+            })?;
+            let rows = location_sql::list_locations(&mut transaction)
+                .await
+                .map_err(|source| {
+                    AccessError::from_statement(
+                        "list locations",
+                        &source,
+                        AllowedConstraints::NONE,
+                    )
+                })?;
+            transaction.commit().await.map_err(|source| {
+                AccessError::from_statement(
+                    "commit location list",
+                    &source,
+                    AllowedConstraints::NONE,
+                )
+            })?;
+            Ok::<_, AccessError>(RowsValue {
+                rows: rows
+                    .into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            })
+        }
+        .await;
+        output.push(match result {
+            Ok(value) => ItemResult::Succeeded {
+                request_id: item.request_id,
+                value,
+            },
+            Err(error) => refused(
+                item.request_id,
+                access_error(&error, "location.list", None, None),
+            ),
+        });
+    }
+    Ok(serialized(&output))
+}
+
+/// Execute only `receiving.load_receipt_screen`.
+pub async fn receiving_load_receipt_screen(input: &str) -> Result<String, InvocationError> {
+    let items = prepare_envelope(input)?;
+    let mut connection = Connection::new();
+    let mut output: Vec<ItemResult<RowsValue<ReceiptScreenValue>>> =
+        Vec::with_capacity(items.len());
+    for item in items.into_vec() {
+        let parsed = match parse_item::<LoadReceiptScreenInput>(&item) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                output.push(refused(item.request_id, error));
+                continue;
+            }
+        };
+        let result = async {
+            let purchase_order_id = parse_uuid(&parsed.purchase_order_id, "purchase_order_id")?;
+            let mut transaction = connection.begin().await.map_err(|source| {
+                AccessError::from_statement(
+                    "begin receipt screen load",
+                    &source,
+                    AllowedConstraints::NONE,
+                )
+            })?;
+            let rows = screen_sql::load_receipt_screen(&mut transaction, purchase_order_id)
+                .await
+                .map_err(|source| {
+                    AccessError::from_statement(
+                        "load receipt screen",
+                        &source,
+                        AllowedConstraints::NONE,
+                    )
+                })?;
+            transaction.commit().await.map_err(|source| {
+                AccessError::from_statement(
+                    "commit receipt screen load",
+                    &source,
+                    AllowedConstraints::NONE,
+                )
+            })?;
+            if rows.is_empty() {
+                return Err(AccessError::not_found("purchase_order does not exist"));
+            }
+            Ok(RowsValue {
+                rows: rows
+                    .into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            })
+        }
+        .await;
+        output.push(match result {
+            Ok(value) => ItemResult::Succeeded {
+                request_id: item.request_id,
+                value,
+            },
+            Err(error) => refused(
+                item.request_id,
+                access_error(
+                    &error,
+                    "receiving.load_receipt_screen",
+                    Some(("purchase_order_id", &parsed.purchase_order_id)),
+                    None,
+                ),
+            ),
+        });
+    }
+    Ok(serialized(&output))
 }
 
 fn record_receipt_error(error: &RecordReceiptError) -> OperationError {
@@ -645,7 +852,12 @@ pub async fn purchase_order_get(input: &str) -> Result<String, InvocationError> 
             },
             Err(error) => refused(
                 item.request_id,
-                access_error(&error, "purchase_order.get", Some(&parsed.id), None),
+                access_error(
+                    &error,
+                    "purchase_order.get",
+                    Some(("id", &parsed.id)),
+                    None,
+                ),
             ),
         });
     }
@@ -718,7 +930,7 @@ pub async fn purchase_order_update(input: &str) -> Result<String, InvocationErro
                 access_error(
                     &error,
                     "purchase_order.update",
-                    Some(&parsed.id),
+                    Some(("id", &parsed.id)),
                     Some(expected_row_version),
                 ),
             ),
@@ -748,7 +960,7 @@ pub async fn receipt_get(input: &str) -> Result<String, InvocationError> {
             },
             Err(error) => refused(
                 item.request_id,
-                access_error(&error, "receipt.get", Some(&parsed.id), None),
+                access_error(&error, "receipt.get", Some(("id", &parsed.id)), None),
             ),
         });
     }
@@ -826,7 +1038,7 @@ pub async fn receiving_record_receipt(input: &str) -> Result<String, InvocationE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_postgres_statements::{TimestampTz, Uuid};
+    use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
 
     #[test]
     fn envelope_requires_all_request_ids_before_item_processing() {
@@ -874,6 +1086,12 @@ mod tests {
         for value in ["", "01", "-0", "+1", "1.0"] {
             assert_eq!(parse_int64(value), Err(()));
         }
+        assert!(serde_json::from_value::<ListInput>(serde_json::json!({})).is_ok());
+        assert!(
+            serde_json::from_value::<ListInput>(serde_json::json!({"unexpected": true})).is_err()
+        );
+        assert!(parse_uuid("01234567-89ab-cdef-0123-456789abcdef", "id").is_ok());
+        assert!(parse_uuid("01234567-89AB-CDEF-0123-456789ABCDEF", "id").is_err());
     }
 
     #[test]
@@ -928,5 +1146,44 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn bounded_projection_rows_preserve_the_declared_wire_scalars() {
+        let location = LocationValue::from(location_sql::ListLocationsRow {
+            id: Uuid("00000000-0000-0000-0000-000000000001".to_owned()),
+            location_code: "DOCK-A".to_owned(),
+        });
+        assert_eq!(
+            serde_json::to_value(RowsValue {
+                rows: vec![location].into_boxed_slice()
+            })
+            .unwrap(),
+            serde_json::json!({
+                "rows": [{
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "location_code": "DOCK-A"
+                }]
+            })
+        );
+
+        let screen = ReceiptScreenValue::from(screen_sql::LoadReceiptScreenRow {
+            purchase_order_id: Uuid("00000000-0000-0000-0000-000000000002".to_owned()),
+            purchase_order_number: "PO-1".to_owned(),
+            purchase_order_status: "open".to_owned(),
+            supplier_id: Uuid("00000000-0000-0000-0000-000000000003".to_owned()),
+            row_version: 4,
+            line_id: None,
+            line_number: None,
+            item_id: None,
+            item_number: None,
+            ordered_quantity: Some(Numeric("12.3400".to_owned())),
+            received_quantity: Some(Numeric("0".to_owned())),
+            remaining_quantity: Some(Numeric("12.3400".to_owned())),
+        });
+        let value = serde_json::to_value(screen).unwrap();
+        assert_eq!(value["row_version"], "4");
+        assert!(value["line_id"].is_null());
+        assert_eq!(value["ordered_quantity"], "12.3400");
     }
 }

@@ -26,15 +26,17 @@ const CONTROL_URL_ENV: &str = "WAMN_EFFECTIVE_RELEASE_CONTROL_PG_URL";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const BASE_COMPONENT_DIGEST: &str =
-    "sha256:8e04f7f2463c08fe7b969309304328731371c1d0c869a450575106680345a5b8";
+    "sha256:1c2925c2733096b822969fe5b11954ad05b69daa1d02f2432d88942fa72b7fef";
 const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const BASE_WIRINGS: [&str; 6] = [
+const BASE_WIRINGS: [&str; 8] = [
+    "location_list",
     "purchase_order_get",
     "purchase_order_query",
     "purchase_order_update",
     "receipt_get",
     "receipt_query",
+    "receiving_load_receipt_screen",
     "receiving_record_receipt",
 ];
 const OVERLAY_WIRINGS: [&str; 6] = [

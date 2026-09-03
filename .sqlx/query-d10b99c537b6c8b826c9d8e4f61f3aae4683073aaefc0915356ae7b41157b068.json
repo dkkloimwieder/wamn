@@ -1,0 +1,155 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    purchase_order.id AS purchase_order_id,\n    purchase_order.purchase_order_number,\n    purchase_order.status AS purchase_order_status,\n    purchase_order.supplier_id,\n    purchase_order.row_version,\n    purchase_order_line.id AS line_id,\n    purchase_order_line.line_number,\n    purchase_order_line.item_id,\n    item.item_number,\n    purchase_order_line.ordered_quantity,\n    purchase_order_line.received_quantity,\n    purchase_order_line.ordered_quantity - purchase_order_line.received_quantity\n        AS remaining_quantity\nFROM purchase_order AS purchase_order\nLEFT JOIN purchase_order_line AS purchase_order_line\n    ON purchase_order_line.purchase_order_id = purchase_order.id\nLEFT JOIN item AS item\n    ON item.id = purchase_order_line.item_id\nWHERE purchase_order.id = $1::uuid\nORDER BY\n    purchase_order_line.line_number ASC,\n    purchase_order_line.id ASC;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "purchase_order_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "purchase_order_number",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "purchase_order_number"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "purchase_order_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "supplier_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "supplier_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "line_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order_line",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "line_number",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "purchase_order_line",
+            "name": "line_number"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "item_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order_line",
+            "name": "item_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "item_number",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "item",
+            "name": "item_number"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "ordered_quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "purchase_order_line",
+            "name": "ordered_quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "received_quantity",
+        "type_info": "Numeric",
+        "origin": {
+          "Table": {
+            "table": "purchase_order_line",
+            "name": "received_quantity"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "remaining_quantity",
+        "type_info": "Numeric",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "d10b99c537b6c8b826c9d8e4f61f3aae4683073aaefc0915356ae7b41157b068"
+}

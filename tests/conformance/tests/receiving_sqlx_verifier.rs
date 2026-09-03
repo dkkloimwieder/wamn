@@ -5,6 +5,13 @@
     reason = "compile-only SQLx verification owns generated fields and SQL references"
 )]
 mod native {
+    pub mod location_list {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packages/receiving/generated/native-verifier/location_list.rs"
+        ));
+    }
+
     pub mod purchase_order {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -23,6 +30,13 @@ mod native {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../packages/receiving/generated/native-verifier/receiving_record_receipt.rs"
+        ));
+    }
+
+    pub mod receiving_load_receipt_screen {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packages/receiving/generated/native-verifier/receiving_load_receipt_screen.rs"
         ));
     }
 }
@@ -70,6 +84,10 @@ mod client_acme_native {
 
 #[test]
 fn native_verifier_compiles_the_exact_runtime_sql_files() {
+    let _ = sqlx::query_file_as!(
+        native::location_list::ListLocationsRow,
+        "../../packages/receiving/query/location.sql"
+    );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderRow,
         "../../packages/receiving/generated/sql/purchase_order/get.sql",
@@ -207,6 +225,11 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
         "../../packages/receiving/command/record_receipt/validate_receipt_line.sql",
         native::receiving_record_receipt::validate_receipt_line_purchase_order_id_bind_fixture(),
         native::receiving_record_receipt::validate_receipt_line_line_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_load_receipt_screen::LoadReceiptScreenRow,
+        "../../packages/receiving/query/load_receipt_screen.sql",
+        native::receiving_load_receipt_screen::load_receipt_screen_purchase_order_id_bind_fixture()
     );
 }
 
