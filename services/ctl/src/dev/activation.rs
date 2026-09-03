@@ -415,6 +415,7 @@ impl ActivationBackend for NativeActivationBackend {
 struct BackendActivation<B> {
     backend: B,
     host_id: Box<str>,
+    http_port: u16,
     workload_id: Box<str>,
 }
 
@@ -432,6 +433,7 @@ impl fmt::Debug for DevActivation {
         formatter
             .debug_struct("DevActivation")
             .field("host_id", &self.active.host_id)
+            .field("http_port", &self.active.http_port)
             .field("workload_id", &self.active.workload_id)
             .finish_non_exhaustive()
     }
@@ -448,11 +450,17 @@ impl DevActivation {
         &self.active.workload_id
     }
 
+    /// Loopback HTTP endpoint published by the supervised host heartbeat.
+    pub fn http_base_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.active.http_port)
+    }
+
     /// Stop the workload, then terminate and reap the supervised host.
     pub async fn shutdown(self) -> Result<(), DevActivationError> {
         let BackendActivation {
             mut backend,
             host_id,
+            http_port: _,
             workload_id,
         } = self.active;
         shutdown_backend(&mut backend, &host_id, &workload_id).await
@@ -733,9 +741,11 @@ where
     })?;
 
     let mut host_id = None;
+    let mut http_port = None;
     let activation = async {
         let selected = wait_for_host(&mut backend, request.identity).await?;
-        host_id = Some(selected);
+        host_id = Some(selected.id);
+        http_port = Some(selected.http_port);
         let selected = host_id
             .as_deref()
             .expect("selected host identity is assigned before workload start");
@@ -789,14 +799,21 @@ where
         host_id: host_id
             .expect("successful activation selected one host")
             .into_boxed_str(),
+        http_port: http_port.expect("successful activation selected one HTTP port"),
         workload_id: FLOW_HTTP_WORKLOAD_ID.into(),
     })
+}
+
+#[derive(Debug)]
+struct SelectedHost {
+    id: String,
+    http_port: u16,
 }
 
 async fn wait_for_host<B>(
     backend: &mut B,
     identity: &DevActivationIdentity,
-) -> Result<String, DevActivationError>
+) -> Result<SelectedHost, DevActivationError>
 where
     B: ActivationBackend,
 {
@@ -826,7 +843,23 @@ where
             "heartbeat payload is not the pinned native v2 shape",
         )?;
         if heartbeat_matches(&message.subject, &heartbeat, identity) {
-            return Ok(heartbeat.id);
+            let http_port = u16::try_from(heartbeat.http_port)
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or_else(|| {
+                    DevActivationError::new(
+                        DevActivationErrorKind::ProtocolViolation,
+                        "wait-heartbeat",
+                        format!(
+                            "the supervised HTTP host reported invalid port {}",
+                            heartbeat.http_port
+                        ),
+                    )
+                })?;
+            return Ok(SelectedHost {
+                id: heartbeat.id,
+                http_port,
+            });
         }
     }
 }
@@ -1293,6 +1326,16 @@ mod tests {
     }
 
     fn heartbeat(id: &str, hostname: &str, environment: &str, host_group: &str) -> RuntimeMessage {
+        heartbeat_with_port(id, hostname, environment, host_group, 38_080)
+    }
+
+    fn heartbeat_with_port(
+        id: &str,
+        hostname: &str,
+        environment: &str,
+        host_group: &str,
+        http_port: u32,
+    ) -> RuntimeMessage {
         let heartbeat = v2::HostHeartbeat {
             id: id.to_owned(),
             hostname: hostname.to_owned(),
@@ -1310,7 +1353,7 @@ mod tests {
             workload_count: 0,
             imports: Vec::new(),
             exports: Vec::new(),
-            http_port: 0,
+            http_port,
             environment: environment.to_owned(),
         };
         RuntimeMessage {
@@ -1383,6 +1426,7 @@ mod tests {
             .await
             .expect("the exact local host activates");
         assert_eq!(&*active.host_id, "selected-host-id");
+        assert_eq!(active.http_port, 38_080);
         shutdown_backend(&mut active.backend, &active.host_id, &active.workload_id)
             .await
             .expect("timeout falls back to kill and bounded reap");
@@ -1602,6 +1646,35 @@ mod tests {
             assert!(requests[0].0.ends_with("workload.start"));
             assert!(requests[1].0.ends_with("workload.stop"));
         }
+    }
+
+    #[tokio::test]
+    async fn a_heartbeat_without_a_usable_http_port_refuses_the_activation() {
+        // The port reaches the read seam as the loopback route a developer is
+        // told to call. Accepting zero would publish http://127.0.0.1:0.
+        let identity = identity();
+        let mut backend = FakeBackend::new(
+            Arc::new(Shared::default()),
+            [heartbeat_with_port(
+                "selected-host-id",
+                &identity.host_name,
+                &identity.environment,
+                &identity.host_group,
+                0,
+            )],
+            [],
+            [],
+        );
+
+        let error = wait_for_host(&mut backend, &identity)
+            .await
+            .expect_err("a zero HTTP port is not a usable endpoint");
+
+        assert_eq!(error.kind(), DevActivationErrorKind::ProtocolViolation);
+        assert!(
+            error.to_string().contains("invalid port 0"),
+            "{error} must name the refused port"
+        );
     }
 
     #[tokio::test]

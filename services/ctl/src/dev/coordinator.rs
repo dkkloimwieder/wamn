@@ -32,7 +32,8 @@ use super::activation::{self, DevActivation, DevActivationRequest};
 use super::config::{DevConfig, ResolvedDevPackages, VerifiedBaseComponentDigest};
 use super::observations::DevObservationReaders;
 use super::read::{
-    DevGateOutcome, DevGateVerdict, DevReadHandle, DevReadPublisher, dev_read_channel,
+    DevGateOutcome, DevGateVerdict, DevReadHandle, DevReadPublisher, DevRuntimeEndpoint,
+    dev_read_channel,
 };
 use super::verification_world::RUN_SCHEMA;
 use super::watch::GitSource;
@@ -1024,19 +1025,23 @@ impl ProductionDevStageRunner {
                 "the Release stage produced no carrier",
             )
         })?;
-        self.activation = Some(
-            activation::activate(DevActivationRequest {
-                config: &self.config,
-                release,
-                identity: self.config.activation_identity(),
-                host_binary: self.config.host_binary(),
-                wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
-            })
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("activate local host and flow-http", source.into())
-            })?,
-        );
+        let activation = activation::activate(DevActivationRequest {
+            config: &self.config,
+            release,
+            identity: self.config.activation_identity(),
+            host_binary: self.config.host_binary(),
+            wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
+        })
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("activate local host and flow-http", source.into())
+        })?;
+        self.read_publisher
+            .set_runtime_endpoint(DevRuntimeEndpoint::new(
+                activation.http_base_url(),
+                self.config.route_host(),
+            ));
+        self.activation = Some(activation);
         Ok(())
     }
 

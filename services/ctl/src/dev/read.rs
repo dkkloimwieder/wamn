@@ -204,6 +204,32 @@ pub struct DevTraceObservation {
     pub(crate) duration: Duration,
 }
 
+/// Runtime-assigned local route endpoint for the activated release.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevRuntimeEndpoint {
+    base_url: Box<str>,
+    route_host: Box<str>,
+}
+
+impl DevRuntimeEndpoint {
+    pub(crate) fn new(base_url: String, route_host: &str) -> Self {
+        Self {
+            base_url: base_url.into_boxed_str(),
+            route_host: route_host.into(),
+        }
+    }
+
+    /// Loopback base URL published by the supervised host.
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Deployment-owned Host header bound during publication.
+    pub fn route_host(&self) -> &str {
+        &self.route_host
+    }
+}
+
 impl DevTraceObservation {
     /// W3C-compatible trace identity.
     pub fn trace_id(&self) -> &str {
@@ -238,6 +264,7 @@ pub struct DevSnapshot {
     stages: [DevStageSnapshot; DEV_STAGE_COUNT],
     gate_outcomes: Vec<DevGateOutcome>,
     release: Option<Arc<DevReleaseSnapshot>>,
+    runtime_endpoint: Option<DevRuntimeEndpoint>,
     traces: Vec<DevTraceObservation>,
     taps: Vec<DevTapObservation>,
 }
@@ -252,6 +279,7 @@ impl DevSnapshot {
             }),
             gate_outcomes: Vec::new(),
             release: None,
+            runtime_endpoint: None,
             traces: Vec::with_capacity(DEV_OBSERVATION_LIMIT),
             taps: Vec::with_capacity(DEV_OBSERVATION_LIMIT),
         }
@@ -275,6 +303,11 @@ impl DevSnapshot {
     /// Exact manifest and serving carrier produced by Release.
     pub fn release(&self) -> Option<&DevReleaseSnapshot> {
         self.release.as_deref()
+    }
+
+    /// Local endpoint that serves the activated release.
+    pub const fn runtime_endpoint(&self) -> Option<&DevRuntimeEndpoint> {
+        self.runtime_endpoint.as_ref()
     }
 
     /// Exact package memberships derived from the serving manifest.
@@ -399,6 +432,9 @@ impl DevReadPublisher {
             if from.position() <= DevStage::Release.position() {
                 snapshot.release = None;
             }
+            if from.position() <= DevStage::Activate.position() {
+                snapshot.runtime_endpoint = None;
+            }
             snapshot.traces.clear();
             snapshot.taps.clear();
         });
@@ -440,6 +476,11 @@ impl DevReadPublisher {
         self.update(|snapshot| {
             snapshot.release = Some(Arc::new(DevReleaseSnapshot { manifest, carrier }));
         });
+    }
+
+    /// Publish the route endpoint selected by the exact activated host.
+    pub(crate) fn set_runtime_endpoint(&self, endpoint: DevRuntimeEndpoint) {
+        self.update(|snapshot| snapshot.runtime_endpoint = Some(endpoint));
     }
 
     /// Merge one Tempo page while retaining the bounded newest distinct traces.
@@ -583,6 +624,10 @@ mod tests {
         }
         let manifest = manifest();
         publisher.set_release(manifest.clone(), carrier(&manifest));
+        publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
+            "http://127.0.0.1:38080".to_owned(),
+            "receiving.localhost",
+        ));
 
         publisher.reset(DevStage::Apply);
         let snapshot = handle.snapshot();
@@ -596,6 +641,7 @@ mod tests {
             &DevStageState::Awaiting
         );
         assert!(snapshot.release().is_none());
+        assert!(snapshot.runtime_endpoint().is_none());
     }
 
     #[test]
@@ -603,6 +649,10 @@ mod tests {
         let (publisher, handle) = dev_read_channel();
         let manifest = manifest();
         publisher.set_release(manifest.clone(), carrier(&manifest));
+        publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
+            "http://127.0.0.1:38080".to_owned(),
+            "receiving.localhost",
+        ));
         let snapshot = handle.snapshot();
 
         let memberships = snapshot
@@ -630,6 +680,9 @@ mod tests {
                 .carrier()
                 .manifest_digest
         );
+        let endpoint = snapshot.runtime_endpoint().expect("activation is present");
+        assert_eq!(endpoint.base_url(), "http://127.0.0.1:38080");
+        assert_eq!(endpoint.route_host(), "receiving.localhost");
     }
 
     #[test]
