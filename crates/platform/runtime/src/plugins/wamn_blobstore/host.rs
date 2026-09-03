@@ -119,7 +119,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         end: u64,
     ) -> wash_runtime::wasmtime::Result<Result<wash_runtime::wasmtime::component::StreamReader<u8>, WitError>> {
         let container = container_of(accessor, &handle)?;
-        let body = match container.get(&name).await {
+        let body = match instrumented(accessor, "get-data", container.get(&name)).await? {
             Ok(body) => body,
             Err(error) => return Ok(Err(to_wit(&error))),
         };
@@ -151,7 +151,9 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
             Ok(body) => body,
             Err(error) => return Ok(Err(to_wit(&StoreError::Intake(error)))),
         };
-        Ok(container.put(&name, body).await.map_err(|error| to_wit(&error)))
+        Ok(instrumented(accessor, "write-data", container.put(&name, body))
+            .await?
+            .map_err(|error| to_wit(&error)))
     }
 
     async fn list_objects(
@@ -159,7 +161,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         handle: Resource<Container>,
     ) -> wash_runtime::wasmtime::Result<Result<wash_runtime::wasmtime::component::StreamReader<String>, WitError>> {
         let container = container_of(accessor, &handle)?;
-        let keys = match container.list().await {
+        let keys = match instrumented(accessor, "list-objects", container.list()).await? {
             Ok(keys) => keys,
             Err(error) => return Ok(Err(to_wit(&error))),
         };
@@ -175,7 +177,9 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
         let container = container_of(accessor, &handle)?;
-        Ok(container.delete(&name).await.map_err(|error| to_wit(&error)))
+        Ok(instrumented(accessor, "delete-object", container.delete(&name))
+            .await?
+            .map_err(|error| to_wit(&error)))
     }
 
     async fn delete_objects(
@@ -184,14 +188,18 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         names: Vec<String>,
     ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
         let container = container_of(accessor, &handle)?;
-        // Each key is resolved and refused on its own, so one containment
-        // breach in a batch cannot ride in behind valid siblings.
-        for name in &names {
-            if let Err(error) = container.delete(name).await {
-                return Ok(Err(to_wit(&error)));
+        // ONE span for the batch, not one per key: the guest asked for one
+        // effect. Each key is still resolved and refused on its own inside it,
+        // so a containment breach cannot ride in behind valid siblings.
+        let batch = async {
+            for name in &names {
+                container.delete(name).await?;
             }
-        }
-        Ok(Ok(()))
+            Ok(())
+        };
+        Ok(instrumented(accessor, "delete-objects", batch)
+            .await?
+            .map_err(|error| to_wit(&error)))
     }
 
     async fn has_object(
@@ -200,7 +208,9 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<bool, WitError>> {
         let container = container_of(accessor, &handle)?;
-        Ok(container.has(&name).await.map_err(|error| to_wit(&error)))
+        Ok(instrumented(accessor, "has-object", container.has(&name))
+            .await?
+            .map_err(|error| to_wit(&error)))
     }
 
     /// `created-at` reports the store's last-modified time.
@@ -219,7 +229,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<ObjectMetadata, WitError>> {
         let container = container_of(accessor, &handle)?;
-        match container.head(&name).await {
+        match instrumented(accessor, "object-info", container.head(&name)).await? {
             Ok(meta) => Ok(Ok(ObjectMetadata {
                 name,
                 container: container.container().to_owned(),
@@ -238,7 +248,9 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         handle: Resource<Container>,
     ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
         let container = container_of(accessor, &handle)?;
-        Ok(container.clear().await.map_err(|error| to_wit(&error)))
+        Ok(instrumented(accessor, "clear", container.clear())
+            .await?
+            .map_err(|error| to_wit(&error)))
     }
 }
 
@@ -313,6 +325,53 @@ impl<T: 'static + Send> HostWithStore<T> for SharedCtx {
 pub const REFUSED_OBJECT_ID_REASON: &str =
     "object ids are bare strings carrying no backend or binding discriminator, so bucket and \
      prefix confinement cannot hold across them";
+
+/// The plugin and the calling component, for instrumentation and resolution.
+fn plugin_and_caller<T>(
+    accessor: &Accessor<T, SharedCtx>,
+) -> wash_runtime::wasmtime::Result<(std::sync::Arc<WamnBlobstore>, String)>
+where
+    T: 'static,
+{
+    accessor.with(|mut access| {
+        let ctx = access.get();
+        let component_id = ctx.component_id.to_string();
+        ctx.try_get_plugin::<WamnBlobstore>(WAMN_BLOBSTORE_ID)
+            .map(|plugin| (plugin, component_id))
+    })
+}
+
+/// Run one store effect inside its span and record its latency.
+///
+/// Every store touch goes through here, so an effect cannot be added later
+/// that is invisible to a trace.
+async fn instrumented<T, F, R>(
+    accessor: &Accessor<T, SharedCtx>,
+    operation: &'static str,
+    effect: F,
+) -> wash_runtime::wasmtime::Result<Result<R, StoreError>>
+where
+    T: 'static,
+    F: std::future::Future<Output = Result<R, StoreError>>,
+{
+    use tracing::Instrument as _;
+
+    let (plugin, component_id) = plugin_and_caller(accessor)?;
+    let span = super::plugin::blobstore_span(&plugin, &component_id, operation);
+    let started = std::time::Instant::now();
+    let outcome = effect.instrument(span).await;
+    crate::plugins::effect_span::record_effect_ms(
+        &crate::plugins::effect_span::BLOBSTORE_DURATION_MS,
+        crate::plugins::effect_span::EFFECT_OPERATION,
+        operation,
+        &plugin.project,
+        started.elapsed(),
+    );
+    if let Err(error) = &outcome {
+        tracing::warn!(effect.operation = operation, error = %error, "blobstore effect refused");
+    }
+    Ok(outcome)
+}
 
 /// Resolve one store alias into its confined container, live.
 ///

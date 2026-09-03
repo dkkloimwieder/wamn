@@ -19,6 +19,10 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+use crate::plugins::effect_span::{
+    EffectIdentity, EffectWiring, effect_span, record_wiring,
+};
+
 use super::binding::{self, BindingError};
 use super::store::BoundContainer;
 use crate::plugins::connection_http::{ConnectionExecutionClosure, ConnectionInvocation};
@@ -32,7 +36,7 @@ pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 pub struct WamnBlobstore {
     postgres: Arc<WamnPostgres>,
     vault: Arc<WamnCredentials>,
-    tenant: Box<str>,
+    pub(super) tenant: Box<str>,
     pub(super) project: Box<str>,
     /// Component-store owner id to the invocation currently using that pooled
     /// instance. The driver binds before `handler.run` and revokes before
@@ -209,6 +213,44 @@ fn build_store(
         .with_virtual_hosted_style_request(false)
         .build()?;
     Ok(Arc::new(store))
+}
+
+/// The `wamn.blobstore` span over one guest object-store effect.
+///
+/// Carries the shared identity vocabulary plus the wiring position this
+/// component was invoked at, copied from the host-attested invocation — never
+/// anything the guest sent. A pooled instance with no invocation bound records
+/// the wiring keys empty, which says "about to be refused" where a missing
+/// field would look like lost instrumentation.
+///
+/// The object KEY is deliberately absent: keys are guest-authored and can carry
+/// tenant data, and a span is a wider audience than the effect itself.
+pub(super) fn blobstore_span(
+    plugin: &WamnBlobstore,
+    component_id: &str,
+    operation: &'static str,
+) -> tracing::Span {
+    let span = effect_span!(
+        "wamn.blobstore",
+        EffectIdentity {
+            tenant: &plugin.tenant,
+            project: &plugin.project,
+            component: component_id,
+        },
+        None,
+        effect.operation = operation,
+    );
+    let invocation = plugin.invocation(component_id);
+    record_wiring(
+        &span,
+        invocation.as_ref().map(|invocation| EffectWiring {
+            wiring_id: &invocation.wiring_id,
+            wiring_version: invocation.wiring_version,
+            node_id: &invocation.node_id,
+            component_digest: &invocation.component_digest,
+        }),
+    );
+    span
 }
 
 impl HostPlugin for WamnBlobstore {
