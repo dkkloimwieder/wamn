@@ -850,8 +850,8 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
     );
     assert_eq!(
         inventory.consumers.len(),
-        3,
-        "the inventory must retain all three production consumers"
+        4,
+        "the inventory must retain all four production consumers"
     );
 
     let recorded_manifests = inventory

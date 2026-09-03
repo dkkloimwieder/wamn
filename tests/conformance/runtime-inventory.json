@@ -10,6 +10,14 @@
   ],
   "consumers": [
     {
+      "package": "wamn-ctl",
+      "manifest": "services/ctl/Cargo.toml",
+      "features": [
+        "oci",
+        "washlet"
+      ]
+    },
+    {
       "package": "wamn-executor",
       "manifest": "services/executor/Cargo.toml",
       "features": [

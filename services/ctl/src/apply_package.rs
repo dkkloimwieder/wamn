@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, bail, ensure};
 use clap::Args;
 use tokio_postgres::{NoTls, Transaction, error::SqlState};
+use wamn_control_provision::DB_OWNER_ROLE;
 use wamn_control_provision::operation_grants::{
     OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
@@ -26,6 +27,7 @@ use wamn_schema_introspection::migration_policy::{
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+const SELECT_ROLE_CONTEXT_SQL: &str = "SELECT current_user::text, session_user::text";
 const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
 const SELECT_PACKAGE_SQL: &str = "\
@@ -546,10 +548,26 @@ async fn apply(
             .with_context(|| format!("validate {} before apply", deferred.relative_path));
     }
 
+    // Package text cannot issue SET ROLE: the pre-apply policy rejects a
+    // package escalating itself. This host-issued SET LOCAL ROLE moves in the
+    // opposite direction, narrowing the administrator to the existing
+    // package-owner role while package DDL runs.
+    set_package_owner_role(&tx).await?;
     ensure_model_schemas(&tx, &plan).await?;
+    reset_host_role(&tx).await?;
     for statement in &plan.statements {
-        execute(&tx, statement, &coordinate_text).await?;
+        // The planner carries exact package bytes as its parameter-free batch
+        // statements; every host-authored root/ledger statement has binds.
+        if statement.params.is_empty() {
+            set_package_owner_role(&tx).await?;
+            execute(&tx, statement, &coordinate_text).await?;
+            reset_host_role(&tx).await?;
+        } else {
+            assert_host_role(&tx).await?;
+            execute(&tx, statement, &coordinate_text).await?;
+        }
     }
+    assert_host_role(&tx).await?;
     let ownership_changed = reconcile_definition_ownership(
         &tx,
         tenant,
@@ -572,6 +590,33 @@ async fn apply(
             || !operation_grants.is_noop()
             || registrations_changed,
     })
+}
+
+async fn set_package_owner_role(tx: &Transaction<'_>) -> anyhow::Result<()> {
+    tx.batch_execute(&format!("SET LOCAL ROLE \"{DB_OWNER_ROLE}\""))
+        .await
+        .context("narrow package migration authority to wamn_db_owner")
+}
+
+async fn reset_host_role(tx: &Transaction<'_>) -> anyhow::Result<()> {
+    tx.batch_execute("RESET ROLE")
+        .await
+        .context("reset package migration authority before trusted writes")?;
+    assert_host_role(tx).await
+}
+
+async fn assert_host_role(tx: &Transaction<'_>) -> anyhow::Result<()> {
+    let row = tx
+        .query_one(SELECT_ROLE_CONTEXT_SQL, &[])
+        .await
+        .context("read server role context before trusted package writes")?;
+    let current_role = row.get::<_, String>(0);
+    let session_role = row.get::<_, String>(1);
+    ensure!(
+        current_role == session_role,
+        "package-role-reset-refused: current role {current_role:?} differs from session role {session_role:?}"
+    );
+    Ok(())
 }
 
 fn derive_catalog_registrations(

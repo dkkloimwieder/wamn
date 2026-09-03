@@ -44,6 +44,20 @@ async fn install(client: &Client) {
         .await
         .expect("reset package-runner schemas");
     client
+        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
+        .await
+        .expect("ensure the production package-owner role");
+    client
+        .batch_execute(
+            "DO $grant$ BEGIN \
+               EXECUTE format(\
+                 'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\
+               ); \
+             END $grant$;",
+        )
+        .await
+        .expect("grant the package-owner role its production-equivalent database authority");
+    client
         .batch_execute(CATALOG_SCHEMA)
         .await
         .expect("install production package catalog schema");
@@ -51,6 +65,13 @@ async fn install(client: &Client) {
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install production application authorization floor");
+    client
+        .batch_execute(
+            "ALTER TABLE catalog.package_migrations \
+               ADD COLUMN apply_effective_role name NOT NULL DEFAULT CURRENT_USER;",
+        )
+        .await
+        .expect("instrument the server-visible role used for trusted ledger writes");
 }
 
 fn fixture_root() -> PathBuf {
@@ -517,6 +538,42 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     apply(&url, &package)
         .await
         .expect("first package apply commits");
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT apply_effective_role::text = current_user::text \
+                   FROM catalog.package_migrations \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                    AND package_version = '1.0.0' AND ordinal = 1",
+                &[&TENANT],
+            )
+            .await
+            .expect("read server-visible authority used for the migration ledger")
+            .get::<_, bool>(0),
+        true,
+        "apply-package did not RESET ROLE before its trusted migration-ledger write"
+    );
+    let ownership = client
+        .query_one(
+            "SELECT pg_catalog.pg_get_userbyid(namespace.nspowner) = $1, \
+                    count(*) FILTER (\
+                        WHERE pg_catalog.pg_get_userbyid(relation.relowner) <> $1\
+                    ) = 0 \
+               FROM pg_catalog.pg_namespace AS namespace \
+               JOIN pg_catalog.pg_class AS relation \
+                 ON relation.relnamespace = namespace.oid \
+              WHERE namespace.nspname = 'receiving' \
+                AND relation.relkind = 'r' \
+                AND relation.relname NOT IN ('wamn_entities', 'wamn_cdc_exclusions') \
+              GROUP BY namespace.nspowner",
+            &[&wamn_control_provision::DB_OWNER_ROLE],
+        )
+        .await
+        .expect("read server-derived package schema and relation owners");
+    assert!(
+        ownership.get::<_, bool>(0) && ownership.get::<_, bool>(1),
+        "schema creation and exact package DDL must run as wamn_db_owner"
+    );
     assert!(
         client
             .query_one(
