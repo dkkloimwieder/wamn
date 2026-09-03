@@ -1517,6 +1517,15 @@ first differ, not an aggregate they may agree on.** For the highlight that is
 seed with every other knob off". The test that survives a mutant is the one
 that names the difference, and the way to find out is to write the mutant.
 
+**Companion at the fixture layer: choose values a hardcoded stand-in cannot
+match.** The same failure appears one level down. A blobstore mutant that
+hardcoded `environment` to `"prod"` survived its test because the fixture
+manifest also said `"prod"` — reading the manifest and ignoring it were
+indistinguishable, so an assertion named for a lookup proved only that two
+constants agreed. A fixture says `"warehouse-eu-3"` for the same reason a
+count is a bad assertion: plausible values collide with the wrong
+implementation, unguessable ones cannot.
+
 Corollary, from the same three: canonical means order-independent **only for
 sets**, so a reorder-and-compare test must know which of its lists are sets
 and which are orderings. Reversing an ordering correctly fails a correct
