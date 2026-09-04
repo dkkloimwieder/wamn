@@ -296,19 +296,26 @@ pub(super) async fn run_verified_query(
             .await
             .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
         futures_util::pin_mut!(stream);
-        let mut rows = Vec::new();
-        while let Some(row) = stream
-            .try_next()
-            .await
-            .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?
-        {
-            if rows.len() as u64 >= row_limit {
-                return Err(StatementError::Postgres(PgError::RowLimitExceeded(
-                    row_limit,
-                )));
+        // This is the path a released route takes; run_query's decode loop is a
+        // different function and spanning only that one measured nothing here.
+        let rows = async {
+            let mut rows = Vec::new();
+            while let Some(row) = stream
+                .try_next()
+                .await
+                .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?
+            {
+                if rows.len() as u64 >= row_limit {
+                    return Err(StatementError::Postgres(PgError::RowLimitExceeded(
+                        row_limit,
+                    )));
+                }
+                rows.push(decode_row(&row).map_err(StatementError::Postgres)?);
             }
-            rows.push(decode_row(&row).map_err(StatementError::Postgres)?);
+            Ok::<_, StatementError>(rows)
         }
+        .instrument(tracing::info_span!("wamn.postgres.decode_rows"))
+        .await?;
         validate_statement_result(digest, statement, RowSet { columns, rows })
     }
     .instrument(tracing::info_span!(

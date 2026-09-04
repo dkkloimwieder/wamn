@@ -2115,7 +2115,13 @@ impl WamnPostgres {
         )
         .await;
         match result {
-            Ok(rows) => match connection.connection().batch_execute("COMMIT").await {
+            // COMMIT is a SECOND full server round trip on every request, and it
+            // sat inside wamn.postgres with no span: statement ended at 13.7 ms
+            // and the postgres span at 15.9 ms, so 2.1 ms was invisible here.
+            Ok(rows) => match async { connection.connection().batch_execute("COMMIT").await }
+                .instrument(tracing::info_span!("wamn.postgres.commit"))
+                .await
+            {
                 Ok(()) => {
                     connection.repool();
                     Ok(rows)
