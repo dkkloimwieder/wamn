@@ -513,6 +513,14 @@ pub struct RouterDriver {
     source: ComponentArtifactSource,
     config: RouterDriverConfig,
     cache: Arc<WiringCache<CatalogFacts>>,
+    /// Compiled components held by artifact digest for the life of the
+    /// process. A digest names immutable bytes, so an entry can never go
+    /// stale: the same digest is always the same component. Without this,
+    /// every request re-ran `Component::new`, which DESERIALIZES the
+    /// wasmtime disk-cache entry rather than recompiling it -- measured at
+    /// ~376 ms per request against a 0.43 ms SQL statement (wamn-10yt perf,
+    /// docs/perf/2026.09/cold-v-hot.md).
+    compiled: Arc<std::sync::Mutex<BTreeMap<String, Component>>>,
     _doorbell: WiringDoorbellListener,
     started: Instant,
 }
@@ -563,6 +571,7 @@ impl RouterDriver {
             source,
             config,
             cache,
+            compiled: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
             _doorbell: doorbell,
             started: Instant::now(),
         })
@@ -1247,7 +1256,24 @@ impl RouterDriver {
         let pipelines = required.into_values().map(|component| {
             let source = self.source.clone();
             let engine = Arc::clone(&self.engine);
+            let cache = Arc::clone(&self.compiled);
             async move {
+                // A digest names immutable bytes, so a hit is always correct and
+                // never needs invalidating. The miss path below is the ONLY place
+                // that pulls or compiles.
+                if let Some(hit) = cache
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("compiled-component cache poisoned"))?
+                    .get(component.component_digest.as_str())
+                    .cloned()
+                {
+                    tracing::info_span!(
+                        "wamn.component.cache_hit",
+                        wamn.component_digest = %component.component_digest,
+                    )
+                    .in_scope(|| ());
+                    return anyhow::Ok((component.component_digest, hit));
+                }
                 let bytes = source
                     .pull_verified(&component)
                     .instrument(tracing::info_span!(
@@ -1264,6 +1290,10 @@ impl RouterDriver {
                         ))
                         .await
                         .context("join released operation component compilation task")??;
+                cache
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("compiled-component cache poisoned"))?
+                    .insert(component_digest.to_string(), compiled.clone());
                 anyhow::Ok((component_digest, compiled))
             }
         });
