@@ -1253,12 +1253,17 @@ spec:
                 --data '[{"request_id":"$request_id","id":"00000000-0000-0000-0000-000000000301"}]' \\
                 'http://flow-http.$namespace.svc.cluster.local/purchase_order/get')
               set -- \$metrics
-              test "\$1" = 200
+              # REPORT BEFORE ASSERTING. The shell is `sh -ec`, so a failing
+              # `test` exits here and anything printed after it is never
+              # printed at all -- which made a non-200 probe silent by
+              # construction: exit 1, an empty log, and no way to tell a 503
+              # from a timeout without another cluster.
               printf '%s\n' \\
                 "RECEIVING_STARTUP_REQUEST phase=$phase status=\$1 time_starttransfer_seconds=\$2 time_total_seconds=\$3"
               printf 'RECEIVING_STARTUP_BODY '
               tr -d '\n' </tmp/body
               printf '\n'
+              test "\$1" = 200
 EOF
     run "${kube[@]}" apply -f "$manifest"
     run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
