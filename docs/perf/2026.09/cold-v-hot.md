@@ -6,7 +6,7 @@ in seconds where the target is milliseconds.
 
 **Source commit:** `4dec956a`  
 **Measured:** 2026-09-04T08:54:33-04:00  
-**Raw traces:** `docs/perf/2026.09/traces/`
+**Raw traces:** `docs/perf/2026.09/0-baseline/` (traces/, raw/)
 
 ## Method
 
