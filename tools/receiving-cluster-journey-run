@@ -1523,8 +1523,12 @@ if [[ "$measure_startup" == true ]]; then
     22222222222222222222222222222222 2222222222222222
   run_startup_request steady startup-steady \
     33333333333333333333333333333333 3333333333333333
+  # FALSE, not true: the executor-platform acquisition belonged to the wiring
+  # resolve the FIRST request used to perform. The release preload now does it at
+  # startup, in its own trace, so a served request -- restart-first included --
+  # touches only the callable-http and guest-sql pools.
   collect_trace_breakdown restart-first \
-    22222222222222222222222222222222 true
+    22222222222222222222222222222222 false
   collect_trace_breakdown steady \
     33333333333333333333333333333333 false
   # Hot only. A restart-first request still pays its pool connects, so it is not

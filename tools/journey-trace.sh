@@ -52,8 +52,16 @@ trace_is_complete() {
                attr(.; "wamn.authority_class") == $class)] | length;
     count_named("wamn.route.authenticate") == 1 and
     count_named("wamn.router.resolve") == 1 and
-    count_named("wamn.component.pull") == 1 and
-    count_named("wamn.component.compile") == 1 and
+    # THE PRELOAD MOVED THE COLD WORK TO STARTUP, so a served request pulls and
+    # compiles NOTHING and hits the digest-keyed component cache instead. This
+    # asserted pull == 1 and compile == 1 until 2026-09-04, describing the world
+    # before the release preload existed; the restart-first arm never reached
+    # this check to say so, because its probe gave up first. Asserting the three
+    # together is strictly stronger than the old pair: it fails both if the
+    # preload stops working AND if a request starts pulling again.
+    count_named("wamn.component.cache_hit") == 1 and
+    count_named("wamn.component.pull") == 0 and
+    count_named("wamn.component.compile") == 0 and
     count_named("wamn.component.linker_setup") == 1 and
     count_named("wamn.component.link") == 1 and
     count_named("wamn.component.instantiate") == 1 and

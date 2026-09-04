@@ -30,7 +30,7 @@ def span(name, cls=None):
     return s
 spans = []
 for n in ("wamn.route.authenticate", "wamn.router.resolve",
-          "wamn.component.pull", "wamn.component.compile",
+          "wamn.component.cache_hit",
           "wamn.component.linker_setup", "wamn.component.link",
           "wamn.component.instantiate"):
     if n != omit:
@@ -73,8 +73,8 @@ check "control: an unexpected executor acquisition is refused" $?
 check "control: a missing executor acquisition is refused" $?
 
 echo "4. every platform span is load-bearing"
-for span in wamn.route.authenticate wamn.router.resolve wamn.component.pull \
-            wamn.component.compile wamn.component.linker_setup \
+for span in wamn.route.authenticate wamn.router.resolve wamn.component.cache_hit \
+            wamn.component.linker_setup \
             wamn.component.link wamn.component.instantiate wamn.postgres; do
   trace "$work/omit.json" 1 1 "$span"
   ! trace_is_complete "$work/omit.json" true 1 2>/dev/null
@@ -86,12 +86,22 @@ for cls in callable-http guest-sql; do
   check "control: a trace missing the $cls acquisition is refused" $?
 done
 
+echo "4b. the preload's own evidence: a served request pulls and compiles nothing"
+# The complement of the cache_hit assertion. Without these two the guard would
+# accept a request that fell back to pulling, which is exactly the regression
+# the release preload exists to prevent (docs/perf/2026.09/1-component-cache.md).
+for span in wamn.component.pull wamn.component.compile; do
+  trace "$work/regress.json" 1 1 "" "{\"name\":\"$span\",\"attributes\":[]}"
+  ! trace_is_complete "$work/regress.json" true 1 2>/dev/null
+  check "control: a served trace that does $span is refused" $?
+done
+
 echo "5. counts are exact, not at-least — for EVERY count, not a sample"
 # One duplicate control per span proved only that span's count. Relaxing any
 # OTHER == 1 to >= 1 survived, because nothing duplicated it. A count is only
 # shown exact by duplicating the thing it counts, so every one gets its own.
-for span in wamn.route.authenticate wamn.router.resolve wamn.component.pull \
-            wamn.component.compile wamn.component.linker_setup \
+for span in wamn.route.authenticate wamn.router.resolve wamn.component.cache_hit \
+            wamn.component.linker_setup \
             wamn.component.link wamn.component.instantiate; do
   trace "$work/dup.json" 1 1 "" "{\"name\":\"$span\",\"attributes\":[]}"
   ! trace_is_complete "$work/dup.json" true 1 2>/dev/null
