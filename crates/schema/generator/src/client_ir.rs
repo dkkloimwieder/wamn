@@ -664,14 +664,7 @@ fn build_operation(
             .unwrap_or("none")
             .to_owned(),
         input_fields: input_fields_of(&input),
-        // A `.result.json` is the exception, not the rule: exactly one shipped
-        // operation has one. Every generated CRUD operation declares a result
-        // CLASS in its operation contract and describes the result's shape in
-        // its SQL statement columns instead. Reading only `.result.json` would
-        // leave the emitter with nothing to type for `get`, `query` and
-        // `update` — so the columns are the fallback, and the contract is
-        // honoured either way it chose to express itself.
-        result_fields: result_fields(&result, &operation),
+        result_fields: fields_of(&result),
         server_owned_fields: string_list(
             input
                 .get("server_owned_fields")
@@ -681,40 +674,6 @@ fn build_operation(
         paging: paging_of(&input),
         errors: errors_of(parts.errors.as_ref()),
     }))
-}
-
-/// Result descriptors from a `.result.json` when present, else from the SQL
-/// statement columns the operation contract carries.
-fn result_fields(result: &Value, operation: &Value) -> Vec<FieldIr> {
-    let declared = fields_of(result);
-    if !declared.is_empty() {
-        return declared;
-    }
-    let mut columns: Vec<FieldIr> = operation
-        .get("statements")
-        .and_then(Value::as_array)
-        .map(|statements| {
-            statements
-                .iter()
-                .filter_map(|statement| statement.get("columns")?.as_array())
-                .flatten()
-                .filter_map(|column| {
-                    Some(FieldIr {
-                        path: column.get("name")?.as_str()?.to_owned(),
-                        type_name: column.get("type")?.as_str()?.to_owned(),
-                        nullable: column
-                            .get("nullable")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                        values: Vec::new(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    columns.sort();
-    columns.dedup();
-    columns
 }
 
 /// Input descriptors from a command contract's `fields` array, else from the
@@ -1558,52 +1517,27 @@ mod tests {
         );
     }
 
-    /// Only ONE shipped operation has a `.result.json`; every generated CRUD
-    /// operation describes its result through SQL statement columns instead.
-    /// Without the fallback the emitter would have nothing to type for `get`,
-    /// `query` or `update`, so this pins it.
+    /// Every operation a client can call declares a result class, and the IR
+    /// types its rows from the result CONTRACT — there is no columns fallback
+    /// to fill the gap if the projection stops shipping one.
     #[test]
-    fn a_result_class_without_a_result_contract_still_types_its_rows() {
+    fn every_result_class_is_typed_by_its_result_contract() {
         let ir = receiving_ir();
-        let purchase_order = ir
-            .models
-            .iter()
-            .find(|model| model.name == "purchase_order")
-            .expect("purchase_order model");
-
-        for name in ["get", "query", "update"] {
-            let operation = purchase_order
-                .operations
-                .iter()
-                .find(|operation| operation.name == name)
-                .unwrap_or_else(|| panic!("{name} is a shipped operation"));
-            assert_ne!(
-                operation.result_class, "none",
-                "{name} declares a result class"
-            );
-            assert!(
-                !operation.result_fields.is_empty(),
-                "{name} declares a result class but the IR typed no rows for it"
-            );
+        for model in &ir.models {
+            for operation in &model.operations {
+                assert_ne!(
+                    operation.result_class, "none",
+                    "{}/{} declares a result class",
+                    model.name, operation.name
+                );
+                assert!(
+                    !operation.result_fields.is_empty(),
+                    "{}/{} declares a result class but ships no result contract",
+                    model.name,
+                    operation.name
+                );
+            }
         }
-
-        // And the fallback is not silently overriding a real result contract.
-        let record_receipt = ir
-            .models
-            .iter()
-            .find(|model| model.name == "receiving")
-            .expect("receiving model")
-            .operations
-            .iter()
-            .find(|operation| operation.name == "record_receipt")
-            .expect("record_receipt operation");
-        assert!(
-            record_receipt
-                .result_fields
-                .iter()
-                .any(|field| field.path == "purchase_order_status" && !field.values.is_empty()),
-            "the declared result contract, with its closed domain, must win over columns"
-        );
     }
 
     fn copy_tree(from: &Path, to: &Path) {

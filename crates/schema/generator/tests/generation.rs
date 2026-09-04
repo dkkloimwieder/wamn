@@ -1638,6 +1638,79 @@ fn generation_is_byte_stable_and_emits_both_projection_siblings() {
     );
 }
 
+/// A result CLASS says how many rows come back, not what is in them. Every
+/// generated operation therefore ships a result CONTRACT beside its class, and
+/// that contract carries the model's closed value domains — without it the
+/// result survives only as statement columns, and a control rendering `status`
+/// gets a free-text box where a choice belongs.
+#[test]
+fn generated_operations_ship_a_result_contract_with_closed_domains() {
+    let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
+    for action in ["get", "query", "update"] {
+        let operation = artifact_json(
+            &package,
+            &format!("generated/contracts/purchase_order/{action}.operation.json"),
+        );
+        let result = artifact_json(
+            &package,
+            &format!("generated/contracts/purchase_order/{action}.result.json"),
+        );
+        assert_eq!(
+            result["class"], operation["result"],
+            "{action} result contract disagrees with its declared class"
+        );
+        let status = result["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["path"] == "status")
+            .unwrap_or_else(|| panic!("{action} projects status"));
+        assert_eq!(
+            status["values"],
+            json!(["open", "complete", "cancelled"]),
+            "{action} dropped the closed domain the model declares"
+        );
+    }
+
+    assert_eq!(
+        artifact_json(
+            &package,
+            "generated/contracts/purchase_order/get.result.json"
+        ),
+        json!({
+            "class": "one",
+            "fields": [
+                {"path": "created_at", "type": "timestamptz", "nullable": false, "values": []},
+                {"path": "id", "type": "uuid", "nullable": false, "values": []},
+                {
+                    "path": "purchase_order_number",
+                    "type": "text",
+                    "nullable": false,
+                    "values": []
+                },
+                {"path": "row_version", "type": "int64", "nullable": false, "values": []},
+                {
+                    "path": "status",
+                    "type": "text",
+                    "nullable": false,
+                    "values": ["open", "complete", "cancelled"]
+                },
+                {"path": "supplier_id", "type": "uuid", "nullable": false, "values": []}
+            ]
+        })
+    );
+
+    // A mutation's outcome discriminator is not a model field, so it carries
+    // no domain rather than an invented one.
+    let update = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/update.result.json",
+    );
+    let outcome = &update["fields"][0];
+    assert_eq!(outcome["path"], "outcome");
+    assert_eq!(outcome["values"], json!([]));
+}
+
 #[test]
 fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();

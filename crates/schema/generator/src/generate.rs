@@ -10,8 +10,9 @@ use wamn_schema_introspection::ir::{
 };
 
 use crate::manifest::{
-    AccessOperationErrorLiteral, AuthoredSqlDeclaration, CrudAction, CursorDirection,
-    CustomOperationDeclaration, CustomOperationKind, ModelDeclaration, OperationDeclaration,
+    AccessOperationErrorLiteral, AuthoredSqlDeclaration, ContractFieldDeclaration, CrudAction,
+    CursorDirection, CustomOperationDeclaration, CustomOperationKind,
+    CustomOperationResultDeclaration, ModelDeclaration, OperationDeclaration,
     OperationErrorDetailDeclaration, PackageManifest, PolicyContractRequirement,
     PolicyContractState, ResultClass, SortDeclaration, StaticSqlFetch,
     canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
@@ -2090,36 +2091,39 @@ fn emit_operation_contracts(
         &format!("{model_name}.{}", action.as_str()),
     )?;
     let root = format!("generated/contracts/{model_name}/{}", action.as_str());
-    let statements = wamn_api
+    let accessors = wamn_api
         .accessors
         .iter()
         .filter(|accessor| accessor.operation == action)
+        .collect::<Vec<_>>();
+    // Every accessor of one action returns the same row, so this is the
+    // operation's result shape and not just one statement's columns.
+    let columns = if matches!(action, CrudAction::Update | CrudAction::Delete) {
+        accessors.first().map_or_else(Vec::new, |accessor| {
+            wamn_api
+                .operation_rows
+                .iter()
+                .find(|row| row.name == accessor.row)
+                .expect("mutation accessor row was emitted from the same operation")
+                .fields
+                .iter()
+                .map(|field| {
+                    statement_value_contract(&field.name, field.statement_type, field.nullable)
+                })
+                .collect::<Vec<_>>()
+        })
+    } else {
+        table
+            .columns()
+            .iter()
+            .map(|column| {
+                statement_value_contract(column.name(), column.column_type(), column.nullable())
+            })
+            .collect::<Vec<_>>()
+    };
+    let statements = accessors
+        .iter()
         .map(|accessor| {
-            let columns = if matches!(action, CrudAction::Update | CrudAction::Delete) {
-                wamn_api
-                    .operation_rows
-                    .iter()
-                    .find(|row| row.name == accessor.row)
-                    .expect("mutation accessor row was emitted from the same operation")
-                    .fields
-                    .iter()
-                    .map(|field| {
-                        statement_value_contract(&field.name, field.statement_type, field.nullable)
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                table
-                    .columns()
-                    .iter()
-                    .map(|column| {
-                        statement_value_contract(
-                            column.name(),
-                            column.column_type(),
-                            column.nullable(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            };
             statement_contract(
                 &accessor.name,
                 &accessor.sql_path,
@@ -2127,7 +2131,7 @@ fn emit_operation_contracts(
                 accessor.binds.iter().map(|bind| {
                     statement_value_contract(&bind.parameter, bind.statement_type, bind.nullable)
                 }),
-                columns,
+                columns.iter().cloned(),
             )
         })
         .collect::<Vec<_>>();
@@ -2151,9 +2155,49 @@ fn emit_operation_contracts(
     )?;
     insert_json(
         files,
+        &format!("{root}.result.json"),
+        &crud_result_contract(model, operation.result, &columns),
+    )?;
+    insert_json(
+        files,
         &format!("{root}.errors.json"),
         &error_contract(table, action, operation),
     )
+}
+
+/// The generated CRUD result contract, in the shape a custom operation
+/// declares.
+///
+/// A result CLASS in the operation contract says how many rows come back, not
+/// what is in them. Without this the only surviving description of a generated
+/// operation's result is its statement columns — name, type, nullable and
+/// nothing else — so a closed value domain the model declares never reaches a
+/// client, and a control renders a free-text box where a choice belongs.
+///
+/// `enum_fields` is the ONLY declared domain source, so a result member that is
+/// not a model field — a mutation's `outcome`, its `observed_<revision>` —
+/// carries no domain rather than an invented one.
+fn crud_result_contract(
+    model: &ModelDeclaration,
+    class: ResultClass,
+    columns: &[StatementValueContract],
+) -> CustomOperationResultDeclaration {
+    CustomOperationResultDeclaration {
+        class,
+        fields: columns
+            .iter()
+            .map(|column| ContractFieldDeclaration {
+                path: column.name.clone(),
+                ty: column.ty,
+                nullable: column.nullable,
+                values: model
+                    .enum_fields
+                    .get(&column.name)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .collect(),
+    }
 }
 
 fn input_contract(
@@ -2454,7 +2498,7 @@ struct StatementContract {
     columns: Vec<StatementValueContract>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct StatementValueContract {
     name: String,
     #[serde(rename = "type")]
