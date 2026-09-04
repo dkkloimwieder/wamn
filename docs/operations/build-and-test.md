@@ -1115,6 +1115,145 @@ The explicit service list keeps the anonymous std-virtualization PostgreSQL and
 registry services stopped. Cleanup removes only this Compose project, its
 volumes, and the validated scratch path.
 
+### `[WAMN-DEV-ENVIRONMENT]` — the environment an operator starts the loop against
+
+`[WAMN-DEV-LIVE]` proves the twelve-stage loop but mints its whole environment
+inside the proof and throws it away with the scratch directory, so the loop was
+provable and not startable (`wamn-10yt.10.30`). `wamn-dev-env` runs the same
+standup module the gate runs — `tests/integration/src/dev_environment.rs`, whose
+only job is to build the arguments the platform verbs take — writes the strict
+`dev.json`, and then holds the authoring Gate open on a nameable port for as
+long as it runs. It is not a gate: it emits no receipt, and its evidence is that
+`wamn dev` starts against what it left behind.
+
+Point it only at disposable services. Standup resets the control store, so every
+run is a fresh start; never point it at shared infrastructure or the frozen
+cluster. Minted PATs and credential URLs live only in the mode-0700 environment
+directory and are never printed. `wamn dev` refuses to publish from a dirty
+worktree, so run the loop from a clean one.
+
+The scratch path is deliberately not under `/tmp`: a cold build of the loop is
+several gigabytes, `/tmp` is a tmpfs on many machines, and the environment is
+meant to outlive the session that made it. Pointing `CARGO_TARGET_DIR` at a
+tmpfs is what exhausts it — the failure surfaces as `Disk quota exceeded` from
+`rustc` in the middle of the build stage, which reads like a toolchain fault.
+
+```bash
+set -euo pipefail
+umask 077
+
+WAMN_DEV_ENV_TREE="$(pwd -P)"
+test "$(git -C "$WAMN_DEV_ENV_TREE" rev-parse --show-toplevel)" = "$WAMN_DEV_ENV_TREE"
+command -v wash >/dev/null
+
+WAMN_DEV_ENV_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+mkdir -p "$WAMN_DEV_ENV_HOME"
+WAMN_DEV_ENV_SCRATCH="$(mktemp -d "$WAMN_DEV_ENV_HOME/wamn-dev-env.XXXXXX")"
+WAMN_DEV_ENV_TARGET="$WAMN_DEV_ENV_SCRATCH/target"
+WAMN_DEV_ENV_DIR="$WAMN_DEV_ENV_SCRATCH/environment"
+WAMN_DEV_ENV_PROJECT="wamn-dev-env-$$"
+WAMN_DEV_ENV_COMPOSE="$WAMN_DEV_ENV_TREE/test-support/infrastructure/std-virtualization.compose.yaml"
+WAMN_DEV_ENV_PG_PORT=54332
+WAMN_DEV_ENV_REGISTRY_PORT=5004
+WAMN_DEV_ENV_NATS_PORT=4224
+WAMN_DEV_ENV_TEMPO_PORT=3201
+WAMN_DEV_ENV_OTLP_PORT=4319
+WAMN_DEV_ENV_AUTHORITY="127.0.0.1:${WAMN_DEV_ENV_REGISTRY_PORT}"
+WAMN_DEV_ENV_USERNAME=wamn-dev-env
+WAMN_DEV_ENV_PASSWORD="$(openssl rand -hex 32)"
+WAMN_DEV_ENV_HTPASSWD="$WAMN_DEV_ENV_SCRATCH/htpasswd"
+WAMN_DEV_ENV_DOCKER_AUTH="$WAMN_DEV_ENV_SCRATCH/.dockerconfigjson"
+WAMN_DEV_ENV_FLOW_HTTP_IMAGE="$WAMN_DEV_ENV_AUTHORITY/wamn/flow-http:dev"
+
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
+  cargo build -p wamn-ctl --bin wamn --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
+  cargo build -p wamn-host --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
+  cargo build -p wamn-proof-integration --bin wamn-dev-env --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
+  cargo build --manifest-path "$WAMN_DEV_ENV_TREE/components/Cargo.toml" \
+    -p http-route --target wasm32-wasip2 --locked --offline
+WAMN_DEV_ENV_FLOW_HTTP="$WAMN_DEV_ENV_TARGET/wasm32-wasip2/debug/http_route.wasm"
+test -x "$WAMN_DEV_ENV_TARGET/debug/wamn"
+test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-host"
+test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-dev-env"
+test -s "$WAMN_DEV_ENV_FLOW_HTTP"
+
+printf '%s\n' "$WAMN_DEV_ENV_PASSWORD" \
+  | docker run --rm -i --entrypoint htpasswd httpd:2-alpine \
+      -Bni "$WAMN_DEV_ENV_USERNAME" >"$WAMN_DEV_ENV_HTPASSWD"
+jq -n --arg authority "$WAMN_DEV_ENV_AUTHORITY" \
+  --arg username "$WAMN_DEV_ENV_USERNAME" \
+  --arg password "$WAMN_DEV_ENV_PASSWORD" \
+  '{auths:{($authority):{username:$username,password:$password}}}' \
+  >"$WAMN_DEV_ENV_DOCKER_AUTH"
+
+WAMN_STD_VIRT_PG_PORT="$WAMN_DEV_ENV_PG_PORT"
+WAMN_STD_VIRT_REGISTRY_PORT=5003
+WAMN_RECEIVING_ROUTE_REGISTRY_PORT="$WAMN_DEV_ENV_REGISTRY_PORT"
+WAMN_RECEIVING_ROUTE_REGISTRY_HTPASSWD="$WAMN_DEV_ENV_HTPASSWD"
+WAMN_RECEIVING_DEV_NATS_PORT="$WAMN_DEV_ENV_NATS_PORT"
+WAMN_RECEIVING_DEV_TEMPO_PORT="$WAMN_DEV_ENV_TEMPO_PORT"
+WAMN_RECEIVING_DEV_OTLP_PORT="$WAMN_DEV_ENV_OTLP_PORT"
+export WAMN_STD_VIRT_PG_PORT WAMN_STD_VIRT_REGISTRY_PORT
+export WAMN_RECEIVING_ROUTE_REGISTRY_PORT WAMN_RECEIVING_ROUTE_REGISTRY_HTPASSWD
+export WAMN_RECEIVING_DEV_NATS_PORT
+export WAMN_RECEIVING_DEV_TEMPO_PORT WAMN_RECEIVING_DEV_OTLP_PORT
+docker compose --profile receiving-route -p "$WAMN_DEV_ENV_PROJECT" \
+  -f "$WAMN_DEV_ENV_COMPOSE" up --detach --wait --wait-timeout 60 \
+  receiving-route-postgres authenticated-registry receiving-dev-nats receiving-dev-tempo
+for _ in {1..60}; do
+  curl --fail --silent "http://127.0.0.1:${WAMN_DEV_ENV_TEMPO_PORT}/ready" \
+    >/dev/null && break
+  sleep 1
+done
+curl --fail --silent "http://127.0.0.1:${WAMN_DEV_ENV_TEMPO_PORT}/ready" >/dev/null
+PGPASSWORD=probe psql \
+  "postgresql://postgres@127.0.0.1:${WAMN_DEV_ENV_PG_PORT}/postgres" \
+  -Atqc 'select 1' >/dev/null
+
+WASH_REG_USER="$WAMN_DEV_ENV_USERNAME" \
+WASH_REG_PASSWORD="$WAMN_DEV_ENV_PASSWORD" \
+  wash push "$WAMN_DEV_ENV_FLOW_HTTP_IMAGE" "$WAMN_DEV_ENV_FLOW_HTTP" --insecure
+unset WAMN_DEV_ENV_PASSWORD
+
+"$WAMN_DEV_ENV_TARGET/debug/wamn-dev-env" \
+  --system-database-url "postgresql://postgres:probe@127.0.0.1:${WAMN_DEV_ENV_PG_PORT}/postgres" \
+  --root "$WAMN_DEV_ENV_DIR" \
+  --nats-url "nats://127.0.0.1:${WAMN_DEV_ENV_NATS_PORT}" \
+  --tempo-query-url "http://127.0.0.1:${WAMN_DEV_ENV_TEMPO_PORT}" \
+  --otel-exporter-otlp-endpoint "http://127.0.0.1:${WAMN_DEV_ENV_OTLP_PORT}" \
+  --component-artifact-base "$WAMN_DEV_ENV_AUTHORITY/wamn/components" \
+  --release-artifact-base "$WAMN_DEV_ENV_AUTHORITY/wamn/releases" \
+  --registry-auth-file "$WAMN_DEV_ENV_DOCKER_AUTH" \
+  --route-host receiving.localhost \
+  --flow-http-workload-image "$WAMN_DEV_ENV_FLOW_HTTP_IMAGE" \
+  --host-binary "$WAMN_DEV_ENV_TARGET/debug/wamn-host" \
+  --package "$WAMN_DEV_ENV_TREE/packages/receiving" \
+  --overlay-root "$WAMN_DEV_ENV_TREE/packages/client_acme_receiving"
+```
+
+The command prints the Gate URL, the configuration path, and the exact `wamn
+dev` line to run. Leave it running and start the loop from the repository root
+in a second terminal:
+
+```bash
+"$WAMN_DEV_ENV_TARGET/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
+  --overlay-root "$WAMN_DEV_ENV_TREE/packages/client_acme_receiving" --tui
+```
+
+Stop the Gate with Ctrl-C when the loop is done, then remove the services and
+the scratch path:
+
+```bash
+docker compose --profile receiving-route -p "$WAMN_DEV_ENV_PROJECT" \
+  -f "$WAMN_DEV_ENV_COMPOSE" down --volumes --remove-orphans
+if [[ "$WAMN_DEV_ENV_SCRATCH" == "$WAMN_DEV_ENV_HOME"/wamn-dev-env.* ]]; then
+  rm -rf -- "$WAMN_DEV_ENV_SCRATCH"
+fi
+```
+
 ### `[GUEST-DIGEST-REPRODUCIBILITY]` — one commit, two checkouts, one digest
 
 A component digest must be a function of the bytes an author wrote. It was not:

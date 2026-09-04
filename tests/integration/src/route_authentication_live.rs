@@ -17,35 +17,26 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{
     InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
 };
-use reqwest::Url;
 use serde_json::Value;
 use tokio::process::Command;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::Client;
 use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_catalog::{
     AttachmentKind, ComponentOperationDependency, PackageCoordinate,
     SERVING_MANIFEST_FORMAT_VERSION,
 };
 use wamn_control_provision::{
-    CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader,
-    WorkloadRoleFamily, management_admitter_generation_role, parse_system_reader_url,
-    sql as provision_sql,
+    SystemReader, WorkloadRoleFamily, parse_system_reader_url, sql as provision_sql,
 };
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::dev::DevSourceState;
-use wamn_ctl::dev::activation::DevActivationIdentity;
 use wamn_ctl::dev::watch::GitSource;
-use wamn_ctl::provision_org::{self, ProvisionOrgArgs, TemplateArg};
-use wamn_ctl::provision_project_env::{
-    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs,
-};
+use wamn_ctl::provision_project_env;
 use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_component::{self, PushComponentArgs};
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
-use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 use wamn_execution_host::{
     ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
     WiringCacheCapacity, authorize_attachment_for_test,
@@ -72,7 +63,6 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
-use wamn_scenario_worker::management::{self, ManagementServeArgs};
 use wash_runtime::engine::InstancePolicy;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
@@ -84,6 +74,14 @@ use wash_runtime::wasmtime::component::{Component, Linker};
 use wasmtime_wasi_http::p2::WasiHttpView as _;
 use wasmtime_wasi_http::p2::bindings::Proxy;
 use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
+
+use crate::dev_environment::{
+    DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT,
+    clean_dev_verification_gate_roles, connect, generation_args, install_journey_platform_floor,
+    prepare_journey_credentials, provision_journey_control, provision_route, read_json,
+    reconcile_journey_run_plane, reset_control_store, secret_value, start_journey_management_gate,
+    write_dev_config,
+};
 
 const URL_ENV: &str = "WAMN_ROUTE_AUTH_PG18_URL";
 const JOURNEY_URL_ENV: &str = "WAMN_RECEIVING_ROUTE_PG18_URL";
@@ -108,12 +106,8 @@ const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = [
         "migrations/0001_initial.sql",
     ),
 ];
-const ORG: &str = "acme";
-const PROJECT: &str = "receiving";
 const OTHER_PROJECT: &str = "other";
-const ENVIRONMENT: &str = "dev";
 const OTHER_ENVIRONMENT: &str = "prod";
-const TENANT: &str = "receiving-route-auth";
 const ROUTE_CALLER_ROLE: &str = "route-caller";
 const ATTACHMENT_ID: &str = "receiving-purchase-order-get";
 const OPERATION: &str = "wamn-receiving:purchase-order/get@1.0.0";
@@ -124,7 +118,6 @@ const BASE_COMPONENT: &str = "receiving";
 const OVERLAY_PACKAGE_ID: &str = "client_acme_receiving";
 const OVERLAY_PACKAGE_VERSION: &str = "3.0.0";
 const OVERLAY_COMPONENT: &str = "client_acme_receiving";
-const RELEASE_ID: u32 = 1;
 const RAW_BODY_LIMIT: usize = 1024 * 1024;
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const BASE_OPERATIONS: [(&str, &str); 8] = [
@@ -319,15 +312,6 @@ enum Refusal {
     Permission(Box<str>),
 }
 
-struct ProvisionedRoute {
-    database_url: String,
-    token: String,
-    token_prefix: String,
-    principal_subject: String,
-    management_token: Option<String>,
-    management_principal_subject: Option<String>,
-}
-
 struct ScratchRoot(PathBuf);
 
 impl ScratchRoot {
@@ -349,185 +333,8 @@ impl Drop for ScratchRoot {
     }
 }
 
-async fn connect(url: &str) -> anyhow::Result<(Arc<Client>, tokio::task::JoinHandle<()>)> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls)
-        .await
-        .context("connect to disposable PostgreSQL")?;
-    let task = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    Ok((Arc::new(client), task))
-}
-
-fn database_url(admin_url: &str, database: &str) -> anyhow::Result<String> {
-    let mut url = Url::parse(admin_url).context("parse disposable PostgreSQL URL")?;
-    url.set_path(&format!("/{database}"));
-    url.set_query(None);
-    url.set_fragment(None);
-    Ok(url.into())
-}
-
 fn scratch_root() -> PathBuf {
     std::env::temp_dir().join(format!("route-authentication-live-{}", std::process::id()))
-}
-
-fn provisioning_args(
-    system_url: &str,
-    root: &Path,
-    route_secret: &Path,
-    management_secret: Option<&Path>,
-) -> ProvisionProjectEnvArgs {
-    ProvisionProjectEnvArgs {
-        org: Some(ORG.to_owned()),
-        project: Some(PROJECT.to_owned()),
-        env: Some(ENVIRONMENT.to_owned()),
-        tenant: Some(TENANT.to_owned()),
-        system_database_url: Some(system_url.to_owned()),
-        cluster: Some("route-auth-pg18".to_owned()),
-        connection_limit: None,
-        app_password: Some("unused-legacy-secret".to_owned()),
-        app_host: Some("route-auth-pg18.invalid".to_owned()),
-        app_port: 5432,
-        namespace: "wamn-system".to_owned(),
-        secret_namespace: None,
-        target_admin_database_url: None,
-        workload: WorkloadGenerationArgs::default(),
-        emit_database: Some(root.join("database.json")),
-        emit_role_sql: Some(root.join("roles.sql")),
-        emit_privilege_sql: Some(root.join("privileges.sql")),
-        emit_secret: Some(root.join("database-secret.json")),
-        emit_management_author_pat_secret: management_secret.map(Path::to_path_buf),
-        emit_route_caller_pat_secret: Some(route_secret.to_path_buf()),
-        revoke_pat_prefix: None,
-    }
-}
-
-fn generation_args(
-    family: WorkloadRoleFamily,
-    system_url: &str,
-    target_admin_url: Option<&str>,
-    secret: &Path,
-) -> ProvisionProjectEnvArgs {
-    ProvisionProjectEnvArgs {
-        org: Some(ORG.to_owned()),
-        project: Some(PROJECT.to_owned()),
-        env: Some(ENVIRONMENT.to_owned()),
-        tenant: Some(TENANT.to_owned()),
-        system_database_url: Some(system_url.to_owned()),
-        cluster: None,
-        connection_limit: None,
-        app_password: None,
-        app_host: None,
-        app_port: 5432,
-        namespace: "wamn-system".to_owned(),
-        secret_namespace: None,
-        target_admin_database_url: target_admin_url.map(str::to_owned),
-        workload: WorkloadGenerationArgs {
-            action: Some(WorkloadGenerationAction {
-                family,
-                verb: WorkloadActionVerb::Prepare,
-                generation: CredentialGeneration::A,
-            }),
-            secret: Some((family, secret.to_path_buf())),
-        },
-        emit_database: None,
-        emit_role_sql: None,
-        emit_privilege_sql: None,
-        emit_secret: None,
-        emit_management_author_pat_secret: None,
-        emit_route_caller_pat_secret: None,
-        revoke_pat_prefix: None,
-    }
-}
-
-fn read_json(path: &Path) -> anyhow::Result<Value> {
-    serde_json::from_slice(
-        &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
-    )
-    .with_context(|| format!("parse {}", path.display()))
-}
-
-fn secret_value(path: &Path, key: &str) -> anyhow::Result<String> {
-    read_json(path)?["stringData"][key]
-        .as_str()
-        .map(str::to_owned)
-        .with_context(|| format!("{} carries stringData.{key}", path.display()))
-}
-
-fn secret_annotation(path: &Path, key: &str) -> anyhow::Result<String> {
-    read_json(path)?["metadata"]["annotations"][key]
-        .as_str()
-        .map(str::to_owned)
-        .with_context(|| format!("{} carries annotation {key}", path.display()))
-}
-
-async fn reset_control_store(admin: &Client) -> anyhow::Result<()> {
-    let stale_databases = admin
-        .query(
-            "SELECT datname::text FROM pg_database \
-             WHERE datname LIKE 'wamn-db-acme--%--%--%' ORDER BY datname",
-            &[],
-        )
-        .await
-        .context("list stale route-auth databases")?;
-    for row in stale_databases {
-        let database: String = row.get(0);
-        admin
-            .batch_execute(&provision_sql::drop_database_named_sql(&database))
-            .await
-            .with_context(|| format!("drop stale database {database}"))?;
-    }
-    admin
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS identity CASCADE; \
-             DROP SCHEMA IF EXISTS provisioning CASCADE; \
-             DROP SCHEMA IF EXISTS registry CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DO $$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
-                 CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOREPLICATION NOBYPASSRLS; \
-               END IF; \
-             END $$; \
-             DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
-                                        current_database()); END $$;",
-        )
-        .await
-        .context("prepare the production control owner")?;
-    admin
-        .batch_execute(&provision_sql::ensure_control_author_acl_role_sql())
-        .await
-        .context("ensure the portable store's control-author ACL role")?;
-    admin
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("assume the production control owner")?;
-    admin
-        .batch_execute(SYSTEM_SCHEMA_SQL)
-        .await
-        .context("install deploy/sql/system-schema.sql")?;
-    admin
-        .batch_execute(CONTROL_PORTABLE_STORE_SQL)
-        .await
-        .context("install the control portable store")?;
-    admin
-        .batch_execute("RESET ROLE")
-        .await
-        .context("release the production control owner before cluster ACL convergence")?;
-    admin
-        .batch_execute(provision_sql::revoke_public_connect_floor_sql())
-        .await
-        .context("converge the cluster PUBLIC CONNECT floor")?;
-    admin
-        .batch_execute(
-            "DO $$ BEGIN EXECUTE format(\
-               'REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;",
-        )
-        .await
-        .context("converge the control database PUBLIC TEMPORARY floor")?;
-    Ok(())
 }
 
 async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
@@ -548,62 +355,6 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
         .await
         .context("seed the auth-only test's declared environment policies")?;
     Ok(())
-}
-
-async fn provision_route(
-    system_url: &str,
-    admin: &Client,
-    root: &Path,
-    management_secret: Option<&Path>,
-) -> anyhow::Result<ProvisionedRoute> {
-    let route_secret = root.join("route-caller-pat.json");
-    provision_project_env::run(provisioning_args(
-        system_url,
-        root,
-        &route_secret,
-        management_secret,
-    ))
-    .await
-    .context("run production project-environment and route-PAT provisioning")?;
-
-    let database = read_json(&root.join("database.json"))?["spec"]["name"]
-        .as_str()
-        .context("Database CR carries spec.name")?
-        .to_owned();
-    admin
-        .batch_execute(
-            &std::fs::read_to_string(root.join("roles.sql")).context("read emitted role SQL")?,
-        )
-        .await
-        .context("apply emitted role SQL")?;
-    admin
-        .batch_execute(&wamn_schema_control::ensure_scenario_author_role_sql())
-        .await
-        .context("ensure the catalog author role")?;
-    admin
-        .batch_execute(&provision_sql::create_database_named_sql(&database))
-        .await
-        .context("stand in for the emitted Database CR")?;
-    admin
-        .batch_execute(
-            &std::fs::read_to_string(root.join("privileges.sql"))
-                .context("read emitted privilege SQL")?,
-        )
-        .await
-        .context("apply emitted privilege SQL")?;
-
-    Ok(ProvisionedRoute {
-        database_url: database_url(system_url, &database)?,
-        token: secret_value(&route_secret, "token")?,
-        token_prefix: secret_annotation(&route_secret, "wamn.io/pat-prefix")?,
-        principal_subject: secret_annotation(&route_secret, "wamn.io/principal-subject")?,
-        management_token: management_secret
-            .map(|secret| secret_value(secret, "token"))
-            .transpose()?,
-        management_principal_subject: management_secret
-            .map(|secret| secret_annotation(secret, "wamn.io/principal-subject"))
-            .transpose()?,
-    })
 }
 
 fn package_root() -> PathBuf {
@@ -1150,57 +901,50 @@ impl JourneyInputs {
 
 struct DevJourneyInputs {
     wamn_binary: PathBuf,
-    host_binary: PathBuf,
-    nats_url: String,
-    tempo_query_url: String,
-    otel_exporter_otlp_endpoint: String,
-    flow_http_workload_image: String,
-    component_artifact_base: String,
-    release_artifact_base: String,
-    route_host: String,
-    registry_auth_file: PathBuf,
+    environment: DevEnvironmentInputs,
 }
 
 impl DevJourneyInputs {
     fn required() -> anyhow::Result<Self> {
         let inputs = Self {
             wamn_binary: required_journey_path("WAMN_RECEIVING_DEV_BIN")?,
-            host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
-            nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
-            tempo_query_url: required_journey("WAMN_RECEIVING_DEV_TEMPO_QUERY_URL")?,
-            otel_exporter_otlp_endpoint: required_journey(
-                "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
-            )?,
-            flow_http_workload_image: required_journey(
-                "WAMN_RECEIVING_DEV_FLOW_HTTP_WORKLOAD_IMAGE",
-            )?,
-            component_artifact_base: required_journey(
-                "WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE",
-            )?,
-            release_artifact_base: required_journey("WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE")?,
-            route_host: required_journey("WAMN_RECEIVING_ROUTE_HOST")?,
-            registry_auth_file: required_journey_path("WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE")?,
+            environment: DevEnvironmentInputs {
+                host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
+                nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
+                tempo_query_url: required_journey("WAMN_RECEIVING_DEV_TEMPO_QUERY_URL")?,
+                otel_exporter_otlp_endpoint: required_journey(
+                    "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
+                )?,
+                flow_http_workload_image: required_journey(
+                    "WAMN_RECEIVING_DEV_FLOW_HTTP_WORKLOAD_IMAGE",
+                )?,
+                component_artifact_base: required_journey(
+                    "WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE",
+                )?,
+                release_artifact_base: required_journey(
+                    "WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE",
+                )?,
+                route_host: required_journey("WAMN_RECEIVING_ROUTE_HOST")?,
+                registry_auth_file: required_journey_path(
+                    "WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE",
+                )?,
+                package_sources: vec![
+                    package_root()
+                        .canonicalize()
+                        .context("resolve the base package root")?,
+                ],
+            },
         };
         anyhow::ensure!(
             inputs.wamn_binary.is_file(),
             "WAMN_RECEIVING_DEV_BIN does not name a built wamn binary"
         );
         anyhow::ensure!(
-            inputs.host_binary.is_file(),
+            inputs.environment.host_binary.is_file(),
             "WAMN_RECEIVING_DEV_HOST_BIN does not name a built wamn-host binary"
         );
         Ok(inputs)
     }
-}
-
-struct JourneyCredentials {
-    guest_sql: String,
-    executor_platform: String,
-    event_materializer: String,
-    http_admitter: String,
-    identity_reader: String,
-    control_author: String,
-    management_admitter: String,
 }
 
 struct TraceHarness {
@@ -1539,30 +1283,6 @@ fn assert_no_component_trace(spans: &[SpanData], trace_id: &str) {
     );
 }
 
-async fn provision_journey_control(system_url: &str, admin: &Client) -> anyhow::Result<()> {
-    reset_control_store(admin).await?;
-    provision_org::run(ProvisionOrgArgs {
-        org: ORG.to_owned(),
-        template: TemplateArg::Trials,
-        pool: "route-auth-pg18".to_owned(),
-        system_database_url: Some(system_url.to_owned()),
-        emit_clusters: None,
-    })
-    .await
-    .context("stamp the journey org and environment policies through provision-org")
-}
-
-async fn install_journey_platform_floor(project: &Client) -> anyhow::Result<()> {
-    project
-        .batch_execute(include_str!("../../../deploy/sql/catalog-schema.sql"))
-        .await
-        .context("install the catalog schema")?;
-    project
-        .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))
-        .await
-        .context("install the application authorization schema")
-}
-
 async fn install_journey_project(project: &Client, project_url: &str) -> anyhow::Result<()> {
     install_journey_platform_floor(project).await?;
     for package in JOURNEY_PACKAGES {
@@ -1636,347 +1356,11 @@ async fn verify_journey_operation_grants(project: &Client) -> anyhow::Result<()>
     Ok(())
 }
 
-async fn reconcile_journey_run_plane(system_url: &str, project_url: &str) -> anyhow::Result<()> {
-    reconcile_run_plane::run(ReconcileRunPlaneArgs {
-        system_database_url: system_url.to_owned(),
-        admin_database_url: project_url.to_owned(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        tenant: TENANT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
-        schema: "wamn_run".to_owned(),
-        dry_run: false,
-    })
-    .await
-    .context("reconcile the journey run plane")
-}
-
-async fn prepare_journey_credentials(
-    system_url: &str,
-    project_url: &str,
-    root: &Path,
-    host_secret_directory: &Path,
-    host_secret_namespace: &str,
-) -> anyhow::Result<JourneyCredentials> {
-    async fn prepare(
-        family: WorkloadRoleFamily,
-        system_url: &str,
-        target_url: Option<&str>,
-        root: &Path,
-        namespace: &str,
-        name: &str,
-    ) -> anyhow::Result<String> {
-        let secret = root.join(format!("{name}.json"));
-        let mut args = generation_args(family, system_url, target_url, &secret);
-        args.namespace = namespace.to_owned();
-        provision_project_env::run(args)
-            .await
-            .with_context(|| format!("prepare the production {name} generation"))?;
-        secret_value(&secret, "url")
-    }
-
-    Ok(JourneyCredentials {
-        guest_sql: prepare(
-            WorkloadRoleFamily::App,
-            system_url,
-            Some(project_url),
-            host_secret_directory,
-            host_secret_namespace,
-            "guest-sql",
-        )
-        .await?,
-        executor_platform: prepare(
-            WorkloadRoleFamily::ExecutorPlatform,
-            system_url,
-            Some(project_url),
-            host_secret_directory,
-            host_secret_namespace,
-            "executor-platform",
-        )
-        .await?,
-        event_materializer: prepare(
-            WorkloadRoleFamily::EventMaterializer,
-            system_url,
-            Some(project_url),
-            host_secret_directory,
-            host_secret_namespace,
-            "event-materializer",
-        )
-        .await?,
-        http_admitter: prepare(
-            WorkloadRoleFamily::HttpAdmitter,
-            system_url,
-            Some(project_url),
-            host_secret_directory,
-            host_secret_namespace,
-            "http-admitter",
-        )
-        .await?,
-        identity_reader: prepare(
-            WorkloadRoleFamily::IdentityReader,
-            system_url,
-            None,
-            host_secret_directory,
-            host_secret_namespace,
-            "identity-reader",
-        )
-        .await?,
-        control_author: prepare(
-            WorkloadRoleFamily::ControlAuthor,
-            system_url,
-            None,
-            root,
-            "wamn-system",
-            "control-author",
-        )
-        .await?,
-        management_admitter: prepare(
-            WorkloadRoleFamily::ManagementAdmitter,
-            system_url,
-            Some(project_url),
-            root,
-            "wamn-system",
-            "management-admitter",
-        )
-        .await?,
-    })
-}
-
-async fn start_journey_management_gate(
-    credentials: &JourneyCredentials,
-    management_admission_database_url: &str,
-) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)> {
-    let (readiness_tx, readiness_rx) = tokio::sync::oneshot::channel();
-    let mut server = tokio::spawn(management::serve_with_readiness(
-        ManagementServeArgs {
-            bind: "127.0.0.1:0".to_owned(),
-            system_url: credentials.identity_reader.clone(),
-            control_authoring_database_url: credentials.control_author.clone(),
-            management_admission_database_url: management_admission_database_url.to_owned(),
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
-            environment: ENVIRONMENT.to_owned(),
-            tenant: TENANT.to_owned(),
-            source_schema: "wamn_run".to_owned(),
-        },
-        readiness_tx,
-    ));
-    let bind = tokio::select! {
-        ready = readiness_rx => ready
-            .context("the production management Gate dropped readiness")?
-            .to_string(),
-        stopped = &mut server => {
-            stopped.context("join the production management Gate")??;
-            anyhow::bail!("the production management Gate stopped before listening");
-        }
-    };
-    Ok((bind, server))
-}
-
-struct DevVerificationGate {
-    database: String,
-    database_url: String,
-    credential_url: String,
-    generation_roles: [String; 2],
-}
-
-fn dev_activation_identity() -> DevActivationIdentity {
-    let process = std::process::id();
-    DevActivationIdentity {
-        tenant: TENANT.to_owned(),
-        catalog: "default".to_owned(),
-        environment: ENVIRONMENT.to_owned(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        schema: "receiving".to_owned(),
-        host_group: "wamn-dev-receiving".to_owned(),
-        host_name: format!("wamn-dev-receiving-{process}"),
-        runner: format!("wamn-dev-receiving-{process}"),
-    }
-}
-
-fn quoted_generated_identifier(identifier: &str) -> anyhow::Result<String> {
-    anyhow::ensure!(
-        identifier
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'),
-        "generated development fixture name is not a safe PostgreSQL identifier"
-    );
-    Ok(format!("\"{identifier}\""))
-}
-
-async fn prepare_dev_verification_gate(
-    system_url: &str,
-    admin: &Client,
-    identity: &DevActivationIdentity,
-) -> anyhow::Result<DevVerificationGate> {
-    let database = format!("wamn_dev_verification_{}", std::process::id());
-    admin
-        .batch_execute(&provision_sql::drop_database_named_sql(&database))
-        .await
-        .context("remove stale disposable development verification database")?;
-    admin
-        .batch_execute(&provision_sql::create_database_named_sql(&database))
-        .await
-        .context("create the Gate's initial disposable verification database")?;
-    let quoted_database = quoted_generated_identifier(&database)?;
-    admin
-        .batch_execute(&format!(
-            "REVOKE CONNECT ON DATABASE {quoted_database} FROM PUBLIC"
-        ))
-        .await
-        .context("revoke PUBLIC CONNECT on only the initial verification database")?;
-
-    let generation_roles = [CredentialGeneration::A, CredentialGeneration::B].map(|generation| {
-        management_admitter_generation_role(
-            &identity.org,
-            &identity.project,
-            &identity.environment,
-            &database,
-            generation,
-        )
-    });
-    for role in &generation_roles {
-        let quoted = quoted_generated_identifier(role)?;
-        admin
-            .batch_execute(&format!(
-                "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{role}') \
-                 THEN CREATE ROLE {quoted} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                 INHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$;"
-            ))
-            .await
-            .with_context(|| format!("ensure inactive generated Gate role {role}"))?;
-    }
-
-    let verification_url = database_url(system_url, &database)?;
-    let (verification, verification_task) = connect(&verification_url).await?;
-    for role in &generation_roles {
-        verification
-            .batch_execute(&provision_sql::retire_workload_generation_sql(
-                WorkloadRoleFamily::ManagementAdmitter,
-                &database,
-                role,
-            ))
-            .await
-            .with_context(|| format!("reset generated Gate role {role} to inactive"))?;
-    }
-    drop(verification);
-    verification_task.abort();
-
-    wamn_ctl::dev::verification_world::bootstrap(&verification_url, identity)
-        .await
-        .context("bootstrap the Gate's initial disposable verification world")?;
-
-    let password = format!("wamn-dev-gate-{}-a", std::process::id());
-    let (verification, verification_task) = connect(&verification_url).await?;
-    verification
-        .batch_execute(&provision_sql::prepare_workload_generation_sql(
-            WorkloadRoleFamily::ManagementAdmitter,
-            &database,
-            &generation_roles[0],
-            &password,
-            "2099-01-01T00:00:00Z",
-        ))
-        .await
-        .context("prepare the production-shaped verification Gate credential")?;
-    drop(verification);
-    verification_task.abort();
-
-    let mut credential_url =
-        Url::parse(&verification_url).context("parse the disposable verification database URL")?;
-    credential_url
-        .set_username(&generation_roles[0])
-        .map_err(|_| anyhow::anyhow!("set the generated Gate role in its verification URL"))?;
-    credential_url
-        .set_password(Some(&password))
-        .map_err(|_| anyhow::anyhow!("set the generated Gate password in its verification URL"))?;
-
-    Ok(DevVerificationGate {
-        database,
-        database_url: verification_url,
-        credential_url: credential_url.into(),
-        generation_roles,
-    })
-}
-
-async fn clean_dev_verification_gate_roles(
-    admin: &Client,
-    fixture: &DevVerificationGate,
-) -> anyhow::Result<()> {
-    for role in &fixture.generation_roles {
-        let quoted = quoted_generated_identifier(role)?;
-        admin
-            .batch_execute(&format!(
-                "REVOKE \"{}\" FROM {quoted}; DROP ROLE {quoted};",
-                WorkloadRoleFamily::ManagementAdmitter.acl_role()
-            ))
-            .await
-            .with_context(|| format!("remove generated Gate role {role}"))?;
-    }
-    Ok(())
-}
-
 fn repository_root() -> anyhow::Result<PathBuf> {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .context("resolve the repository root for the product command")
-}
-
-fn write_dev_config(
-    root: &Path,
-    system_url: &str,
-    route: &ProvisionedRoute,
-    credentials: &JourneyCredentials,
-    verification: &DevVerificationGate,
-    gate_bind: &str,
-    inputs: &DevJourneyInputs,
-    identity: &DevActivationIdentity,
-) -> anyhow::Result<PathBuf> {
-    let wasmtime_cache = root.join("dev-wasmtime-cache");
-    std::fs::create_dir(&wasmtime_cache).context("create the product-command Wasmtime cache")?;
-    let config = serde_json::json!({
-        "verification_database_url": verification.database_url.as_str(),
-        "target_database_url": route.database_url.as_str(),
-        "system_database_url": system_url,
-        "identity_database_url": credentials.identity_reader.as_str(),
-        "guest_database_url": credentials.guest_sql.as_str(),
-        "executor_platform_database_url": credentials.executor_platform.as_str(),
-        "http_admitter_database_url": credentials.http_admitter.as_str(),
-        "event_materializer_database_url": credentials.event_materializer.as_str(),
-        "scheduler_nats_url": inputs.nats_url.as_str(),
-        "event_nats_url": inputs.nats_url.as_str(),
-        "tempo_query_url": inputs.tempo_query_url.as_str(),
-        "otel_exporter_otlp_endpoint": inputs.otel_exporter_otlp_endpoint.as_str(),
-        "component_artifact_base": inputs.component_artifact_base.as_str(),
-        "release_artifact_base": inputs.release_artifact_base.as_str(),
-        "registry_auth_file": &inputs.registry_auth_file,
-        "insecure_registry": true,
-        "gate_url": format!("http://{gate_bind}/authoring"),
-        "gate_bearer_token": route
-            .management_token
-            .as_deref()
-            .context("project provisioning emitted no management-author PAT")?,
-        "route_host": inputs.route_host.as_str(),
-        "flow_http_workload_image": inputs.flow_http_workload_image.as_str(),
-        "package_sources": [package_root().canonicalize().context("resolve the base package root")?],
-        "effective_release_id": RELEASE_ID,
-        "tenant": identity.tenant.as_str(),
-        "catalog": identity.catalog.as_str(),
-        "environment": identity.environment.as_str(),
-        "org": identity.org.as_str(),
-        "project": identity.project.as_str(),
-        "schema": identity.schema.as_str(),
-        "host_group": identity.host_group.as_str(),
-        "host_name": identity.host_name.as_str(),
-        "runner": identity.runner.as_str(),
-        "host_binary": &inputs.host_binary,
-        "wasmtime_cache_dir": wasmtime_cache,
-    });
-    let path = root.join("dev.json");
-    std::fs::write(&path, serde_json::to_vec_pretty(&config)?)
-        .context("write the strict product-command configuration")?;
-    Ok(path)
 }
 
 async fn run_dev_product_command(
@@ -2259,7 +1643,7 @@ async fn verify_dev_target_package_and_acl_state(project: &Client) -> anyhow::Re
 
 async fn verify_dev_release_state(
     control: &Client,
-    inputs: &DevJourneyInputs,
+    inputs: &DevEnvironmentInputs,
     expected_source_commit: &str,
     expected_publisher_id: &str,
     expected_publisher_subject: &str,
@@ -3238,23 +2622,9 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
     let (admin, admin_task) = connect(&system_url).await?;
-    let version: i32 = admin
-        .query_one("SHOW server_version_num", &[])
-        .await
-        .context("read PostgreSQL version")?
-        .get::<_, String>(0)
-        .parse()
-        .context("parse PostgreSQL version")?;
-    anyhow::ensure!(
-        version >= 180_000,
-        "product-command journey requires PostgreSQL 18 or newer"
-    );
-
-    provision_journey_control(&system_url, admin.as_ref()).await?;
-    let management_secret = root.join("management-author-pat.json");
-    let route =
-        provision_route(&system_url, admin.as_ref(), root, Some(&management_secret)).await?;
-    let publisher_subject = route
+    let environment = crate::dev_environment::provision(&system_url, admin.as_ref(), root).await?;
+    let publisher_subject = environment
+        .route
         .management_principal_subject
         .as_deref()
         .context("project provisioning emitted no management-author principal")?;
@@ -3264,31 +2634,24 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
         .context("the production management-author principal is absent")?
         .id()
         .to_string();
-    let (project, project_task) = connect(&route.database_url).await?;
-
-    // Install only the platform floor. The product command remains the sole
-    // owner of both package migrations and their generated ACL union.
-    install_journey_platform_floor(project.as_ref()).await?;
-    reconcile_journey_run_plane(&system_url, &route.database_url).await?;
-    let credentials =
-        prepare_journey_credentials(&system_url, &route.database_url, root, root, "wamn-system")
-            .await?;
-    let identity = dev_activation_identity();
-    let verification =
-        prepare_dev_verification_gate(&system_url, admin.as_ref(), &identity).await?;
-    let (gate_bind, gate_server) =
-        start_journey_management_gate(&credentials, &verification.credential_url).await?;
+    let (project, project_task) = connect(&environment.route.database_url).await?;
+    let (gate_bind, gate_server) = start_journey_management_gate(
+        &environment.credentials,
+        &environment.verification.credential_url,
+        "127.0.0.1:0",
+    )
+    .await?;
     let system_acl_before = current_database_acl(admin.as_ref()).await?;
     let durable_acl_before = current_database_acl(project.as_ref()).await?;
     let config = write_dev_config(
         root,
         &system_url,
-        &route,
-        &credentials,
-        &verification,
+        &environment.route,
+        &environment.credentials,
+        &environment.verification,
         &gate_bind,
-        &inputs,
-        &identity,
+        &inputs.environment,
+        &environment.identity,
     )?;
 
     let command_result = async {
@@ -3311,7 +2674,7 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
         verify_dev_target_package_and_acl_state(project.as_ref()).await?;
         verify_dev_release_state(
             admin.as_ref(),
-            &inputs,
+            &inputs.environment,
             &source_commit,
             &publisher_id,
             publisher_subject,
@@ -3324,16 +2687,18 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
     gate_server.abort();
     let _ = gate_server.await;
     let verification_cleanup =
-        verify_dev_verification_database_absent(admin.as_ref(), &verification.database).await;
+        verify_dev_verification_database_absent(admin.as_ref(), &environment.verification.database)
+            .await;
     // Exact fallback cleanup runs after the assertion, so it cannot make a
     // product cleanup failure look green when an earlier stage fails.
     let fixture_database_cleanup = admin
         .batch_execute(&provision_sql::drop_database_named_sql(
-            &verification.database,
+            &environment.verification.database,
         ))
         .await
         .context("remove the exact verification fixture after its cleanup assertion");
-    let role_cleanup = clean_dev_verification_gate_roles(admin.as_ref(), &verification).await;
+    let role_cleanup =
+        clean_dev_verification_gate_roles(admin.as_ref(), &environment.verification).await;
     project_task.abort();
     admin_task.abort();
 
@@ -3414,8 +2779,12 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
     let admitted_component_digests =
         verify_journey_components_are_effectful(project.as_ref()).await?;
 
-    let (management_bind, management_server) =
-        start_journey_management_gate(&credentials, &credentials.management_admitter).await?;
+    let (management_bind, management_server) = start_journey_management_gate(
+        &credentials,
+        &credentials.management_admitter,
+        "127.0.0.1:0",
+    )
+    .await?;
     let gate_reports = gate_journey_wirings(
         &management_bind,
         route

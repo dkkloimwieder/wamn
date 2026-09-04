@@ -9,6 +9,7 @@ mod acme_overlay_publication;
 mod cdc_reader_process;
 pub mod cdcbench;
 pub mod dashproof;
+pub mod dev_environment;
 mod hot_route_trace;
 mod measurement_schema;
 pub mod provisionbench;
