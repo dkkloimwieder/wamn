@@ -128,18 +128,13 @@ fn effect_uncertain_failure_has_one_exact_non_committal_shape() {
     );
 }
 
-#[test]
-fn canonical_status_ddl_mirrors_include_effect_uncertain_without_run_level_parked() {
-    let exact_check = r#"CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
-                          'infrastructure-failure', 'effect-uncertain'))"#;
-    for ddl in [
-        include_str!("../../../../deploy/sql/run-state.sql"),
-        include_str!("../../../../deploy/sql/postgres-init.sql"),
-    ] {
-        assert!(ddl.contains(exact_check));
-        assert!(!ddl.contains("'parked'"));
-    }
-}
+// `canonical_status_ddl_mirrors_include_effect_uncertain_without_run_level_parked` lived here.
+// It pinned the run-status CHECK as a substring of two checked-in files and went red the moment
+// one of them — `deploy/sql/postgres-init.sql`, which declares no `runs` table at all — stopped
+// carrying that text: a formatting-shaped false red proving neither the installed constraint nor
+// its vocabulary. Its successor is the server-answer arm of
+// `run_state_schema_applies_and_isolates_on_postgres` below, which asks the installed constraint
+// itself.
 
 #[test]
 fn postgres_fixture_has_no_retired_flow_runs_checkpoint_table() {
@@ -343,11 +338,16 @@ fn live_database(url: &str) -> String {
 }
 
 /// Apply `deploy/sql/run-state.sql` to a throwaway Postgres and assert the tenant RLS
-/// isolates rows and the idempotency index dedupes. Gated on
-/// `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness prepares an App generation);
-/// skips cleanly when unset.
+/// isolates rows, the idempotency index dedupes, and the INSTALLED run-status CHECK
+/// admits exactly the crate's [`RunStatus`] vocabulary while refusing the retired
+/// run-level `parked`. Gated on `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness
+/// prepares an App generation); skips cleanly when unset.
 #[test]
 fn run_state_schema_applies_and_isolates_on_postgres() {
+    /// The run-level status the queue park retired off the run row. The server must
+    /// refuse it, not merely the file must omit it.
+    const RETIRED_RUN_STATUS: &str = "parked";
+
     let Ok(url) = std::env::var("WAMN_RUN_STORE_PG_URL") else {
         eprintln!(
             "skipping run_state_schema_applies_and_isolates_on_postgres (set WAMN_RUN_STORE_PG_URL to run)"
@@ -469,6 +469,54 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          ) VALUES ('t3','run-c','f',1,'run-state-fixture',1,'test',\
            'fixture-wiring',1,'k-a');\n",
     );
+    // Ask the INSTALLED status CHECK its own answer, twice over, instead of pinning the
+    // declaration's text. First behaviourally: one INSERT per candidate, each in its own
+    // subtransaction, recording `admitted` or the refusing SQLSTATE. Then exhaustively:
+    // the literal set the server itself reports for the single-column CHECK on `status`,
+    // which no behavioural probe can supply because it cannot enumerate a literal the
+    // crate has never heard of.
+    let candidates = RunStatus::ALL
+        .into_iter()
+        .map(RunStatus::as_sql)
+        .chain(std::iter::once(RETIRED_RUN_STATUS))
+        .map(|literal| format!("'{literal}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    script.push_str(&format!(
+        "CREATE TEMP TABLE status_probe (literal text PRIMARY KEY, answer text NOT NULL);\n\
+         DO $status_probe$\n\
+         DECLARE candidate text; ordinal int := 0;\n\
+         BEGIN\n\
+           FOREACH candidate IN ARRAY ARRAY[{candidates}] LOOP\n\
+             ordinal := ordinal + 1;\n\
+             BEGIN\n\
+               INSERT INTO wamn_run.runs (\
+                 tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id,\
+                 environment, wiring_id, wiring_version, status, idempotency_key\
+               ) VALUES ('t3', 'status-probe-' || ordinal, 'f', 1, 'run-state-fixture', 1,\
+                 'test', 'fixture-wiring', 1, candidate, 'status-probe-' || ordinal);\n\
+               INSERT INTO status_probe VALUES (candidate, 'admitted');\n\
+             EXCEPTION WHEN others THEN\n\
+               INSERT INTO status_probe VALUES (candidate, SQLSTATE);\n\
+             END;\n\
+           END LOOP;\n\
+         END\n\
+         $status_probe$;\n\
+         SELECT 'status-answer ' || literal || ' ' || answer FROM status_probe ORDER BY literal;\n\
+         SELECT 'status-installed ' || string_agg(DISTINCT literal, ' ' ORDER BY literal)\n\
+         FROM (\n\
+           SELECT hit.parts[1] AS literal\n\
+           FROM pg_constraint AS con\n\
+           JOIN pg_attribute AS col\n\
+             ON col.attrelid = con.conrelid AND col.attnum = con.conkey[1]\n\
+           CROSS JOIN LATERAL regexp_matches(\
+             pg_get_constraintdef(con.oid), '''([^'']*)''', 'g') AS hit(parts)\n\
+           WHERE con.conrelid = 'wamn_run.runs'::regclass\n\
+             AND con.contype = 'c'\n\
+             AND cardinality(con.conkey) = 1\n\
+             AND col.attname = 'status'\n\
+         ) AS installed;\n"
+    ));
     // Terminal run history remains deletable.
     script.push_str(
         "UPDATE wamn_run.runs SET status='completed' \
@@ -486,7 +534,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     use std::process::{Command as Proc, Stdio};
     let mut child = Proc::new("psql")
         .arg(&url)
-        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        // `-A -t` so the probe's answers arrive as bare tagged lines.
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-A", "-t", "-f", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -503,5 +552,44 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         out.status.success(),
         "psql failed:\n--- stderr ---\n{}",
         String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Carry the server's answers back across the Rust boundary.
+    let stdout = String::from_utf8(out.stdout).expect("psql stdout is UTF-8");
+    let mut answers = std::collections::BTreeMap::new();
+    let mut installed = None;
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("status-answer ") {
+            let (literal, answer) = rest
+                .split_once(' ')
+                .expect("each status answer is `<literal> <answer>`");
+            answers.insert(literal.to_string(), answer.to_string());
+        } else if let Some(rest) = line.strip_prefix("status-installed ") {
+            installed = Some(rest.to_string());
+        }
+    }
+
+    for status in RunStatus::ALL {
+        assert_eq!(
+            answers.get(status.as_sql()).map(String::as_str),
+            Some("admitted"),
+            "the installed runs status CHECK refused the crate status {:?}",
+            status.as_sql()
+        );
+    }
+    // 23514 is check_violation: the constraint refused it, not a trigger or a type error.
+    assert_eq!(
+        answers.get(RETIRED_RUN_STATUS).map(String::as_str),
+        Some("23514"),
+        "the installed runs status CHECK must refuse the retired run-level \
+         {RETIRED_RUN_STATUS:?} with check_violation"
+    );
+
+    let mut vocabulary = RunStatus::ALL.map(RunStatus::as_sql);
+    vocabulary.sort_unstable();
+    assert_eq!(
+        installed.as_deref(),
+        Some(vocabulary.join(" ").as_str()),
+        "the installed runs status CHECK admits a different vocabulary than RunStatus::ALL"
     );
 }
