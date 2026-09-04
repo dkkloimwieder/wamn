@@ -1756,7 +1756,11 @@ impl WamnPostgres {
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = connection.batch_execute("BEGIN").await {
+        if let Err(error) = connection
+            .batch_execute("BEGIN")
+            .instrument(tracing::info_span!("wamn.auth.perm.begin"))
+            .await
+        {
             self.destroy(connection);
             return Err(error).context("begin registered-operation permission read");
         }
@@ -1771,13 +1775,18 @@ impl WamnPostgres {
                 return Err(error).context("prepare registered-operation permission timeout");
             }
         };
-        if let Err(error) = connection.execute(&timeout_statement, &[&timeout]).await {
+        if let Err(error) = connection
+            .execute(&timeout_statement, &[&timeout])
+            .instrument(tracing::info_span!("wamn.auth.perm.timeout"))
+            .await
+        {
             self.destroy(connection);
             return Err(error).context("set registered-operation permission timeout");
         }
         let result: anyhow::Result<BTreeSet<String>> = async {
             let rows = connection
                 .query(OPERATION_PERMISSIONS_SQL, &[&tenant, &role])
+                .instrument(tracing::info_span!("wamn.auth.perm.query"))
                 .await
                 .context("read registered-operation permissions")?;
             rows.into_iter()
@@ -1790,7 +1799,11 @@ impl WamnPostgres {
         .await;
         match result {
             Ok(permissions) => {
-                if let Err(error) = connection.batch_execute("COMMIT").await {
+                if let Err(error) = connection
+                    .batch_execute("COMMIT")
+                    .instrument(tracing::info_span!("wamn.auth.perm.commit"))
+                    .await
+                {
                     self.destroy(connection);
                     return Err(error).context("commit registered-operation permission read");
                 }

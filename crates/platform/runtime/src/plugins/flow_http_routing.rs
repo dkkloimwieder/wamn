@@ -561,6 +561,7 @@ impl FlowHttpRouting {
                 .ok_or_else(authentication_unavailable)?;
             let token = required_bearer_token(headers)?;
             let principal = authenticate_pat(authentication.identity_reader.as_ref(), token)
+                .instrument(tracing::info_span!("wamn.auth.pat"))
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "route PAT authentication unavailable");
@@ -579,6 +580,7 @@ impl FlowHttpRouting {
                 &authentication.org,
                 &authentication.project,
             )
+            .instrument(tracing::info_span!("wamn.auth.roles"))
             .await
             .map_err(|error| {
                 tracing::warn!(error = %error, "route caller role lookup unavailable");
@@ -594,6 +596,7 @@ impl FlowHttpRouting {
                     &manifest.release.tenant_id,
                     ROUTE_CALLER_ROLE,
                 )
+                .instrument(tracing::info_span!("wamn.auth.permissions"))
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "route operation grants unavailable");
