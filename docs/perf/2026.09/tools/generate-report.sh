@@ -3,7 +3,7 @@
 set -uo pipefail
 REPO=/home/kaalin/dev/wamn
 D=$REPO/docs/perf/2026.09
-T=$D/traces
+T=$D/0-baseline/traces
 tree_of(){ jq -r '
   [.batches[]?.scopeSpans[]?.spans[]?] as $sp |
   ($sp | map({(.spanId): .}) | add // {}) as $by |
