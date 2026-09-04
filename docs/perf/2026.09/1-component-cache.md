@@ -1,6 +1,6 @@
 # Fix 1 — compiled components cached in-process by digest
 
-**Source commits:** `56b1ced5`, `e14011e9`, `726657ad` (branch `perf/1-component-cache`, base `4dec956a`)  
+**Source commits:** `9491fb9b`, `b623744a`, `c187206b` on main (authored on `perf/1-component-cache` off `4dec956a`)  
 **Measured:** 2026-09-04T10:15:10-04:00  
 **Load average at measurement:** 0.79, 0.88, 1.63  
 **Data:** `docs/perf/2026.09/1-component-cache/`
@@ -19,13 +19,13 @@ Cold **255x** faster, hot **~60x**.
 
 Three commits, each necessary:
 
-1. `56b1ced5` — `RouterDriver` holds a `BTreeMap<String, Component>` keyed by artifact
+1. `9491fb9b` — `RouterDriver` holds a `BTreeMap<String, Component>` keyed by artifact
    digest, consulted before the OCI pull. A digest names immutable bytes, so a hit is
    always correct and an entry can never go stale.
-2. `e14011e9` — `prepare_synchronous_release` already pulled and compiled every release
+2. `b623744a` — `prepare_synchronous_release` already pulled and compiled every release
    digest to prove the closure servable, then **dropped the result**. It now inserts into
    the same cache, and readiness refuses unless every release digest is present.
-3. `726657ad` — **the preload never ran in the serving host.** `RouterReadinessProbe` was
+3. `c187206b` — **the preload never ran in the serving host.** `RouterReadinessProbe` was
    constructed in `services/executor` and nowhere else, so `services/host` — the process
    serving every HTTP route — went straight to serving with an empty cache and reported
    ready anyway. Cold stayed at 35.8 s after commit 2 for exactly this reason.
