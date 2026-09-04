@@ -580,8 +580,25 @@ host_secret_directory=$work_dir/host-secrets
 install -d -m 0700 "$host_secret_directory"
 compilation_cache_directory=$work_dir/wasmtime-cache
 install -d -m 0700 "$compilation_cache_directory"
+# A `cargo test --exact` naming a test that does not exist runs NOTHING and
+# exits 0 -- "0 passed; 31 filtered out" reads identically to a suite with no
+# matching work to do. This journey lost that bet once: 8a73233c renamed the
+# route test from eleven to thirteen routes and did not sweep this file, so
+# every run since executed no route test at all and failed later, at a missing
+# artifact, under a message about Secret file modes.
+#
+# So the count is asserted at the invocation rather than inferred downstream.
+assert_one_test_ran() {
+  local log=$1 name=$2
+  grep -qE '^test result: ok\. 1 passed; 0 failed;' "$log" || {
+    echo "cargo test ran no matching test for $name -- an --exact name that does not exist exits 0 having executed nothing" >&2
+    grep -E '^(running|test result)' "$log" >&2 || true
+    exit 1
+  }
+}
+
 route_caller_secret=$work_dir/route-caller-pat.json
-record_command cargo test production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces \
+record_command cargo test production_two_package_release_serves_all_thirteen_pat_routes \
   '<disposable PostgreSQL and OCI inputs redacted>'
 WAMN_RECEIVING_ROUTE_PG18_URL="$system_url" \
 WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY="$component_directory" \
@@ -597,9 +614,11 @@ WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$route_caller_secret" \
 CARGO_TARGET_DIR="$cargo_target_dir" \
 RUSTC_WRAPPER= \
   cargo test -p wamn-proof-integration --lib --locked --offline \
-  route_authentication_live::production_two_package_release_serves_all_eleven_pat_routes_with_correlated_traces \
+  route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/production-route.log"
+assert_one_test_ran "$evidence_dir/production-route.log" \
+  production_two_package_release_serves_all_thirteen_pat_routes
 
 if [[ $(stat -c '%a' "$route_caller_secret") != 600 ]]; then
   echo "production journey emitted an unsafe route-caller Secret mode" >&2
@@ -1660,6 +1679,8 @@ CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/production-materializer.log"
+assert_one_test_ran "$evidence_dir/production-materializer.log" \
+  production_materializer_consumes_the_causal_receipt_exactly_once
 if [[ $(grep -Fc 'RECEIVING_MATERIALIZER_PASS ' \
     "$evidence_dir/production-materializer.log") -ne 1 ]]; then
   echo "production materializer emitted no unique causal receipt" >&2
