@@ -490,6 +490,25 @@ const CLAIM_SQL: &str = "SELECT \
 /// `app.role` and `app.user_id` STAY. They key the RESTRICTIVE per-role and
 /// per-user policies, a different claim class layered INSIDE the tenant floor
 /// and explicitly outside `wamn-0h0g.22.6`'s scope.
+/// The SESSION-scoped settings an autocommit read still needs.
+///
+/// `search_path` and `statement_timeout` are not claims -- they are how the
+/// connection resolves this package's unqualified relations and how long it may
+/// run. A read outside a transaction cannot take them transaction-locally, and
+/// without `search_path` every generated statement fails to resolve its own
+/// tables. They are POOL-UNIFORM: the pool is keyed by class, project and
+/// tenant, so every borrower of this connection wants the same two values.
+///
+/// `app.role` and `app.user_id` are deliberately ABSENT. Those are per-caller
+/// claims, and a session-scoped claim would outlive the request and reach the
+/// next borrower of the pooled connection -- the exact leak the claim model
+/// exists to prevent. A request carrying either one takes the transactional
+/// path instead.
+const GUEST_AUTOCOMMIT_SETTINGS_SQL: &str = "SELECT \
+     set_config('statement_timeout', $1, false), \
+     set_config('search_path', COALESCE($2, current_setting('search_path')), false), \
+     set_config('app.runner', COALESCE($3, current_setting('app.runner', true)), false)";
+
 const GUEST_CLAIM_SQL: &str = "SELECT \
      set_config('statement_timeout', $1, true), \
      set_config('search_path', COALESCE($2, current_setting('search_path')), true), \
@@ -2091,30 +2110,48 @@ impl WamnPostgres {
         let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
         // AUTOCOMMIT WHEN THE SERVER SAYS NO TRANSACTION IS NEEDED. PostgreSQL
         // classified this statement at generation time: it neither writes nor
-        // takes a row lock, so BEGIN, the bound claim statement and COMMIT are
-        // ceremony around a read. Measured cost of that ceremony:
-        // bind_claims 0.45-0.89 ms plus a COMMIT of 2.1-3.8 ms, against a
-        // 0.6 ms statement (docs/perf/2026.09/3b-pipeline.md).
+        // takes a row lock, so BEGIN and COMMIT are ceremony around a read.
+        // Measured cost of that ceremony: bind_claims 0.45-0.89 ms plus a
+        // COMMIT of 2.1-3.8 ms, around a 0.6 ms statement
+        // (docs/perf/2026.09/3b-pipeline.md).
         //
-        // The tenant floor derives from current_user, not from a bound claim,
-        // so a read carries its authority in the connection it was checked out
-        // with. Nothing a policy reads is lost by not binding.
-        if !statement.transactional {
-            let result = run_verified_query(
-                connection.connection(),
-                digest,
-                statement,
-                binds,
-                policy.row_limit,
-            )
-            .await;
-            match result {
-                Ok(rows) => {
-                    connection.repool();
-                    return Ok(rows);
+        // A read carrying a per-caller claim keeps the transaction: a
+        // session-scoped app.role or app.user_id would outlive the request and
+        // reach the next borrower of this pooled connection.
+        if !statement.transactional && role.is_none() && user_id.is_none() {
+            let timeout = policy.statement_timeout_ms.to_string();
+            // ONE FLIGHT. The settings and the statement are issued without an
+            // await between them; tokio-postgres preserves FIFO order, so
+            // search_path is set before the statement that depends on it.
+            let (settings, result) = tokio::join!(
+                async {
+                    let prepared = connection
+                        .connection()
+                        .prepare_cached(GUEST_AUTOCOMMIT_SETTINGS_SQL)
+                        .await
+                        .map_err(|error| map_pg_error(&error))?;
+                    connection
+                        .connection()
+                        .execute(
+                            &prepared,
+                            &[&timeout, &schema.as_deref(), &runner.as_deref()],
+                        )
+                        .await
+                        .map_err(|error| map_pg_error(&error))
                 }
-                Err(error) => return Err(error),
-            }
+                .instrument(tracing::info_span!("wamn.postgres.session_settings")),
+                run_verified_query(
+                    connection.connection(),
+                    digest,
+                    statement,
+                    binds,
+                    policy.row_limit,
+                )
+            );
+            settings.map_err(StatementError::Postgres)?;
+            let rows = result?;
+            connection.repool();
+            return Ok(rows);
         }
 
         // ONE FLIGHT, NOT TWO. The claim transaction and the statement are issued
