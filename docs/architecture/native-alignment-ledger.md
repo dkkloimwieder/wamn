@@ -1,8 +1,8 @@
 # Native-alignment ledger — wamn vs wasmCloud
 
 Principle (ratified): **native capability first — a wamn deviation must name
-what it buys and where it re-converges.** Pin: fork `wamn/2.8.0` @ `5c4ec4a3`
-(zero commits over upstream `v2.8.0`). The tag includes `a5e7d5a`, upstream's
+what it buys and where it re-converges.** Pin: fork `wamn/2.8.0` @ `2a183dfb`
+(one commit over upstream `v2.8.0`; see Part 2). The tag includes `a5e7d5a`, upstream's
 instance-pool panic/poison fix. Sync cadence: per upstream minor, with a shrink
 audit each sync.
 
@@ -20,11 +20,27 @@ audit each sync.
 | 8 | Per-environment `events.k8s.io` Role + RoleBinding for the runtime-operator (native chart 2.8.0 grants only core-group Events). | Lets the operator's native `CrossEnvironmentSchedulingDenied` Warning Event publish instead of leaving only the authoritative `HostSelection=False` condition visible. | **WAMN-side config; temporary.** No upstream filing. Delete the WAMN-owned overlay when a pinned upstream chart grants `events.k8s.io/events` to the operator in every watched namespace. |
 | 9 | `wasmcloud:blobstore@0.1.0` implemented by a WAMN plugin over `object_store`, with binding-scoped credentials and bucket/prefix confinement (native: upstream's `wasi_blobstore` filesystem/in-memory/NATS providers, registered through `multiplexed_plugins()`). | Confinement the contract does not carry: the environment owns endpoint, container and prefix, the author owns only an object key relative to the prefix, and the credential is host-signed so no credential-shaped value exists in anything the guest composes. Plus a bounded body and explicit-commit writes, so a truncated stream cannot overwrite a good object under a deterministic key. | **Keep.** WAMN is the single runtime owner of this contract, and structurally so: the `wasi-blobstore` cargo feature is NOT enabled, so upstream's providers are never compiled and a second registered runtime is impossible rather than merely avoided. **Deviation is confined to three verbs that never succeed, in two categories with different remedies.** *Refused by policy* — `copy-object`, `move-object`: their `object-id` arguments are bare strings carrying no backend or binding discriminator, so confinement cannot hold across them; they return as binding-scoped variants if demand appears, never these signatures. *Unsatisfiable by backend* — `info`: `container-metadata` requires a `created-at` and the object-store surface exposes no container creation time; fabricating `0` would be a timestamp a guest could act on. It returns if `object_store` grows the capability; no policy decision is involved. `create-container`/`delete-container` are NOT deviations — refusing them is the ordinary operation of the environment owning the container. Re-convergence: adopt `wasi:blobstore` when the draft stabilises AND upstream binds it by default. Design: `docs/architecture/2a-capability-registry.md` (posture), bead `wamn-jpxo`. |
 
-## Part 2 — Fork ledger (`wamn/2.8.0` @ `5c4ec4a3`)
+## Part 2 — Fork ledger (`wamn/2.8.0` @ `2a183dfb`)
 
 **Process law:** every fork patch carries a bead id under the fork's current
 retarget epic, a row here, and an exit condition. No un-ledgered patches. The
-current branch has **zero** patches: its tip is the peeled upstream `v2.8.0` tag.
+current branch has **one** patch over the peeled upstream `v2.8.0` tag.
+
+| Patch | Bead | What it changes | What it buys | Exit condition |
+|---|---|---|---|---|
+| `2a183dfb` — an unbound-but-routable host answers **503 `Retry-After: 1`**, not 404 | `wamn-2w3x.2` | `host/http.rs`: `RouteError::NoWorkloadForHost` status 404 → 503 plus a new `retry_after_seconds()`, and the dispatch path's missing-workload-handle arm, where the router has already resolved the route so only the handle is absent. Both now carry `Retry-After`. | **Correctness, measured.** After a host restart the operator-managed EndpointSlice keeps advertising the host while the workload is rebound, so the restarted host takes live traffic for the whole window and answers 404 for a route present in its own weld. A client treats 404 as an answer and retries a 503, so a transient rebind became a wrong result at the caller — 21 seconds of it, second by second, in `docs/perf/2026.09/2-auth/restart-watch.log`. No in-tree lever reaches it: the status is this line, the listener binds inside `run_cluster_host`, and the endpoint is the operator's. | **Drop when a pinned upstream release answers an unbound-but-routable host with a retryable status of its own.** No upstream filing, per standing owner law. |
+
+**What this patch does not fix.** It makes the rebind window *honest*, not
+*shorter*. The window is the operator taking ~20 s to rebind the workload while
+the route-manager EndpointSlice still advertises the host; with three replicas a
+third of traffic meets a 503 for that window instead of a 404. The desired shape
+is endpoint readiness computed from bound-workload state, so a restarting host
+receives no traffic at all — upstream Go we neither patch nor file against.
+Recorded on `wamn-0h0g.17.20` with its trigger.
+
+**Accepted cost.** This layer cannot distinguish "never bound" from "not bound
+yet", so a genuinely wrong `Host` header also receives a retryable 503. Ruled
+the cheaper of the two errors.
 
 | Former patch | v2.8 disposition | Native or WAMN-owned replacement |
 |---|---|---|

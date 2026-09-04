@@ -95,7 +95,7 @@ crossterm = { version = "0.29", default-features = false, features = ["event-str
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # wamn and wash-runtime resolve one crates.io Wasmtime 47.0.x family from the
 # shared 47.0.3 requirement; enforce that source identity in conformance.
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "5c4ec4a3d008b3f401d9e763515f434deebc9936", default-features = false, features = ["oci"] }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "2a183dfb4125c4fcbebe749ebfdead6ab52cdc61", default-features = false, features = ["oci"] }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
 wasmtime = { version = "47.0.3", default-features = false, features = ["cache"] }
 wasmtime-wasi = "47.0.3"

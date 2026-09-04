@@ -12,7 +12,7 @@ fn repository_root() -> PathBuf {
 }
 
 #[test]
-fn dry_run_names_the_zero_patch_identity_and_every_gate_leg() {
+fn dry_run_names_the_ledgered_patch_identity_and_every_gate_leg() {
     let tool = repository_root().join("tools/fork-sync-check");
     let output = Command::new(&tool)
         .args(["dry-run", "/tmp/fork checkout with spaces"])
@@ -27,7 +27,11 @@ fn dry_run_names_the_zero_patch_identity_and_every_gate_leg() {
     for required in [
         "expected-branch: wamn/2.8.0",
         "expected-tag: v2.8.0",
-        "expected-revision: 5c4ec4a3d008b3f401d9e763515f434deebc9936",
+        "expected-tag-revision: 5c4ec4a3d008b3f401d9e763515f434deebc9936",
+        "expected-revision: 2a183dfb4125c4fcbebe749ebfdead6ab52cdc61",
+        // The ledger says one patch; the gate says so too, so an un-ledgered
+        // patch fails rather than riding along.
+        "expected-patch-count: 1",
         "git-config-global: /dev/null",
         "git-config-nosystem: 1",
         "format:",

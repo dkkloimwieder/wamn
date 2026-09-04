@@ -4,7 +4,13 @@ set -euo pipefail
 readonly WAMN_USAGE='usage: tools/fork-sync-check [run|dry-run] [fork-checkout]'
 readonly WAMN_EXPECTED_BRANCH='wamn/2.8.0'
 readonly WAMN_EXPECTED_TAG='v2.8.0'
-readonly WAMN_EXPECTED_REVISION='5c4ec4a3d008b3f401d9e763515f434deebc9936'
+# The upstream tag the branch is cut from, and the branch tip itself. They are
+# no longer the same commit: the branch carries ledgered patches. The COUNT is
+# asserted as well as the tip, so an un-ledgered patch fails this gate rather
+# than riding along -- the ledger's process law, made executable.
+readonly WAMN_EXPECTED_TAG_REVISION='5c4ec4a3d008b3f401d9e763515f434deebc9936'
+readonly WAMN_EXPECTED_REVISION='2a183dfb4125c4fcbebe749ebfdead6ab52cdc61'
+readonly WAMN_EXPECTED_PATCH_COUNT=1
 
 wamn_fail() {
   local -r exit_code="$1"
@@ -61,7 +67,9 @@ wamn_dry_run() {
   printf 'fork-checkout: %q\n' "$WAMN_FORK_CHECKOUT"
   printf 'expected-branch: %s\n' "$WAMN_EXPECTED_BRANCH"
   printf 'expected-tag: %s\n' "$WAMN_EXPECTED_TAG"
+  printf 'expected-tag-revision: %s\n' "$WAMN_EXPECTED_TAG_REVISION"
   printf 'expected-revision: %s\n' "$WAMN_EXPECTED_REVISION"
+  printf 'expected-patch-count: %s\n' "$WAMN_EXPECTED_PATCH_COUNT"
   printf 'git-config-global: /dev/null\n'
   printf 'git-config-nosystem: 1\n'
   wamn_print_command format "${WAMN_FORMAT[@]}"
@@ -97,11 +105,16 @@ wamn_assert_identity() {
   tag_revision="$(wamn_git rev-parse "$WAMN_EXPECTED_TAG^{}")"
   branch_revision="$(wamn_git rev-parse "refs/heads/$WAMN_EXPECTED_BRANCH")"
   head_revision="$(wamn_git rev-parse HEAD)"
-  [[ "$tag_revision" == "$WAMN_EXPECTED_REVISION" ]] || {
-    wamn_fail 65 "$WAMN_EXPECTED_TAG peels to $tag_revision, expected $WAMN_EXPECTED_REVISION"
+  [[ "$tag_revision" == "$WAMN_EXPECTED_TAG_REVISION" ]] || {
+    wamn_fail 65 "$WAMN_EXPECTED_TAG peels to $tag_revision, expected $WAMN_EXPECTED_TAG_REVISION"
   }
   [[ "$branch_revision" == "$WAMN_EXPECTED_REVISION" ]] || {
-    wamn_fail 65 "$WAMN_EXPECTED_BRANCH is $branch_revision, expected zero patches at $WAMN_EXPECTED_REVISION"
+    wamn_fail 65 "$WAMN_EXPECTED_BRANCH is $branch_revision, expected $WAMN_EXPECTED_REVISION"
+  }
+  local patch_count
+  patch_count="$(wamn_git rev-list --count "$WAMN_EXPECTED_TAG_REVISION..$branch_revision")"
+  [[ "$patch_count" == "$WAMN_EXPECTED_PATCH_COUNT" ]] || {
+    wamn_fail 65 "$WAMN_EXPECTED_BRANCH carries $patch_count patches over $WAMN_EXPECTED_TAG, expected $WAMN_EXPECTED_PATCH_COUNT; every patch needs its ledger row"
   }
   [[ "$head_revision" == "$branch_revision" ]] || {
     wamn_fail 65 "checkout HEAD $head_revision is not $WAMN_EXPECTED_BRANCH at $branch_revision"

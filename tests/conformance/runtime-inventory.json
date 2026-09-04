@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "wash_runtime": {
-    "cargo_tree_root": "wash-runtime v2.8.0 (https://github.com/dkkloimwieder/wasmCloud?rev=5c4ec4a3d008b3f401d9e763515f434deebc9936#5c4ec4a3)",
+    "cargo_tree_root": "wash-runtime v2.8.0 (https://github.com/dkkloimwieder/wasmCloud?rev=2a183dfb4125c4fcbebe749ebfdead6ab52cdc61#2a183dfb)",
     "default_features": false
   },
   "live_store_paths": [
