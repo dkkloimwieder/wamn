@@ -1,0 +1,15 @@
+[cap] 09:40:49 kubeconfig=/tmp/tmp.W2y4YDXxHV/kubeconfig
+[cap] 09:43:50 image=wamn-host:receiving-56b1ced5dc3e-1518098-debug
+[cap] 09:43:51 idle probe pod ready
+REQ n=1 phase=COLD tid=c01dc01dc01dc01dc01dc01dc01d0001 status=000 ttfb_s=0 total_s=0
+REQ n=2 phase=HOT tid=d0d0d0d0d0d0d0d0d0d0d0d0d0d00002 status=000 ttfb_s=0 total_s=0
+REQ n=3 phase=HOT tid=d0d0d0d0d0d0d0d0d0d0d0d0d0d00003 status=000 ttfb_s=0 total_s=0
+REQ n=4 phase=HOT tid=d0d0d0d0d0d0d0d0d0d0d0d0d0d00004 status=000 ttfb_s=0 total_s=0
+REQ n=5 phase=HOT tid=d0d0d0d0d0d0d0d0d0d0d0d0d0d00005 status=000 ttfb_s=0 total_s=0
+[cap] 09:43:51 requests done: 5
+[cap] 09:44:18 trace COLD c01dc01dc01dc01dc01dc01dc01d0001 incomplete
+[cap] 09:44:44 trace HOT d0d0d0d0d0d0d0d0d0d0d0d0d0d00002 incomplete
+[cap] 09:45:11 trace  d0d0d0d0d0d0d0d0d0d0d0d0d0d00003 incomplete
+[cap] 09:45:12 trace  d0d0d0d0d0d0d0d0d0d0d0d0d0d00004 ok
+[cap] 09:45:13 trace HOT d0d0d0d0d0d0d0d0d0d0d0d0d0d00005 ok
+[cap] 09:45:13 done: requests=5 traces=2

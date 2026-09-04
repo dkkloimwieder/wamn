@@ -1,0 +1,127 @@
+{
+    "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+    "kind": "WorkloadReplicaSet",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"WorkloadDeployment\",\"metadata\":{\"annotations\":{},\"name\":\"receiving-materializer\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"replicas\":1,\"template\":{\"spec\":{\"environment\":\"wamn-receiving-journey\",\"hostInterfaces\":[{\"interfaces\":[\"types\",\"client\"],\"namespace\":\"wamn\",\"package\":\"postgres\",\"version\":\"0.1.0\"},{\"interfaces\":[\"types\",\"consumer\"],\"namespace\":\"wamn\",\"package\":\"jetstream\",\"version\":\"0.1.0\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"service\":{\"image\":\"172.28.0.9:5000/wamn/materializer@sha256:45795103e519fa7a975de45c67ad0f74297328f0b96b5258a8e9c6462215898f\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"allowedIpNameLookups\":[],\"config\":{\"wamn.environment\":\"dev\",\"wamn.postgres.authority\":\"event-materializer\",\"wamn.project\":\"receiving\",\"wamn.tenant\":\"receiving-route-auth\"},\"environment\":{\"config\":{\"WAMN_MAT_ENV\":\"dev\",\"WAMN_MAT_FETCH_MS\":\"500\",\"WAMN_MAT_MAX_DELIVER\":\"5\",\"WAMN_MAT_ORG\":\"acme\",\"WAMN_MAT_PROJECT\":\"receiving\",\"WAMN_MAT_STREAM\":\"EVT_acme_dev\",\"WAMN_MAT_SWEEP_MS\":\"500\",\"WAMN_MAT_TENANT\":\"receiving-route-auth\"}}},\"maxRestarts\":5}}}}}\n"
+        },
+        "creationTimestamp": "2026-09-04T13:44:31Z",
+        "generation": 1,
+        "labels": {
+            "runtime.wasmcloud.dev/workload-deployment": "receiving-materializer"
+        },
+        "name": "receiving-materializer-78cb5fbb89",
+        "namespace": "wamn-receiving-journey",
+        "ownerReferences": [
+            {
+                "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+                "blockOwnerDeletion": true,
+                "controller": true,
+                "kind": "WorkloadDeployment",
+                "name": "receiving-materializer",
+                "uid": "0031d4bb-a671-46ab-be35-9becc906e33c"
+            }
+        ],
+        "resourceVersion": "1762",
+        "uid": "dc9cad36-bd02-44ce-96c4-7adcabc89144"
+    },
+    "spec": {
+        "replicas": 1,
+        "template": {
+            "spec": {
+                "environment": "wamn-receiving-journey",
+                "hostInterfaces": [
+                    {
+                        "interfaces": [
+                            "types",
+                            "client"
+                        ],
+                        "namespace": "wamn",
+                        "package": "postgres",
+                        "version": "0.1.0"
+                    },
+                    {
+                        "interfaces": [
+                            "types",
+                            "consumer"
+                        ],
+                        "namespace": "wamn",
+                        "package": "jetstream",
+                        "version": "0.1.0"
+                    },
+                    {
+                        "interfaces": [
+                            "routing"
+                        ],
+                        "namespace": "wamn",
+                        "package": "flow-http-routing",
+                        "version": "0.1.0"
+                    },
+                    {
+                        "interfaces": [
+                            "delivery"
+                        ],
+                        "namespace": "wamn",
+                        "package": "router-delivery",
+                        "version": "0.1.0"
+                    }
+                ],
+                "hostSelector": {
+                    "hostgroup": "default"
+                },
+                "service": {
+                    "image": "172.28.0.9:5000/wamn/materializer@sha256:45795103e519fa7a975de45c67ad0f74297328f0b96b5258a8e9c6462215898f",
+                    "imagePullPolicy": "Always",
+                    "localResources": {
+                        "config": {
+                            "wamn.environment": "dev",
+                            "wamn.postgres.authority": "event-materializer",
+                            "wamn.project": "receiving",
+                            "wamn.tenant": "receiving-route-auth"
+                        },
+                        "environment": {
+                            "config": {
+                                "WAMN_MAT_ENV": "dev",
+                                "WAMN_MAT_FETCH_MS": "500",
+                                "WAMN_MAT_MAX_DELIVER": "5",
+                                "WAMN_MAT_ORG": "acme",
+                                "WAMN_MAT_PROJECT": "receiving",
+                                "WAMN_MAT_STREAM": "EVT_acme_dev",
+                                "WAMN_MAT_SWEEP_MS": "500",
+                                "WAMN_MAT_TENANT": "receiving-route-auth"
+                            }
+                        }
+                    },
+                    "maxRestarts": 5
+                }
+            }
+        }
+    },
+    "status": {
+        "conditions": [
+            {
+                "lastTransitionTime": "2026-09-04T13:44:31Z",
+                "reason": "Available",
+                "status": "True",
+                "type": "ScaleUp"
+            },
+            {
+                "lastTransitionTime": "2026-09-04T13:44:31Z",
+                "reason": "Available",
+                "status": "True",
+                "type": "ScaleDown"
+            },
+            {
+                "lastTransitionTime": "2026-09-04T13:45:27Z",
+                "reason": "Available",
+                "status": "True",
+                "type": "Ready"
+            }
+        ],
+        "replicas": {
+            "current": 1,
+            "expected": 1,
+            "ready": 1
+        }
+    }
+}

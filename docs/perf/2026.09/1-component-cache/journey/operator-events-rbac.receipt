@@ -1,0 +1,8 @@
+create=yes
+patch=yes
+get=no
+list=no
+watch=no
+update=no
+delete=no
+deletecollection=no

@@ -1,0 +1,5 @@
+REQ n=1 phase=COLD tid=c01dc01dc01dc01dc01dc01dc01d0001 status=200 ttfb_s=37.379131 total_s=37.379356
+REQ n=2 phase=HOT tid=d0d0d0d0d0d0d0d0d0d0d0d0d0d00002 status=200 ttfb_s=0.032148 total_s=0.032243
+REQ n=3 phase=HOT tid=d0d0d0d0d0d0d0d0d0d0d0d0d0d00003 status=200 ttfb_s=0.029199 total_s=0.029320
+REQ n=4 phase=HOT tid=d0d0d0d0d0d0d0d0d0d0d0d0d0d00004 status=200 ttfb_s=0.028060 total_s=0.028146
+REQ n=5 phase=HOT tid=d0d0d0d0d0d0d0d0d0d0d0d0d0d00005 status=200 ttfb_s=0.027166 total_s=0.027280
