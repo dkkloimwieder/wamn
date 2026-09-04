@@ -513,6 +513,9 @@ pub struct RouterDriver {
     source: ComponentArtifactSource,
     config: RouterDriverConfig,
     cache: Arc<WiringCache<CatalogFacts>>,
+    /// The WASI p2 host surface, linked once. Cloned per request rather than
+    /// rebuilt: see the construction site for the measurement.
+    base_linker: Arc<Linker<SharedCtx>>,
     /// Compiled components held by artifact digest for the life of the
     /// process. A digest names immutable bytes, so an entry can never go
     /// stale: the same digest is always the same component. Without this,
@@ -555,6 +558,19 @@ impl RouterDriver {
             "invalid router owner {:?}: 1-128 chars of [A-Za-z0-9_-] required",
             config.owner_prefix
         );
+        // THE WASI P2 SURFACE, ADDED ONCE. Populating a fresh Linker with it cost
+        // 1.78 ms of every request -- 55% of linker_setup and the largest single
+        // item left in the hot path (docs/perf/2026.09/1b-a-linker-instrument.md).
+        // Nothing in it is per-request: it is the same host functions against the
+        // same engine every time. Each request clones this, which copies a name
+        // map rather than rebuilding hundreds of closures and their type
+        // registrations, and then layers its own binds on the clone.
+        let base_linker = {
+            let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
+            wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+                .map_err(|error| anyhow::anyhow!("add the WASI p2 surface to the shared base linker: {error}"))?;
+            Arc::new(linker)
+        };
         let cache = Arc::new(WiringCache::new(config.cache_capacity.get()));
         let doorbell = WiringDoorbellListener::postgres(
             Arc::clone(&postgres),
@@ -571,6 +587,7 @@ impl RouterDriver {
             source,
             config,
             cache,
+            base_linker,
             compiled: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
             _doorbell: doorbell,
             started: Instant::now(),
@@ -719,6 +736,7 @@ impl RouterDriver {
             )]));
             NodeInstance::instantiate_compiled(
                 &self.engine,
+                &self.base_linker,
                 compiled,
                 Arc::clone(&self.postgres),
                 Arc::clone(&self.credentials),
@@ -1417,6 +1435,7 @@ impl RouterDriver {
         let mut instance = if let Some(bytes) = candidate_bytes {
             NodeInstance::instantiate(
                 &self.engine,
+                &self.base_linker,
                 bytes,
                 Arc::clone(&self.postgres),
                 Arc::clone(&self.credentials),
@@ -1437,6 +1456,7 @@ impl RouterDriver {
                 .ok_or_else(|| anyhow::anyhow!("released-operation-component-unprepared"))?;
             NodeInstance::instantiate_compiled(
                 &self.engine,
+                &self.base_linker,
                 compiled,
                 Arc::clone(&self.postgres),
                 Arc::clone(&self.credentials),
@@ -1575,6 +1595,9 @@ struct BoundNestedInvocation {
 /// admission-declared dependencies.
 struct NestedOperationHost {
     engine: Arc<Engine>,
+    /// The shared WASI base linker, so a nested invocation clones it too rather
+    /// than rebuilding the surface for the child.
+    base_linker: Arc<Linker<SharedCtx>>,
     postgres: Arc<WamnPostgres>,
     credentials: Arc<WamnCredentials>,
     logging: Arc<WamnLogging>,
@@ -1779,6 +1802,7 @@ impl NestedOperationHost {
             })?;
         let mut child = NodeInstance::instantiate_compiled(
             &self.engine,
+            &self.base_linker,
             compiled,
             Arc::clone(&self.postgres),
             Arc::clone(&self.credentials),
@@ -2075,6 +2099,7 @@ impl NodeInstance {
     )]
     async fn instantiate(
         engine: &Engine,
+        base_linker: &Arc<Linker<SharedCtx>>,
         bytes: &[u8],
         postgres: Arc<WamnPostgres>,
         credentials: Arc<WamnCredentials>,
@@ -2091,6 +2116,7 @@ impl NodeInstance {
             .in_scope(|| Self::compile(engine, bytes))?;
         Self::instantiate_compiled(
             engine,
+            base_linker,
             component,
             postgres,
             credentials,
@@ -2112,6 +2138,7 @@ impl NodeInstance {
     )]
     async fn instantiate_compiled(
         engine: &Engine,
+        base_linker: &Arc<Linker<SharedCtx>>,
         component: Component,
         postgres: Arc<WamnPostgres>,
         credentials: Arc<WamnCredentials>,
@@ -2130,12 +2157,8 @@ impl NodeInstance {
                 // request. This is the span that decides whether 1b is worth its
                 // refactor: if the cost is here, a linker cached per component
                 // world removes it outright.
-                let mut linker: Linker<SharedCtx> = tracing::info_span!("wamn.linker.wasi")
-                    .in_scope(|| {
-                        let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
-                        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-                        Ok::<_, anyhow::Error>(linker)
-                    })?;
+                let mut linker: Linker<SharedCtx> = tracing::info_span!("wamn.linker.clone")
+                    .in_scope(|| base_linker.as_ref().clone());
                 let local = wash_runtime::types::LocalResources {
                     allowed_hosts: Arc::clone(&allowed_hosts),
                     ..Default::default()
@@ -2162,6 +2185,7 @@ impl NodeInstance {
                 ));
                 let nested = Arc::new(NestedOperationHost {
                     engine: Arc::new(engine.clone()),
+                    base_linker: Arc::clone(base_linker),
                     postgres: Arc::clone(&postgres),
                     credentials: Arc::clone(&credentials),
                     logging: Arc::clone(&logging),
