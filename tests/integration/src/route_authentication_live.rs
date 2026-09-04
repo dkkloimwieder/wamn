@@ -84,7 +84,7 @@ use crate::dev_environment::{
 };
 
 const URL_ENV: &str = "WAMN_ROUTE_AUTH_PG18_URL";
-const JOURNEY_URL_ENV: &str = "WAMN_RECEIVING_ROUTE_PG18_URL";
+const JOURNEY_URL_ENV: &str = "WAMN_ROUTE_PG18_URL";
 const DEV_COMMAND_TIMEOUT: Duration = Duration::from_secs(12 * 60);
 const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = [
     (
@@ -877,23 +877,23 @@ struct JourneyInputs {
 impl JourneyInputs {
     fn required() -> anyhow::Result<Self> {
         Ok(Self {
-            component_directory: required_journey_path("WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY")?,
+            component_directory: required_journey_path("WAMN_ROUTE_COMPONENT_DIRECTORY")?,
             compilation_cache_directory: required_journey_path(
-                "WAMN_RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY",
+                "WAMN_ROUTE_COMPILATION_CACHE_DIRECTORY",
             )?,
-            flow_http_wasm: required_journey_path("WAMN_RECEIVING_ROUTE_FLOW_HTTP_WASM")?,
+            flow_http_wasm: required_journey_path("WAMN_ROUTE_FLOW_HTTP_WASM")?,
             component_artifact_base: required_journey(
-                "WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE",
+                "WAMN_ROUTE_COMPONENT_ARTIFACT_BASE",
             )?,
-            release_artifact_base: required_journey("WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE")?,
-            route_host: required_journey("WAMN_RECEIVING_ROUTE_HOST")?,
-            registry_auth_file: required_journey_path("WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE")?,
+            release_artifact_base: required_journey("WAMN_ROUTE_RELEASE_ARTIFACT_BASE")?,
+            route_host: required_journey("WAMN_ROUTE_HOST")?,
+            registry_auth_file: required_journey_path("WAMN_ROUTE_REGISTRY_AUTH_FILE")?,
             host_secret_directory: required_journey_path(
-                "WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY",
+                "WAMN_ROUTE_SECRET_OUTPUT_DIRECTORY",
             )?,
-            host_secret_namespace: required_journey("WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE")?,
+            host_secret_namespace: required_journey("WAMN_ROUTE_SECRET_NAMESPACE")?,
             route_caller_secret_output: required_journey_path(
-                "WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT",
+                "WAMN_ROUTE_CALLER_SECRET_OUTPUT",
             )?,
         })
     }
@@ -919,14 +919,14 @@ impl DevJourneyInputs {
                     "WAMN_RECEIVING_DEV_FLOW_HTTP_WORKLOAD_IMAGE",
                 )?,
                 component_artifact_base: required_journey(
-                    "WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE",
+                    "WAMN_ROUTE_COMPONENT_ARTIFACT_BASE",
                 )?,
                 release_artifact_base: required_journey(
-                    "WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE",
+                    "WAMN_ROUTE_RELEASE_ARTIFACT_BASE",
                 )?,
-                route_host: required_journey("WAMN_RECEIVING_ROUTE_HOST")?,
+                route_host: required_journey("WAMN_ROUTE_HOST")?,
                 registry_auth_file: required_journey_path(
-                    "WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE",
+                    "WAMN_ROUTE_REGISTRY_AUTH_FILE",
                 )?,
                 package_sources: vec![
                     package_root()
@@ -1432,7 +1432,7 @@ fn verify_dev_command_receipt(output: &std::process::Output) -> anyhow::Result<(
         "the served endpoint is not a loopback port the host actually bound: {base_url:?}"
     );
     anyhow::ensure!(
-        route_host == required_journey("WAMN_RECEIVING_ROUTE_HOST")?,
+        route_host == required_journey("WAMN_ROUTE_HOST")?,
         "the served route host is not the deployment-owned one: {route_host:?}"
     );
     Ok(())

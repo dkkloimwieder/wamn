@@ -667,17 +667,17 @@ assert_one_test_ran() {
 route_caller_secret=$work_dir/route-caller-pat.json
 record_command cargo test production_two_package_release_serves_all_thirteen_pat_routes \
   '<disposable PostgreSQL and OCI inputs redacted>'
-WAMN_RECEIVING_ROUTE_PG18_URL="$system_url" \
-WAMN_RECEIVING_ROUTE_COMPONENT_DIRECTORY="$component_directory" \
-WAMN_RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY="$compilation_cache_directory" \
-WAMN_RECEIVING_ROUTE_FLOW_HTTP_WASM="$flow_http_wasm" \
-WAMN_RECEIVING_ROUTE_COMPONENT_ARTIFACT_BASE="$component_artifact_base" \
-WAMN_RECEIVING_ROUTE_RELEASE_ARTIFACT_BASE="$release_artifact_base" \
-WAMN_RECEIVING_ROUTE_HOST="$route_host" \
-WAMN_RECEIVING_ROUTE_REGISTRY_AUTH_FILE="$docker_config_directory/config.json" \
-WAMN_RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$host_secret_directory" \
-WAMN_RECEIVING_ROUTE_SECRET_NAMESPACE="$namespace" \
-WAMN_RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$route_caller_secret" \
+WAMN_ROUTE_PG18_URL="$system_url" \
+WAMN_ROUTE_COMPONENT_DIRECTORY="$component_directory" \
+WAMN_ROUTE_COMPILATION_CACHE_DIRECTORY="$compilation_cache_directory" \
+WAMN_ROUTE_FLOW_HTTP_WASM="$flow_http_wasm" \
+WAMN_ROUTE_COMPONENT_ARTIFACT_BASE="$component_artifact_base" \
+WAMN_ROUTE_RELEASE_ARTIFACT_BASE="$release_artifact_base" \
+WAMN_ROUTE_HOST="$route_host" \
+WAMN_ROUTE_REGISTRY_AUTH_FILE="$docker_config_directory/config.json" \
+WAMN_ROUTE_SECRET_OUTPUT_DIRECTORY="$host_secret_directory" \
+WAMN_ROUTE_SECRET_NAMESPACE="$namespace" \
+WAMN_ROUTE_CALLER_SECRET_OUTPUT="$route_caller_secret" \
 CARGO_TARGET_DIR="$cargo_target_dir" \
 RUSTC_WRAPPER= \
   cargo test -p wamn-proof-integration --lib --locked --offline \

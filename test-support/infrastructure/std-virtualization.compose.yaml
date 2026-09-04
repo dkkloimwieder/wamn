@@ -53,11 +53,11 @@ services:
       REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
     volumes:
       - type: bind
-        source: ${WAMN_RECEIVING_ROUTE_REGISTRY_HTPASSWD:-/dev/null}
+        source: ${WAMN_ROUTE_REGISTRY_HTPASSWD:-/dev/null}
         target: /auth/htpasswd
         read_only: true
     ports:
-      - "127.0.0.1:${WAMN_RECEIVING_ROUTE_REGISTRY_PORT:-5004}:5000"
+      - "127.0.0.1:${WAMN_ROUTE_REGISTRY_PORT:-5004}:5000"
     healthcheck:
       test:
         - CMD-SHELL
