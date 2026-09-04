@@ -2314,6 +2314,32 @@ which must keep naming the world the crate's own `wit/world.wit` declares —
 contract change. No `-p` resolution catches that one; only building the
 component does (`wamn-0h0g.26.22`).
 
+## Adding a span to the request path
+
+Two mistakes cost a full measurement cycle each while instrumenting the request
+path for `docs/perf/2026.09/3a-instrument.md`.
+
+**A span guard held across an `await` makes the future non-`Send`.** The WIT host
+functions require `Send`, so `tracing::info_span!(...).entered()` around any code
+containing an `.await` fails to compile with *"future cannot be sent between
+threads safely"* — and the error surfaces at the host-function signature, several
+files away from the guard that caused it. Use an instrumented async block:
+
+```rust
+async { /* work with .await */ }
+    .instrument(tracing::info_span!("wamn.thing"))
+    .await
+```
+
+`.entered()` is correct only when the block it guards is entirely synchronous.
+
+**Span the function the path actually takes.** `run_query` and
+`run_verified_query` in `wamn_postgres/resources.rs` both have a row-decode loop.
+A released route takes the *verified* one, so instrumenting `run_query` produced
+a span that never appeared in a single trace — which reads exactly like the work
+being free. Confirm the span appears in a captured trace before drawing any
+conclusion from its absence.
+
 ## Not reconstructed
 
 `architecture/gate-registry.json` carries `SourceKind::Recipe` entries under an
