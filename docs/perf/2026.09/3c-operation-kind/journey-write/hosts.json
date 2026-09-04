@@ -1,0 +1,147 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "5ac8c4f2-7d12-4503-a3bd-8d04291a00a8",
+            "hostname": "10.244.2.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T17:08:01Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "addicted-street-3303",
+                "namespace": "wamn-system",
+                "resourceVersion": "1670",
+                "uid": "96fdd631-a3cc-43d8-8b47-b8532a0ad3c4"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-04T17:08:01Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-04T17:08:02Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-04T17:08:03Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "12.289781",
+                "systemMemoryFree": 11796037632,
+                "systemMemoryTotal": 65437433856,
+                "version": "2.8.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "3216c5ca-963a-45a9-b4cd-cb42abe3d136",
+            "hostname": "10.244.1.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T17:08:02Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "special-hole-8672",
+                "namespace": "wamn-system",
+                "resourceVersion": "1674",
+                "uid": "ef96f9c7-93a2-4e7a-b8d4-619821b7263f"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-04T17:08:02Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-04T17:08:03Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-04T17:08:04Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "10.012836",
+                "systemMemoryFree": 11796434944,
+                "systemMemoryTotal": 65437433856,
+                "version": "2.8.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "2073506a-8099-4273-b762-47c5bd8b6605",
+            "hostname": "10.244.2.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T17:08:01Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "unhealthy-hall-9135",
+                "namespace": "wamn-system",
+                "resourceVersion": "1671",
+                "uid": "4c216c68-31b8-4bb4-b544-e45e1e1818b5"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-04T17:08:01Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-04T17:08:02Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-04T17:08:03Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "11.528497",
+                "systemMemoryFree": 11796201472,
+                "systemMemoryTotal": 65437433856,
+                "version": "2.8.0"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

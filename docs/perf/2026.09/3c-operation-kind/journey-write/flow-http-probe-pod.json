@@ -1,0 +1,227 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T17:08:19Z",
+                "generateName": "flow-http-reachability-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "535a6648-740a-4bab-a2a7-f9ed159f0b3a",
+                    "batch.kubernetes.io/job-name": "flow-http-reachability",
+                    "controller-uid": "535a6648-740a-4bab-a2a7-f9ed159f0b3a",
+                    "job-name": "flow-http-reachability"
+                },
+                "name": "flow-http-reachability-b2wkh",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "flow-http-reachability",
+                        "uid": "535a6648-740a-4bab-a2a7-f9ed159f0b3a"
+                    }
+                ],
+                "resourceVersion": "1777",
+                "uid": "e16a38d3-2c91-48b2-90f4-cbef3cf96962"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "headers=/tmp/headers\nbody=/tmp/body\nstatus=$(curl --silent --show-error --connect-timeout 5 --max-time 15 \\\n  --dump-header \"$headers\" --output \"$body\" --write-out '%{http_code}' \\\n  --header 'Host: receiving.localhost' \\\n  'http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route')\ncontent_type=$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' \"$headers\" \\\n  | tr -d '\\r' | head -n 1)\ntest \"$status\" = 404\ntest \"$content_type\" = application/json\nprintf '%s' '{\"error\":{\"code\":\"route-not-found\"}}' \u003e/tmp/expected\ncmp -s /tmp/expected \"$body\"\nprintf '%s\\n' 'RECEIVING_HTTP_PROBE {\"status\":404,\"content_type\":\"application/json\",\"host\":\"receiving.localhost\",\"body\":{\"error\":{\"code\":\"route-not-found\"}}}'\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "image": "wamn-host:receiving-c0cbd7bda465-1903908-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-clgw8",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker2",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-clgw8",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T17:08:22Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T17:08:19Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T17:08:21Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T17:08:21Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T17:08:19Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://40a411722df0967352fe9426f574dfbebaa89567c8e3c0afdf6c2c6722fcac63",
+                        "image": "docker.io/library/wamn-host:receiving-c0cbd7bda465-1903908-debug",
+                        "imageID": "docker.io/library/import-2026-09-04@sha256:1f26f3407be596524efe486bdb49898fb9529e3ad5955a5676b96282e48f63e9",
+                        "lastState": {},
+                        "name": "probe",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://40a411722df0967352fe9426f574dfbebaa89567c8e3c0afdf6c2c6722fcac63",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-04T17:08:20Z",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-04T17:08:20Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-clgw8",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.5",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.5"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.2.8",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.8"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-04T17:08:19Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

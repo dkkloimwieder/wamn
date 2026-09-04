@@ -1,0 +1,22 @@
+[2m2026-09-04T17:05:12.697103Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m registration loaded [3mpublication[0m[2m=[0m"wamn_cdc_acme__receiving__dev__1af7d9y7" [3mslot[0m[2m=[0m"wamn_cdc_acme__receiving__dev__1af7d9y7" [3mstream[0m[2m=[0m"EVT_acme_dev"
+[2m2026-09-04T17:05:12.699032Z[0m [32m INFO[0m [2masync_nats::connector[0m[2m:[0m connected successfully [3mserver[0m[2m=[0m4222 [3mmax_payload[0m[2m=[0m1048576
+[2m2026-09-04T17:05:12.699121Z[0m [32m INFO[0m [2masync_nats[0m[2m:[0m event: connected
+[2m2026-09-04T17:05:12.742266Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m preflight: slot healthy (resume position = confirmed LSN) [3mslot[0m[2m=[0m"wamn_cdc_acme__receiving__dev__1af7d9y7" [3mactive[0m[2m=[0mfalse [3mconfirmed_flush_lsn[0m[2m=[0m"0/33FDAD0" [3mwal_status[0m[2m=[0m"reserved"
+[2m2026-09-04T17:05:12.742337Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Creating logical replication stream with retry support
+[2m2026-09-04T17:05:12.742367Z[0m [32m INFO[0m [2mpg_walstream::retry[0m[2m:[0m Attempting to connect to PostgreSQL with retry logic
+[2m2026-09-04T17:05:12.781060Z[0m [32m INFO[0m [2mpg_walstream::retry[0m[2m:[0m Successfully connected to PostgreSQL on attempt 1 after 38.675507ms
+[2m2026-09-04T17:05:12.781102Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Starting logical replication stream
+[2m2026-09-04T17:05:12.781110Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Initializing replication stream
+[2m2026-09-04T17:05:12.781212Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m System identification successful
+[2m2026-09-04T17:05:12.781222Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Creating replication slot: wamn_cdc_acme__receiving__dev__1af7d9y7
+[2m2026-09-04T17:05:12.781344Z[0m [33m WARN[0m [2mpg_walstream::stream[0m[2m:[0m Replication slot already exists, continuing
+[2m2026-09-04T17:05:12.781358Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Replication stream initialized
+[2m2026-09-04T17:05:12.781930Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Logical replication started with LSN: 0/0
+[2m2026-09-04T17:05:12.781955Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m walsender session open; draining [3mreopens[0m[2m=[0m0
+[2m2026-09-04T17:05:42.801945Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3405890, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T17:06:12.802695Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3405890, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T17:06:42.833986Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3405890, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T17:07:12.865007Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3405890, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T17:07:42.895056Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3405890, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T17:08:12.925167Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3405890, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T17:08:42.938715Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3405A00, flushed=0/34059C8, applied=0/34059C8, reply_requested=false

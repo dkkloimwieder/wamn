@@ -50,6 +50,38 @@ autocommit path and silently lost its causation. The plan says `ModifyTable`.
 `lock_purchase_order` is `SELECT … FOR UPDATE` with no `ModifyTable` node at all — which
 is why the field is named for needing a transaction rather than for writing.
 
+## Rule 4, both halves — the write path is exercised, not only classified
+
+A classification proven at build time with the runtime path unexercised is how a
+proof misses a lost transaction. `POST /purchase_order/update` was driven through
+the runner with the same payload the proof uses, and its trace captured.
+
+| | `bind_claims` | `commit` |
+|---|---|---|
+| read (`purchase_order/get`) | **absent** | **absent** |
+| write (`purchase_order/update`) | **4.070 ms** | **2.231 ms** |
+
+The write keeps its transaction, so its causation still rides the commit.
+
+Two things only the write trace shows:
+
+- **3b's pipelining is observable here for the first time.** `statement` runs
+  17.0 → 22.2 ms and `bind_claims` 18.3 → 22.4 ms: overlapping, not serialized.
+  The read path has no claim binding left to overlap with.
+- **The write's `wamn.postgres` is 8.845 ms against the read's 1.960 ms** — nine
+  statements, a row lock, and causation riding the commit. That is the shape the
+  ruling intends, not a defect.
+
+```
+    wamn.postgres  8.845 ms  @+16.4 ms
+      wamn.postgres.acquire  0.337 ms  @+16.5 ms
+      wamn.postgres.statement  5.204 ms  @+17 ms
+      wamn.postgres.bind_claims  4.07 ms  @+18.3 ms
+        wamn.postgres.decode_rows  0.086 ms  @+22 ms
+      wamn.postgres.commit  2.231 ms  @+22.9 ms
+      wamn.jetstream  0.176 ms  @+26.9 ms
+```
+
 ## Phase breakdown (ms)
 
 | trace | auth | resolve | linker | link | inst | db | bind | sql | COMMIT | UNSPANNED | handle_http | ratio |
