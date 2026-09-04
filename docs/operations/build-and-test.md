@@ -2007,6 +2007,35 @@ an input owes two proofs: every rule fired, and nothing the rules were meant
 to eliminate is still there. The first is about the transform; the second is
 about the artifact, and only the second is what ships.
 
+**And the sweep is a COUNT, not an absence, whenever a real value can equal
+the placeholder it replaces.** Applying the rule above to the workload
+renderer immediately refused a correct manifest: Receiving's own catalog is
+`default`, the same string the template carries as its placeholder, so
+"no placeholder survives" is false for a render that is right. The tempting
+repair — skip the check when the declared value equals the placeholder —
+blinds the sweep at precisely the claim it was added for.
+
+What actually holds is a count: a placeholder may survive no more often than
+the claims that legitimately declare it. One `"default"` for Receiving's
+catalog; a second occurrence is something the anchor map does not cover. The
+same shape appears wherever a guard's subject and its sentinel can coincide,
+and the general lesson is that "must not appear" is usually a count of zero
+that nobody checked was really zero.
+
+Two smaller things fell out of the same guard, both worth keeping:
+
+- **Quote the sentinel when the format does.** `default` also appears in this
+  template as `hostgroup: default` and inside a comment naming
+  `values-host-default.yaml`. Sweeping the bare word refuses a correct file;
+  sweeping `"default"` does not, because every claim value is a quoted YAML
+  string. A mutant that widened the sweep to the bare word is killed by a
+  positive assertion that the unquoted uses SURVIVE.
+- **Every key the contract calls required needs its own control, not one
+  representative.** Mutation caught this directly: dropping `catalog` from the
+  required list survived, because the only missing-key case unset `tenant` and
+  every fixture happened to carry a catalog. One control per required key, or
+  the list is a comment.
+
 **The test of an un-fusing: a parameter no test can distinguish from the
 constant it replaced is the same fusion with extra steps.** Introducing the
 argument is not the work; proving it CHANGES something is. The statement-count

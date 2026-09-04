@@ -635,18 +635,42 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
     }
 }
 
+/// The identity claims the host injects into the flow-http workload, paired
+/// with the field of [`DevActivationIdentity`] each one carries.
+///
+/// This is the SINGLE SOURCE for the claim set. It exists because the set was
+/// previously written out by hand in two places -- here and in the cluster
+/// journey's workload renderer -- and the second copy had four of the five.
+/// `wamn.catalog` was left at the template's placeholder, with no anchor, no
+/// substitution and no assertion, so a second application would have deployed
+/// under the first one's catalog and route resolution would have looked in
+/// the wrong one. An enumeration maintained by hand on both sides misses
+/// whatever the enumeration missed; nothing compared the two.
+///
+/// `deploy/platform/http-route-workload.example.yaml` is held equal to this
+/// by a test in this module, so the template gaining or losing a claim fails
+/// here rather than in a cluster.
+pub fn flow_http_identity_claims(
+    identity: &DevActivationIdentity,
+) -> [(&'static str, &str); 5] {
+    [
+        ("wamn.tenant", identity.tenant.as_str()),
+        ("wamn.catalog", identity.catalog.as_str()),
+        ("wamn.environment", identity.environment.as_str()),
+        ("wamn.project", identity.project.as_str()),
+        ("wamn.schema", identity.schema.as_str()),
+    ]
+}
+
 fn flow_http_request(
     request: &DevActivationRequest<'_>,
     pull_secret: v2::ImagePullSecret,
 ) -> v2::WorkloadStartRequest {
     let identity = request.identity;
-    let config = HashMap::from([
-        ("wamn.tenant".to_owned(), identity.tenant.clone()),
-        ("wamn.catalog".to_owned(), identity.catalog.clone()),
-        ("wamn.environment".to_owned(), identity.environment.clone()),
-        ("wamn.project".to_owned(), identity.project.clone()),
-        ("wamn.schema".to_owned(), identity.schema.clone()),
-    ]);
+    let config = flow_http_identity_claims(identity)
+        .into_iter()
+        .map(|(claim, value)| (claim.to_owned(), value.to_owned()))
+        .collect::<HashMap<_, _>>();
     let local_resources = v2::LocalResources {
         memory_limit_mb: 0,
         cpu_limit: 0,
@@ -1307,6 +1331,72 @@ mod tests {
             host_group: "wamn-dev-receiving".to_owned(),
             host_name: "wamn-dev-receiving-1".to_owned(),
             runner: "wamn-dev-receiving-1".to_owned(),
+        }
+    }
+
+    /// The deploy template and the production path must declare the SAME
+    /// identity claims. Either side gaining or losing one fails here.
+    ///
+    /// Read from the template rather than restated, and compared against the
+    /// producer rather than a second list, so this cannot drift into the third
+    /// hand-maintained copy of the thing it exists to prevent.
+    #[test]
+    fn the_workload_template_declares_exactly_the_claims_activation_sets() {
+        let template = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../deploy/platform/http-route-workload.example.yaml"),
+        )
+        .expect("the workload template is checked in beside the platform manifests");
+
+        let mut declared: Vec<&str> = template
+            .lines()
+            .filter_map(|line| line.trim().split_once(':'))
+            .map(|(key, _)| key)
+            .filter(|key| key.starts_with("wamn."))
+            .collect();
+        declared.sort_unstable();
+
+        let identity = identity();
+        let mut set: Vec<&str> = flow_http_identity_claims(&identity)
+            .into_iter()
+            .map(|(claim, _)| claim)
+            .collect();
+        set.sort_unstable();
+
+        assert_eq!(
+            declared, set,
+            "deploy/platform/http-route-workload.example.yaml declares {declared:?} \
+             but activation sets {set:?}; the cluster journey substitutes what the \
+             template declares, so a claim in one and not the other deploys a \
+             placeholder identity"
+        );
+    }
+
+    /// Every claim carries a DISTINCT field. A producer that paired two claims
+    /// to the same field would satisfy the set-equality test above while
+    /// deploying one identity under another's name.
+    #[test]
+    fn each_identity_claim_carries_its_own_field() {
+        let identity = DevActivationIdentity {
+            tenant: "tenant-value".to_owned(),
+            catalog: "catalog-value".to_owned(),
+            environment: "environment-value".to_owned(),
+            org: "org-value".to_owned(),
+            project: "project-value".to_owned(),
+            schema: "schema-value".to_owned(),
+            host_group: "host-group-value".to_owned(),
+            host_name: "host-name-value".to_owned(),
+            runner: "runner-value".to_owned(),
+        };
+        for (claim, value) in flow_http_identity_claims(&identity) {
+            let field = claim
+                .strip_prefix("wamn.")
+                .expect("every claim is namespaced");
+            assert_eq!(
+                value,
+                format!("{field}-value"),
+                "claim {claim} carries the wrong field of the identity"
+            );
         }
     }
 

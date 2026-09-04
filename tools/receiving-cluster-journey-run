@@ -66,6 +66,21 @@ app_project=receiving
 app_environment=dev
 app_schema=receiving
 app_tenant=receiving-route-auth
+# The FIFTH identity claim, and the reason it is declared rather than left at
+# the template's placeholder: the production activation path sets five claims
+# (services/ctl/src/dev/activation.rs, flow_http_identity_claims) and this
+# journey substituted four. wamn.catalog rode through as the template's
+# "default" -- no anchor, no substitution, no assertion -- so a second
+# application would resolve routes in the first one's catalog.
+#
+# THE VALUE IS default BECAUSE THAT IS WHAT THE PLATFORM PRODUCES, not because
+# it is a safe-looking word. wamn-ctl provision-project-env takes --org,
+# --project, --env, --schema and --tenant and has no --catalog; the dev path
+# requires catalog as a validated non-empty config field, and every value it
+# is ever given in this tree is "default". Naming it here says that out loud
+# and gives a per-application catalog exactly one line to change when the
+# provisioning vocabulary grows one.
+app_catalog=default
 # The workload role families THIS application's host mounts. WorkloadRoleFamily
 # is a closed twelve-variant PLATFORM enum; which subset a host mounts is the
 # APPLICATION's declaration. Every secret anchor below is derived from this
@@ -1130,6 +1145,7 @@ declare -A workload_spec=(
   [image]=$flow_http_ref
   [route_host]=$route_host
   [tenant]=$app_tenant
+  [catalog]=$app_catalog
   [environment]=$app_environment
   [project]=$app_project
   [schema]=$app_schema
@@ -1138,6 +1154,7 @@ declare -A workload_spec=(
   [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
   [template_interfaces]="interfaces: [incoming-handler]"
   [template_tenant]=00000000-0000-0000-0000-000000000001
+  [template_catalog]=default
   [template_environment_value]=poc
   [template_project]=default
   [template_schema]=public

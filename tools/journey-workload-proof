@@ -16,40 +16,43 @@ check() {
 refused_saying() { local err; err=$("$@" 2>&1 >/dev/null) && return 1; [[ $err == *"$REASON"* ]]; }
 
 # Deliberately unguessable, so a hardcoded stand-in cannot match.
-build_spec() { # <array-name> <template> <tenant> <project> <schema> <environment>
+build_spec() { # <array-name> <template> <tenant> <project> <schema> <environment> <catalog>
   eval "declare -gA $1=(
     [template]=$2
     [namespace]=warehouse-eu-3
     [image]=registry.probe.invalid:5000/proofs/flow-http@sha256:abc123
     [route_host]=probe.route.invalid
-    [tenant]=$3 [environment]=$6 [project]=$4 [schema]=$5
+    [tenant]=$3 [environment]=$6 [project]=$4 [schema]=$5 [catalog]=$7
     [template_namespace]=wamn-system [template_environment]=wamn-system
     [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
     [template_interfaces]='interfaces: [incoming-handler]'
-    [template_tenant]=00000000-0000-0000-0000-000000000001
+    [template_tenant]=00000000-0000-0000-0000-000000000001 [template_catalog]=default
     [template_environment_value]=poc [template_project]=default [template_schema]=public
   )"
 }
 
 echo "1. bytes, and both applications"
-build_spec rcv "$TEMPLATE" receiving-route-auth receiving receiving dev
+build_spec rcv "$TEMPLATE" receiving-route-auth receiving receiving dev default
 render_workload_manifest rcv "$work/rcv.yaml"; check "the Receiving render succeeds" $?
 [[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == 54b44e025edde11d3f5d1462d068d7c4d1163f9baf560846d997dccc8df32c6e ]]
 check "bytes unchanged since the pre-lift block" $?
-build_spec wms "$TEMPLATE" wms-route-auth wms wms dev
+build_spec wms "$TEMPLATE" wms-route-auth wms wms dev wms-catalog
 render_workload_manifest wms "$work/wms.yaml"; check "a second application renders" $?
 ! diff -q "$work/rcv.yaml" "$work/wms.yaml" >/dev/null
 check "the two applications render differently" $?
-grep -q 'wamn.tenant: "wms-route-auth"' "$work/wms.yaml"; check "the second application's tenant is its own" $?
-# The FOUR claims this renderer owns. It does not own wamn.catalog, which the
-# production activation path sets as a fifth claim and which the journey leaves
-# at the template's "default" -- filed as wamn-362o.16, because the correct
-# value is a policy question rather than a substitution. Asserting only what is
-# owned keeps this from reading as coverage it does not have.
-! grep -qE '00000000-0000-0000-0000-000000000001|wamn\.environment: "poc"|wamn\.project: "default"|wamn\.schema: "public"' "$work/wms.yaml"
-check "no placeholder survives for the four claims this renderer owns" $?
-grep -q 'wamn.catalog: "default"' "$work/wms.yaml"
-check "wamn.catalog is knowingly untouched (wamn-362o.16), not silently handled" $?
+# PER LINE, NOT AS A FILE DIFF. "The two files differ" passes when ONE claim
+# moved, which is exactly the state this renderer was in: four of the five
+# substituted and wamn.catalog riding through as the template's placeholder.
+while IFS='|' read -r want gone; do
+  grep -qF -- "$want" "$work/wms.yaml" && ! grep -qF -- "$gone" "$work/wms.yaml"
+  check "[$want] replaces [$gone]" $?
+done <<'PAIRS'
+wamn.tenant: "wms-route-auth"|wamn.tenant: "00000000-0000-0000-0000-000000000001"
+wamn.catalog: "wms-catalog"|wamn.catalog: "default"
+wamn.environment: "dev"|wamn.environment: "poc"
+wamn.project: "wms"|wamn.project: "default"
+wamn.schema: "wms"|wamn.schema: "public"
+PAIRS
 
 echo "2. exactly N — the count is per anchor, not one for all"
 # namespace: wamn-system occurs TWICE by design. A one-size exactly-once rule
@@ -59,19 +62,19 @@ echo "2. exactly N — the count is per anchor, not one for all"
 check "the twice-occurring namespace anchor fired twice" $?
 drop_one() { grep -vn '' >/dev/null; }
 awk 'BEGIN{n=0} /^  namespace: wamn-system$/ && n==0 {n=1; next} {print}' "$TEMPLATE" >"$work/one-ns.yaml"
-build_spec oneNs "$work/one-ns.yaml" receiving-route-auth receiving receiving dev
+build_spec oneNs "$work/one-ns.yaml" receiving-route-auth receiving receiving dev default
 REASON="want 2" refused_saying render_workload_manifest oneNs "$work/out.yaml"
 check "control: a template with only ONE namespace is refused, naming the count" $?
 { cat "$TEMPLATE"; echo '  namespace: wamn-system'; } >"$work/three-ns.yaml"
-build_spec threeNs "$work/three-ns.yaml" receiving-route-auth receiving receiving dev
+build_spec threeNs "$work/three-ns.yaml" receiving-route-auth receiving receiving dev default
 REASON="want 2" refused_saying render_workload_manifest threeNs "$work/out.yaml"
 check "control: a template with THREE namespaces is refused" $?
 
 echo "3. every identity anchor is load-bearing"
 for a in 'wamn.tenant: "00000000-0000-0000-0000-000000000001"' 'wamn.environment: "poc"' \
-         'wamn.project: "default"' 'wamn.schema: "public"'; do
+         'wamn.catalog: "default"' 'wamn.project: "default"' 'wamn.schema: "public"'; do
   grep -vF -- "$a" "$TEMPLATE" >"$work/drift.yaml"
-  build_spec drift "$work/drift.yaml" receiving-route-auth receiving receiving dev
+  build_spec drift "$work/drift.yaml" receiving-route-auth receiving receiving dev default
   REASON="want 1" refused_saying render_workload_manifest drift "$work/out.yaml"
   check "control: a template missing [$a] is refused" $?
 done
@@ -81,30 +84,65 @@ done
 # the neighbour proves the neighbour. Deleting the interfaces check left this
 # proof green until the message was the assertion.
 grep -vF -- 'interfaces: [incoming-handler]' "$TEMPLATE" >"$work/drift.yaml"
-build_spec drift "$work/drift.yaml" receiving-route-auth receiving receiving dev
+build_spec drift "$work/drift.yaml" receiving-route-auth receiving receiving dev default
 REASON="interfaces anchor matched 0 times" refused_saying render_workload_manifest drift "$work/out.yaml"
 check "control: a template missing the interfaces anchor is refused, naming IT" $?
 
-echo "4. the route host is setup-owned and singular"
+echo "4. no claim placeholder survives the render"
+# A RENDER IS VERIFIED BY WHAT SURVIVES IT. The anchor counts prove every
+# declared replacement fired and cannot see a claim the map does not cover --
+# which is how wamn.catalog stayed at "default" through four applications of
+# this renderer. The control plants the placeholder under a key NOBODY
+# declared, because deleting a declared anchor is caught by the count rule and
+# would prove the neighbour instead.
+{ cat "$TEMPLATE"; echo '              wamn.legacy_catalog: "default"'; } >"$work/legacy.yaml"
+build_spec legacy "$work/legacy.yaml" receiving-route-auth receiving receiving dev default
+REASON='claims ["default"] 2 times, but only 1 claim(s) declare it' \
+  refused_saying render_workload_manifest legacy "$work/out.yaml"
+check "control: a placeholder surviving under an undeclared key is refused" $?
+# The count is the whole point: Receiving's own catalog IS "default", so the
+# correct render keeps exactly one. An absence check would refuse this file,
+# and skipping the check for it would blind the sweep at the one claim it was
+# added for.
+[[ $(grep -Fc -- '"default"' "$work/rcv.yaml") -eq 1 ]]
+check "Receiving keeps exactly one \"default\" -- its own catalog claim" $?
+[[ $(grep -Fc -- '"default"' "$work/wms.yaml") -eq 0 ]]
+check "a second application whose catalog differs keeps none" $?
+# And the sweep must not refuse the LEGITIMATE unquoted uses of the same words:
+# hostgroup: default, and the comment naming values-host-default.yaml.
+grep -q 'hostgroup: default' "$work/rcv.yaml"
+check "the unquoted hostgroup default survives, so the sweep is not too wide" $?
+
+echo "5. the route host is setup-owned and singular"
 { cat "$TEMPLATE"; echo '            host: probe.route.invalid'; } >"$work/two-hosts.yaml"
-build_spec twoHosts "$work/two-hosts.yaml" receiving-route-auth receiving receiving dev
+build_spec twoHosts "$work/two-hosts.yaml" receiving-route-auth receiving receiving dev default
 REASON="occurrences of the route host" refused_saying render_workload_manifest twoHosts "$work/out.yaml"
 check "control: a manifest answering on the host twice is refused" $?
 
-echo "5. the arguments themselves"
-build_spec absent "$work/nope.yaml" receiving-route-auth receiving receiving dev
+echo "6. the arguments themselves"
+build_spec absent "$work/nope.yaml" receiving-route-auth receiving receiving dev default
 REASON="no template at" refused_saying render_workload_manifest absent "$work/out.yaml"
 check "control: a missing template is refused" $?
-build_spec short "$TEMPLATE" receiving-route-auth receiving receiving dev
+build_spec short "$TEMPLATE" receiving-route-auth receiving receiving dev default
 unset "short[tenant]"
 REASON="missing tenant" refused_saying render_workload_manifest short "$work/out.yaml"
 check "control: a missing required key is refused before any work" $?
+# EVERY key the contract calls required needs its own control, not one
+# representative. Mutation caught this: dropping catalog from the required list
+# survived, because the only missing-key case unset tenant and every spec here
+# happened to carry a catalog.
+for key in catalog template_catalog; do
+  build_spec missing "$TEMPLATE" receiving-route-auth receiving receiving dev default
+  unset "missing[$key]"
+  REASON="missing $key" refused_saying render_workload_manifest missing "$work/out.yaml"
+  check "control: a spec without $key is refused, naming IT" $?
+done
 
-echo "6. nameref binding"
+echo "7. nameref binding"
 binds() {
   local n=$1
   # A decoy GLOBAL under the name the caller will use.
-  build_spec "$n" "$TEMPLATE" DECOY DECOY DECOY DECOY
+  build_spec "$n" "$TEMPLATE" DECOY DECOY DECOY DECOY DECOY
   collide() {
     eval "local -A $n=(
       [template]=$TEMPLATE
@@ -112,10 +150,11 @@ binds() {
       [image]=registry.probe.invalid:5000/proofs/flow-http@sha256:abc123
       [route_host]=probe.route.invalid
       [tenant]=receiving-route-auth [environment]=dev [project]=receiving [schema]=receiving
+      [catalog]=default
       [template_namespace]=wamn-system [template_environment]=wamn-system
       [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
       [template_interfaces]='interfaces: [incoming-handler]'
-      [template_tenant]=00000000-0000-0000-0000-000000000001
+      [template_tenant]=00000000-0000-0000-0000-000000000001 [template_catalog]=default
       [template_environment_value]=poc [template_project]=default [template_schema]=public
     )"
     render_workload_manifest "$n" "$work/nr.yaml"
