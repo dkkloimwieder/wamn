@@ -2230,3 +2230,132 @@ that the selectors were prose, and that nothing real remains to resolve them
 against. **This document does not reconstruct them** — the bodies are gone and
 inventing replacements would be worse than the gap. Their classification,
 evidence, and decision mapping are still checked by that test.
+
+## Measured: what the unselected M1 guests cost the `wamn dev` loop
+
+`wamn-10yt.10.25` asked whether the `wamn dev` watch loop spends enough time on
+M1 artifacts it never consumes to justify a package-scoped selector inside
+`tools/build-components`. Measured on 2026-09-04 at `3742a0e8`: **the compile
+waste is not material; the virtualization waste is, and it is a different
+mechanism than the bead names.** No selector was added.
+
+**The set.** `architecture/workspace-tiers.json` puts nine packages in the M1
+tier (`profiles.components.m1_inventory_tier` = `product_components`), split
+across the two guest workspaces:
+
+| workspace | M1 packages |
+| --- | --- |
+| `components/Cargo.toml` | `blob-put` `client-acme-receiving` `http-route` `materializer` `receiving` `wms` |
+| `components/no-std/Cargo.toml` | `http-request` `label-render` `transform` |
+
+`wamn dev --overlay-root packages/client_acme_receiving` consumes exactly two
+of them: the overlay guest `client-acme-receiving`, and the guest of its single
+base dependency (`packages/client_acme_receiving/wamn.json` →
+`base_dependencies.base_receiving.package` = `wamn_receiving` → component
+`receiving`). **Seven are unselected, not six** — the bead's count predates the
+current tier. Both selected guests live in `components/Cargo.toml`, so all
+three `no-std` guests are unselected and selection would drop an entire Cargo
+invocation and an entire target directory from the loop.
+
+**Conditions.** 8 cores, `jobs = 4` from `.cargo/config.toml`, `sccache`
+already warm from concurrent lanes, and **five other lanes compiling
+throughout**: 1-minute load average ran 8.8 → 34 across the run. Absolute
+seconds here are inflated and are not a clean-machine baseline. Every A/B pair
+below was measured back to back under the same load and run in both orders;
+read the paired deltas, not the absolutes. Debug profile, `wasm32-wasip2`,
+scratch `CARGO_TARGET_DIR` under `$HOME/.cache` (never `/tmp` — see the
+disk-quota trap above). Each arm reproduces what `tools/build-components`
+issues, including its `--remap-path-prefix`:
+
+```bash
+# full M1, as the loop builds it today
+CARGO_TARGET_DIR=$SCRATCH/full-std RUSTFLAGS="--remap-path-prefix=$PWD=/wamn" \
+  cargo build --locked --offline --target wasm32-wasip2 \
+  --manifest-path components/Cargo.toml \
+  -p blob-put -p client-acme-receiving -p http-route \
+  -p materializer -p receiving -p wms
+CARGO_TARGET_DIR=$SCRATCH/full-nostd RUSTFLAGS="--remap-path-prefix=$PWD=/wamn" \
+  cargo build --locked --offline --target wasm32-wasip2 \
+  --manifest-path components/no-std/Cargo.toml \
+  -p http-request -p label-render -p transform
+
+# what the loop actually consumes
+CARGO_TARGET_DIR=$SCRATCH/sel-std RUSTFLAGS="--remap-path-prefix=$PWD=/wamn" \
+  cargo build --locked --offline --target wasm32-wasip2 \
+  --manifest-path components/Cargo.toml \
+  -p client-acme-receiving -p receiving
+```
+
+**Cold** (fresh target directory per arm; crate counts are exact and stable):
+
+| order | full std (74 crates) | full no-std (42 crates) | full total | selected (62 crates) | delta |
+| --- | --- | --- | --- | --- | --- |
+| selected first | 127.08 s | 118.70 s | 245.78 s | 80.69 s | **165.09 s** |
+| full first | 138.39 s | 105.55 s | 243.94 s | 100.46 s | **143.48 s** |
+
+The four extra `components/` guests add only 12 crates; the whole 42-crate
+`no-std` leg is waste, and it is 72-74 % of the cold delta because a separate
+target directory shares no compiled dependency with the first leg.
+
+**Incremental**, touching the selected base guest
+`components/application/receiving/src/lib.rs` — the loop's hot path. Both arms
+recompile the same single crate; the unselected packages are only fingerprinted:
+
+| pair | full std | full no-std | full total | selected | delta |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 2.19 s | 0.35 s | 2.54 s | 2.14 s | 0.40 s |
+| 2 | 2.37 s | 0.21 s | 2.58 s | 1.46 s | 1.12 s |
+| 3 | 4.76 s | 0.28 s | 5.04 s | 3.63 s | 1.41 s |
+| no-op (nothing touched) | 0.34 s | 0.44 s | 0.78 s | 0.41 s | 0.37 s |
+
+Touching a crate that the unselected guests *also* consume
+(`components/execution/contract/src/lib.rs`, which reaches `wms` through
+`wamn-wms-data-access`) makes the full arm compile five crates against the
+selected arm's three, and still costs nothing measurable: **+1.00 s** in one
+order and **-0.83 s** in the other. With `jobs = 4` the two extra crates fit in
+the parallel slack of the three that must rebuild anyway.
+
+So the compile-side per-loop waste is the **0.37 s no-op delta** — a second
+`cargo` process and a fingerprint scan for a `no-std` leg that compiles nothing
+— not compilation. It is below the run-to-run variance of the identical
+selected build, which spanned 1.46-3.63 s under this load.
+`tools/build-components watch-roots m1` (two `cargo metadata --no-deps` reads
+plus `jq` validation, no compilation) costs 0.48/0.48/0.65 s on top.
+
+**Virtualization is where the loop actually wastes time.** `wamn dev`'s
+Virtualize stage runs `tools/build-components virtualize-only`, which
+`rm -rf`s its output directory and re-virtualizes every allowlisted artifact
+unconditionally, every loop. `tools/component-virtualization.json` allowlists
+three — `blob-put`, `client-acme-receiving`, `receiving` — and
+`select_component_artifacts` in `services/ctl/src/dev/coordinator.rs` then
+consumes two. **One of three virtualizations is thrown away on every
+iteration**, at 2.80/4.56/4.59 s for `blob-put` run bare, or 4.01/5.86 s as the
+loop invokes it through `cargo run`. That is roughly ten times the entire
+compile-side waste.
+
+**Verdict — not material, on the criterion the bead states.** Threshold used:
+a saving is material if it exceeds run-to-run variance *and* clears 1 s or
+20 % of the incremental stage it belongs to. Compile-side waste is 0.37 s,
+about 15 % of a 2.5 s incremental Build and under the noise floor: **not
+material**, so no package-scoped selection was added to the build owner. Cold
+waste is 143-165 s, but that is paid once per fresh target directory, not per
+loop, and the acceptance criterion names watch-loop cost.
+
+**Two things this measurement did not settle, for the owner rather than the
+lane.** First, the virtualization waste (~3-6 s per loop) does clear the
+threshold in absolute terms, but the fix is narrowing the virtualization
+allowlist filter, not package-scoped *building* — a different change from the
+one the bead authorises. Second, whether ~3-6 s is material depends on total
+loop wall time, which was not measured: `[WAMN-DEV-LIVE]` needs live Postgres,
+NATS, and a registry, and must never be pointed at shared infrastructure.
+
+**Two constraints on any future selector.** Watch roots are workspace
+*directories*, not packages — `component_build_watch_roots` in
+`services/ctl/src/dev/command.rs` takes `watch-roots m1`, which returns
+`components` and `components/no-std`, so an edit anywhere under either tree
+still fires the Build stage regardless of what gets built. And selection is not
+purely subtractive: Cargo unifies features per invocation, and the guests carry
+ungoverned `chrono` declarations (`components/data/receiving-data/Cargo.toml`
+and `components/data/wms-data/Cargo.toml` name the version directly instead of
+`workspace = true`, which is `wamn-onj5`), so a narrower `-p` set can resolve a
+different feature union than the full build it replaces.
