@@ -637,6 +637,27 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         }
         None => None,
     };
+    // SCHEDULE-TIME PRELOAD. prepare_synchronous_release pulls and compiles
+    // every digest this release serves and populates the driver's digest-keyed
+    // component cache; without it the FIRST request pays a full pull and compile
+    // -- measured at 35.8 s on this journey (docs/perf/2026.09/1-component-cache.md).
+    //
+    // It ran only in services/executor before this: the probe was constructed
+    // there and nowhere else, so the host that actually serves HTTP routes never
+    // preloaded anything. Readiness is gated on the same call, so a host that
+    // reports ready has the entries rather than a promise of them.
+    if let Some(driver) = router_driver.as_ref() {
+        let readiness = wamn_execution_host::RouterReadinessProbe::new(Arc::clone(driver));
+        let snapshot = readiness.refresh().await;
+        anyhow::ensure!(
+            matches!(snapshot.status, wamn_execution_host::RouterReadinessStatus::Ready),
+            "release preload did not reach ready: {:?}", snapshot.status
+        );
+        tracing::info!(
+            target: "wamn::host",
+            "release preload completed; component cache warm"
+        );
+    }
     let host_config = HostConfig {
         allow_oci_insecure: args.allow_insecure_registries,
         oci_pull_timeout: Some(Duration::from_secs(30)),
