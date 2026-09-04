@@ -9,7 +9,8 @@ report regenerates from data committed beside it.
 | `cold-v-hot.md` | `0-baseline/` | baseline: where a request's time goes | done |
 | `1-component-cache.md` | `1-component-cache/` | compiled `Component` cached in-process by digest, preloaded at schedule | done |
 | `3a-instrument.md` | `3a-instrument/` | span every unmeasured gap — instrumentation only | done |
-| `3b-*.md` | | fix the gaps 3a found, by size | next |
+| `3b-pipeline.md` | `3b-pipeline/` | claim transaction and statement in one flight | done |
+| `3c-operation-kind.md` | | carry the declared kind; reads autocommit | next |
 | `2-auth-cache.md` | | auth resolution cached per PAT hash | |
 | `1b-linker-cache.md` | | move invocation state to `SharedCtx`, cache the `Linker` | |
 | `4-instance-pool.md` | | warm instance pool keyed `(tenant, digest)` | |

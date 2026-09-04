@@ -1,0 +1,27 @@
+[2m2026-09-04T15:08:10.487774Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m registration loaded [3mpublication[0m[2m=[0m"wamn_cdc_acme__receiving__dev__8jsu4bh6" [3mslot[0m[2m=[0m"wamn_cdc_acme__receiving__dev__8jsu4bh6" [3mstream[0m[2m=[0m"EVT_acme_dev"
+[2m2026-09-04T15:08:10.489752Z[0m [32m INFO[0m [2masync_nats::connector[0m[2m:[0m connected successfully [3mserver[0m[2m=[0m4222 [3mmax_payload[0m[2m=[0m1048576
+[2m2026-09-04T15:08:10.489859Z[0m [32m INFO[0m [2masync_nats[0m[2m:[0m event: connected
+[2m2026-09-04T15:08:10.534889Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m preflight: slot healthy (resume position = confirmed LSN) [3mslot[0m[2m=[0m"wamn_cdc_acme__receiving__dev__8jsu4bh6" [3mactive[0m[2m=[0mfalse [3mconfirmed_flush_lsn[0m[2m=[0m"0/341F000" [3mwal_status[0m[2m=[0m"reserved"
+[2m2026-09-04T15:08:10.534959Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Creating logical replication stream with retry support
+[2m2026-09-04T15:08:10.534978Z[0m [32m INFO[0m [2mpg_walstream::retry[0m[2m:[0m Attempting to connect to PostgreSQL with retry logic
+[2m2026-09-04T15:08:10.575876Z[0m [32m INFO[0m [2mpg_walstream::retry[0m[2m:[0m Successfully connected to PostgreSQL on attempt 1 after 40.877124ms
+[2m2026-09-04T15:08:10.575917Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Starting logical replication stream
+[2m2026-09-04T15:08:10.575925Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Initializing replication stream
+[2m2026-09-04T15:08:10.576073Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m System identification successful
+[2m2026-09-04T15:08:10.576096Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Creating replication slot: wamn_cdc_acme__receiving__dev__8jsu4bh6
+[2m2026-09-04T15:08:10.576487Z[0m [33m WARN[0m [2mpg_walstream::stream[0m[2m:[0m Replication slot already exists, continuing
+[2m2026-09-04T15:08:10.576502Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Replication stream initialized
+[2m2026-09-04T15:08:10.577189Z[0m [32m INFO[0m [2mpg_walstream::stream[0m[2m:[0m Logical replication started with LSN: 0/0
+[2m2026-09-04T15:08:10.577222Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m walsender session open; draining [3mreopens[0m[2m=[0m0
+[2m2026-09-04T15:08:40.582892Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3428670, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T15:09:10.583388Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/34286A8, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T15:09:40.613013Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/34286A8, flushed=0/0, applied=0/0, reply_requested=false
+[2m2026-09-04T15:10:10.619942Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/3428AE8, flushed=0/3428AE8, applied=0/3428AE8, reply_requested=false
+[2m2026-09-04T15:10:40.625059Z[0m [32m INFO[0m [2mpg_walstream::connection::native::connection[0m[2m:[0m Sent standby status update: received=0/342DE78, flushed=0/3428AE8, applied=0/3428AE8, reply_requested=false
+[2m2026-09-04T15:10:51.749977Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m entity resolved [3mtable[0m[2m=[0mpurchase_order [3mrelation_oid[0m[2m=[0m17803 [3mpackage_id[0m[2m=[0m"wamn_receiving" [3mentity[0m[2m=[0m"purchase_order"
+[2m2026-09-04T15:10:51.811396Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m CDC exclusion resolved [3mtable[0m[2m=[0mrecord_receipt_command [3mrelation_oid[0m[2m=[0m17854 [3mpackage_id[0m[2m=[0m"wamn_receiving" [3mrelation[0m[2m=[0m"record_receipt_command"
+[2m2026-09-04T15:10:51.859759Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m entity resolved [3mtable[0m[2m=[0mreceipt [3mrelation_oid[0m[2m=[0m17872 [3mpackage_id[0m[2m=[0m"wamn_receiving" [3mentity[0m[2m=[0m"receipt"
+[2m2026-09-04T15:10:51.914806Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m entity resolved [3mtable[0m[2m=[0mreceipt_line [3mrelation_oid[0m[2m=[0m17901 [3mpackage_id[0m[2m=[0m"wamn_receiving" [3mentity[0m[2m=[0m"receipt_line"
+[2m2026-09-04T15:10:51.962667Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m entity resolved [3mtable[0m[2m=[0mpurchase_order_line [3mrelation_oid[0m[2m=[0m17825 [3mpackage_id[0m[2m=[0m"wamn_receiving" [3mentity[0m[2m=[0m"purchase_order_line"
+[2m2026-09-04T15:10:51.963549Z[0m [32m INFO[0m [2mwamn::event_reader[0m[2m:[0m CDC exclusions committed [3mexcluded_by_relation[0m[2m=[0m{"wamn_receiving::record_receipt_command": 2}
+[2m2026-09-04T15:10:52.039773Z[0m [32m INFO[0m [2mwamn_cdc_reader[0m[2m:[0m entity resolved [3mtable[0m[2m=[0mquality_inspection [3mrelation_oid[0m[2m=[0m17957 [3mpackage_id[0m[2m=[0m"client_acme_receiving" [3mentity[0m[2m=[0m"quality_inspection"

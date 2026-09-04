@@ -1,0 +1,147 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "ad3bdcae-a700-405a-868a-5c077390a1e7",
+            "hostname": "10.244.1.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T15:09:44Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "discreet-spade-1841",
+                "namespace": "wamn-system",
+                "resourceVersion": "1574",
+                "uid": "0bb68cf1-c2e4-46a6-91f2-07b80ba0645e"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-04T15:09:44Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-04T15:09:45Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-04T15:09:46Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "6.202532",
+                "systemMemoryFree": 16603766784,
+                "systemMemoryTotal": 65437433856,
+                "version": "2.8.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "15c0e094-fc30-43e5-ae57-dada6581f82a",
+            "hostname": "10.244.2.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T15:09:44Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "freezing-thumb-4983",
+                "namespace": "wamn-system",
+                "resourceVersion": "1575",
+                "uid": "373d6e28-6b35-4262-97c4-5a202f00f1c2"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-04T15:09:44Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-04T15:09:45Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-04T15:09:46Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "6.675225",
+                "systemMemoryFree": 16599388160,
+                "systemMemoryTotal": 65437433856,
+                "version": "2.8.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "64b8fe01-b779-4bd6-b801-e44f18c5d881",
+            "hostname": "10.244.2.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T15:09:44Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "wooden-snail-8884",
+                "namespace": "wamn-system",
+                "resourceVersion": "1576",
+                "uid": "88b917cf-d8f0-431b-ae04-031993c58817"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-04T15:09:44Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-04T15:09:45Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-04T15:09:46Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "6.385696",
+                "systemMemoryFree": 16599388160,
+                "systemMemoryTotal": 65437433856,
+                "version": "2.8.0"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

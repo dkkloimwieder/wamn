@@ -1,0 +1,28 @@
+{
+    "apiVersion": "rbac.authorization.k8s.io/v1",
+    "kind": "Role",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"kind\":\"Role\",\"metadata\":{\"annotations\":{},\"name\":\"wamn-runtime-operator-events\",\"namespace\":\"wamn-receiving-journey\"},\"rules\":[{\"apiGroups\":[\"events.k8s.io\"],\"resources\":[\"events\"],\"verbs\":[\"create\",\"patch\"]}]}\n"
+        },
+        "creationTimestamp": "2026-09-04T15:08:40Z",
+        "name": "wamn-runtime-operator-events",
+        "namespace": "wamn-receiving-journey",
+        "resourceVersion": "1215",
+        "uid": "cfd78bec-8f92-4c65-b1da-486874bf6e65"
+    },
+    "rules": [
+        {
+            "apiGroups": [
+                "events.k8s.io"
+            ],
+            "resources": [
+                "events"
+            ],
+            "verbs": [
+                "create",
+                "patch"
+            ]
+        }
+    ]
+}
