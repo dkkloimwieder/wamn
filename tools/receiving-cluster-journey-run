@@ -1364,7 +1364,17 @@ if [[ "$measure_startup" == true ]]; then
         callable_http_acquire_ms: acquired("callable-http"),
         guest_sql_acquire_ms: acquired("guest-sql"),
         sql_ms: named("wamn.postgres.statement"),
-        guest_db_call_ms: named("wamn.postgres")
+        guest_db_call_ms: named("wamn.postgres"),
+        root_ms: named("handle_http_request"),
+        real_work_ms:
+          (named("wamn.postgres.statement") + named("wamn.component.instantiate")),
+        overhead_ratio:
+          (if (named("wamn.postgres.statement") +
+               named("wamn.component.instantiate")) > 0
+           then named("handle_http_request") /
+                (named("wamn.postgres.statement") +
+                 named("wamn.component.instantiate"))
+           else null end)
       }
     ' "$trace_file" >"$breakdown_file"
     jq -r '[.phase, .http_total_ms, .authentication_ms, .resolution_ms,
@@ -1375,6 +1385,41 @@ if [[ "$measure_startup" == true ]]; then
         printf "verdict=pass phase=%s http_total_ms=%.3f auth_ms=%.3f resolve_ms=%.3f pull_ms=%.3f compile_ms=%.3f linker_setup_ms=%.3f link_ms=%.3f instantiate_ms=%.3f executor_platform_acquire_ms=%.3f callable_http_acquire_ms=%.3f guest_sql_acquire_ms=%.3f sql_ms=%.3f guest_db_call_ms=%.3f\n",
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
       }' >"$evidence_dir/trace-breakdown-$phase.receipt"
+  }
+
+  # THE OVERHEAD RATIO IS THE ONLY LATENCY GATE, and it is deliberately a RATIO.
+  #
+  # An absolute millisecond bound is unassertable here: the journey builds on the
+  # machine it measures, and load ran 0.8 to 7.4 across the 2026.09 measurement
+  # series. A ratio of the request against the real work inside it is a quotient
+  # of spans from the SAME trace, so it does not move with the machine.
+  #
+  # The ceiling RATCHETS DOWN as the fixes land; it is never relaxed. Each step
+  # needs its report in docs/perf/ naming what removed the overhead.
+  #   12  wamn-0h0g.17.19  measured 8.1-9.7 after the auth collapse
+  #    ?  wamn-0h0g.17.16, .17.17   the unspanned fork and guest residue
+  #    ?  1b, 4                     the Linker cache and the instance pool
+  #    3  the directive's target
+  overhead_ratio_ceiling=12
+
+  assert_overhead_ratio() {
+    local phase=$1 breakdown=$evidence_dir/trace-breakdown-$phase.json ratio
+    ratio=$(jq -r '.overhead_ratio // "null"' "$breakdown")
+    if [[ "$ratio" == null ]]; then
+      echo "$phase trace carries no statement or instantiate span, so the" \
+        "overhead ratio cannot be computed" >&2
+      exit 1
+    fi
+    if ! awk -v r="$ratio" -v c="$overhead_ratio_ceiling" \
+        'BEGIN { exit !(r <= c) }'; then
+      echo "$phase overhead ratio $ratio exceeds the ceiling" \
+        "$overhead_ratio_ceiling: handle_http_request is more than" \
+        "${overhead_ratio_ceiling}x the statement plus instantiate it contains" >&2
+      exit 1
+    fi
+    printf 'verdict=pass phase=%s overhead_ratio=%s ceiling=%s\n' \
+      "$phase" "$ratio" "$overhead_ratio_ceiling" \
+      >"$evidence_dir/overhead-ratio-$phase.receipt"
   }
 
   run_startup_request cold startup-cold \
@@ -1455,6 +1500,9 @@ if [[ "$measure_startup" == true ]]; then
     22222222222222222222222222222222 true
   collect_trace_breakdown steady \
     33333333333333333333333333333333 false
+  # Hot only. A restart-first request still pays its pool connects, so it is not
+  # the steady state the ratio describes.
+  assert_overhead_ratio steady
   "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
     find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
       -printf '%i %T@ %s %p\n' \

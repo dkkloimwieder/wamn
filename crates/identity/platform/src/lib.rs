@@ -14,7 +14,7 @@ use std::time::Duration;
 use ring::rand::{SecureRandom as _, SystemRandom};
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
-use tokio_postgres::{GenericClient, Row, error::SqlState};
+use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
 
 #[cfg(test)]
 const PRINCIPAL_COLUMNS: &str = "id::text, kind, subject, display_name, status";
@@ -563,6 +563,17 @@ pub async fn authenticate_pat(
         .query_opt(SELECT_PAT_BY_PREFIX_SQL, &[&prefix])
         .await
         .map_err(database_error)?;
+    decide_pat(row, token)
+}
+
+/// Apply the token predicates to the looked-up row.
+///
+/// Shared by the ad-hoc and the prepared paths so the two can never disagree
+/// about which token is acceptable: a predicate added here binds both.
+fn decide_pat(
+    row: Option<Row>,
+    token: &str,
+) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
     let Some(row) = row else {
         return Ok(None);
     };
@@ -646,12 +657,90 @@ pub async fn project_roles(
         )
         .await
         .map_err(database_error)?;
+    decode_project_roles(rows)
+}
+
+fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<ProjectRole>, IdentityError> {
     rows.into_iter()
         .map(|row| {
             let role: String = row.try_get(0).map_err(database_error)?;
             Ok(ProjectRole { role: role.into() })
         })
         .collect()
+}
+
+/// The two identity reads a route authentication performs, prepared once.
+///
+/// The free functions above hand `query`/`query_opt` a `&str`. `tokio-postgres`
+/// converts a `&str` through `prepare::prepare` on every call and never caches
+/// it (`prepare_cached` belongs to `deadpool_postgres::Object`, and the route's
+/// identity reader is a bare `Client`), so each read cost a Parse+Describe round
+/// trip before its Bind+Execute. Measured at 1.184 ms and 0.709 ms per request
+/// against a 0.30 ms single round trip: see
+/// `docs/perf/2026.09/2a-auth-instrument.md`.
+///
+/// Holding the two `Statement` handles moves that Parse to process start. The
+/// handles are bound to the connection they were prepared on, so this type must
+/// be used only with the client it was prepared from; a different connection
+/// would refuse the statement name.
+#[derive(Clone, Debug)]
+pub struct PreparedIdentityReads {
+    pat_by_prefix: Statement,
+    project_roles: Statement,
+}
+
+impl PreparedIdentityReads {
+    /// Parse both statements on `client`, once.
+    pub async fn prepare(client: &(impl GenericClient + Sync)) -> Result<Self, IdentityError> {
+        Ok(Self {
+            pat_by_prefix: client
+                .prepare(SELECT_PAT_BY_PREFIX_SQL)
+                .await
+                .map_err(database_error)?,
+            project_roles: client
+                .prepare(SELECT_PROJECT_ROLES_SQL)
+                .await
+                .map_err(database_error)?,
+        })
+    }
+
+    /// [`authenticate_pat`] over the prepared handle. Same predicates, one round
+    /// trip.
+    pub async fn authenticate_pat(
+        &self,
+        client: &(impl GenericClient + Sync),
+        token: &str,
+    ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
+        let Some(prefix) = lookup_prefix(PAT_TOKEN_PREFIX, token) else {
+            return Ok(None);
+        };
+        let row = client
+            .query_opt(&self.pat_by_prefix, &[&prefix])
+            .await
+            .map_err(database_error)?;
+        decide_pat(row, token)
+    }
+
+    /// [`project_roles`] over the prepared handle. Same validation, one round
+    /// trip.
+    pub async fn project_roles(
+        &self,
+        client: &(impl GenericClient + Sync),
+        principal_id: &PrincipalId,
+        org: &str,
+        project: &str,
+    ) -> Result<Vec<ProjectRole>, IdentityError> {
+        let org = checked_scope_segment("org", org)?;
+        let project = checked_scope_segment("project", project)?;
+        let rows = client
+            .query(
+                &self.project_roles,
+                &[&principal_id.as_str(), &org, &project],
+            )
+            .await
+            .map_err(database_error)?;
+        decode_project_roles(rows)
+    }
 }
 
 fn decode_principal(row: &Row) -> Result<Principal, IdentityError> {

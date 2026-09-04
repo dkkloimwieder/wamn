@@ -456,6 +456,9 @@ mod tests {
             exact_sql: sql.into(),
             binds: [field(StatementValueType::Uuid, false)].into(),
             columns: [field(StatementValueType::Text, false)].into(),
+            // These fixtures are SELECTs, which is what PostgreSQL classifies as
+            // needing no transaction.
+            transactional: false,
         }
     }
 

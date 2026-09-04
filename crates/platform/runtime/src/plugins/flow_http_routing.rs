@@ -32,7 +32,7 @@ use wamn_catalog::{
     AttachmentKind, NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE, ServingAttachment,
     ServingManifest,
 };
-use wamn_platform_identity::{PrincipalKind, authenticate_pat, project_roles};
+use wamn_platform_identity::{PreparedIdentityReads, PrincipalKind};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -384,6 +384,9 @@ impl AuthenticatedCaller {
 /// Trusted dependencies and scope for PAT-backed route authentication.
 pub struct RouteAuthentication {
     identity_reader: Arc<tokio_postgres::Client>,
+    /// The two identity statements, parsed once at construction rather than on
+    /// every request. See [`PreparedIdentityReads`].
+    prepared: PreparedIdentityReads,
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
     org: Box<str>,
     project: Box<str>,
@@ -404,20 +407,26 @@ impl RouteAuthentication {
     /// Bind the two read authorities to trusted package coordinates.
     ///
     /// Environment and tenant remain single-sourced from the welded release.
-    pub fn new(
+    /// Async because it parses the two identity statements on `identity_reader`
+    /// here, once, instead of on every request. A reader that cannot parse them
+    /// cannot authenticate anything, so this fails at startup rather than on the
+    /// first request.
+    pub async fn new(
         identity_reader: Arc<tokio_postgres::Client>,
         postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
         org: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         expected_subject: impl Into<Box<str>>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, wamn_platform_identity::IdentityError> {
+        let prepared = PreparedIdentityReads::prepare(identity_reader.as_ref()).await?;
+        Ok(Self {
             identity_reader,
+            prepared,
             postgres,
             org: org.into(),
             project: project.into(),
             expected_subject: expected_subject.into(),
-        }
+        })
     }
 }
 
@@ -560,7 +569,9 @@ impl FlowHttpRouting {
                 .as_ref()
                 .ok_or_else(authentication_unavailable)?;
             let token = required_bearer_token(headers)?;
-            let principal = authenticate_pat(authentication.identity_reader.as_ref(), token)
+            let principal = authentication
+                .prepared
+                .authenticate_pat(authentication.identity_reader.as_ref(), token)
                 .instrument(tracing::info_span!("wamn.auth.pat"))
                 .await
                 .map_err(|error| {
@@ -574,14 +585,16 @@ impl FlowHttpRouting {
             {
                 return Err(unauthorized());
             }
-            let roles = project_roles(
-                authentication.identity_reader.as_ref(),
-                principal.id(),
-                &authentication.org,
-                &authentication.project,
-            )
-            .instrument(tracing::info_span!("wamn.auth.roles"))
-            .await
+            let roles = authentication
+                .prepared
+                .project_roles(
+                    authentication.identity_reader.as_ref(),
+                    principal.id(),
+                    &authentication.org,
+                    &authentication.project,
+                )
+                .instrument(tracing::info_span!("wamn.auth.roles"))
+                .await
             .map_err(|error| {
                 tracing::warn!(error = %error, "route caller role lookup unavailable");
                 authentication_unavailable()

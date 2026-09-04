@@ -673,13 +673,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         FlowHttpRouting::from_env(release.clone()).context("wamn:flow-http-routing plugin init")?;
     let flow_http = match (&route_auth_scope, &identity_reader) {
         (Some((org, subject)), Some(identity_reader)) => {
-            flow_http.with_authentication(Arc::new(RouteAuthentication::new(
-                Arc::clone(identity_reader),
-                Arc::clone(&postgres),
-                org.clone(),
-                args.project.clone(),
-                subject.clone(),
-            )))
+            flow_http.with_authentication(Arc::new(
+                RouteAuthentication::new(
+                    Arc::clone(identity_reader),
+                    Arc::clone(&postgres),
+                    org.clone(),
+                    args.project.clone(),
+                    subject.clone(),
+                )
+                .await
+                .context("prepare the route authentication identity reads")?,
+            ))
         }
         (None, None) => flow_http,
         _ => unreachable!("route authentication inputs are constructed together"),

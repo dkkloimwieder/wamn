@@ -24,7 +24,8 @@ use super::pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, PlatformAsyncMessage, PlatformConnect,
     PoolKey, PoolLifecycle, ProjectConfig, ProjectPool, ResolvedCredential,
     StaticCredentialProvider, WamnPostgresConfig, credential_exactness_hook,
-    credential_generation_role, destroy_connection, standard_conforming_strings_hook,
+    credential_generation_role, destroy_connection, session_statement_timeout_hook,
+    standard_conforming_strings_hook,
 };
 use super::resources::{StatementConnectionGuard, run_execute, run_query, run_verified_query};
 use super::statements::{StatementScopes, VerifiedStatement};
@@ -35,7 +36,6 @@ const OPERATION_PERMISSIONS_SQL: &str = "SELECT permission \
     FROM app_system.permissions \
     WHERE tenant_id = $1 AND role_name = $2 \
     ORDER BY permission";
-const OPERATION_PERMISSION_TIMEOUT_SQL: &str = "SELECT set_config('statement_timeout', $1, true)";
 
 pub struct WamnPostgres {
     /// Resolves a project id → its database connection + policy.
@@ -804,6 +804,9 @@ impl WamnPostgres {
             })
             // R18: assert standard_conforming_strings=on once per new connection.
             .post_create(standard_conforming_strings_hook())
+            // wamn-0h0g.17.18: the project's statement_timeout is pool-uniform,
+            // so it is applied here once instead of on every request.
+            .post_create(session_statement_timeout_hook(cfg.statement_timeout_ms))
             // wamn-0h0g.22.8.4: and assert the connection IS the credential
             // this pool resolved. deadpool pushes hooks, so both run.
             .post_create(credential_exactness_hook(
@@ -1752,70 +1755,39 @@ impl WamnPostgres {
         );
         anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
         anyhow::ensure!(!role.is_empty(), "operation-permission role is empty");
-        let (connection, policy) = self
+        let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = connection
-            .batch_execute("BEGIN")
-            .instrument(tracing::info_span!("wamn.auth.perm.begin"))
-            .await
-        {
-            self.destroy(connection);
-            return Err(error).context("begin registered-operation permission read");
-        }
-        let timeout = policy.statement_timeout_ms.to_string();
-        let timeout_statement = match connection
-            .prepare_cached(OPERATION_PERMISSION_TIMEOUT_SQL)
-            .await
-        {
+        // ONE ROUND TRIP, AUTOCOMMIT. This read installs no session claim -- see
+        // the contract above -- so it is exactly the shape 3c proved needs no
+        // transaction, and the BEGIN/COMMIT around it were ceremony: 0.662 ms of
+        // every authenticated request, against a 0.740 ms read. The
+        // statement_timeout it used to SET per request is pool-uniform and now
+        // rides the pool's post_create hook. Measured in
+        // docs/perf/2026.09/2a-auth-instrument.md.
+        //
+        // prepare_cached, not a bare &str: deadpool caches the parse per
+        // connection, so the Parse round trip is paid once per connection rather
+        // than once per request.
+        let statement = match connection.prepare_cached(OPERATION_PERMISSIONS_SQL).await {
             Ok(statement) => statement,
             Err(error) => {
                 self.destroy(connection);
-                return Err(error).context("prepare registered-operation permission timeout");
+                return Err(error).context("prepare registered-operation permissions");
             }
         };
-        if let Err(error) = connection
-            .execute(&timeout_statement, &[&timeout])
-            .instrument(tracing::info_span!("wamn.auth.perm.timeout"))
+        let rows = connection
+            .query(&statement, &[&tenant, &role])
+            .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
-        {
-            self.destroy(connection);
-            return Err(error).context("set registered-operation permission timeout");
-        }
-        let result: anyhow::Result<BTreeSet<String>> = async {
-            let rows = connection
-                .query(OPERATION_PERMISSIONS_SQL, &[&tenant, &role])
-                .instrument(tracing::info_span!("wamn.auth.perm.query"))
-                .await
-                .context("read registered-operation permissions")?;
-            rows.into_iter()
-                .map(|row| {
-                    row.try_get::<_, String>(0)
-                        .context("decode registered-operation permission")
-                })
-                .collect()
-        }
-        .await;
-        match result {
-            Ok(permissions) => {
-                if let Err(error) = connection
-                    .batch_execute("COMMIT")
-                    .instrument(tracing::info_span!("wamn.auth.perm.commit"))
-                    .await
-                {
-                    self.destroy(connection);
-                    return Err(error).context("commit registered-operation permission read");
-                }
-                Ok(permissions)
-            }
-            Err(error) => {
-                if connection.batch_execute("ROLLBACK").await.is_err() {
-                    self.destroy(connection);
-                }
-                Err(error)
-            }
-        }
+            .context("read registered-operation permissions")?;
+        rows.into_iter()
+            .map(|row| {
+                row.try_get::<_, String>(0)
+                    .context("decode registered-operation permission")
+            })
+            .collect()
     }
 
     pub(super) fn destroy(&self, obj: Object) {

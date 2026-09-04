@@ -762,6 +762,35 @@ pub(super) fn credential_exactness_hook(
     }))
 }
 
+/// Apply the project's `statement_timeout` once, when the connection is created.
+///
+/// The value comes from [`ResolvedCredential`], which is resolved per
+/// (project, class, tenant) -- exactly the pool key -- so every borrower of a
+/// given connection wants the same number. Paying a `SET` round trip for it on
+/// every request is waste: measured at 0.293 ms of each authenticated request
+/// (`docs/perf/2026.09/2a-auth-instrument.md`).
+///
+/// SESSION scope, so a later transaction-LOCAL `set_config` still wins. That is
+/// what keeps the guest paths unchanged: they set their own timeout alongside
+/// `search_path`, which is per-component and therefore CANNOT be hoisted here.
+pub(super) fn session_statement_timeout_hook(statement_timeout_ms: u32) -> Hook {
+    let timeout = statement_timeout_ms.to_string();
+    Hook::async_fn(move |client, _metrics| {
+        let timeout = timeout.clone();
+        Box::pin(async move {
+            client
+                .execute("SELECT set_config('statement_timeout', $1, false)", &[
+                    &timeout,
+                ])
+                .await
+                .map_err(|e| {
+                    HookError::message(format!("set the session statement_timeout failed: {e}"))
+                })?;
+            Ok(())
+        })
+    })
+}
+
 pub(super) fn standard_conforming_strings_hook() -> Hook {
     Hook::async_fn(|client, _metrics| {
         Box::pin(async move {
