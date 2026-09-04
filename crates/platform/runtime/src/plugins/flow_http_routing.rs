@@ -838,6 +838,12 @@ impl routing::Host for ActiveCtx<'_> {
         authority: String,
     ) -> wash_runtime::wasmtime::Result<Result<Vec<RouteDefinition>, String>> {
         let plugin = plugin_of(self)?;
+        let _span = tracing::info_span!(
+            target: "wamn::route",
+            "wamn.route.match",
+            wamn.method = %method,
+        )
+        .entered();
         Ok(plugin.routes(&method, &authority).map_err(|error| {
             tracing::warn!(method, authority, error = %error, "flow-http route supply refused");
             error.to_string()
@@ -866,6 +872,13 @@ impl routing::Host for ActiveCtx<'_> {
         payload: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), String>> {
         let plugin = plugin_of(self)?;
+        let _span = tracing::info_span!(
+            target: "wamn::route",
+            "wamn.route.validate_input",
+            wamn.attachment_id = %attachment_id,
+            wamn.payload_bytes = payload.len(),
+        )
+        .entered();
         Ok(plugin
             .validate_input(&attachment_id, &payload)
             .map_err(str::to_owned))
@@ -876,6 +889,12 @@ impl routing::Host for ActiveCtx<'_> {
         attachment_id: String,
     ) -> wash_runtime::wasmtime::Result<Result<Option<Resource<RoutePermit>>, String>> {
         let plugin = plugin_of(self)?;
+        let _span = tracing::info_span!(
+            target: "wamn::route",
+            "wamn.route.permit",
+            wamn.attachment_id = %attachment_id,
+        )
+        .entered();
         match plugin.carries_route(&attachment_id) {
             Ok(true) => {}
             Ok(false) => return Ok(Err(UNKNOWN_ROUTE_REFUSAL.to_string())),

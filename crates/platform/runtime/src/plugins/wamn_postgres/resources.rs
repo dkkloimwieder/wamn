@@ -227,13 +227,20 @@ pub(super) async fn run_query(
             .await
             .map_err(|e| map_pg_error(&e))?;
         futures_util::pin_mut!(stream);
-        let mut rows = Vec::new();
-        while let Some(row) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
-            if rows.len() as u64 >= row_limit {
-                return Err(PgError::RowLimitExceeded(row_limit));
+        // Row decode was inside wamn.postgres.statement with no span of its own,
+        // so wire time and decode time were indistinguishable.
+        let rows = async {
+            let mut rows = Vec::new();
+            while let Some(row) = stream.try_next().await.map_err(|e| map_pg_error(&e))? {
+                if rows.len() as u64 >= row_limit {
+                    return Err(PgError::RowLimitExceeded(row_limit));
+                }
+                rows.push(decode_row(&row)?);
             }
-            rows.push(decode_row(&row)?);
+            Ok::<_, PgError>(rows)
         }
+        .instrument(tracing::info_span!("wamn.postgres.decode_rows"))
+        .await?;
         Ok(RowSet { columns, rows })
     }
     .instrument(tracing::info_span!(

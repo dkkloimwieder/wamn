@@ -1944,10 +1944,21 @@ impl WamnPostgres {
         // enqueued in `join!` poll order (BEGIN first) and travel in one flight;
         // tokio-postgres processes them FIFO, so the txn is open before the
         // transaction-LOCAL `set_config`s run.
-        let (begin, claims) =
-            tokio::join!(conn.batch_execute("BEGIN"), conn.execute(&stmt, params));
-        begin.map_err(|e| map_pg_error(&e))?;
-        claims.map_err(|e| map_pg_error(&e))?;
+        // Claim binding is a full server round trip on every request. It sat
+        // inside wamn.postgres with no span of its own, so it was
+        // indistinguishable from pool checkout and statement time.
+        async {
+            let (begin, claims) =
+                tokio::join!(conn.batch_execute("BEGIN"), conn.execute(&stmt, params));
+            begin.map_err(|e| map_pg_error(&e))?;
+            claims.map_err(|e| map_pg_error(&e))?;
+            Ok::<(), PgError>(())
+        }
+        .instrument(tracing::info_span!(
+            "wamn.postgres.bind_claims",
+            wamn.authority_class = class.as_str(),
+        ))
+        .await?;
         if let Some(run) = run {
             // l5i9.12.2: stamp the run's causation onto this txn. The
             // TRANSACTIONAL emit rides the commit; a rolled-back txn emits
