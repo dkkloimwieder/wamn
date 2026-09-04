@@ -1,0 +1,7 @@
+
+{
+  "url": "172.28.0.9:5000/wamn/materializer:receiving-1fd93af33429-2349795-debug",
+  "tag": "receiving-1fd93af33429-2349795-debug",
+  "success": true,
+  "digest": "sha256:58acf8d3650c83dcf4c4302bef128c3dd529bee2d83eaee006a074c49a0fbe6e"
+}
