@@ -12,7 +12,7 @@ report regenerates from data committed beside it.
 | `3b-pipeline.md` | `3b-pipeline/` | claim transaction and statement in one flight | done |
 | `3c-operation-kind.md` | `3c-operation-kind/` | PostgreSQL decides which statements need a transaction | done |
 | `2a-auth-instrument.md` | `2a-auth-instrument/` | span the three authenticate legs — instrumentation only | done |
-| `2-auth.md` | | collapse the auth round trips, and/or cache per PAT hash | owner decision open |
+| `2-auth.md` | `2-auth/` | collapse the auth round trips: nine to three | done |
 | `1b-linker-cache.md` | | move invocation state to `SharedCtx`, cache the `Linker` | |
 | `4-instance-pool.md` | | warm instance pool keyed `(tenant, digest)` | |
 
@@ -28,5 +28,7 @@ divided by the sum of `wamn.postgres.statement` + `wamn.component.instantiate`.
 It bounds platform overhead against real work, so it does not move when the
 dev machine is busy. No test asserts an absolute latency.
 
-Measured hot ratio as of `2a-auth-instrument`: **8.1–9.7**. Nothing asserts it
-yet; arming it is an open owner decision, recorded in `2a-auth-instrument.md`.
+Measured hot ratio as of `2-auth`: **8.21 mean**. The journey asserts a ceiling
+of **12**, ratcheting down as the remaining fixes land. The assertion does not
+execute yet: the journey's restart arm fails before `steady` is collected
+(`wamn-0h0g.17.20`).

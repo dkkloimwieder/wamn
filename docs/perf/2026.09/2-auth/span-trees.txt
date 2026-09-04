@@ -1,0 +1,163 @@
+
+===== trace-2-cold-c0000000000000000000000000000011 =====
+  spans=24
+  handle_http_request  13.97 ms  @+0 ms
+    invoke_component_handler  13.73 ms  @+0.2 ms
+      wamn.route.match  0.107 ms  @+2 ms
+      wamn.route.authenticate  1.908 ms  @+2.7 ms
+        wamn.auth.pat  0.646 ms  @+2.8 ms
+        wamn.auth.roles  0.314 ms  @+3.5 ms
+        wamn.auth.permissions  0.744 ms  @+3.8 ms
+          wamn.postgres.acquire  0.15 ms  @+3.9 ms
+          wamn.auth.perm.query  0.426 ms  @+4.1 ms
+      wamn.route.validate_input  0.101 ms  @+4.9 ms
+      wamn.route.permit  0.037 ms  @+5.1 ms
+      wamn.jetstream  0.099 ms  @+5.5 ms
+      wamn.router.resolve  0.066 ms  @+5.6 ms
+  wamn.component.invoke  6.922 ms  @+5.8 ms
+    wamn.component.cache_hit  0.035 ms  @+6.1 ms
+    wamn.component.linker_setup  2.557 ms  @+6.2 ms
+    wamn.component.link  0.124 ms  @+8.8 ms
+    wamn.component.instantiate  0.976 ms  @+9 ms
+    wamn.postgres  1.396 ms  @+10.5 ms
+      wamn.postgres.acquire  0.161 ms  @+10.5 ms
+      wamn.postgres.session_settings  0.461 ms  @+10.7 ms
+      wamn.postgres.statement  0.592 ms  @+11.2 ms
+        wamn.postgres.decode_rows  0.103 ms  @+11.7 ms
+      wamn.jetstream  0.132 ms  @+12.9 ms
+
+===== trace-2-hot-d2d2d2d2d2d2d2d2d2d2d2d2d2d20002 =====
+  spans=24
+  handle_http_request  13.83 ms  @+0 ms
+    invoke_component_handler  13.609 ms  @+0.1 ms
+      wamn.route.match  0.074 ms  @+1.6 ms
+      wamn.route.authenticate  1.499 ms  @+2.1 ms
+        wamn.auth.pat  0.527 ms  @+2.2 ms
+        wamn.auth.roles  0.279 ms  @+2.8 ms
+        wamn.auth.permissions  0.54 ms  @+3.1 ms
+          wamn.postgres.acquire  0.1 ms  @+3.1 ms
+          wamn.auth.perm.query  0.306 ms  @+3.2 ms
+      wamn.route.validate_input  0.101 ms  @+3.9 ms
+      wamn.route.permit  0.025 ms  @+4.1 ms
+      wamn.jetstream  0.107 ms  @+4.4 ms
+      wamn.router.resolve  0.05 ms  @+4.5 ms
+  wamn.component.invoke  7.541 ms  @+4.6 ms
+    wamn.component.cache_hit  0.037 ms  @+5 ms
+    wamn.component.linker_setup  3.081 ms  @+5.2 ms
+    wamn.component.link  0.173 ms  @+8.3 ms
+    wamn.component.instantiate  1.268 ms  @+8.6 ms
+    wamn.postgres  1.147 ms  @+10.4 ms
+      wamn.postgres.acquire  0.14 ms  @+10.5 ms
+      wamn.postgres.session_settings  0.405 ms  @+10.6 ms
+      wamn.postgres.statement  0.45 ms  @+11.1 ms
+        wamn.postgres.decode_rows  0.074 ms  @+11.4 ms
+      wamn.jetstream  0.146 ms  @+12.5 ms
+
+===== trace-2-hot-d2d2d2d2d2d2d2d2d2d2d2d2d2d20003 =====
+  spans=24
+  handle_http_request  17.734 ms  @+0 ms
+    invoke_component_handler  17.454 ms  @+0.2 ms
+      wamn.route.match  0.098 ms  @+2.1 ms
+      wamn.route.authenticate  2.515 ms  @+3 ms
+        wamn.auth.pat  0.808 ms  @+3.1 ms
+        wamn.auth.roles  0.638 ms  @+3.9 ms
+        wamn.auth.permissions  0.772 ms  @+4.6 ms
+          wamn.postgres.acquire  0.145 ms  @+4.7 ms
+          wamn.auth.perm.query  0.424 ms  @+4.9 ms
+      wamn.route.validate_input  0.162 ms  @+6 ms
+      wamn.route.permit  0.045 ms  @+6.3 ms
+      wamn.jetstream  0.17 ms  @+6.7 ms
+      wamn.router.resolve  0.079 ms  @+6.9 ms
+  wamn.component.invoke  8.928 ms  @+7.1 ms
+    wamn.component.cache_hit  0.03 ms  @+7.5 ms
+    wamn.component.linker_setup  2.944 ms  @+7.7 ms
+    wamn.component.link  0.153 ms  @+10.6 ms
+    wamn.component.instantiate  1.55 ms  @+10.8 ms
+    wamn.postgres  1.915 ms  @+13.1 ms
+      wamn.postgres.acquire  0.2 ms  @+13.1 ms
+      wamn.postgres.session_settings  0.61 ms  @+13.4 ms
+      wamn.postgres.statement  0.868 ms  @+14.1 ms
+        wamn.postgres.decode_rows  0.136 ms  @+14.7 ms
+      wamn.jetstream  0.161 ms  @+16.4 ms
+
+===== trace-2-hot-d2d2d2d2d2d2d2d2d2d2d2d2d2d20004 =====
+  spans=24
+  handle_http_request  17.083 ms  @+0 ms
+    invoke_component_handler  16.87 ms  @+0.1 ms
+      wamn.route.match  0.095 ms  @+2 ms
+      wamn.route.authenticate  1.959 ms  @+2.6 ms
+        wamn.auth.pat  0.654 ms  @+2.7 ms
+        wamn.auth.roles  0.349 ms  @+3.4 ms
+        wamn.auth.permissions  0.704 ms  @+3.8 ms
+          wamn.postgres.acquire  0.15 ms  @+3.9 ms
+          wamn.auth.perm.query  0.369 ms  @+4.1 ms
+      wamn.route.validate_input  0.121 ms  @+5 ms
+      wamn.route.permit  0.033 ms  @+5.2 ms
+      wamn.jetstream  0.204 ms  @+5.6 ms
+      wamn.router.resolve  0.062 ms  @+5.8 ms
+  wamn.component.invoke  9.053 ms  @+6 ms
+    wamn.component.cache_hit  0.028 ms  @+6.3 ms
+    wamn.component.linker_setup  3.75 ms  @+6.5 ms
+    wamn.component.link  0.225 ms  @+10.3 ms
+    wamn.component.instantiate  1.322 ms  @+10.6 ms
+    wamn.postgres  1.47 ms  @+12.6 ms
+      wamn.postgres.acquire  0.153 ms  @+12.7 ms
+      wamn.postgres.session_settings  0.456 ms  @+12.8 ms
+      wamn.postgres.statement  0.64 ms  @+13.4 ms
+        wamn.postgres.decode_rows  0.12 ms  @+13.8 ms
+      wamn.jetstream  0.156 ms  @+15.3 ms
+
+===== trace-2-hot-d2d2d2d2d2d2d2d2d2d2d2d2d2d20005 =====
+  spans=24
+  handle_http_request  15.724 ms  @+0 ms
+    invoke_component_handler  15.462 ms  @+0.2 ms
+      wamn.route.match  0.089 ms  @+2 ms
+      wamn.route.authenticate  2.001 ms  @+2.7 ms
+        wamn.auth.pat  0.669 ms  @+2.8 ms
+        wamn.auth.roles  0.393 ms  @+3.5 ms
+        wamn.auth.permissions  0.719 ms  @+3.9 ms
+          wamn.postgres.acquire  0.133 ms  @+4 ms
+          wamn.auth.perm.query  0.384 ms  @+4.2 ms
+      wamn.route.validate_input  0.135 ms  @+5.1 ms
+      wamn.route.permit  0.039 ms  @+5.4 ms
+      wamn.jetstream  0.124 ms  @+5.7 ms
+      wamn.router.resolve  0.055 ms  @+5.9 ms
+  wamn.component.invoke  7.951 ms  @+6.1 ms
+    wamn.component.cache_hit  0.024 ms  @+6.5 ms
+    wamn.component.linker_setup  2.894 ms  @+6.6 ms
+    wamn.component.link  0.15 ms  @+9.5 ms
+    wamn.component.instantiate  1.236 ms  @+9.7 ms
+    wamn.postgres  1.412 ms  @+11.8 ms
+      wamn.postgres.acquire  0.21 ms  @+11.8 ms
+      wamn.postgres.session_settings  0.431 ms  @+12.1 ms
+      wamn.postgres.statement  0.562 ms  @+12.6 ms
+        wamn.postgres.decode_rows  0.101 ms  @+13 ms
+      wamn.jetstream  0.19 ms  @+14.3 ms
+
+===== trace-2-write-a0000000000000000000000000000077 =====
+  spans=25
+  handle_http_request  23.747 ms  @+0 ms
+    invoke_component_handler  23.537 ms  @+0.1 ms
+      wamn.route.match  0.084 ms  @+1.8 ms
+      wamn.route.authenticate  1.716 ms  @+2.5 ms
+        wamn.auth.pat  0.504 ms  @+2.6 ms
+        wamn.auth.roles  0.319 ms  @+3.2 ms
+        wamn.auth.permissions  0.682 ms  @+3.5 ms
+          wamn.postgres.acquire  0.141 ms  @+3.6 ms
+          wamn.auth.perm.query  0.354 ms  @+3.8 ms
+      wamn.route.validate_input  0.39 ms  @+4.7 ms
+      wamn.route.permit  0.04 ms  @+5.2 ms
+      wamn.jetstream  0.157 ms  @+5.6 ms
+      wamn.router.resolve  0.075 ms  @+5.8 ms
+  wamn.component.invoke  16.14 ms  @+6 ms
+    wamn.component.cache_hit  0.034 ms  @+6.5 ms
+    wamn.component.linker_setup  3.868 ms  @+6.7 ms
+    wamn.component.link  0.201 ms  @+10.7 ms
+    wamn.component.instantiate  1.679 ms  @+10.9 ms
+    wamn.postgres  7.507 ms  @+13.4 ms
+      wamn.postgres.acquire  0.194 ms  @+13.5 ms
+      wamn.postgres.statement  3.207 ms  @+13.9 ms
+      wamn.postgres.bind_claims  0.665 ms  @+15.1 ms
+        wamn.postgres.decode_rows  0.087 ms  @+16.9 ms
+      wamn.postgres.commit  3.621 ms  @+17.2 ms
+      wamn.jetstream  0.182 ms  @+22.5 ms
