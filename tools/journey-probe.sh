@@ -31,11 +31,19 @@
 #   route                 THIS application's probe path
 #   body                  THIS application's probe payload, a JSON object
 #
-# THE TWO TIMINGS ARE NOT PARAMETERS. The 45-second retry window and the Job's
-# 90-second activeDeadlineSeconds are a pair -- the window must fit inside the
-# deadline with room for the final report -- and no application has a reason to
-# want a different one. A parameter nothing varies is a fusion with extra
-# steps in the other direction.
+# THE THREE TIMINGS ARE NOT PARAMETERS. The 150-second retry window, the Job's
+# 200-second activeDeadlineSeconds and the caller's 120-second recovery ceiling
+# are a set -- the window must fit inside the deadline with room for the final
+# report, and must exceed the ceiling so a breach is REPORTED as a number rather
+# than as a timeout. No application has a reason to want a different one.
+#
+# WHY 150 AND NOT 45. Measured recovery after a host restart is 89 seconds
+# (docs/perf/2026.09/2b-503-retryable.md): the operator rebinds the workload on
+# its heartbeat timeout, and until it does, the route is unbound. The old
+# 45-second window gave up 44 seconds early, which is why this arm read as a
+# product failure for six consecutive runs when the route was in fact returning.
+# The ceiling that decides pass or fail lives at the caller, next to the
+# assertion it drives.
 
 render_probe_job() {
   local -n _rpj_spec=$1
@@ -72,7 +80,7 @@ metadata:
   name: ${_rpj_spec[job]}
   namespace: ${_rpj_spec[namespace]}
 spec:
-  activeDeadlineSeconds: 90
+  activeDeadlineSeconds: 200
   backoffLimit: 0
   template:
     spec:
@@ -115,7 +123,7 @@ spec:
                 printf '%s\\n' \\
                   "RECEIVING_STARTUP_ATTEMPT phase=${_rpj_spec[phase]} attempt=\$attempt status=\$1 since_restart_seconds=\$probe_elapsed time_total_seconds=\$3"
                 [ "\$1" = 200 ] && break
-                [ "\$probe_elapsed" -ge 45 ] && break
+                [ "\$probe_elapsed" -ge 150 ] && break
                 sleep 1
               done
               # REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing
@@ -130,7 +138,7 @@ spec:
               # machine and substituted its empty output, deleting the
               # sentence from every manifest the journey wrote.
               printf '%s\n' \\
-                "RECEIVING_STARTUP_REQUEST phase=${_rpj_spec[phase]} status=\$1 time_starttransfer_seconds=\$2 time_total_seconds=\$3"
+                "RECEIVING_STARTUP_REQUEST phase=${_rpj_spec[phase]} status=\$1 time_starttransfer_seconds=\$2 time_total_seconds=\$3 recovery_seconds=\$probe_elapsed"
               printf 'RECEIVING_STARTUP_BODY '
               tr -d '\n' </tmp/body
               printf '\n'

@@ -1267,6 +1267,12 @@ jq -e --slurpfile service "$evidence_dir/flow-http-service.json" \
 ' >/dev/null "$evidence_dir/flow-http-endpointslices.json"
 
 if [[ "$measure_startup" == true ]]; then
+  # Measured recovery after a host restart is 89 s; the ceiling is where a
+  # REGRESSION becomes red without the gate chasing a number it does not own.
+  # The probe's 150 s retry window deliberately exceeds this, so a breach is
+  # reported as a recovery_seconds value rather than as a timeout with no number.
+  readonly recovery_ceiling_seconds=120
+
   run_startup_request() {
     local phase=$1 request_id=$2 trace_id=$3 parent_span_id=$4 job="startup-request-$1"
     local manifest=$work_dir/$job.yaml
@@ -1286,7 +1292,7 @@ if [[ "$measure_startup" == true ]]; then
     render_probe_job probe_spec "$manifest"
     run "${kube[@]}" apply -f "$manifest"
     run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
-      "job/$job" --timeout=90s
+      "job/$job" --timeout=240s
     "${kube[@]}" -n "$namespace" logs "job/$job" \
       >"$evidence_dir/first-request-$phase.log"
     if [[ $(grep -Fc 'RECEIVING_STARTUP_REQUEST ' \
@@ -1303,20 +1309,32 @@ if [[ "$measure_startup" == true ]]; then
       (.[0] | has(\"error\") | not) and
       (.[0].value | $app_probe_value_check)
     " >/dev/null "$evidence_dir/first-request-$phase-response.json"
-    awk -v phase="$phase" '
+    awk -v phase="$phase" -v ceiling="$recovery_ceiling_seconds" '
       /^RECEIVING_STARTUP_REQUEST / {
         for (field = 1; field <= NF; field++) {
           split($field, pair, "=")
           if (pair[1] == "status") status = pair[2]
           if (pair[1] == "time_starttransfer_seconds") first = pair[2]
           if (pair[1] == "time_total_seconds") total = pair[2]
+          if (pair[1] == "recovery_seconds") recovery = pair[2]
         }
       }
       END {
         if (status != "200" || first !~ /^[0-9]+\.[0-9]+$/ ||
             total !~ /^[0-9]+\.[0-9]+$/) exit 1
-        printf "verdict=pass phase=%s status=%s first_byte_ms=%.3f total_ms=%.3f\n",
-          phase, status, first * 1000, total * 1000
+        # THE RECOVERY CEILING, asserted only where recovery means something.
+        # After a host restart the operator rebinds the workload on its
+        # heartbeat timeout and the route is unbound until it does: measured at
+        # 89 s (docs/perf/2026.09/2b-503-retryable.md). That is upstream
+        # behaviour tracked on wamn-0h0g.17.20, not something this repo shaves,
+        # so the gate holds the number rather than chasing it. A regression past
+        # the ceiling is red.
+        if (phase == "restart-first") {
+          if (recovery !~ /^[0-9]+$/) exit 1
+          if (recovery + 0 > ceiling + 0) exit 1
+        }
+        printf "verdict=pass phase=%s status=%s first_byte_ms=%.3f total_ms=%.3f recovery_seconds=%s ceiling_seconds=%s\n",
+          phase, status, first * 1000, total * 1000, recovery, ceiling
       }
     ' "$evidence_dir/first-request-$phase.log" \
       >"$evidence_dir/first-request-$phase.receipt"

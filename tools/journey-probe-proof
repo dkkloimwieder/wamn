@@ -36,7 +36,7 @@ build_spec() {
 echo "1. bytes"
 build_spec rcv /purchase_order/get '{"id":"00000000-0000-0000-0000-000000000301"}'
 render_probe_job rcv "$work/rcv.yaml"; check "the Receiving probe renders" $?
-[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == 82751c0c1f2bc057e3cbb122a70ed51f24acb9f575fc826c409f34090c351f91 ]]
+[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == cbc5b03d84cf466752e845350dca68163f7abf819f18a0c84dc05cf7cc49e2cc ]]
 check "bytes unchanged since the pre-declaration block" $?
 # The merge must not reorder: request_id first is what the hardcoded literal
 # emitted, and the digest above is the only thing that would have caught it.
@@ -109,11 +109,11 @@ grep -q 'since_restart_seconds=[0-9]' "$work/recover.log"
 check "each attempt carries the elapsed window" $?
 
 # The never-recovers case runs with the retry WINDOW shortened, and says so.
-# What is under test is the exit code and the report, not the number 45; at 45
+# What is under test is the exit code and the report, not the number 150; at 150
 # with a one-second sleep this single case would cost the whole proof its
 # sub-second budget and nobody would run it.
 mkdir -p "$work/never"; stub_curl never 404
-sed 's/-ge 45 \]/-ge 2 ]/' <(extract_script "$work/rcv.yaml") >"$work/never.sh"
+sed 's/-ge 150 \]/-ge 2 ]/' <(extract_script "$work/rcv.yaml") >"$work/never.sh"
 [[ $(grep -c -- '-ge 2 ]' "$work/never.sh") -eq 1 ]]
 check "the shortened-window rewrite landed (a no-op sed would prove nothing)" $?
 rm -f /tmp/stub-n
@@ -129,8 +129,14 @@ check "it kept trying to the window rather than giving up on the first 404" $?
 # window must fit inside the Job's deadline, and nothing else checks the pair.
 window=$(sed -n 's/.*-ge \([0-9]*\) \].*/\1/p' <(extract_script "$work/rcv.yaml"))
 deadline=$(sed -n 's/^  activeDeadlineSeconds: \([0-9]*\)$/\1/p' "$work/rcv.yaml")
-[[ $window -eq 45 && $deadline -eq 90 && $window -lt $deadline ]]
-check "the rendered window is 45 and fits inside the Job deadline of 90" $?
+[[ $window -eq 150 && $deadline -eq 200 && $window -lt $deadline ]]
+check "the rendered window is 150 and fits inside the Job deadline of 200" $?
+# The window must also exceed the caller's recovery ceiling, or a breach reads
+# as a timeout with no number rather than as the measurement it is.
+[[ $window -gt 120 ]]
+check "the window exceeds the 120s recovery ceiling, so a breach is reported" $?
+grep -q 'recovery_seconds=' <(extract_script "$work/rcv.yaml")
+check "the final report carries recovery_seconds for the caller to assert on" $?
 
 echo "4. the body is JSON, and it is refused here rather than in a cluster"
 build_spec bad /purchase_order/get 'not json at all'
