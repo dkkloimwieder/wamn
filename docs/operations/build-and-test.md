@@ -498,7 +498,38 @@ proves the legs. Neither substitutes for the other.
 **Env-gated live tests are the single biggest source of false green in this
 repository.**
 
-Two distinct mechanisms, and they behave differently:
+Three distinct mechanisms, and they behave differently:
+
+0. **Deselection by name.** `cargo test <path> -- --exact` naming a test that
+   no longer exists runs **nothing and exits 0**. The output —
+   `running 0 tests` / `test result: ok. 0 passed; N filtered out` — is
+   byte-identical to a suite with no matching work to do, which is a normal and
+   expected thing to see. This is the family's most dangerous member, because
+   the disarming happens in a *different file* from the one that breaks: a
+   rename sweeps the test and its callers in Rust, the compiler confirms it,
+   and a shell script naming the same test by string is left behind with
+   nothing to complain.
+
+   Measured: `8a73233c` renamed the route test from *eleven* to *thirteen* PAT
+   routes. `tools/receiving-cluster-journey-run` still named the old one, so
+   **every cluster journey run from that commit onward executed no route test
+   at all** and then died forty lines later at a missing artifact, under the
+   message "production journey emitted an unsafe route-caller Secret mode" — a
+   file-mode complaint about a Secret that a test which never ran had never
+   written.
+
+   **A test that can be deselected by a rename must assert it ran.** Not
+   downstream, where the artifact check lives and blames the wrong thing —
+   at the invocation:
+
+   ```bash
+   grep -qE '^test result: ok\. 1 passed; 0 failed;' "$log" || {
+     echo "cargo test ran no matching test for $name" >&2; exit 1; }
+   ```
+
+   Assert the *count*, not merely non-zero: two passing is as wrong as none,
+   because an over-broad filter selected something the caller did not name, and
+   it reads just as green.
 
 1. **Self-skipping.** A test whose body does
    `let Ok(url) = std::env::var("WAMN_…_PG_URL") else { eprintln!(…); return; }`

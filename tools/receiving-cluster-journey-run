@@ -254,6 +254,33 @@ cleanup() {
     kubectl --kubeconfig "$kubeconfig" --context "$context" \
       -n "$namespace" get secrets -o name \
       >"$evidence_dir/failure-secret-names.txt" 2>>"$failure_capture_errors"
+
+    # Everything above says WHAT failed. This says why. A probe Job writes its
+    # HTTP status and body to stdout, and those go with the Pod when it is
+    # reaped -- so a run that dies on a probe leaves behind an exit code and no
+    # cause, and diagnosing it costs a whole second cluster. One `logs` call per
+    # unfinished Job is the cheapest evidence in this file.
+    record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get jobs -o json
+    kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get jobs -o json \
+      >"$evidence_dir/failure-jobs.json" 2>>"$failure_capture_errors"
+    # Unfinished means "no Complete condition" rather than "Failed condition":
+    # a Job still retrying, or one whose Pod never scheduled, has neither, and
+    # those are exactly the cases with no other explanation.
+    while read -r unfinished_job; do
+      [[ -n "$unfinished_job" ]] || continue
+      record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
+        -n "$namespace" logs "job/$unfinished_job" --all-containers --tail=-1
+      kubectl --kubeconfig "$kubeconfig" --context "$context" \
+        -n "$namespace" logs "job/$unfinished_job" --all-containers --tail=-1 \
+        >"$evidence_dir/failure-job-$unfinished_job.log" 2>>"$failure_capture_errors"
+    done < <(jq -r '
+      .items[]
+      | select(((.status.conditions // [])
+          | any(.type == "Complete" and .status == "True")) | not)
+      | .metadata.name
+    ' "$evidence_dir/failure-jobs.json" 2>>"$failure_capture_errors")
   fi
 
   if [[ "$cluster_owned" == true ]] &&
