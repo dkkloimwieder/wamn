@@ -199,7 +199,6 @@ async fn run_component(component_path: &Path, guest_url: String) -> anyhow::Resu
         .await
         .map_err(|error| anyhow::anyhow!("run sqlx-command: {error}"))?;
     ensure!(outcome.is_ok(), "sqlx-command returned an error status");
-    drop(command);
     drop(store);
     traces.spans()
 }
