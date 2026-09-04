@@ -2120,36 +2120,40 @@ impl WamnPostgres {
         // reach the next borrower of this pooled connection.
         if !statement.transactional && role.is_none() && user_id.is_none() {
             let timeout = policy.statement_timeout_ms.to_string();
-            // ONE FLIGHT. The settings and the statement are issued without an
-            // await between them; tokio-postgres preserves FIFO order, so
-            // search_path is set before the statement that depends on it.
-            let (settings, result) = tokio::join!(
-                async {
-                    let prepared = connection
-                        .connection()
-                        .prepare_cached(GUEST_AUTOCOMMIT_SETTINGS_SQL)
-                        .await
-                        .map_err(|error| map_pg_error(&error))?;
-                    connection
-                        .connection()
-                        .execute(
-                            &prepared,
-                            &[&timeout, &schema.as_deref(), &runner.as_deref()],
-                        )
-                        .await
-                        .map_err(|error| map_pg_error(&error))
-                }
-                .instrument(tracing::info_span!("wamn.postgres.session_settings")),
-                run_verified_query(
-                    connection.connection(),
-                    digest,
-                    statement,
-                    binds,
-                    policy.row_limit,
-                )
-            );
-            settings.map_err(StatementError::Postgres)?;
-            let rows = result?;
+            // The settings must be APPLIED before the statement that depends on
+            // search_path. They cannot ride the statement's flight: each side is
+            // a prepare followed by an execute, and interleaving two such
+            // futures does not order the two EXECUTES -- only the sends. So this
+            // is two flights, not one, and it still removes the COMMIT.
+            //
+            // wamn-0h0g.17.18 moves these to connection setup, where they belong:
+            // they are pool-uniform, so paying for them per request is waste.
+            async {
+                let prepared = connection
+                    .connection()
+                    .prepare_cached(GUEST_AUTOCOMMIT_SETTINGS_SQL)
+                    .await
+                    .map_err(|error| map_pg_error(&error))?;
+                connection
+                    .connection()
+                    .execute(
+                        &prepared,
+                        &[&timeout, &schema.as_deref(), &runner.as_deref()],
+                    )
+                    .await
+                    .map_err(|error| map_pg_error(&error))
+            }
+            .instrument(tracing::info_span!("wamn.postgres.session_settings"))
+            .await
+            .map_err(StatementError::Postgres)?;
+            let rows = run_verified_query(
+                connection.connection(),
+                digest,
+                statement,
+                binds,
+                policy.row_limit,
+            )
+            .await?;
             connection.repool();
             return Ok(rows);
         }
