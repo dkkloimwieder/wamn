@@ -49,3 +49,25 @@
 2026-09-04T17:08:19Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Complete job/flow-http-reachability --timeout=90s 
 2026-09-04T17:08:22Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.FQvN9xKHns/materializer.yaml 
 2026-09-04T17:08:23Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Ready workloaddeployment/receiving-materializer --timeout=240s 
+2026-09-04T17:09:16Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.FQvN9xKHns/materializer-trigger.yaml 
+2026-09-04T17:09:16Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Complete job/receiving-materializer-trigger --timeout=120s 
+2026-09-04T17:09:19Z cargo test production_materializer_consumes_the_causal_receipt_exactly_once \<disposable\ PostgreSQL\,\ NATS\,\ and\ receipt\ inputs\ redacted\> 
+2026-09-04T17:09:20Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.FQvN9xKHns/cross-environment-workload.json 
+2026-09-04T17:09:20Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=HostSelection=False workload/flow-http-cross-environment --timeout=240s 
+2026-09-04T17:09:20Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get workload flow-http-cross-environment -o json 
+2026-09-04T17:09:20Z timeout 240s kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get events.events.k8s.io --field-selector regarding.uid=d550949c-d1ff-43fd-af4e-ec113be0419a --watch --output-watch-events -o json 
+2026-09-04T17:09:50Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey auth can-i create events.events.k8s.io --namespace wamn-receiving-journey --as system:serviceaccount:wamn-system:wamn-runtime-operator 
+2026-09-04T17:09:50Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey auth can-i patch events.events.k8s.io --namespace wamn-receiving-journey --as system:serviceaccount:wamn-system:wamn-runtime-operator 
+2026-09-04T17:09:50Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey auth can-i get events.events.k8s.io --namespace wamn-receiving-journey --as system:serviceaccount:wamn-system:wamn-runtime-operator 
+2026-09-04T17:09:50Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey auth can-i list events.events.k8s.io --namespace wamn-receiving-journey --as system:serviceaccount:wamn-system:wamn-runtime-operator 
+2026-09-04T17:09:51Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey auth can-i watch events.events.k8s.io --namespace wamn-receiving-journey --as system:serviceaccount:wamn-system:wamn-runtime-operator 
+2026-09-04T17:09:51Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey auth can-i update events.events.k8s.io --namespace wamn-receiving-journey --as system:serviceaccount:wamn-system:wamn-runtime-operator 
+2026-09-04T17:09:51Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey auth can-i delete events.events.k8s.io --namespace wamn-receiving-journey --as system:serviceaccount:wamn-system:wamn-runtime-operator 
+2026-09-04T17:09:51Z kubectl --kubeconfig /tmp/tmp.FQvN9xKHns/kubeconfig --context kind-wamn-receiving-journey auth can-i deletecollection events.events.k8s.io --namespace wamn-receiving-journey --as system:serviceaccount:wamn-system:wamn-runtime-operator 
+2026-09-04T17:09:51Z kill -TERM 1913437 
+2026-09-04T17:09:51Z kind delete cluster --name wamn-receiving-journey 
+2026-09-04T17:09:53Z docker rm --force --volumes wamn-receiving-pg18-c0cbd7bda465-1903908 
+2026-09-04T17:09:53Z docker rm --force --volumes wamn-receiving-registry-c0cbd7bda465-1903908 
+2026-09-04T17:09:53Z docker rm --force --volumes wamn-receiving-nats-c0cbd7bda465-1903908 
+2026-09-04T17:09:53Z docker image rm wamn-host:receiving-c0cbd7bda465-1903908-debug 
+2026-09-04T17:09:53Z rm -rf -- /tmp/tmp.FQvN9xKHns 
