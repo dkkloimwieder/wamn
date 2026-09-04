@@ -703,6 +703,15 @@ impl RouterDriver {
         let mut pipelines = stream::iter(pipelines).buffered(COMPONENT_COMPILATION_CONCURRENCY);
         while let Some(result) = pipelines.next().await {
             let (component, compiled, component_started) = result?;
+            // SCHEDULE-TIME POPULATION. The preload already pulled and compiled
+            // this digest; without this insert the result was dropped and the
+            // first request paid for it again. Readiness below asserts the entry
+            // is present, so a host that reports ready has a warm cache rather
+            // than a promise of one.
+            self.compiled
+                .lock()
+                .map_err(|_| anyhow::anyhow!("compiled-component cache poisoned"))?
+                .insert(component.component_digest.clone(), compiled.clone());
             let instantiate_started = Instant::now();
             let compiled_components = Arc::new(BTreeMap::from([(
                 component.component_digest.clone(),
@@ -744,6 +753,19 @@ impl RouterDriver {
             elapsed_ms = %prepare_started.elapsed().as_millis(),
             "synchronous release preload completed"
         );
+        {
+            let cached = self
+                .compiled
+                .lock()
+                .map_err(|_| anyhow::anyhow!("compiled-component cache poisoned"))?;
+            for component in components.iter() {
+                anyhow::ensure!(
+                    cached.contains_key(component.component_digest.as_str()),
+                    "release-component-not-cached-at-readiness: {:?}",
+                    component.component_digest
+                );
+            }
+        }
         Ok(PreparedReleaseReadiness {
             synchronous_wirings: targets.len(),
             component_digests: component_count,
