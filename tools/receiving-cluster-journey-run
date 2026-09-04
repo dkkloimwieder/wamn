@@ -1439,7 +1439,12 @@ if [[ "$measure_startup" == true ]]; then
   overhead_ratio_ceiling=12
 
   assert_overhead_ratio() {
-    local phase=$1 breakdown=$evidence_dir/trace-breakdown-$phase.json ratio
+    # THREE STATEMENTS, NOT ONE. `local a=$1 b=...$a...` declares every name
+    # first and assigns after, so the $phase in the second assignment expands the
+    # freshly-declared UNSET local and dies under set -u. It cost a full journey.
+    local phase=$1
+    local breakdown=$evidence_dir/trace-breakdown-$phase.json
+    local ratio
     ratio=$(jq -r '.overhead_ratio // "null"' "$breakdown")
     if [[ "$ratio" == null ]]; then
       echo "$phase trace carries no statement or instantiate span, so the" \
