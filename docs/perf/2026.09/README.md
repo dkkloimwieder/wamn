@@ -4,13 +4,19 @@ One directory per increment. Each `<n>-<fix>.md` is the report; the matching
 `<n>-<fix>/` directory holds its raw traces and evidence, so every number in a
 report regenerates from data committed beside it.
 
-| report | data | subject |
-|---|---|---|
-| `cold-v-hot.md` | `0-baseline/` | baseline: where a request's time goes |
-| `1-component-cache.md` | `1-component-cache/` | compiled `Component` cached in-process by digest |
-| `2-auth-cache.md` | `2-auth-cache/` | auth resolution cached per PAT hash |
-| `3-postgres-wrapper.md` | `3-postgres-wrapper/` | the wrapper around a 0.4 ms statement; spans and causation off the request path |
-| `4-instance-pool.md` | `4-instance-pool/` | warm instance pool keyed `(tenant, digest)` |
+| report | data | subject | status |
+|---|---|---|---|
+| `cold-v-hot.md` | `0-baseline/` | baseline: where a request's time goes | done |
+| `1-component-cache.md` | `1-component-cache/` | compiled `Component` cached in-process by digest, preloaded at schedule | done |
+| `3a-instrument.md` | `3a-instrument/` | span every unmeasured gap — instrumentation only | done |
+| `3b-*.md` | | fix the gaps 3a found, by size | next |
+| `2-auth-cache.md` | | auth resolution cached per PAT hash | |
+| `1b-linker-cache.md` | | move invocation state to `SharedCtx`, cache the `Linker` | |
+| `4-instance-pool.md` | | warm instance pool keyed `(tenant, digest)` | |
+
+**Read the load average in each report before comparing absolute milliseconds
+across them.** The journey builds on the same machine it measures, so totals
+move with load. The overhead ratio and within-trace proportions do not.
 
 Each report carries source commit, machine load average at measurement, the
 phase table before and after, the overhead ratio, and span trees verbatim.
