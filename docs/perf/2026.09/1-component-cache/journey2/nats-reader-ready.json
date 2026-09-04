@@ -1,0 +1,125 @@
+{
+  "memory": 0,
+  "storage": 0,
+  "reserved_memory": 0,
+  "reserved_storage": 0,
+  "accounts": 1,
+  "ha_assets": 0,
+  "api": {
+    "total": 4,
+    "errors": 2
+  },
+  "server_id": "NDPFNHOANWEYMRUNE2OV6IW377VTHETQJSZNP4L46UNUKLCTXVIAF5LF",
+  "now": "2026-09-04T13:54:55.946042541Z",
+  "config": {
+    "max_memory": 49078075392,
+    "max_storage": 321493303296,
+    "store_dir": "/data/jetstream",
+    "sync_interval": 120000000000
+  },
+  "streams": 2,
+  "consumers": 0,
+  "messages": 0,
+  "bytes": 0,
+  "account_details": [
+    {
+      "name": "$G",
+      "id": "$G",
+      "memory": 0,
+      "storage": 0,
+      "reserved_memory": 18446744073709551615,
+      "reserved_storage": 18446744073709551615,
+      "accounts": 0,
+      "ha_assets": 0,
+      "api": {
+        "total": 4,
+        "errors": 2
+      },
+      "stream_detail": [
+        {
+          "name": "EVT_acme_dev",
+          "created": "2026-09-04T13:54:54.971088896Z",
+          "cluster": {
+            "leader": "NDPFNHOANWEYMRUNE2OV6IW377VTHETQJSZNP4L46UNUKLCTXVIAF5LF"
+          },
+          "config": {
+            "name": "EVT_acme_dev",
+            "subjects": [
+              "evt.acme.*.dev.\u003e"
+            ],
+            "retention": "limits",
+            "max_consumers": -1,
+            "max_msgs": -1,
+            "max_bytes": -1,
+            "max_age": 0,
+            "max_msgs_per_subject": -1,
+            "max_msg_size": -1,
+            "discard": "old",
+            "storage": "file",
+            "num_replicas": 1,
+            "duplicate_window": 120000000000,
+            "compression": "none",
+            "allow_direct": false,
+            "mirror_direct": false,
+            "sealed": false,
+            "deny_delete": false,
+            "deny_purge": false,
+            "allow_rollup_hdrs": false,
+            "consumer_limits": {}
+          },
+          "state": {
+            "messages": 0,
+            "bytes": 0,
+            "first_seq": 0,
+            "first_ts": "0001-01-01T00:00:00Z",
+            "last_seq": 0,
+            "last_ts": "0001-01-01T00:00:00Z",
+            "consumer_count": 0
+          }
+        },
+        {
+          "name": "WAMN_DLQ",
+          "created": "2026-09-04T13:54:54.973362741Z",
+          "cluster": {
+            "leader": "NDPFNHOANWEYMRUNE2OV6IW377VTHETQJSZNP4L46UNUKLCTXVIAF5LF"
+          },
+          "config": {
+            "name": "WAMN_DLQ",
+            "subjects": [
+              "dlq.\u003e"
+            ],
+            "retention": "limits",
+            "max_consumers": -1,
+            "max_msgs": -1,
+            "max_bytes": -1,
+            "max_age": 604800000000000,
+            "max_msgs_per_subject": 1000,
+            "max_msg_size": -1,
+            "discard": "old",
+            "storage": "file",
+            "num_replicas": 1,
+            "duplicate_window": 604800000000000,
+            "compression": "none",
+            "allow_direct": false,
+            "mirror_direct": false,
+            "sealed": false,
+            "deny_delete": false,
+            "deny_purge": false,
+            "allow_rollup_hdrs": false,
+            "consumer_limits": {}
+          },
+          "state": {
+            "messages": 0,
+            "bytes": 0,
+            "first_seq": 0,
+            "first_ts": "0001-01-01T00:00:00Z",
+            "last_seq": 0,
+            "last_ts": "0001-01-01T00:00:00Z",
+            "consumer_count": 0
+          }
+        }
+      ]
+    }
+  ],
+  "total": 1
+}

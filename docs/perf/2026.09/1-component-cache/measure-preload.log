@@ -1,0 +1,16 @@
+REQ n=1 phase=COLD tid=c0000000000000000000000000000011 status=200 ttfb_s=0.105289 total_s=0.105477
+REQ n=2 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20002 status=200 ttfb_s=0.023153 total_s=0.023229
+REQ n=3 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20003 status=200 ttfb_s=0.023688 total_s=0.023805
+REQ n=4 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20004 status=200 ttfb_s=0.023454 total_s=0.023526
+REQ n=5 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20005 status=200 ttfb_s=0.018426 total_s=0.018497
+trace cold c0000000000000000000000000000011 spans=15
+trace hot d2d2d2d2d2d2d2d2d2d2d2d2d2d20002 spans=15
+trace hot d2d2d2d2d2d2d2d2d2d2d2d2d2d20003 spans=15
+trace hot d2d2d2d2d2d2d2d2d2d2d2d2d2d20004 spans=15
+trace hot d2d2d2d2d2d2d2d2d2d2d2d2d2d20005 spans=15
+=== preload DONE ===
+REQ n=1 phase=COLD tid=c0000000000000000000000000000011 status=200 ttfb_s=0.105289 total_s=0.105477
+REQ n=2 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20002 status=200 ttfb_s=0.023153 total_s=0.023229
+REQ n=3 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20003 status=200 ttfb_s=0.023688 total_s=0.023805
+REQ n=4 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20004 status=200 ttfb_s=0.023454 total_s=0.023526
+REQ n=5 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20005 status=200 ttfb_s=0.018426 total_s=0.018497

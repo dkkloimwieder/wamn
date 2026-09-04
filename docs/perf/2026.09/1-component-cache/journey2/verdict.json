@@ -1,0 +1,43 @@
+{
+  "schema": "wamn-receiving-cluster-journey/v0.1",
+  "verdict": "pass",
+  "source": "e14011e96e08ab49d9f4edad63d660ea074ddb4c",
+  "namespace": "wamn-receiving-journey",
+  "release_manifest_digest": "sha256:5e00597991b9041523659c8b8ca238dfb7cf501afc24e8bb4633762ac64c1d22",
+  "route_host": "receiving.localhost",
+  "passing_arms": [
+    "production-mint-and-attestation",
+    "production-cdc-reader-session",
+    "operator-before-host-2.8.0",
+    "three-ready-default-hosts",
+    "flow-http-workload-ready",
+    "materializer-workload-ready",
+    "operator-endpointslice",
+    "exact-route-not-found-reachability",
+    "receipt-root-causation",
+    "inspection-derived-causation",
+    "exactly-one-pending-inspection",
+    "exact-materializer-durable-ack",
+    "zero-materializer-dead-letter",
+    "cross-environment-scheduling-refusal"
+  ],
+  "evidence_scope": {
+    "cited_immutable_rc": {
+      "close": "851acb80",
+      "source": "79d2ab64",
+      "arms": [
+        "bootstrap",
+        "M2-supersession",
+        "socketguard",
+        "traceproof",
+        "scoped-RegistryReader"
+      ]
+    },
+    "rerun": [
+      "materializer-journey",
+      "native-scheduling",
+      "exact-cleanup"
+    ]
+  },
+  "reachability_scope": "The exact 404 proves HTTP routing and guest execution only."
+}
