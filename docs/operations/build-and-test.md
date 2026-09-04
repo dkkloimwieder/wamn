@@ -1882,6 +1882,41 @@ interpolation, and when it does need interpolation, remember that the price is
 that every backtick, `$(`, and `$` in it — including the ones in prose — is
 live.
 
+**An environment variable carries a PROCESS SETTING. Data crosses a boundary
+as a declared, schema'd artifact.** The cluster journey used environment
+variables as the data contract between a Rust producer and a shell consumer,
+and the shape of the damage is what makes this a law rather than a taste.
+
+Env vars have no schema, no ownership and no types. So every new value spawns
+a new name, and the name encodes whatever the author happened to be thinking
+about at the time — the application, the test, the database. Thirteen names
+grew that way. Renaming them to a neutral prefix was the obvious repair and
+it is the wrong one: it treats the symptom, and the symptom immediately
+reappeared. `WAMN_ROUTE_*` turned out not to be an empty namespace, so the
+tree gained `WAMN_ROUTE_AUTH_PG18_URL` and `WAMN_ROUTE_PG18_URL` — two
+databases, one segment apart, in a flat space with nothing to say they are
+different things. A second application-named family was already queued behind
+the first.
+
+As FIELDS of one document the question does not arise. `auth_pg_url` and
+`system_pg_url` are two fields; nobody asks whether they collide, because a
+document has structure and a namespace does not.
+
+The repo already had the right machinery, in `services/ctl/src/dev/config.rs`:
+a document struct carrying `#[serde(deny_unknown_fields)]` and
+`#[derive(JsonSchema)]`, schema bytes generated from it and checked in, a
+drift test asserting the checked-in bytes equal the generated ones, and an
+`#[ignore]`d regeneration test as the only way to update them. The one most
+worth copying is the third test — that the generated schema and the strict
+parser share ONE field authority, so a field cannot exist in the parser and be
+absent from the schema. That is what makes the artifact a contract rather than
+a serialization.
+
+The test for whether something is a process setting: would the receiving
+process still start if it were absent, differently spelled, or empty?
+`RUSTC_WRAPPER` and `CARGO_TARGET_DIR` change how a process runs.
+A database URL is what the process is FOR.
+
 **The lift checklist.** Before extracting any block into a shared function,
 answer three questions, and answer them BEFORE the extraction rather than
 after:
