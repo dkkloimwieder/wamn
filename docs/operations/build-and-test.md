@@ -2007,20 +2007,20 @@ an input owes two proofs: every rule fired, and nothing the rules were meant
 to eliminate is still there. The first is about the transform; the second is
 about the artifact, and only the second is what ships.
 
-**And the sweep is a COUNT, not an absence, whenever a real value can equal
-the placeholder it replaces.** Applying the rule above to the workload
-renderer immediately refused a correct manifest: Receiving's own catalog is
-`default`, the same string the template carries as its placeholder, so
-"no placeholder survives" is false for a render that is right. The tempting
-repair — skip the check when the declared value equals the placeholder —
-blinds the sweep at precisely the claim it was added for.
+**THE SWEEP'S FINAL FORM IS A COUNT, NOT AN ABSENCE: a placeholder may
+survive no more often than the claims that legitimately declare it.** The
+absence form above is the first draft, and it is stated that way because it
+is the one an author reaches for. Applied to the workload renderer it
+immediately refused a correct manifest: Receiving's own catalog is `default`,
+the same string the template carries as its placeholder. The tempting repair
+— skip the check when the declared value equals the placeholder — blinds the
+sweep at precisely the claim it was added for.
 
-What actually holds is a count: a placeholder may survive no more often than
-the claims that legitimately declare it. One `"default"` for Receiving's
-catalog; a second occurrence is something the anchor map does not cover. The
-same shape appears wherever a guard's subject and its sentinel can coincide,
-and the general lesson is that "must not appear" is usually a count of zero
-that nobody checked was really zero.
+So: one surviving `"default"` for Receiving's catalog is right, and a second
+occurrence is something the anchor map does not cover. The same shape appears
+wherever a guard's subject and its sentinel can coincide, and the general
+lesson is that "must not appear" is usually a count of zero that nobody
+checked was really zero.
 
 Two smaller things fell out of the same guard, both worth keeping:
 

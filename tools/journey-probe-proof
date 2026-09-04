@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-probe.sh. No cluster: a text render, plus the
+# rendered probe script actually RUN against a stub curl.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-probe.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+refused_saying() { local err; err=$("$@" 2>&1 >/dev/null) && return 1; [[ $err == *"$REASON"* ]]; }
+
+# <array-name> <route> <body>. Everything else is deliberately unguessable, so
+# a value reaching the output by any route other than this array shows itself.
+build_spec() {
+  eval "declare -gA $1=(
+    [job]=startup-request-cold [phase]=cold [request_id]=startup-cold
+    [namespace]=wamn-receiving-journey [host_image]=wamn-host:probe
+    [secret_name]=wamn-route-caller [route_host]=receiving.localhost
+    [trace_id]=11111111111111111111111111111111
+    [parent_span_id]=1111111111111111
+    [route]=$2
+  )"
+  # The body is assigned through a nameref rather than inside the eval: one of
+  # the cases below is a body carrying a single quote, and building it by
+  # string substitution would break THIS harness instead of exercising the
+  # guard under test.
+  local -n _bs_target=$1
+  _bs_target[body]=$3
+}
+
+echo "1. bytes"
+build_spec rcv /purchase_order/get '{"id":"00000000-0000-0000-0000-000000000301"}'
+render_probe_job rcv "$work/rcv.yaml"; check "the Receiving probe renders" $?
+[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == 82751c0c1f2bc057e3cbb122a70ed51f24acb9f575fc826c409f34090c351f91 ]]
+check "bytes unchanged since the pre-declaration block" $?
+# The merge must not reorder: request_id first is what the hardcoded literal
+# emitted, and the digest above is the only thing that would have caught it.
+grep -qF -- '--data '"'"'[{"request_id":"startup-cold","id":"00000000-0000-0000-0000-000000000301"}]'"'" "$work/rcv.yaml"
+check "request_id is merged FIRST, so the body is byte-for-byte the old literal" $?
+
+echo "2. a second application changes route and body, per line"
+build_spec wms /inventory/move '{"pallet_code":"PAL-77","to_location_code":"LOC-9"}'
+render_probe_job wms "$work/wms.yaml"; check "a second application renders" $?
+while IFS='|' read -r want gone; do
+  grep -qF -- "$want" "$work/wms.yaml" && ! grep -qF -- "$gone" "$work/wms.yaml"
+  check "[$want] replaces [$gone]" $?
+done <<'PAIRS'
+svc.cluster.local/inventory/move|svc.cluster.local/purchase_order/get
+"pallet_code":"PAL-77"|"id":"00000000-0000-0000-0000-000000000301"
+PAIRS
+
+echo "3. THE RENDERED PROBE RUNS -- a render that produces broken shell is a"
+echo "   forty-minute failure, and reading the YAML cannot tell you it works"
+# Extract the Job's script exactly as Kubernetes would: the block scalar under
+# `args:`, dedented by its own indent.
+extract_script() {
+  awk '
+    /^            - \|$/ { grab = 1; next }
+    grab {
+      if ($0 !~ /^              /) { grab = 0; next }
+      print substr($0, 15)
+    }
+  ' "$1"
+}
+stub_curl() { # <name> <status-sequence...>
+  local name=$1; shift
+  { printf '%s\n' '#!/bin/sh' 'n=$(cat /tmp/stub-n 2>/dev/null || echo 0)'
+    printf '%s\n' 'n=$((n + 1)); echo "$n" >/tmp/stub-n'
+    printf 'set -- %s\n' "$*"
+    printf '%s\n' 'eval "status=\$$n"'
+    printf '%s\n' '[ -n "$status" ] || eval "status=\$$#"'
+    printf '%s\n' 'for a in "$@"; do :; done'
+    printf '%s\n' 'echo "stub-body-$status" > /tmp/body'
+    printf '%s\n' 'printf "%s 0.001 0.002" "$status"'
+  } >"$work/$name/curl"
+  chmod +x "$work/$name/curl"
+}
+run_probe() { # <dir> <yaml>
+  rm -f /tmp/stub-n
+  ( cd "$work/$1" && PATH="$work/$1:$PATH" sh -ec "$(extract_script "$2")" )
+}
+
+mkdir -p "$work/ok"; stub_curl ok 200
+run_probe ok "$work/rcv.yaml" >"$work/ok.log" 2>&1
+check "the rendered probe exits 0 when the route answers 200" $?
+[[ $(grep -c '^RECEIVING_STARTUP_ATTEMPT ' "$work/ok.log") -eq 1 ]]
+check "it reports exactly one attempt" $?
+[[ $(grep -c '^RECEIVING_STARTUP_REQUEST ' "$work/ok.log") -eq 1 ]]
+check "it emits exactly one canonical receipt" $?
+grep -q '^RECEIVING_STARTUP_ATTEMPT phase=cold attempt=1 status=200 ' "$work/ok.log"
+check "the attempt line carries the declared phase" $?
+grep -q '^RECEIVING_STARTUP_BODY stub-body-200$' "$work/ok.log"
+check "the response body is reported" $?
+
+mkdir -p "$work/recover"; stub_curl recover 404 404 200
+run_probe recover "$work/rcv.yaml" >"$work/recover.log" 2>&1
+check "a route that 404s twice and then answers still exits 0" $?
+[[ $(grep -c '^RECEIVING_STARTUP_ATTEMPT ' "$work/recover.log") -eq 3 ]]
+check "every attempt is reported, not only the last" $?
+[[ $(grep -c '^RECEIVING_STARTUP_REQUEST ' "$work/recover.log") -eq 1 ]]
+check "the canonical receipt is still emitted exactly once" $?
+# The whole point of the retry: the window is readable from the log.
+grep -q 'since_restart_seconds=[0-9]' "$work/recover.log"
+check "each attempt carries the elapsed window" $?
+
+# The never-recovers case runs with the retry WINDOW shortened, and says so.
+# What is under test is the exit code and the report, not the number 45; at 45
+# with a one-second sleep this single case would cost the whole proof its
+# sub-second budget and nobody would run it.
+mkdir -p "$work/never"; stub_curl never 404
+sed 's/-ge 45 \]/-ge 2 ]/' <(extract_script "$work/rcv.yaml") >"$work/never.sh"
+[[ $(grep -c -- '-ge 2 ]' "$work/never.sh") -eq 1 ]]
+check "the shortened-window rewrite landed (a no-op sed would prove nothing)" $?
+rm -f /tmp/stub-n
+! ( cd "$work/never" && PATH="$work/never:$PATH" sh -ec "$(cat "$work/never.sh")" ) \
+  >"$work/never.log" 2>&1
+check "a route that never answers exits NON-zero" $?
+grep -q '^RECEIVING_STARTUP_REQUEST phase=cold status=404 ' "$work/never.log"
+check "and still reports before asserting, so the failure is diagnosable" $?
+[[ $(grep -c '^RECEIVING_STARTUP_ATTEMPT ' "$work/never.log") -ge 2 ]]
+check "it kept trying to the window rather than giving up on the first 404" $?
+
+# And the real numbers, asserted where they are cheap: the contract claims the
+# window must fit inside the Job's deadline, and nothing else checks the pair.
+window=$(sed -n 's/.*-ge \([0-9]*\) \].*/\1/p' <(extract_script "$work/rcv.yaml"))
+deadline=$(sed -n 's/^  activeDeadlineSeconds: \([0-9]*\)$/\1/p' "$work/rcv.yaml")
+[[ $window -eq 45 && $deadline -eq 90 && $window -lt $deadline ]]
+check "the rendered window is 45 and fits inside the Job deadline of 90" $?
+
+echo "4. the body is JSON, and it is refused here rather than in a cluster"
+build_spec bad /purchase_order/get 'not json at all'
+REASON="body is not a JSON object" refused_saying render_probe_job bad "$work/out.yaml"
+check "control: a body that is not JSON is refused, naming it" $?
+build_spec quoted /purchase_order/get '{"note":"it'"'"'s quoted"}'
+REASON="carries a single quote" refused_saying render_probe_job quoted "$work/out.yaml"
+check "control: a body carrying a single quote is refused before it breaks out" $?
+# Isolation: that refusal must come from the quote guard, not from jq. The same
+# body IS valid JSON, so a proof that only asserted "refused" would pass with
+# the quote check deleted.
+build_spec quoted2 /purchase_order/get '{"note":"it'"'"'s quoted"}'
+jq -e . >/dev/null <<<"${quoted2[body]}"
+check "control isolates: that body is valid JSON, so only the quote guard can refuse it" $?
+
+echo "5. the arguments themselves"
+for key in route body request_id phase job namespace host_image secret_name \
+    route_host trace_id parent_span_id; do
+  build_spec missing /purchase_order/get '{"id":"x"}'
+  unset "missing[$key]"
+  REASON="missing $key" refused_saying render_probe_job missing "$work/out.yaml"
+  check "control: a spec without $key is refused, naming IT" $?
+done
+
+echo "6. nameref binding"
+binds() {
+  local n=$1
+  build_spec "$n" /DECOY '{"decoy":"DECOY"}'
+  collide() {
+    eval "local -A $n=(
+      [job]=startup-request-cold [phase]=cold [request_id]=startup-cold
+      [namespace]=wamn-receiving-journey [host_image]=wamn-host:probe
+      [secret_name]=wamn-route-caller [route_host]=receiving.localhost
+      [trace_id]=11111111111111111111111111111111
+      [parent_span_id]=1111111111111111
+      [route]=/purchase_order/get
+      [body]='{\"id\":\"00000000-0000-0000-0000-000000000301\"}'
+    )"
+    render_probe_job "$n" "$work/nr.yaml"
+  }
+  collide 2>/dev/null || return 1
+  ! grep -q DECOY "$work/nr.yaml"
+}
+for n in spec probe_spec config params; do
+  binds "$n"; check "a caller array named '$n' binds to the caller" $?
+done
+! binds _rpj_spec; check "control: colliding on the internal name is detected" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-probe: all properties hold"; else
+  echo "journey-probe: $failures failed"; exit 1; fi

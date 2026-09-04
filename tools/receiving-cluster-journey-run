@@ -48,6 +48,8 @@ source "$script_dir/journey-trace.sh"
 source "$script_dir/journey-workload.sh"
 # shellcheck source=tools/journey-materializer.sh
 source "$script_dir/journey-materializer.sh"
+# shellcheck source=tools/journey-probe.sh
+source "$script_dir/journey-probe.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -95,6 +97,20 @@ app_guest_secret_file=guest-sql.json
 # file is per-app-named, lives in the production tier, and each carries its
 # own trusted identity claims, which the render asserts rather than rewrites.
 app_host_values_overlay=deploy/platform/values-host-receiving-pat.yaml
+# The probe request THIS application's startup measurement issues. A probe is
+# THREE things -- a route, a body, and what the answer must contain -- and a
+# harness holding any of them deploys one application and measures another's
+# route. The third is the one worth naming: without it the probe proves only
+# that something answered 200, and the restart-first 404 is exactly the case
+# where that is not enough.
+#
+# The body is a JSON OBJECT, not a fragment: the harness merges request_id in
+# with jq, so a malformed declaration fails on this machine at render time
+# rather than as a 400 inside a Job forty minutes into a cluster run. The
+# answer check is a jq predicate evaluated against .value of the single item.
+app_probe_route=/purchase_order/get
+app_probe_body='{"id":"00000000-0000-0000-0000-000000000301"}'
+app_probe_value_check='.id == "00000000-0000-0000-0000-000000000301"'
 # How many SQL statements THIS application's probe route issues. Everything
 # else trace_is_complete checks is platform shape -- authenticate, resolve,
 # pull, compile, link, instantiate, the two authority classes -- and holds for
@@ -1245,77 +1261,20 @@ if [[ "$measure_startup" == true ]]; then
   run_startup_request() {
     local phase=$1 request_id=$2 trace_id=$3 parent_span_id=$4 job="startup-request-$1"
     local manifest=$work_dir/$job.yaml
-    cat >"$manifest" <<EOF
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: $job
-  namespace: $namespace
-spec:
-  activeDeadlineSeconds: 90
-  backoffLimit: 0
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: probe
-          image: $host_image
-          imagePullPolicy: Never
-          env:
-            - name: ROUTE_CALLER_PAT
-              valueFrom:
-                secretKeyRef:
-                  name: $route_caller_secret_name
-                  key: token
-          command: ["/bin/sh", "-ec"]
-          args:
-            - |
-              # BOUNDED RETRY, reporting EVERY attempt. The question this
-              # answers is product-versus-journey: a route that returns 404
-              # immediately after a host restart and then recovers means
-              # Kubernetes readiness precedes in-host route registration and
-              # this journey waited on the wrong signal; one that never
-              # recovers means released routes are lost across a restart. A
-              # single attempt cannot tell those apart, and every attempt's
-              # status and elapsed time is the measurement.
-              probe_start=\$(date +%s)
-              attempt=0
-              while :; do
-                attempt=\$((attempt + 1))
-                metrics=\$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\
-                  --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\
-                  --header 'Host: $route_host' \\
-                  --header 'Content-Type: application/json' \\
-                  --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \\
-                  --header 'traceparent: 00-$trace_id-$parent_span_id-01' \\
-                  --data '[{"request_id":"$request_id","id":"00000000-0000-0000-0000-000000000301"}]' \\
-                  'http://flow-http.$namespace.svc.cluster.local/purchase_order/get') || metrics='000 0 0'
-                set -- \$metrics
-                probe_elapsed=\$(( \$(date +%s) - probe_start ))
-                printf '%s\\n' \\
-                  "RECEIVING_STARTUP_ATTEMPT phase=$phase attempt=\$attempt status=\$1 since_restart_seconds=\$probe_elapsed time_total_seconds=\$3"
-                [ "\$1" = 200 ] && break
-                [ "\$probe_elapsed" -ge 45 ] && break
-                sleep 1
-              done
-              # REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing
-              # 'test' exits here and anything printed after it is never
-              # printed at all -- which made a non-200 probe silent by
-              # construction: exit 1, an empty log, and no way to tell a 503
-              # from a timeout without another cluster.
-              # APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is
-              # unquoted, so a backtick is command substitution run by the
-              # LOCAL shell at render time. The first draft of these two lines
-              # quoted the shell name that way; rendering ran it on this
-              # machine and substituted its empty output, deleting the
-              # sentence from every manifest the journey wrote.
-              printf '%s\n' \\
-                "RECEIVING_STARTUP_REQUEST phase=$phase status=\$1 time_starttransfer_seconds=\$2 time_total_seconds=\$3"
-              printf 'RECEIVING_STARTUP_BODY '
-              tr -d '\n' </tmp/body
-              printf '\n'
-              test "\$1" = 200
-EOF
+    declare -A probe_spec=(
+      [job]=$job
+      [phase]=$phase
+      [request_id]=$request_id
+      [namespace]=$namespace
+      [host_image]=$host_image
+      [secret_name]=$route_caller_secret_name
+      [route_host]=$route_host
+      [trace_id]=$trace_id
+      [parent_span_id]=$parent_span_id
+      [route]=$app_probe_route
+      [body]=$app_probe_body
+    )
+    render_probe_job probe_spec "$manifest"
     run "${kube[@]}" apply -f "$manifest"
     run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
       "job/$job" --timeout=90s
@@ -1329,12 +1288,12 @@ EOF
     sed -n 's/^RECEIVING_STARTUP_BODY //p' \
       "$evidence_dir/first-request-$phase.log" \
       >"$evidence_dir/first-request-$phase-response.json"
-    jq -e --arg request_id "$request_id" '
-      type == "array" and length == 1 and
-      .[0].request_id == $request_id and
-      (.[0] | has("error") | not) and
-      .[0].value.id == "00000000-0000-0000-0000-000000000301"
-    ' >/dev/null "$evidence_dir/first-request-$phase-response.json"
+    jq -e --arg request_id "$request_id" "
+      type == \"array\" and length == 1 and
+      .[0].request_id == \$request_id and
+      (.[0] | has(\"error\") | not) and
+      (.[0].value | $app_probe_value_check)
+    " >/dev/null "$evidence_dir/first-request-$phase-response.json"
     awk -v phase="$phase" '
       /^RECEIVING_STARTUP_REQUEST / {
         for (field = 1; field <= NF; field++) {
