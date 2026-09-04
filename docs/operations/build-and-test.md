@@ -1651,6 +1651,39 @@ reach it. A surviving mutant means one of three things — the assertion is
 missing, the control does not isolate, or the code is dead — and they are
 distinguished by asking what input would reach it.
 
+**`bash -n` is not a proof. A shell block is verified by RUNNING it against
+the real consumer.** The shell-grain form of the second-consumer rule: a
+parse check proves the syntax is well-formed, which is nearly orthogonal to
+whether the command means what it says. Three defects in one small change,
+each of which `bash -n` accepted and each of which would have failed in the
+middle of a cluster run, tens of minutes from the edit:
+
+- **`psql -c` does not interpolate psql variables.** `:'org'` there is not a
+  substitution that resolves to the wrong thing — it reaches the server
+  literally and is a syntax error. The query has to arrive on stdin via
+  `-f -`. Nothing local says so; the manual is thin on it and the shape looks
+  exactly like the working one.
+- **Bundled short flags swallow what follows.** `-Atqc` ends in `-c`, so
+  inserting `-v org=...` between it and the SQL made `-c` take `-v` as its
+  argument. The command is still valid shell and still valid `psql` invocation
+  syntax; it simply runs the wrong thing.
+- **A second use site, three hundred lines away.** Under `set -u` a missed
+  rename is an unbound variable at RUNTIME, not an error at parse time, so the
+  block dies after the expensive part has already run.
+
+The method that found all three was running the block against a real
+PostgreSQL — extracted VERBATIM from the tool with `sed`, not retyped, so what
+ran is what ships. And once it runs at all, ask the next question for free: the
+same probe confirmed a second application resolves its own row through the
+same code, an absent identity returns empty rather than erroring, and `:'var'`
+actually escapes — a value carrying a quote matched zero rows rather than all
+of them. A quoting form is a safety claim, not only a substitution.
+
+Corollary for anything that touches a database, a cluster, or another process:
+stand up the real consumer, disposable and named, and remove it by name. The
+cost of a container for ninety seconds is nothing against a defect that
+surfaces after a build, a push, and a deploy.
+
 **The lift checklist.** Before extracting any block into a shared function,
 answer three questions, and answer them BEFORE the extraction rather than
 after:
