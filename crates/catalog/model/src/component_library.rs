@@ -1610,6 +1610,9 @@ mod tests {
                 name: "select_order".to_owned(),
                 path: "generated/sql/purchase_order/get.sql".to_owned(),
                 sql: sql.to_owned(),
+                // A SELECT fixture: PostgreSQL classifies it as needing no
+                // transaction.
+                transactional: false,
                 binds: vec![ComponentSqlField {
                     name: "id".to_owned(),
                     value_type: ComponentSqlValueType::Uuid,

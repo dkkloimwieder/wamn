@@ -535,20 +535,23 @@ fn project_postgres(class: AuthorityClass, url: &str) -> anyhow::Result<Arc<Wamn
     Ok(Arc::new(WamnPostgres::with_provider(provider)))
 }
 
-fn routing(
+async fn routing(
     identity_reader: Arc<Client>,
     postgres: Arc<WamnPostgres>,
     weld: Arc<ReleaseManifestWeld>,
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
         FlowHttpRouting::new(Some(weld), RouteInFlightLimit::default()).with_authentication(
-            Arc::new(RouteAuthentication::new(
-                identity_reader,
-                postgres,
-                ORG,
-                PROJECT,
-                route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
-            )),
+            Arc::new(
+                RouteAuthentication::new(
+                    identity_reader,
+                    postgres,
+                    ORG,
+                    PROJECT,
+                    route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
+                )
+                .await?,
+            ),
         ),
     )
 }
@@ -698,6 +701,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
             .expect("build project-specific callable-HTTP provider"),
         Arc::clone(&weld),
     )
+    .await
     .expect("build route authentication");
 
     let mut router_admissions = 0;
@@ -825,6 +829,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .expect("build provider missing the callable-HTTP credential"),
         Arc::clone(&weld),
     )
+    .await
     .expect("build permission-unavailable routing");
     assert_eq!(
         invoke(
@@ -2369,13 +2374,16 @@ async fn build_journey_runtime(
     let (identity_reader, identity_task) = connect(&credentials.identity_reader).await?;
     let routing = Arc::new(
         FlowHttpRouting::new(Some(release), RouteInFlightLimit::default()).with_authentication(
-            Arc::new(RouteAuthentication::new(
-                identity_reader,
-                postgres,
-                ORG,
-                PROJECT,
-                route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
-            )),
+            Arc::new(
+                RouteAuthentication::new(
+                    identity_reader,
+                    postgres,
+                    ORG,
+                    PROJECT,
+                    route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
+                )
+                .await?,
+            ),
         ),
     );
     let raw = engine.inner();

@@ -2970,6 +2970,7 @@ mod tests {
                     sql: sql.to_owned(),
                     binds: Vec::new(),
                     columns: Vec::new(),
+                    transactional: false,
                 },
             );
 

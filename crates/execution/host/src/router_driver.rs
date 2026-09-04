@@ -2756,6 +2756,7 @@ mod tests {
             sql: "SELECT 1".to_owned(),
             binds: Vec::new(),
             columns: Vec::new(),
+            transactional: false,
         };
         let component = component_with_operations(BTreeMap::from([
             (

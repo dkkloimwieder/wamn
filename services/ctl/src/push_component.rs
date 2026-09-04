@@ -1950,6 +1950,7 @@ mod tests {
                 digest: format!("sha256:{}", "f".repeat(64)),
                 binds: Vec::new(),
                 columns: Vec::new(),
+                transactional: false,
             }],
             &mut corpus,
         )
@@ -2096,6 +2097,7 @@ mod tests {
                     sql: sql.to_owned(),
                     binds: Vec::new(),
                     columns: Vec::new(),
+                    transactional: false,
                 },
             );
         assert_ne!(

@@ -845,6 +845,9 @@ mod tests {
                     name: "get".into(),
                     path: "generated/sql/purchase_order/get.sql".into(),
                     sql: sql.into(),
+                    // A SELECT fixture: PostgreSQL classifies it as needing no
+                    // transaction.
+                    transactional: false,
                     binds: Vec::new(),
                     columns: Vec::new(),
                 },
