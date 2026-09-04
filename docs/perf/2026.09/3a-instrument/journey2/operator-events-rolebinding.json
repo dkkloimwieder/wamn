@@ -1,0 +1,26 @@
+{
+    "apiVersion": "rbac.authorization.k8s.io/v1",
+    "kind": "RoleBinding",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"rbac.authorization.k8s.io/v1\",\"kind\":\"RoleBinding\",\"metadata\":{\"annotations\":{},\"name\":\"wamn-runtime-operator-events\",\"namespace\":\"wamn-receiving-journey\"},\"roleRef\":{\"apiGroup\":\"rbac.authorization.k8s.io\",\"kind\":\"Role\",\"name\":\"wamn-runtime-operator-events\"},\"subjects\":[{\"kind\":\"ServiceAccount\",\"name\":\"wamn-runtime-operator\",\"namespace\":\"wamn-system\"}]}\n"
+        },
+        "creationTimestamp": "2026-09-04T14:40:55Z",
+        "name": "wamn-runtime-operator-events",
+        "namespace": "wamn-receiving-journey",
+        "resourceVersion": "1145",
+        "uid": "216249cd-b61f-4265-a790-ace884359e3e"
+    },
+    "roleRef": {
+        "apiGroup": "rbac.authorization.k8s.io",
+        "kind": "Role",
+        "name": "wamn-runtime-operator-events"
+    },
+    "subjects": [
+        {
+            "kind": "ServiceAccount",
+            "name": "wamn-runtime-operator",
+            "namespace": "wamn-system"
+        }
+    ]
+}

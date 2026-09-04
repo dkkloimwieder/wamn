@@ -1,0 +1,96 @@
+{
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"flow-http-reachability\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":60,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"headers=/tmp/headers\\nbody=/tmp/body\\nstatus=$(curl --silent --show-error --connect-timeout 5 --max-time 15 \\\\\\n  --dump-header \\\"$headers\\\" --output \\\"$body\\\" --write-out '%{http_code}' \\\\\\n  --header 'Host: receiving.localhost' \\\\\\n  'http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route')\\ncontent_type=$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' \\\"$headers\\\" \\\\\\n  | tr -d '\\\\r' | head -n 1)\\ntest \\\"$status\\\" = 404\\ntest \\\"$content_type\\\" = application/json\\nprintf '%s' '{\\\"error\\\":{\\\"code\\\":\\\"route-not-found\\\"}}' \\u003e/tmp/expected\\ncmp -s /tmp/expected \\\"$body\\\"\\nprintf '%s\\\\n' 'RECEIVING_HTTP_PROBE {\\\"status\\\":404,\\\"content_type\\\":\\\"application/json\\\",\\\"host\\\":\\\"receiving.localhost\\\",\\\"body\\\":{\\\"error\\\":{\\\"code\\\":\\\"route-not-found\\\"}}}'\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"image\":\"wamn-host:receiving-59ad404ba239-1607194-debug\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+        },
+        "creationTimestamp": "2026-09-04T14:35:08Z",
+        "generation": 1,
+        "labels": {
+            "batch.kubernetes.io/controller-uid": "07b77a65-5910-49e6-82d5-a3b79bff871c",
+            "batch.kubernetes.io/job-name": "flow-http-reachability",
+            "controller-uid": "07b77a65-5910-49e6-82d5-a3b79bff871c",
+            "job-name": "flow-http-reachability"
+        },
+        "name": "flow-http-reachability",
+        "namespace": "wamn-receiving-journey",
+        "resourceVersion": "1801",
+        "uid": "07b77a65-5910-49e6-82d5-a3b79bff871c"
+    },
+    "spec": {
+        "activeDeadlineSeconds": 60,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "TerminatingOrFailed",
+        "selector": {
+            "matchLabels": {
+                "batch.kubernetes.io/controller-uid": "07b77a65-5910-49e6-82d5-a3b79bff871c"
+            }
+        },
+        "suspend": false,
+        "template": {
+            "metadata": {
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "07b77a65-5910-49e6-82d5-a3b79bff871c",
+                    "batch.kubernetes.io/job-name": "flow-http-reachability",
+                    "controller-uid": "07b77a65-5910-49e6-82d5-a3b79bff871c",
+                    "job-name": "flow-http-reachability"
+                }
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "headers=/tmp/headers\nbody=/tmp/body\nstatus=$(curl --silent --show-error --connect-timeout 5 --max-time 15 \\\n  --dump-header \"$headers\" --output \"$body\" --write-out '%{http_code}' \\\n  --header 'Host: receiving.localhost' \\\n  'http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route')\ncontent_type=$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' \"$headers\" \\\n  | tr -d '\\r' | head -n 1)\ntest \"$status\" = 404\ntest \"$content_type\" = application/json\nprintf '%s' '{\"error\":{\"code\":\"route-not-found\"}}' \u003e/tmp/expected\ncmp -s /tmp/expected \"$body\"\nprintf '%s\\n' 'RECEIVING_HTTP_PROBE {\"status\":404,\"content_type\":\"application/json\",\"host\":\"receiving.localhost\",\"body\":{\"error\":{\"code\":\"route-not-found\"}}}'\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "image": "wamn-host:receiving-59ad404ba239-1607194-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File"
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "terminationGracePeriodSeconds": 30
+            }
+        }
+    },
+    "status": {
+        "completionTime": "2026-09-04T14:35:11Z",
+        "conditions": [
+            {
+                "lastProbeTime": "2026-09-04T14:35:11Z",
+                "lastTransitionTime": "2026-09-04T14:35:11Z",
+                "message": "Reached expected number of succeeded pods",
+                "reason": "CompletionsReached",
+                "status": "True",
+                "type": "SuccessCriteriaMet"
+            },
+            {
+                "lastProbeTime": "2026-09-04T14:35:11Z",
+                "lastTransitionTime": "2026-09-04T14:35:11Z",
+                "message": "Reached expected number of succeeded pods",
+                "reason": "CompletionsReached",
+                "status": "True",
+                "type": "Complete"
+            }
+        ],
+        "ready": 0,
+        "startTime": "2026-09-04T14:35:08Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+    }
+}

@@ -15,7 +15,8 @@ jq -r --arg l "${2:-$(basename "$1" .json)}" '
   # These are siblings in wall-clock terms (db contains sql and acquire, so db
   # is counted and sql is not). What is left is time inside handle_http_request
   # that no span covers.
-  ( n("wamn.route.authenticate") + n("wamn.router.resolve") + n("wamn.component.pull")
+  ( n("wamn.route.match") + n("wamn.route.authenticate") + n("wamn.route.validate_input")
+    + n("wamn.route.permit") + n("wamn.router.resolve") + n("wamn.component.pull")
     + n("wamn.component.compile") + n("wamn.component.linker_setup") + n("wamn.component.link")
     + n("wamn.component.instantiate") + n("wamn.postgres") ) as $covered |
   ($total - $covered) as $residue |
@@ -28,7 +29,9 @@ jq -r --arg l "${2:-$(basename "$1" .json)}" '
   + " | " + r(n("wamn.component.link"))
   + " | " + r(n("wamn.component.instantiate"))
   + " | " + r(n("wamn.postgres"))
+  + " | " + r(n("wamn.postgres.bind_claims"))
   + " | " + r(n("wamn.postgres.statement"))
+  + " | " + r(n("wamn.postgres.commit"))
   + " | " + r($residue)
   + " | **" + r($total) + "**"
   + " | " + (if (n("wamn.postgres.statement") + n("wamn.component.instantiate")) > 0
