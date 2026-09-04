@@ -252,6 +252,15 @@ run_complete=false
 cleanup() {
   local status=$? cleanup_failed=false failure_capture_errors
   trap - EXIT HUP INT TERM
+  # Opt-in hold BEFORE teardown, so an observer can keep watching cluster state
+  # past the point where this run gives up. Unset by default, so no run changes
+  # behaviour unless it is asked for. It exists because the question "does the
+  # route ever come back after the restart arm fails" is unanswerable once the
+  # cluster is deleted (wamn-0h0g.17.20).
+  if [[ -n "${WAMN_JOURNEY_HOLD_SECONDS:-}" ]]; then
+    echo "journey holding ${WAMN_JOURNEY_HOLD_SECONDS}s before teardown (status=$status)" >&2
+    sleep "$WAMN_JOURNEY_HOLD_SECONDS" || true
+  fi
   set +e
 
   if [[ "$reader_owned" == true && -n "$reader_pid" ]]; then
