@@ -46,6 +46,8 @@ source "$script_dir/journey-rendered-identity.sh"
 source "$script_dir/journey-trace.sh"
 # shellcheck source=tools/journey-workload.sh
 source "$script_dir/journey-workload.sh"
+# shellcheck source=tools/journey-materializer.sh
+source "$script_dir/journey-materializer.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -88,6 +90,13 @@ app_probe_statement_spans=1
 # Derived, not spelled: EVT_<org>_<env> is the platform's naming, and a second
 # application reading a literal would assert against the first one's stream.
 app_event_stream=EVT_${app_org}_${app_environment}
+# The CDC materializer workload THIS application deploys, and the Job that
+# pokes it. deploy/platform/materializer.example.yaml is a GENERIC example, so
+# unlike the host overlay its name is the harness's to choose -- but choosing
+# it as a literal is how the second application's materializer lands under the
+# first one's name, and only one of them survives the apply.
+app_materializer_workload=${app_project}-materializer
+app_materializer_trigger=${app_materializer_workload}-trigger
 # The virtualized guest artifacts THIS application ships. The journey builds
 # and pushes exactly these; a second application names its own. The names are
 # the virtualizer's output stems, which is why they carry underscores where
@@ -1560,7 +1569,7 @@ cat >"$materializer_trigger" <<EOF
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: receiving-materializer-trigger
+  name: $app_materializer_trigger
   namespace: $namespace
 spec:
   activeDeadlineSeconds: 90
@@ -1604,50 +1613,63 @@ spec:
               printf '\n'
 EOF
 materializer_manifest=$work_dir/materializer.yaml
-awk -v target_namespace="$namespace" -v image="$materializer_ref" '
-  /^  name: materializer-demo$/ { print "  name: receiving-materializer"; next }
-  /^  namespace: wamn-system$/ { print "  namespace: " target_namespace; next }
-  /^      environment: wamn-system$/ { print "      environment: " target_namespace; next }
-  /^        image: registry\.wamn-system\.svc\.cluster\.local:5000\/wamn\/materializer:dev$/ {
-    print "        image: " image; next
-  }
-  /wamn\.tenant: t1$/ { print "            wamn.tenant: receiving-route-auth"; next }
-  /wamn\.project: default$/ { print "            wamn.project: receiving"; next }
-  /wamn\.environment: menv$/ { print "            wamn.environment: dev"; next }
-  /WAMN_MAT_STREAM: EVT_morg_menv$/ { print "              WAMN_MAT_STREAM: EVT_acme_dev"; next }
-  /WAMN_MAT_ORG: morg$/ { print "              WAMN_MAT_ORG: acme"; next }
-  /WAMN_MAT_PROJECT: mproj$/ { print "              WAMN_MAT_PROJECT: receiving"; next }
-  /WAMN_MAT_ENV: menv$/ { print "              WAMN_MAT_ENV: dev"; next }
-  /WAMN_MAT_TENANT: t1$/ {
-    print "              WAMN_MAT_TENANT: receiving-route-auth"
-    print "              WAMN_MAT_FETCH_MS: \"500\""
-    print "              WAMN_MAT_SWEEP_MS: \"500\""
-    next
-  }
-  { print }
-' "$repo_root/deploy/platform/materializer.example.yaml" >"$materializer_manifest"
+# The template is a GENERIC example; every identity field in it is a
+# placeholder this journey fills from the declaration above. The template_*
+# keys name what the example says TODAY, so a template that drifts refuses
+# here instead of passing its own demo tenant through into the cluster.
+declare -A app_materializer_spec=(
+  [template]=$repo_root/deploy/platform/materializer.example.yaml
+  [workload]=$app_materializer_workload
+  [namespace]=$namespace
+  [image]=$materializer_ref
+  [tenant]=$app_tenant
+  [project]=$app_project
+  [environment]=$app_environment
+  [event_stream]=$app_event_stream
+  [org]=$app_org
+  [fetch_ms]=500
+  [sweep_ms]=500
+  [template_name]=materializer-demo
+  [template_system_namespace]=wamn-system
+  [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev
+  [template_tenant]=t1
+  [template_config_project]=default
+  [template_environment]=menv
+  [template_stream]=EVT_morg_menv
+  [template_org]=morg
+  [template_env_project]=mproj
+)
+render_materializer_manifest app_materializer_spec "$materializer_manifest"
 run "${kube[@]}" apply -f "$materializer_manifest"
 run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
-  workloaddeployment/receiving-materializer --timeout=240s
-"${kube[@]}" -n "$namespace" get workloaddeployment receiving-materializer -o json \
+  "workloaddeployment/$app_materializer_workload" --timeout=240s
+"${kube[@]}" -n "$namespace" get workloaddeployment "$app_materializer_workload" -o json \
   >"$evidence_dir/materializer-deployment.json"
-jq -e --arg image "$materializer_ref" --arg namespace "$namespace" '
-  .metadata.name == "receiving-materializer" and
+# The identity the OPERATOR ACCEPTED, read back from the cluster and compared
+# against the declaration -- not against the manifest the renderer just wrote.
+# A renderer proved correct offline still says nothing about what was applied,
+# and this is the assertion a second application would otherwise pass by
+# carrying the first one's literals.
+jq -e --arg image "$materializer_ref" --arg namespace "$namespace" \
+  --arg workload "$app_materializer_workload" --arg tenant "$app_tenant" \
+  --arg project "$app_project" --arg environment "$app_environment" \
+  --arg org "$app_org" --arg stream "$app_event_stream" '
+  .metadata.name == $workload and
   .metadata.namespace == $namespace and
   .spec.replicas == 1 and
   .spec.template.spec.environment == $namespace and
   .spec.template.spec.hostSelector == {hostgroup:"default"} and
   .spec.template.spec.service.image == $image and
   .spec.template.spec.service.localResources.config == {
-    "wamn.tenant":"receiving-route-auth",
-    "wamn.project":"receiving",
-    "wamn.environment":"dev",
+    "wamn.tenant":$tenant,
+    "wamn.project":$project,
+    "wamn.environment":$environment,
     "wamn.postgres.authority":"event-materializer"
   } and
   [.spec.template.spec.service.localResources.environment.config[
     "WAMN_MAT_STREAM","WAMN_MAT_ORG","WAMN_MAT_PROJECT","WAMN_MAT_ENV",
     "WAMN_MAT_TENANT","WAMN_MAT_FETCH_MS","WAMN_MAT_SWEEP_MS"
-  ]] == ["EVT_acme_dev","acme","receiving","dev","receiving-route-auth","500","500"] and
+  ]] == [$stream,$org,$project,$environment,$tenant,"500","500"] and
   (.spec.template.spec.hostInterfaces | sort_by(.package)) == [
     {namespace:"wamn", package:"flow-http-routing", version:"0.1.0",
      interfaces:["routing"]},
@@ -1698,8 +1720,8 @@ jq -e --arg namespace "$namespace" \
 # receipt whose causal CDC event the materializer consumes.
 run "${kube[@]}" apply -f "$materializer_trigger"
 run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
-  job/receiving-materializer-trigger --timeout=120s
-"${kube[@]}" -n "$namespace" logs job/receiving-materializer-trigger \
+  "job/$app_materializer_trigger" --timeout=120s
+"${kube[@]}" -n "$namespace" logs "job/$app_materializer_trigger" \
   >"$evidence_dir/materializer-trigger.log"
 sed -n 's/^RECEIVING_MATERIALIZER_UPDATE //p' \
   "$evidence_dir/materializer-trigger.log" >"$evidence_dir/materializer-update.json"

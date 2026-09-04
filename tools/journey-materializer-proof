@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-materializer.sh. No cluster: a text transform over
+# one checked-in template.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-materializer.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+TEMPLATE=$repo_root/deploy/platform/materializer.example.yaml
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+refused_saying() { local err; err=$("$@" 2>&1 >/dev/null) && return 1; [[ $err == *"$REASON"* ]]; }
+
+# <array-name> <template> <workload> <tenant> <project> <environment> <stream> <org>
+# Everything not under test is deliberately unguessable, so a value that
+# reaches the output by any route other than this array is visible as itself.
+build_spec() {
+  eval "declare -gA $1=(
+    [template]=$2
+    [workload]=$3
+    [namespace]=warehouse-eu-3
+    [image]=registry.probe.invalid:5000/proofs/materializer@sha256:abc123
+    [tenant]=$4 [project]=$5 [environment]=$6 [event_stream]=$7 [org]=$8
+    [fetch_ms]=500 [sweep_ms]=500
+    [template_name]=materializer-demo
+    [template_system_namespace]=wamn-system
+    [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev
+    [template_tenant]=t1
+    [template_config_project]=default
+    [template_environment]=menv
+    [template_stream]=EVT_morg_menv
+    [template_org]=morg
+    [template_env_project]=mproj
+  )"
+}
+receiving_spec() {
+  build_spec "$1" "${2:-$TEMPLATE}" receiving-materializer receiving-route-auth \
+    receiving dev EVT_acme_dev acme
+}
+
+echo "1. bytes, and both applications"
+receiving_spec rcv
+render_materializer_manifest rcv "$work/rcv.yaml"; check "the Receiving render succeeds" $?
+[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == b484547d0b77395ac41e9386e880ca68f0bf00c738e95bf018d64cfcb80d9324 ]]
+check "bytes unchanged since the pre-lift block" $?
+# TWO PINS, because a render is a function of its inputs and the digest above
+# is of the PROOF's inputs. This second one is of the journey's real ones, so
+# the thing actually deployed is what the pre-lift block deployed -- a proof
+# that only ever renders probe values proves the renderer, not the deployment.
+build_spec live "$TEMPLATE" receiving-materializer receiving-route-auth \
+  receiving dev EVT_acme_dev acme
+live[namespace]=wamn-receiving-journey
+live[image]=reg.example:5000/wamn/materializer@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+render_materializer_manifest live "$work/live.yaml"
+[[ $(sha256sum "$work/live.yaml" | cut -d' ' -f1) == 9778c0d5e2ab748d2a37c841e1d146a6b181c4a0603c35601b03f1da271b5a4d ]]
+check "the journey's own inputs render the pre-lift bytes too" $?
+
+# A SECOND APPLICATION SHARING NOTHING. The template is generic and both
+# applications render the same file, so the only thing that can make their
+# outputs differ is the declaration -- which is exactly the property a literal
+# on the replacement side destroys.
+build_spec wms "$TEMPLATE" hopper-materializer quay-9-route-auth quay9 stage7 \
+  EVT_zamboni_stage7 zamboni
+render_materializer_manifest wms "$work/wms.yaml"; check "a second application renders" $?
+
+echo "2. every one of the eight identity values moved"
+# Not "the files differ" -- that passes if ONE value moved. Each value is
+# asserted present as its own, and the first application's absent.
+while IFS='|' read -r want gone; do
+  grep -qF -- "$want" "$work/wms.yaml" && ! grep -qF -- "$gone" "$work/wms.yaml"
+  check "[$want] replaces [$gone]" $?
+done <<'PAIRS'
+name: hopper-materializer|name: receiving-materializer
+wamn.tenant: quay-9-route-auth|wamn.tenant: receiving-route-auth
+wamn.project: quay9|wamn.project: receiving
+wamn.environment: stage7|wamn.environment: dev
+WAMN_MAT_STREAM: EVT_zamboni_stage7|WAMN_MAT_STREAM: EVT_acme_dev
+WAMN_MAT_ORG: zamboni|WAMN_MAT_ORG: acme
+WAMN_MAT_PROJECT: quay9|WAMN_MAT_PROJECT: receiving
+WAMN_MAT_ENV: stage7|WAMN_MAT_ENV: dev
+WAMN_MAT_TENANT: quay-9-route-auth|WAMN_MAT_TENANT: receiving-route-auth
+PAIRS
+
+# What the renderer deliberately does NOT own, stated so this does not read as
+# coverage it lacks: the authority class is a closed platform credential class,
+# not application identity, and MAX_DELIVER is the template's retry bound.
+grep -q 'wamn.postgres.authority: event-materializer' "$work/wms.yaml"
+check "the platform authority class is untouched for both applications" $?
+grep -q 'WAMN_MAT_MAX_DELIVER: "5"' "$work/wms.yaml"
+check "the template's retry bound is untouched" $?
+
+echo "3. exactly once, per anchor"
+for anchor in 'name: materializer-demo' 'namespace: wamn-system' \
+    'environment: wamn-system' 'wamn.tenant: t1' 'wamn.project: default' \
+    'wamn.environment: menv' 'WAMN_MAT_STREAM: EVT_morg_menv' \
+    'WAMN_MAT_ORG: morg' 'WAMN_MAT_PROJECT: mproj' 'WAMN_MAT_ENV: menv'; do
+  grep -vF -- "$anchor" "$TEMPLATE" >"$work/drift.yaml"
+  receiving_spec drift "$work/drift.yaml"
+  REASON="anchor matched 0 times, want 1: [$anchor]" \
+    refused_saying render_materializer_manifest drift "$work/out.yaml"
+  check "control: a template missing [$anchor] is refused, naming IT" $?
+done
+{ cat "$TEMPLATE"; echo '            wamn.project: default'; } >"$work/twice.yaml"
+receiving_spec twice "$work/twice.yaml"
+REASON="matched 2 times, want 1" \
+  refused_saying render_materializer_manifest twice "$work/out.yaml"
+check "control: a template declaring an anchor TWICE is refused" $?
+
+echo "4. the tenant-env anchor carries the insertion, so it needs its own message"
+# Deleting it also deletes the only other WAMN_MAT_TENANT line, so a bare
+# refusal here could come from the plain anchor rule or the placeholder sweep.
+# The MESSAGE is what proves this guard fired and not a neighbour.
+grep -vF -- '              WAMN_MAT_TENANT: t1' "$TEMPLATE" >"$work/no-tenant-env.yaml"
+receiving_spec noTenantEnv "$work/no-tenant-env.yaml"
+REASON="tenant-env anchor matched 0 times" \
+  refused_saying render_materializer_manifest noTenantEnv "$work/out.yaml"
+check "control: a template missing the tenant-env anchor is refused, naming IT" $?
+render_materializer_manifest rcv "$work/rcv.yaml" 2>/dev/null
+[[ $(grep -c 'WAMN_MAT_FETCH_MS: "500"' "$work/rcv.yaml") -eq 1 ]] &&
+  [[ $(grep -c 'WAMN_MAT_SWEEP_MS: "500"' "$work/rcv.yaml") -eq 1 ]]
+check "the two poll intervals are inserted exactly once each" $?
+build_spec tuned "$TEMPLATE" receiving-materializer receiving-route-auth \
+  receiving dev EVT_acme_dev acme
+tuned[fetch_ms]=131; tuned[sweep_ms]=137
+render_materializer_manifest tuned "$work/tuned.yaml"
+grep -q 'WAMN_MAT_FETCH_MS: "131"' "$work/tuned.yaml" &&
+  grep -q 'WAMN_MAT_SWEEP_MS: "137"' "$work/tuned.yaml"
+check "the intervals come from the spec, not from the function" $?
+
+echo "5. no placeholder reaches the cluster under an anchor nobody declared"
+# The anchor counts prove each REPLACEMENT fired. They say nothing about a
+# SECOND copy of a placeholder somewhere the map does not look -- a field added
+# upstream, a comment naming the demo tenant. That copy renders through.
+{ cat "$TEMPLATE"; echo '              WAMN_MAT_LEGACY_TENANT: t1'; } >"$work/legacy.yaml"
+receiving_spec legacy "$work/legacy.yaml"
+REASON="still carries the template placeholder [t1]" \
+  refused_saying render_materializer_manifest legacy "$work/out.yaml"
+check "control: a surviving placeholder under an undeclared anchor is refused" $?
+
+echo "6. the arguments themselves"
+receiving_spec absent "$work/nope.yaml"
+REASON="no template at" refused_saying render_materializer_manifest absent "$work/out.yaml"
+check "control: a missing template is refused" $?
+receiving_spec short
+unset "short[tenant]"
+REASON="missing tenant" refused_saying render_materializer_manifest short "$work/out.yaml"
+check "control: a missing required key is refused before any work" $?
+receiving_spec shortTpl
+unset "shortTpl[template_stream]"
+REASON="missing template_stream" \
+  refused_saying render_materializer_manifest shortTpl "$work/out.yaml"
+check "control: a missing template_* key is refused too" $?
+
+echo "7. nameref binding"
+# The name is part of the interface. A caller array sharing it would be read
+# INSTEAD of the caller's, byte-identically shaped and wrong.
+binds() {
+  local n=$1
+  build_spec "$n" "$TEMPLATE" DECOY-materializer DECOY DECOY DECOY DECOY DECOY
+  collide() {
+    eval "local -A $n=(
+      [template]=$TEMPLATE
+      [workload]=receiving-materializer
+      [namespace]=warehouse-eu-3
+      [image]=registry.probe.invalid:5000/proofs/materializer@sha256:abc123
+      [tenant]=receiving-route-auth [project]=receiving [environment]=dev
+      [event_stream]=EVT_acme_dev [org]=acme [fetch_ms]=500 [sweep_ms]=500
+      [template_name]=materializer-demo
+      [template_system_namespace]=wamn-system
+      [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev
+      [template_tenant]=t1
+      [template_config_project]=default
+      [template_environment]=menv
+      [template_stream]=EVT_morg_menv
+      [template_org]=morg
+      [template_env_project]=mproj
+    )"
+    render_materializer_manifest "$n" "$work/nr.yaml"
+  }
+  collide 2>/dev/null || return 1
+  ! grep -q DECOY "$work/nr.yaml"
+}
+for n in spec materializer_spec config params; do
+  binds "$n"; check "a caller array named '$n' binds to the caller" $?
+done
+! binds _rmm_spec; check "control: colliding on the internal name is detected" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-materializer: all properties hold"; else
+  echo "journey-materializer: $failures failed"; exit 1; fi

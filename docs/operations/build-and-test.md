@@ -1845,6 +1845,29 @@ The general form: whenever a match is loosened, ask what the strict form was
 excluding, and assert that the loosening did not admit it. Otherwise the
 un-fusing has removed one coupling and quietly built another.
 
+**An anchor map proves what it REPLACED, never what remains. A render is
+verified by what survives it.** The exactly-once counts answer "did every
+substitution I declared fire?" That is a complete answer to a question that
+is only half the problem. The other half is whether the template holds a
+SECOND copy of a placeholder somewhere the map does not look — a field added
+upstream, a legacy key beside the current one, a comment naming the demo
+tenant. Nothing in the anchor machinery can see it, every declared count is
+satisfied, and the placeholder renders straight through into a manifest the
+cluster accepts.
+
+The guard is the complement of the anchor map, and it is three lines: after
+rendering, sweep the output for each of the template's own placeholder values
+and refuse if any survives. Its negative control has to plant the placeholder
+under an anchor NOBODY declared — appending `WAMN_MAT_LEGACY_TENANT: t1` to a
+template whose `WAMN_MAT_TENANT: t1` is fully handled — because a control that
+deletes a declared anchor is caught by the count rule instead, and proves the
+neighbour.
+
+This generalises past renders. Any transform declared as a set of rules over
+an input owes two proofs: every rule fired, and nothing the rules were meant
+to eliminate is still there. The first is about the transform; the second is
+about the artifact, and only the second is what ships.
+
 **The test of an un-fusing: a parameter no test can distinguish from the
 constant it replaced is the same fusion with extra steps.** Introducing the
 argument is not the work; proving it CHANGES something is. The statement-count
