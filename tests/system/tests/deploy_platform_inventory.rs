@@ -218,7 +218,9 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 2] = [
 /// Per-project-environment Secret name PREFIXES the scenario worker mounts.
 ///
 /// These carry an `<org>--<project>--<env>` suffix, so they cannot be listed as
-/// literals without pinning the demo triple into the proof.
+/// literals without pinning the demo triple into the proof. What a prefix is
+/// allowed to absorb is [`absorbed_by_a_prerequisite_prefix`], not
+/// `starts_with`.
 const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 6] = [
     "wamn-authoring-",
     // `values-host-receiving-pat.yaml` mounts all four `provision-project-env`
@@ -231,6 +233,36 @@ const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 6] = [
     "wamn-identity-reader-",
     "wamn-mgmt-admitter-",
 ];
+
+/// Whether an [`EXTERNAL_PREREQUISITE_PREFIXES`] row accounts for `name`.
+///
+/// A BARE `starts_with` MADE EVERY PREFIX A SHADOW (`wamn-wmwl`). Each prefix
+/// is the stem of a Secret this tier DECLARES — `wamn-executor-platform-` over
+/// `wamn-executor-platform-db`, `wamn-http-admitter-` over
+/// `wamn-http-admitter-db` — so the prefix already matched the declared name.
+/// The shadow was invisible only because the `unaccounted` computation drops
+/// declared names first; the day a carrier is deleted the prefix absorbs the
+/// orphan and this gate stays green. That cost is measured, not hypothetical:
+/// `wamn-executor-db` sat unaccounted from `wamn-0h0g.10.5` after `ea71c1c4`
+/// deleted `runner-db.example.yaml`, and it was caught ONLY because no prefix
+/// happened to share its stem.
+///
+/// So a prefix absorbs only a name carrying the marker the prefix exists for.
+/// That marker is the `<org>--<project>--<env>` triple
+/// `crates/control/provision/src/name.rs::workload_secret_name` appends —
+/// `wamn-identity-reader-acme--receiving--dev` is the shape actually in the
+/// tree. `validate_project_env` slug-checks all three components and refuses a
+/// consecutive-hyphen run, so the triple is EXACTLY three non-empty `--`
+/// segments. A bare `db` is not one, and stays unaccounted when its carrier
+/// goes.
+fn absorbed_by_a_prerequisite_prefix(name: &str) -> bool {
+    EXTERNAL_PREREQUISITE_PREFIXES.iter().any(|prefix| {
+        name.strip_prefix(prefix).is_some_and(|triple| {
+            let components: Vec<&str> = triple.split("--").collect();
+            components.len() == 3 && components.iter().all(|part| !part.is_empty())
+        })
+    })
+}
 
 /// One Kubernetes object as this proof reads it off a manifest.
 #[derive(Debug)]
@@ -588,11 +620,7 @@ fn every_mounted_secret_is_declared_here_or_named_a_prerequisite() {
         .into_iter()
         .filter(|(name, _)| !declared.contains(name))
         .filter(|(name, _)| !prerequisites.contains(name.as_str()))
-        .filter(|(name, _)| {
-            !EXTERNAL_PREREQUISITE_PREFIXES
-                .iter()
-                .any(|prefix| name.starts_with(prefix))
-        })
+        .filter(|(name, _)| !absorbed_by_a_prerequisite_prefix(name))
         .collect();
     assert!(
         unaccounted.is_empty(),
@@ -607,6 +635,20 @@ fn every_mounted_secret_is_declared_here_or_named_a_prerequisite() {
             !declared.contains(name),
             "{name} is declared by this tier and must not also be listed as an \
              external prerequisite minted by {minted_by}"
+        );
+    }
+
+    // The PREFIXES had no such coverage, which is how the shadow got in
+    // (`wamn-wmwl`). Same direction, one grain finer: a prefix that absorbs a
+    // name this tier DECLARES is a shadow lying in wait for the day that
+    // carrier is deleted, so the marker must keep the two apart HERE, while
+    // both still exist, rather than the day one of them goes.
+    for name in &declared {
+        assert!(
+            !absorbed_by_a_prerequisite_prefix(name),
+            "{name} is declared by this tier and is also absorbed by an \
+             external-prerequisite prefix; delete its carrier and the prefix \
+             would account for it silently"
         );
     }
 }
