@@ -2126,8 +2126,16 @@ impl NodeInstance {
     ) -> anyhow::Result<Self> {
         let (mut store, mut workload, connection_http, blobstore, nested, statement_scope) =
             async {
-                let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
-                wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+                // WASI's whole p2 host surface, added to a FRESH linker on every
+                // request. This is the span that decides whether 1b is worth its
+                // refactor: if the cost is here, a linker cached per component
+                // world removes it outright.
+                let mut linker: Linker<SharedCtx> = tracing::info_span!("wamn.linker.wasi")
+                    .in_scope(|| {
+                        let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
+                        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+                        Ok::<_, anyhow::Error>(linker)
+                    })?;
                 let local = wash_runtime::types::LocalResources {
                     allowed_hosts: Arc::clone(&allowed_hosts),
                     ..Default::default()
@@ -2165,7 +2173,8 @@ impl NodeInstance {
                     components,
                     invocation: std::sync::Mutex::new(None),
                 });
-                add_nested_operation_links(&mut linker, Arc::clone(&nested), component_fact)?;
+                tracing::info_span!("wamn.linker.nested")
+                    .in_scope(|| add_nested_operation_links(&mut linker, Arc::clone(&nested), component_fact))?;
                 let loopback = Arc::new(std::sync::Mutex::new(
                     wash_runtime::sockets::loopback::Network::default(),
                 ));
@@ -2199,7 +2208,7 @@ impl NodeInstance {
                         interface
                     })
                     .collect();
-                {
+                async {
                     let mut item = WorkloadItem::Component(&mut workload);
                     postgres
                         .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
@@ -2217,7 +2226,10 @@ impl NodeInstance {
                     ) {
                         wamn_blobstore_plugin::add_to_linker(item.linker())?;
                     }
+                    Ok::<(), anyhow::Error>(())
                 }
+                .instrument(tracing::info_span!("wamn.linker.plugins"))
+                .await?;
                 let scope: Box<str> = workload.id().into();
                 // Linker setup is not an identity bind. In particular WamnLogging's
                 // plugin hook seeds even an empty claim. Clear every registry before
@@ -2243,7 +2255,8 @@ impl NodeInstance {
                 let ctx = Ctx::builder(scope.to_string(), scope.to_string())
                     .with_plugins(plugins)
                     .build();
-                let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
+                let mut store = tracing::info_span!("wamn.linker.store")
+                    .in_scope(|| Store::new(engine.inner(), SharedCtx::new(ctx)));
                 // Instantiation executes guest start code, so it needs the same bounded
                 // ceiling as a call. One tick is only 10 ms and interrupts valid
                 // virtualized std components before their instance is ready.

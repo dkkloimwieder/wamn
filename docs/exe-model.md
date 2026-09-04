@@ -114,6 +114,22 @@ Package application rows are tenant-scoped by database residency, not by column.
   they compare the exact operation token against the authenticated principal's
   grants and bind no caller-derived database claim (`wamn-10yt.3.2`).
 
+**THE AUTHORIZATION PATH IS NEVER CACHED. Revocation is immediate by
+construction.** Ratified 2026-09-04 after a measured attempt to cache it. A
+verified token, a principal status, a project role and an operation permission
+are all re-read from the database on every request, and the cost of that -- 1.76
+ms of a 16 ms request, measured in `perf/2026.09/2-auth.md` -- is the price of
+the property.
+
+The rule is not about TTLs. A cache invalidated on write fails for the same
+reason: the write happens in one host process and the caches live in the other
+N, so every cross-process signal is asynchronous and leaves a window that is
+unbounded under load. `route_authentication_live` already asserts the property
+it protects -- it deletes a permission and demands 403 on the NEXT request -- and
+a proof rewritten to poll for that refusal would be a proof of a race. The way
+to make an authorization path fast is to make its reads cheap, which is what
+reducing them from nine round trips to three did; it is not to stop making them.
+
 Per-tenant roles imply pools per credential. Connection multiplication is the
 pooler trigger, not an alternative identity model.
 
