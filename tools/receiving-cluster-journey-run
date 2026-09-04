@@ -84,6 +84,10 @@ app_host_values_overlay=deploy/platform/values-host-receiving-pat.yaml
 # any caller. This one is the route's own, and a consumer whose route issues a
 # different number would fail inside a platform-sounding assertion.
 app_probe_statement_spans=1
+# The JetStream stream the platform creates for this application's events.
+# Derived, not spelled: EVT_<org>_<env> is the platform's naming, and a second
+# application reading a literal would assert against the first one's stream.
+app_event_stream=EVT_${app_org}_${app_environment}
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 chart_version=2.8.0
 route_host=receiving.localhost
@@ -633,9 +637,15 @@ flow_http_ref=$registry_authority/wamn/flow-http@$flow_http_digest
 materializer_digest=$(jq -er '.digest' "$evidence_dir/materializer-push.json")
 materializer_ref=$registry_authority/wamn/materializer@$materializer_digest
 
-instance_suffix=$(PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres \
-  -d postgres -Atqc \
-  "SELECT instance_suffix FROM registry.project_envs WHERE org='acme' AND project='receiving' AND env='dev'")
+# The identity comes from the declaration, and psql quotes it. Note the form:
+# -c does NOT interpolate psql variables, so the query arrives on stdin via
+# -f -. Verified against a live PostgreSQL 18, including that :'var' escapes --
+# a value carrying a quote matched zero rows rather than all of them.
+instance_suffix=$(printf '%s\n' \
+  "SELECT instance_suffix FROM registry.project_envs" \
+  "  WHERE org = :'org' AND project = :'project' AND env = :'env';" |
+  PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres -d postgres -Atq \
+    -v org="$app_org" -v project="$app_project" -v env="$app_environment" -f -)
 if [[ ! "$instance_suffix" =~ ^[a-z0-9]{8}$ ]]; then
   echo "production provisioning emitted an invalid project instance suffix" >&2
   exit 1
@@ -704,10 +714,10 @@ for _ in $(seq 1 120); do
   curl --silent --show-error --connect-timeout 2 --max-time 5 \
     "http://$nats_ip:8222/jsz?streams=true&config=true" \
     >"$work_dir/nats-jsz.json"
-  if jq -e '
+  if jq -e --arg stream "$app_event_stream" '
       [.. | objects | .name? |
-       select(. == "EVT_acme_dev" or . == "WAMN_DLQ")] |
-      unique == ["EVT_acme_dev", "WAMN_DLQ"]
+       select(. == $stream or . == "WAMN_DLQ")] |
+      unique == ([$stream, "WAMN_DLQ"] | sort)
     ' >/dev/null "$work_dir/nats-jsz.json" &&
     grep -F -- 'walsender session open; draining' \
       "$evidence_dir/cdc-reader.log" >/dev/null; then
@@ -726,7 +736,7 @@ grep -F -- 'walsender session open; draining' "$evidence_dir/cdc-reader.log" \
 fi
 
 run_sensitive print-release-env "$ctl" print-release-env \
-  --database-url "$project_url" --tenant receiving-route-auth \
+  --database-url "$project_url" --tenant "$app_tenant" \
   --effective-release-id 1 --artifact-base "$release_artifact_base" \
   >"$evidence_dir/print-release-env.receipt"
 mapfile -t digest_lines < <(grep -E '^--release-manifest-digest=sha256:[0-9a-f]{64}$' \
