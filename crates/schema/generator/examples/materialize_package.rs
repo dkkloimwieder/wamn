@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result, bail, ensure};
-use wamn_schema_generator::{MaterializeMode, materialize_package};
+use wamn_schema_generator::{MaterializeMode, materialize_package_verified};
 
 const DATABASE_URL_ENV: &str = "WAMN_SCHEMA_INTROSPECTION_PG_URL";
 
@@ -18,7 +18,9 @@ async fn main() -> Result<()> {
     let arguments = arguments()?;
     let database_url = std::env::var(DATABASE_URL_ENV)
         .with_context(|| format!("{DATABASE_URL_ENV} must name an already-migrated database"))?;
-    materialize_package(arguments.mode, &database_url, &arguments.package_root).await
+    // Plans every statement against the migrated database so the contracts
+    // carry PostgreSQL's verdict on which of them need a transaction.
+    materialize_package_verified(arguments.mode, &database_url, &arguments.package_root).await
 }
 
 fn arguments() -> Result<Arguments> {

@@ -5,6 +5,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
+use wamn_schema_generator::StatementTransactionality;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, GenerateErrorKind,
     GeneratedPackage, GenerationInput, GenerationProvenance, OperationVisibility, PackageManifest,
@@ -708,6 +709,7 @@ fn run(
         &bytes,
         sources,
         GenerationProvenance::new("wamn-schema-generator/0.1.0", "rust-1.89"),
+        &StatementTransactionality::default(),
     ))
 }
 
@@ -2144,6 +2146,7 @@ fn shipped_receiving_manifest_and_authored_corpus_generate_without_drift() {
         RECEIVING_MANIFEST,
         &RECEIVING_SOURCES,
         GenerationProvenance::new("wamn-schema-generator/0.1.0", "rust-1.89"),
+        &StatementTransactionality::default(),
     ))
     .unwrap();
 
@@ -2281,6 +2284,7 @@ fn generic_custom_operation_path_preserves_shipped_receiving_bytes() {
         RECEIVING_MANIFEST,
         &RECEIVING_SOURCES,
         GenerationProvenance::new("wamn-schema-generator/0.1.0", "rust-1.98.0"),
+        &StatementTransactionality::default(),
     ))
     .unwrap();
     let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../packages/receiving");

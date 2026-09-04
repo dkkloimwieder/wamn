@@ -91,16 +91,43 @@ pub async fn introspect_package(database_url: &str, package_root: &Path) -> Resu
 async fn classify_statements(
     client: &tokio_postgres::Client,
     corpus: &std::collections::BTreeMap<String, Vec<u8>>,
+    schemas: &[String],
 ) -> Result<StatementTransactionality> {
+    // Plan with the SAME search_path the guest runs under, or an unqualified
+    // relation the package owns cannot be resolved and every statement
+    // referencing it fails to plan.
+    let search_path = schemas
+        .iter()
+        .map(|schema| format!("\"{}\"", schema.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if !search_path.is_empty() {
+        client
+            .batch_execute(&format!("SET search_path TO {search_path}, public"))
+            .await
+            .context("set the package search_path before planning")?;
+    }
     let mut verdicts = std::collections::BTreeMap::new();
     for (path, bytes) in corpus {
         let sql = std::str::from_utf8(bytes)
             .with_context(|| format!("statement {path} is not UTF-8"))?;
-        let row = client
-            .query_one(&format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}"), &[])
+        // simple_query, NOT query_one: the statement carries $1..$n, and the
+        // extended protocol would treat those as parameters OF THE EXPLAIN and
+        // refuse with "expected N parameters but got 0". GENERIC_PLAN exists
+        // precisely so the planner supplies its own placeholders.
+        let messages = client
+            .simple_query(&format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}"))
             .await
             .with_context(|| format!("plan statement {path} against the migrated database"))?;
-        let plan: serde_json::Value = row.get(0);
+        let rendered = messages
+            .iter()
+            .find_map(|message| match message {
+                tokio_postgres::SimpleQueryMessage::Row(row) => row.get(0),
+                _ => None,
+            })
+            .with_context(|| format!("planning {path} returned no plan"))?;
+        let plan: serde_json::Value = serde_json::from_str(rendered)
+            .with_context(|| format!("parse the plan PostgreSQL returned for {path}"))?;
         verdicts.insert(path.clone(), plan_needs_transaction(&plan));
     }
     Ok(StatementTransactionality::from_paths(verdicts))
@@ -225,7 +252,9 @@ pub async fn materialize_package_verified(
         .await
         .context("connect to plan the package statements")?;
     let connection_task = tokio::spawn(connection);
-    let verdicts = classify_statements(&client, &corpus).await;
+    let (_, manifest) = load_manifest(package_root)?;
+    let schemas = application_schemas(&manifest).context("resolve application schemas")?;
+    let verdicts = classify_statements(&client, &corpus, &schemas).await;
     drop(client);
     connection_task
         .await

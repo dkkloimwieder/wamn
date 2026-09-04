@@ -58,6 +58,7 @@ pub use manifest::{
     canonical_operation_prefix, validate_operation_vocabulary,
 };
 pub use materialize::{
+    materialize_package_verified,
     MaterializeMode, introspect_package, materialize_package, materialize_package_from_catalog,
 };
 pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
