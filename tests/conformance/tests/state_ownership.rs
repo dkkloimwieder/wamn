@@ -849,18 +849,27 @@ fn validate_scan_policy(repository: &Path, manifest: &Manifest) -> Result<(), St
     Ok(())
 }
 
-fn scan_repository_writers(
+/// Every production SQL fragment under `roots`, as `(path, line, sql)`.
+///
+/// This is the repository's one definition of "production SQL text": the string
+/// literals of production Rust (`#[cfg(test)] mod tests` blocks removed, whole
+/// test-gated module files skipped) plus the comment-stripped body of each
+/// `.sql` file, with the manifest's scan exclusions deciding what is production
+/// source at all. Both the writer scan and the claim fence read it, so a fence
+/// cannot drift from the writer scan's notion of production.
+fn production_sql_fragments(
     repository: &Path,
     manifest: &Manifest,
-) -> Result<Vec<Discovery>, String> {
+    roots: &[&str],
+) -> Result<Vec<(String, usize, String)>, String> {
     let mut files = Vec::new();
-    for root in &manifest.scan_policy.roots {
+    for root in roots {
         collect_files(repository, &repository.join(root), manifest, &mut files)?;
     }
     files.sort();
     files.dedup();
 
-    let mut discoveries = Vec::new();
+    let mut fragments = Vec::new();
     for path in files {
         let relative = relative_path(repository, &path)?;
         let source =
@@ -873,16 +882,34 @@ fn scan_repository_writers(
             _ => continue,
         };
         for (line, literal) in literals {
-            if manifest
-                .scan_policy
-                .ignored_literals
-                .iter()
-                .any(|ignored| ignored.path == relative && ignored.literal == literal)
-            {
-                continue;
-            }
-            discoveries.extend(discover_writes(&relative, line, &literal));
+            fragments.push((relative.clone(), line, literal));
         }
+    }
+    Ok(fragments)
+}
+
+fn scan_repository_writers(
+    repository: &Path,
+    manifest: &Manifest,
+) -> Result<Vec<Discovery>, String> {
+    let roots = manifest
+        .scan_policy
+        .roots
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+
+    let mut discoveries = Vec::new();
+    for (relative, line, literal) in production_sql_fragments(repository, manifest, &roots)? {
+        if manifest
+            .scan_policy
+            .ignored_literals
+            .iter()
+            .any(|ignored| ignored.path == relative && ignored.literal == literal)
+        {
+            continue;
+        }
+        discoveries.extend(discover_writes(&relative, line, &literal));
     }
     Ok(discoveries)
 }
@@ -2268,5 +2295,126 @@ fn the_generic_copy_channel_declares_why_it_authors_nothing() {
     assert!(
         note.contains("authors none"),
         "ctl-copy note must state that it authors nothing: {note:?}"
+    );
+}
+
+/// The two session claims wamn-0h0g.22.23 measured a guest session can forge.
+const SESSION_FORGEABLE_CLAIMS: [&str; 2] = ["app.role", "app.user_id"];
+
+/// Scanned for the claim fence on top of the manifest's production roots.
+/// `packages` is the developer data-access surface of the wamn-0h0g.22 epic and
+/// the first place a per-user RLS policy would land, so the fence has to see it
+/// even though no static writer lives there.
+const CLAIM_FENCE_EXTRA_ROOTS: [&str; 1] = ["packages"];
+
+/// Every `current_setting` read of a [`SESSION_FORGEABLE_CLAIMS`] entry in
+/// `sql`, as `(claim, call)`.
+///
+/// Keys on the READ. `set_config('app.role', $5, true)` — the host's own
+/// `GUEST_CLAIM_SQL` binding, which wamn-0h0g.23.1 ruled deliberate — WRITES the
+/// claims and is not a consumer. Doubled single quotes collapse first, so a
+/// policy assembled inside an `EXECUTE` string reads like a literal one. A claim
+/// name arriving through a bind parameter or a `format!` hole is out of reach.
+fn forgeable_claim_reads(sql: &str) -> Vec<(&'static str, String)> {
+    let normalized = sql.to_ascii_lowercase().replace("''", "'");
+    let mut reads = Vec::new();
+    let mut offset = 0;
+    while let Some(found) = normalized[offset..].find("current_setting") {
+        let start = offset + found;
+        let tail = &normalized[start..];
+        let call = tail.find(')').map_or(tail, |end| &tail[..=end]);
+        for claim in SESSION_FORGEABLE_CLAIMS {
+            if call.contains(claim) {
+                reads.push((claim, call.trim().to_owned()));
+            }
+        }
+        offset = start + "current_setting".len();
+    }
+    reads
+}
+
+/// No production RLS policy or generated-API path reads `app.role` or
+/// `app.user_id` while wamn-0h0g.22.23 is open.
+///
+/// wamn-0h0g.22.23 measured, on a live server as a role asserted NOT (rolsuper
+/// OR rolbypassrls), that a `DO` block whose `EXECUTE` string carries `SET
+/// app.role` walks straight past `statement_mutates_session`
+/// (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`): it read
+/// another user's rows and then zeroed them. The tenant axis held, because it
+/// derives from `current_user`; the user axis did not. The owner ruled HOLD
+/// rather than repair — the repair is structural and charters with the identity
+/// epic — and that ruling is honest ONLY while the hole is unreachable, which is
+/// to say only while nothing in production reads either claim.
+///
+/// This is the fence (wamn-0h0g.22.44) that keeps the ruling honest. It fails
+/// red the day the first consumer is wired, so the repair becomes a visible
+/// prerequisite instead of one discovered under schedule pressure.
+///
+/// The subject is production SQL TEXT: the `CREATE POLICY` DDL of
+/// `deploy/sql/*.sql`, the package SQL under `packages/`, and the SQL string
+/// literals of production Rust — which is where this repository's run-plane
+/// policies actually live (`crates/schema/control/src/run_plane.rs` emits
+/// `CREATE POLICY` from a literal), so the Rust half is a source scan and there
+/// is no compiled-policy artifact to assert over instead. Prose is excluded on
+/// both sides: `--` comments are stripped from SQL and only string literals are
+/// read out of Rust. The test-only callers stay green because
+/// [`production_sql_fragments`] applies the manifest's own scan exclusions —
+/// `crates/identity/project-state/tests/` is behind the `tests` path segment,
+/// and the `claims.rs` readers are inside `#[cfg(test)] mod tests`.
+#[test]
+fn app_role_and_app_user_id_have_no_production_reader_while_the_claim_escape_is_open() {
+    // A fence that has quietly stopped matching is the failure this one exists
+    // to prevent, so prove the discrimination before trusting the scan.
+    assert!(
+        forgeable_claim_reads(
+            "select set_config('app.role', $5, true), set_config('app.user_id', $6, true)"
+        )
+        .is_empty(),
+        "the fence must not fire on the GUEST_CLAIM_SQL binding, which writes \
+         the claims (wamn-0h0g.23.1 ruled that deliberate)"
+    );
+    assert_eq!(
+        forgeable_claim_reads(
+            "create policy p on t using (owner = nullif(current_setting(''app.user_id'', true), '''')::uuid)"
+        )
+        .len(),
+        1,
+        "the fence must see a claim read, including one nested in an EXECUTE string"
+    );
+
+    let repository = repository();
+    let manifest = read_manifest(&repository);
+    let mut roots = manifest
+        .scan_policy
+        .roots
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    roots.extend(CLAIM_FENCE_EXTRA_ROOTS);
+
+    let readers = production_sql_fragments(&repository, &manifest, &roots)
+        .expect("scan production SQL")
+        .into_iter()
+        .flat_map(|(path, line, sql)| {
+            forgeable_claim_reads(&sql)
+                .into_iter()
+                .map(move |(claim, call)| format!("  {path}:{line} reads {claim} — {call}"))
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        readers.is_empty(),
+        "production SQL must not read the session-forgeable identity claims \
+         `app.role` or `app.user_id` while wamn-0h0g.22.23 is OPEN.\n\n\
+         wamn-0h0g.22.23 measured that a guest session rewrites both claims past \
+         the claim blocklist with a DO-wrapped EXECUTE, then reads and zeroes \
+         another user's rows. A policy that reads either claim is that hole made \
+         reachable. Settle wamn-0h0g.22.23 first — the owner ruling of 2026-09-04 \
+         is to re-key the per-user layer onto something the session cannot \
+         rewrite (the wamn-0h0g.22.6 option (c) `current_user` pattern one layer \
+         down), which charters with the identity epic. This fence is \
+         wamn-0h0g.22.44; do not widen it to admit the reader.\n\n\
+         production readers found:\n{}",
+        readers.join("\n")
     );
 }
