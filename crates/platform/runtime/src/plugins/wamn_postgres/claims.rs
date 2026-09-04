@@ -2089,8 +2089,18 @@ impl WamnPostgres {
             .await
             .map_err(StatementError::Postgres)?;
         let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
-        if let Err(error) = self
-            .begin_with_claims(
+        // ONE FLIGHT, NOT TWO. The claim transaction and the statement are issued
+        // without an await between them; tokio-postgres preserves FIFO order per
+        // connection, which is already why BEGIN opens the txn before the
+        // transaction-LOCAL set_configs apply. Awaiting the claims first cost a
+        // whole extra round trip per request -- measured at 0.45-0.89 ms of
+        // bind_claims plus a wakeup, against a 0.6 ms statement
+        // (docs/perf/2026.09/3a-instrument.md).
+        //
+        // Two flights is the FLOOR for a real transaction: COMMIT versus
+        // ROLLBACK cannot be decided before the statement's result is known.
+        let (claims, result) = tokio::join!(
+            self.begin_with_claims(
                 connection.connection(),
                 authority,
                 &tenant,
@@ -2100,20 +2110,23 @@ impl WamnPostgres {
                 user_id.as_deref(),
                 run.as_ref(),
                 policy.statement_timeout_ms,
+            ),
+            run_verified_query(
+                connection.connection(),
+                digest,
+                statement,
+                binds,
+                policy.row_limit,
             )
-            .await
-        {
+        );
+        if let Err(error) = claims {
+            // The statement rode the same flight into a transaction that never
+            // opened, so its own error is a consequence, not the cause.
+            if connection.connection().batch_execute("ROLLBACK").await.is_err() {
+                tracing::warn!("rollback after failed claim binding also failed");
+            }
             return Err(StatementError::Postgres(error));
         }
-
-        let result = run_verified_query(
-            connection.connection(),
-            digest,
-            statement,
-            binds,
-            policy.row_limit,
-        )
-        .await;
         match result {
             // COMMIT is a SECOND full server round trip on every request, and it
             // sat inside wamn.postgres with no span: statement ended at 13.7 ms
