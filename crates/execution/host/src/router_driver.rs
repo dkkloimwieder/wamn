@@ -1966,6 +1966,7 @@ fn lower_statement_set(
                         .iter()
                         .map(lower_statement_field)
                         .collect(),
+                    transactional: statement.transactional,
                 },
             )
         })

@@ -55,6 +55,10 @@ pub struct VerifiedStatement {
     pub exact_sql: Box<str>,
     pub binds: Box<[StatementField]>,
     pub columns: Box<[StatementField]>,
+    /// PostgreSQL's build-time verdict: this statement writes or takes a row
+    /// lock, so it must run inside a transaction. A statement that does neither
+    /// runs autocommit -- one flight, no claim binding, no COMMIT.
+    pub transactional: bool,
 }
 
 /// The verified statements admitted for one operation.

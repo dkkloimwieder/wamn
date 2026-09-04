@@ -2089,6 +2089,34 @@ impl WamnPostgres {
             .await
             .map_err(StatementError::Postgres)?;
         let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
+        // AUTOCOMMIT WHEN THE SERVER SAYS NO TRANSACTION IS NEEDED. PostgreSQL
+        // classified this statement at generation time: it neither writes nor
+        // takes a row lock, so BEGIN, the bound claim statement and COMMIT are
+        // ceremony around a read. Measured cost of that ceremony:
+        // bind_claims 0.45-0.89 ms plus a COMMIT of 2.1-3.8 ms, against a
+        // 0.6 ms statement (docs/perf/2026.09/3b-pipeline.md).
+        //
+        // The tenant floor derives from current_user, not from a bound claim,
+        // so a read carries its authority in the connection it was checked out
+        // with. Nothing a policy reads is lost by not binding.
+        if !statement.transactional {
+            let result = run_verified_query(
+                connection.connection(),
+                digest,
+                statement,
+                binds,
+                policy.row_limit,
+            )
+            .await;
+            match result {
+                Ok(rows) => {
+                    connection.repool();
+                    return Ok(rows);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
         // ONE FLIGHT, NOT TWO. The claim transaction and the statement are issued
         // without an await between them; tokio-postgres preserves FIFO order per
         // connection, which is already why BEGIN opens the txn before the
