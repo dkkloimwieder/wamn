@@ -11,7 +11,8 @@ report regenerates from data committed beside it.
 | `3a-instrument.md` | `3a-instrument/` | span every unmeasured gap — instrumentation only | done |
 | `3b-pipeline.md` | `3b-pipeline/` | claim transaction and statement in one flight | done |
 | `3c-operation-kind.md` | `3c-operation-kind/` | PostgreSQL decides which statements need a transaction | done |
-| `2-auth-cache.md` | | auth resolution cached per PAT hash | |
+| `2a-auth-instrument.md` | `2a-auth-instrument/` | span the three authenticate legs — instrumentation only | done |
+| `2-auth.md` | | collapse the auth round trips, and/or cache per PAT hash | owner decision open |
 | `1b-linker-cache.md` | | move invocation state to `SharedCtx`, cache the `Linker` | |
 | `4-instance-pool.md` | | warm instance pool keyed `(tenant, digest)` | |
 
@@ -26,3 +27,6 @@ phase table before and after, the overhead ratio, and span trees verbatim.
 divided by the sum of `wamn.postgres.statement` + `wamn.component.instantiate`.
 It bounds platform overhead against real work, so it does not move when the
 dev machine is busy. No test asserts an absolute latency.
+
+Measured hot ratio as of `2a-auth-instrument`: **8.1–9.7**. Nothing asserts it
+yet; arming it is an open owner decision, recorded in `2a-auth-instrument.md`.
