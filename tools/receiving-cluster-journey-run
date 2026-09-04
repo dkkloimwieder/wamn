@@ -1354,8 +1354,17 @@ if [[ "$measure_startup" == true ]]; then
       echo "$phase trace is incomplete at collection" >&2
       exit 1
     fi
-    http_total_ms=$(sed -n 's/.* total_ms=\([0-9.]*\)$/\1/p' \
-      "$evidence_dir/first-request-$phase.receipt")
+    # FIELD-ADDRESSED, NOT END-ANCHORED. This read total_ms with a sed anchored
+    # on end-of-line, so appending recovery_seconds to the receipt silently
+    # extracted nothing and the run died with "no total timing" one step after
+    # the arm it had just fixed. A receipt is key=value fields; read it that way
+    # and the next field appended costs nothing.
+    http_total_ms=$(awk '{
+      for (field = 1; field <= NF; field++) {
+        split($field, pair, "=")
+        if (pair[1] == "total_ms") print pair[2]
+      }
+    }' "$evidence_dir/first-request-$phase.receipt")
     [[ "$http_total_ms" =~ ^[0-9]+\.[0-9]+$ ]] || {
       echo "$phase request has no total timing" >&2
       exit 1
