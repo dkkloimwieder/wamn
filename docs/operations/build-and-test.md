@@ -1715,6 +1715,34 @@ stand up the real consumer, disposable and named, and remove it by name. The
 cost of a container for ninety seconds is nothing against a defect that
 surfaces after a build, a push, and a deploy.
 
+**An unquoted heredoc RENDERS; it does not quote. Nothing inside it is
+inert — least of all a comment.** The fourth defect in the same block, found
+by reading a passing run's log rather than by any check: the probe's
+explanatory comment named its own shell in backticks, and because the
+heredoc's delimiter is unquoted, the renderer ran `sh -ec` on the developer's
+machine, once per generated Job, and substituted its empty output. The
+manifest shipped with the sentence deleted, and the run passed, three times,
+carrying the error on stderr where it read as somebody else's noise.
+
+Two things make this worth a law rather than a fix. The first is that the
+damage lands in the artifact, not the script: the tool ran correctly and the
+thing it WROTE was wrong, so every local check of the tool is green. The
+second is the direction of failure. A comment is the one construct an author
+is certain cannot execute, so it is the one place the escaping discipline
+relaxes — and command substitution does not care what a line means.
+
+Verified the way the entry above prescribes: the block extracted VERBATIM by
+line range, rendered with pinned inputs, and diffed. Post-fix the render emits
+zero bytes on stderr and the sentence is whole; the pre-fix control emits
+`sh: 0: -c requires an argument` and renders `The shell is , so a failing`.
+The diff between the two renders touches only the comment, which is what
+proves the fix changed nothing else in the manifest.
+
+Corollary: quote the delimiter (`<<'EOF'`) whenever the block needs no
+interpolation, and when it does need interpolation, remember that the price is
+that every backtick, `$(`, and `$` in it — including the ones in prose — is
+live.
+
 **The lift checklist.** Before extracting any block into a shared function,
 answer three questions, and answer them BEFORE the extraction rather than
 after:
