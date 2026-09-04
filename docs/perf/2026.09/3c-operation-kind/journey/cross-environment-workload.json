@@ -1,0 +1,114 @@
+{
+    "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+    "kind": "Workload",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"Workload\",\"metadata\":{\"annotations\":{},\"labels\":{\"app\":\"flow-http-cross-environment\"},\"name\":\"flow-http-cross-environment\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"components\":[{\"image\":\"172.28.0.9:5000/wamn/flow-http@sha256:9945febed9fc23f6b3b49b29dad77f9c58a12b7b1c126867ec3fd60edb6d1f88\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"config\":{\"wamn.catalog\":\"default\",\"wamn.environment\":\"dev\",\"wamn.project\":\"receiving\",\"wamn.schema\":\"receiving\",\"wamn.tenant\":\"receiving-route-auth\"}},\"name\":\"flow-http\"}],\"environment\":\"wamn-receiving-journey-denied\",\"hostInterfaces\":[{\"config\":{\"host\":\"receiving.localhost\"},\"interfaces\":[\"incoming-handler\"],\"namespace\":\"wasi\",\"package\":\"http\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"kubernetes\":{\"service\":{\"name\":\"flow-http\"}}}}\n"
+        },
+        "creationTimestamp": "2026-09-04T16:16:05Z",
+        "finalizers": [
+            "runtime.wasmcloud.dev/workload-finalizer"
+        ],
+        "generation": 1,
+        "labels": {
+            "app": "flow-http-cross-environment"
+        },
+        "name": "flow-http-cross-environment",
+        "namespace": "wamn-receiving-journey",
+        "resourceVersion": "2010",
+        "uid": "d811ad18-3d12-46fa-bd70-bf9c5e97a24f"
+    },
+    "spec": {
+        "components": [
+            {
+                "image": "172.28.0.9:5000/wamn/flow-http@sha256:9945febed9fc23f6b3b49b29dad77f9c58a12b7b1c126867ec3fd60edb6d1f88",
+                "imagePullPolicy": "Always",
+                "localResources": {
+                    "config": {
+                        "wamn.catalog": "default",
+                        "wamn.environment": "dev",
+                        "wamn.project": "receiving",
+                        "wamn.schema": "receiving",
+                        "wamn.tenant": "receiving-route-auth"
+                    }
+                },
+                "name": "flow-http"
+            }
+        ],
+        "environment": "wamn-receiving-journey-denied",
+        "hostInterfaces": [
+            {
+                "config": {
+                    "host": "receiving.localhost"
+                },
+                "interfaces": [
+                    "incoming-handler"
+                ],
+                "namespace": "wasi",
+                "package": "http"
+            },
+            {
+                "interfaces": [
+                    "routing"
+                ],
+                "namespace": "wamn",
+                "package": "flow-http-routing",
+                "version": "0.1.0"
+            },
+            {
+                "interfaces": [
+                    "delivery"
+                ],
+                "namespace": "wamn",
+                "package": "router-delivery",
+                "version": "0.1.0"
+            }
+        ],
+        "hostSelector": {
+            "hostgroup": "default"
+        },
+        "kubernetes": {
+            "service": {
+                "name": "flow-http"
+            }
+        }
+    },
+    "status": {
+        "conditions": [
+            {
+                "lastTransitionTime": "2026-09-04T16:16:05Z",
+                "reason": "Available",
+                "status": "True",
+                "type": "Config"
+            },
+            {
+                "lastTransitionTime": "2026-09-04T16:16:05Z",
+                "message": "workload targets Environment \"wamn-receiving-journey-denied\" but operator has allowSharedHosts=false",
+                "reason": "Reconcile",
+                "status": "False",
+                "type": "HostSelection"
+            },
+            {
+                "lastTransitionTime": "2026-09-04T16:16:05Z",
+                "message": "status unknown: waiting for Host Selection",
+                "reason": "Reconcile",
+                "status": "Unknown",
+                "type": "Placement"
+            },
+            {
+                "lastTransitionTime": "2026-09-04T16:16:05Z",
+                "message": "status unknown: workload is not placed yet",
+                "reason": "Reconcile",
+                "status": "Unknown",
+                "type": "Sync"
+            },
+            {
+                "lastTransitionTime": "2026-09-04T16:16:05Z",
+                "message": "workload is not placed or not synced",
+                "reason": "Reconcile",
+                "status": "False",
+                "type": "Ready"
+            }
+        ]
+    }
+}
