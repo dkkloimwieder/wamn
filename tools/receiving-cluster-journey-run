@@ -88,6 +88,11 @@ app_probe_statement_spans=1
 # Derived, not spelled: EVT_<org>_<env> is the platform's naming, and a second
 # application reading a literal would assert against the first one's stream.
 app_event_stream=EVT_${app_org}_${app_environment}
+# The virtualized guest artifacts THIS application ships. The journey builds
+# and pushes exactly these; a second application names its own. The names are
+# the virtualizer's output stems, which is why they carry underscores where
+# the package names carry hyphens.
+app_components=(receiving client_acme_receiving)
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 chart_version=2.8.0
 route_host=receiving.localhost
@@ -371,10 +376,9 @@ run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
 flow_http_wasm=$cargo_target_dir/wasm32-wasip2/debug/http_route.wasm
 materializer_wasm=$cargo_target_dir/wasm32-wasip2/debug/materializer.wasm
 component_directory=$cargo_target_dir/virtualized/std-empty-environment
-components=(receiving client_acme_receiving)
-for component in "${components[@]}"; do
+for component in "${app_components[@]}"; do
   [[ -s "$component_directory/$component.wasm" ]] || {
-    echo "missing virtualized Receiving journey component: $component" >&2
+    echo "missing virtualized journey component: $component" >&2
     exit 1
   }
 done
@@ -389,7 +393,7 @@ done
 : >"$evidence_dir/component-bytes.sha256"
 sha256sum "$flow_http_wasm" >>"$evidence_dir/component-bytes.sha256"
 sha256sum "$materializer_wasm" >>"$evidence_dir/component-bytes.sha256"
-for component in "${components[@]}"; do
+for component in "${app_components[@]}"; do
   sha256sum "$component_directory/$component.wasm" \
     >>"$evidence_dir/component-bytes.sha256"
 done
