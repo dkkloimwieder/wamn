@@ -67,6 +67,47 @@ impl<'a> GenerationProvenance<'a> {
     }
 }
 
+/// PostgreSQL's verdict on which statements need a transaction, keyed by the
+/// statement's corpus path.
+///
+/// A statement NEEDS A TRANSACTION when its generic plan carries a
+/// `ModifyTable` node (it writes -- data-modifying CTEs included) or a
+/// `LockRows` node (it takes a row lock, which autocommit would drop the
+/// instant the statement returned). The verdict is the server's, taken at
+/// generation time against the already-migrated database; nothing here reads
+/// SQL text.
+///
+/// Generation runs TWICE: once to obtain the corpus with every verdict absent,
+/// then again with the verdicts the server gave for that corpus. The bit is
+/// contract-only and never reaches SQL bytes, so the corpus is identical across
+/// both passes -- which `application_sql_corpus_identity` would catch if it
+/// were not.
+#[derive(Debug, Clone, Default)]
+pub struct StatementTransactionality {
+    paths: BTreeMap<String, bool>,
+}
+
+impl StatementTransactionality {
+    /// Build from the server's verdicts, keyed by corpus path.
+    #[must_use]
+    pub const fn from_paths(paths: BTreeMap<String, bool>) -> Self {
+        Self { paths }
+    }
+
+    /// Absent verdicts, for the corpus-discovery pass.
+    #[must_use]
+    pub fn unclassified() -> Self {
+        Self::from_paths(BTreeMap::new())
+    }
+
+    /// The server's verdict for one corpus path. An unclassified path reads
+    /// `false` ONLY during the discovery pass, whose contracts are discarded.
+    #[must_use]
+    pub fn needs_transaction(&self, path: &str) -> bool {
+        self.paths.get(path).copied().unwrap_or(false)
+    }
+}
+
 /// Complete pure input to [`generate`].
 #[derive(Debug)]
 pub struct GenerationInput<'a> {
@@ -74,6 +115,7 @@ pub struct GenerationInput<'a> {
     manifest_json: &'a [u8],
     authored_sql: &'a [AuthoredSql<'a>],
     provenance: GenerationProvenance<'a>,
+    transactional: &'a StatementTransactionality,
 }
 
 impl<'a> GenerationInput<'a> {
@@ -83,12 +125,14 @@ impl<'a> GenerationInput<'a> {
         manifest_json: &'a [u8],
         authored_sql: &'a [AuthoredSql<'a>],
         provenance: GenerationProvenance<'a>,
+        transactional: &'a StatementTransactionality,
     ) -> Self {
         Self {
             catalog,
             manifest_json,
             authored_sql,
             provenance,
+            transactional,
         }
     }
 }
@@ -292,6 +336,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         emit_model(
             &mut files,
             &mut sql_corpus,
+            input.transactional,
             &manifest,
             model_name,
             model,
@@ -302,6 +347,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         emit_custom_operation(
             &mut files,
             &sql_corpus,
+            input.transactional,
             input.catalog,
             &manifest,
             operation_name,
@@ -1184,6 +1230,7 @@ fn authored_sql_map(
 fn emit_model(
     files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &mut BTreeMap<String, Vec<u8>>,
+    transactional: &StatementTransactionality,
     manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
@@ -1203,7 +1250,16 @@ fn emit_model(
     let wamn_api = wamn_api(model_name, model, table, &operation_sql);
     for (action, operation) in &model.operations {
         emit_operation_contracts(
-            files, sql_corpus, manifest, model_name, model, table, *action, operation, &wamn_api,
+            files,
+            sql_corpus,
+            transactional,
+            manifest,
+            model_name,
+            model,
+            table,
+            *action,
+            operation,
+            &wamn_api,
         )?;
     }
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
@@ -1245,6 +1301,7 @@ fn emit_model(
 fn emit_custom_operation(
     files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &BTreeMap<String, Vec<u8>>,
+    transactional: &StatementTransactionality,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     operation_name: &str,
@@ -1253,6 +1310,7 @@ fn emit_custom_operation(
     emit_custom_operation_contracts(
         files,
         sql_corpus,
+        transactional,
         catalog,
         manifest,
         operation_name,
@@ -1361,6 +1419,7 @@ fn emit_custom_operation(
 fn emit_custom_operation_contracts(
     files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &BTreeMap<String, Vec<u8>>,
+    transactional: &StatementTransactionality,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     operation_name: &str,
@@ -1382,6 +1441,7 @@ fn emit_custom_operation_contracts(
                     name,
                     &statement.path,
                     sql_corpus,
+                    transactional,
                     statement.parameters.iter().map(|value| {
                         statement_value_contract(&value.name, value.ty, value.nullable)
                     }),
@@ -1474,6 +1534,7 @@ fn statement_contract(
     name: &str,
     path: &str,
     sql_corpus: &BTreeMap<String, Vec<u8>>,
+    transactional: &StatementTransactionality,
     binds: impl IntoIterator<Item = StatementValueContract>,
     columns: impl IntoIterator<Item = StatementValueContract>,
 ) -> StatementContract {
@@ -1486,6 +1547,7 @@ fn statement_contract(
         digest: sha256(bytes),
         binds: binds.into_iter().collect(),
         columns: columns.into_iter().collect(),
+        transactional: transactional.needs_transaction(path),
     }
 }
 
@@ -2078,6 +2140,7 @@ fn query_variants(operation: &OperationDeclaration) -> Vec<(&str, CursorDirectio
 fn emit_operation_contracts(
     files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &BTreeMap<String, Vec<u8>>,
+    transactional: &StatementTransactionality,
     manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
@@ -2128,6 +2191,7 @@ fn emit_operation_contracts(
                 &accessor.name,
                 &accessor.sql_path,
                 sql_corpus,
+                transactional,
                 accessor.binds.iter().map(|bind| {
                     statement_value_contract(&bind.parameter, bind.statement_type, bind.nullable)
                 }),
@@ -2496,6 +2560,11 @@ struct StatementContract {
     digest: String,
     binds: Vec<StatementValueContract>,
     columns: Vec<StatementValueContract>,
+    /// PostgreSQL's own verdict, from the statement's generic plan against the
+    /// migrated database: a `ModifyTable` node (it writes, data-modifying CTEs
+    /// included) or a `LockRows` node (it takes a row lock, which autocommit
+    /// would drop the instant the statement returned). Never read off the text.
+    transactional: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

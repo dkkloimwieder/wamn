@@ -9,6 +9,7 @@ use tokio_postgres::NoTls;
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
+use crate::StatementTransactionality;
 use crate::{
     AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
     data_access::application_schemas, generate, manifest::CONTROL_OWNED_RELATION_TABLES,
@@ -76,6 +77,51 @@ pub async fn introspect_package(database_url: &str, package_root: &Path) -> Resu
     catalog_result.context("introspect package schemas")
 }
 
+/// Ask PostgreSQL which of these statements need a transaction.
+///
+/// `EXPLAIN (GENERIC_PLAN, FORMAT JSON)` plans a PARAMETERISED statement
+/// without executing it and without supplying binds -- which is the whole
+/// reason it exists (PostgreSQL 16+). A statement needs a transaction when its
+/// plan carries a `ModifyTable` node (it writes; a data-modifying CTE appears
+/// as a ModifyTable inside the CTE subplan) or a `LockRows` node (it takes a
+/// row lock, and autocommit would drop that lock the instant the statement
+/// returned).
+///
+/// The verdict is the SERVER'S. Nothing here reads SQL text.
+async fn classify_statements(
+    client: &tokio_postgres::Client,
+    corpus: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<StatementTransactionality> {
+    let mut verdicts = std::collections::BTreeMap::new();
+    for (path, bytes) in corpus {
+        let sql = std::str::from_utf8(bytes)
+            .with_context(|| format!("statement {path} is not UTF-8"))?;
+        let row = client
+            .query_one(&format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}"), &[])
+            .await
+            .with_context(|| format!("plan statement {path} against the migrated database"))?;
+        let plan: serde_json::Value = row.get(0);
+        verdicts.insert(path.clone(), plan_needs_transaction(&plan));
+    }
+    Ok(StatementTransactionality::from_paths(verdicts))
+}
+
+/// Walk a plan tree for the two node types that require a transaction.
+fn plan_needs_transaction(plan: &serde_json::Value) -> bool {
+    match plan {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::String(node)) = map.get("Node Type")
+                && (node == "ModifyTable" || node == "LockRows")
+            {
+                return true;
+            }
+            map.values().any(plan_needs_transaction)
+        }
+        serde_json::Value::Array(items) => items.iter().any(plan_needs_transaction),
+        _ => false,
+    }
+}
+
 /// Materialize one package from an already-introspected catalog.
 ///
 /// This stage reads the package's manifest and authored SQL, but performs no
@@ -85,20 +131,23 @@ pub fn materialize_package_from_catalog(
     catalog: &CatalogIr,
     package_root: &Path,
 ) -> Result<()> {
-    let (manifest_bytes, manifest) = load_manifest(package_root)?;
-    let source_files = load_authored_sql(package_root, &manifest)?;
-    let authored_sql = source_files
-        .iter()
-        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
-        .collect::<Vec<_>>();
+    materialize_package_classified(mode, catalog, package_root, &StatementTransactionality::default())
+}
 
-    let package = generate(&GenerationInput::new(
-        catalog,
-        &manifest_bytes,
-        &authored_sql,
-        GenerationProvenance::new(GENERATOR_ID, TOOLCHAIN_ID),
-    ))
-    .context("generate package artifacts")?;
+/// Materialize with PostgreSQL's verdict on which statements need a transaction.
+///
+/// Generation runs TWICE. The first pass exists only to obtain the SQL corpus:
+/// the statements are generated from the catalog, so they cannot be planned
+/// before they exist. The second pass emits the contracts carrying the verdicts
+/// the server gave for that corpus. The bit is contract-only and never reaches
+/// SQL bytes, so both passes produce an identical corpus.
+pub fn materialize_package_classified(
+    mode: MaterializeMode,
+    catalog: &CatalogIr,
+    package_root: &Path,
+    transactional: &StatementTransactionality,
+) -> Result<()> {
+    let package = generate_package(catalog, package_root, transactional)?;
     let output_root = package_root.join("generated");
     let expected = expected_files(&package)?;
 
@@ -106,6 +155,48 @@ pub fn materialize_package_from_catalog(
         MaterializeMode::Write => write_files(&output_root, &expected),
         MaterializeMode::Check => check_files(&output_root, &expected),
     }
+}
+
+fn generate_package(
+    catalog: &CatalogIr,
+    package_root: &Path,
+    transactional: &StatementTransactionality,
+) -> Result<crate::GeneratedPackage> {
+    let (manifest_bytes, manifest) = load_manifest(package_root)?;
+    let source_files = load_authored_sql(package_root, &manifest)?;
+    let authored_sql = source_files
+        .iter()
+        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
+        .collect::<Vec<_>>();
+
+    generate(&GenerationInput::new(
+        catalog,
+        &manifest_bytes,
+        &authored_sql,
+        GenerationProvenance::new(GENERATOR_ID, TOOLCHAIN_ID),
+        transactional,
+    ))
+    .context("generate package artifacts")
+}
+
+/// Every statement this package will admit, keyed by the path its contracts
+/// name: authored SQL at the package root, generated SQL under `generated/`.
+fn statement_corpus(
+    package_root: &Path,
+    catalog: &CatalogIr,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>> {
+    let (_, manifest) = load_manifest(package_root)?;
+    let mut corpus = std::collections::BTreeMap::new();
+    for source in load_authored_sql(package_root, &manifest)? {
+        corpus.insert(source.path.clone(), source.bytes.clone());
+    }
+    let discovery = generate_package(catalog, package_root, &StatementTransactionality::default())?;
+    for file in discovery.files() {
+        if file.path().ends_with(".sql") {
+            corpus.insert(file.path().to_owned(), file.bytes().to_vec());
+        }
+    }
+    Ok(corpus)
 }
 
 async fn materialize_after_introspection<F>(
@@ -118,6 +209,31 @@ where
 {
     let catalog = introspection.await?;
     materialize_package_from_catalog(mode, &catalog, package_root)
+}
+
+/// Materialize against a live migrated database, asking the server which
+/// statements need a transaction.
+pub async fn materialize_package_verified(
+    mode: MaterializeMode,
+    database_url: &str,
+    package_root: &Path,
+) -> Result<()> {
+    let catalog = introspect_package(database_url, package_root).await?;
+    let corpus = statement_corpus(package_root, &catalog)?;
+
+    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+        .await
+        .context("connect to plan the package statements")?;
+    let connection_task = tokio::spawn(connection);
+    let verdicts = classify_statements(&client, &corpus).await;
+    drop(client);
+    connection_task
+        .await
+        .context("join PostgreSQL connection task")?
+        .context("drive PostgreSQL connection")?;
+    let verdicts = verdicts?;
+
+    materialize_package_classified(mode, &catalog, package_root, &verdicts)
 }
 
 fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {

@@ -37,6 +37,7 @@ pub use data_access::{
 };
 pub use error::{GenerateError, GenerateErrorKind};
 pub use generate::{
+    StatementTransactionality,
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, GenerationProvenance,
     PackageWeld, corpus_sha256, generate,
 };

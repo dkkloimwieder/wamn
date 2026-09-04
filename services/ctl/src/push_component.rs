@@ -180,6 +180,8 @@ struct GeneratedStatementContract {
     digest: String,
     binds: Vec<ComponentSqlField>,
     columns: Vec<ComponentSqlField>,
+    /// PostgreSQL's own verdict from the generic plan at generation time.
+    transactional: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -923,6 +925,7 @@ fn load_operation_statements(
             sql,
             binds: statement.binds,
             columns: statement.columns,
+            transactional: statement.transactional,
         };
         if admitted.insert(statement.digest.clone(), fact).is_some() {
             return Err(ComponentProjectionError::new(

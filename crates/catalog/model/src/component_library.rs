@@ -226,6 +226,12 @@ pub struct ComponentSqlStatement {
     pub sql: String,
     pub binds: Vec<ComponentSqlField>,
     pub columns: Vec<ComponentSqlField>,
+    /// Whether this statement NEEDS A TRANSACTION, as PostgreSQL itself reports
+    /// it at build time: the generic plan contains a `ModifyTable` node (it
+    /// writes, including a data-modifying CTE) or a `LockRows` node (it takes a
+    /// row lock, which autocommit would drop the instant the statement
+    /// returned). Never inferred from SQL text.
+    pub transactional: bool,
 }
 
 /// One normalized operation exported by an admitted component.
