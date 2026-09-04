@@ -1,0 +1,41 @@
+{
+    "apiVersion": "v1",
+    "kind": "Service",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Service\",\"metadata\":{\"annotations\":{},\"labels\":{\"app\":\"flow-http\"},\"name\":\"flow-http\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"protocol\":\"TCP\",\"targetPort\":80}],\"type\":\"ClusterIP\"}}\n"
+        },
+        "creationTimestamp": "2026-09-04T21:15:03Z",
+        "labels": {
+            "app": "flow-http"
+        },
+        "name": "flow-http",
+        "namespace": "wamn-receiving-journey",
+        "resourceVersion": "1408",
+        "uid": "a10ed47e-44e5-4c57-8e1b-561a7a2eee97"
+    },
+    "spec": {
+        "clusterIP": "10.96.115.21",
+        "clusterIPs": [
+            "10.96.115.21"
+        ],
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+            "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+            {
+                "name": "http",
+                "port": 80,
+                "protocol": "TCP",
+                "targetPort": 80
+            }
+        ],
+        "sessionAffinity": "None",
+        "type": "ClusterIP"
+    },
+    "status": {
+        "loadBalancer": {}
+    }
+}

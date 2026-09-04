@@ -1,0 +1,54 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "addressType": "IPv4",
+            "apiVersion": "discovery.k8s.io/v1",
+            "endpoints": [
+                {
+                    "addresses": [
+                        "10.244.2.5"
+                    ],
+                    "conditions": {
+                        "ready": true,
+                        "serving": true
+                    }
+                }
+            ],
+            "kind": "EndpointSlice",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T21:15:14Z",
+                "generation": 1,
+                "labels": {
+                    "kubernetes.io/service-name": "flow-http",
+                    "wasmcloud.dev/route-manager": "true"
+                },
+                "name": "flow-http-98924a98",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Service",
+                        "name": "flow-http",
+                        "uid": "a10ed47e-44e5-4c57-8e1b-561a7a2eee97"
+                    }
+                ],
+                "resourceVersion": "1474",
+                "uid": "bbd3a8d4-6557-422d-8cb9-7fdb183977bd"
+            },
+            "ports": [
+                {
+                    "name": "http",
+                    "port": 80,
+                    "protocol": "TCP"
+                }
+            ]
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

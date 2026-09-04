@@ -1,0 +1,55 @@
+[
+    {
+        "Id": "sha256:9be8c53b88b86d3a256d6597af9a3ace1388af51bdf89c783f1ec648b4465e86",
+        "RepoTags": [
+            "wamn-host:receiving-e225143e5248-2560489-debug"
+        ],
+        "RepoDigests": [],
+        "Parent": "",
+        "Comment": "buildkit.dockerfile.v0",
+        "Created": "2026-09-04T17:10:59.547892121-04:00",
+        "DockerVersion": "",
+        "Author": "",
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Size": 540313123,
+        "GraphDriver": {
+            "Data": {
+                "LowerDir": "/var/lib/docker/overlay2/abhcudj435d1boa5p0yyt1ed7/diff:/var/lib/docker/overlay2/7c57767d9d551e37a619d77a77d0eaf2462a862e82236fbab1d9eb6ac0772da7/diff",
+                "MergedDir": "/var/lib/docker/overlay2/jazuenl20qx2xfz5meged2rn6/merged",
+                "UpperDir": "/var/lib/docker/overlay2/jazuenl20qx2xfz5meged2rn6/diff",
+                "WorkDir": "/var/lib/docker/overlay2/jazuenl20qx2xfz5meged2rn6/work"
+            },
+            "Name": "overlay2"
+        },
+        "RootFS": {
+            "Type": "layers",
+            "Layers": [
+                "sha256:411a86676185cb54d695a805b238194a64e9b77e0c723f3802fbb87d333ea0b3",
+                "sha256:65bc4687ef5fdcb2f3e4e973a40fdbe2f317c6395a66ce7b938c418b9971229a",
+                "sha256:ea5274a5076509d3b45474f25a92363912c5265c5140de98775d805c0e363bc6"
+            ]
+        },
+        "Metadata": {
+            "LastTagTime": "2026-09-04T17:11:00.285710871-04:00"
+        },
+        "Config": {
+            "Cmd": null,
+            "Entrypoint": [
+                "/usr/local/bin/wamn-host"
+            ],
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME=/tmp"
+            ],
+            "Labels": {
+                "wamn.dev/build-profile": "debug",
+                "wamn.dev/source-head": "e225143e524863c2a7e25e52252ab7e7c2af302f"
+            },
+            "OnBuild": null,
+            "User": "",
+            "Volumes": null,
+            "WorkingDir": ""
+        }
+    }
+]

@@ -1,0 +1,62 @@
+2026-09-04T21:41:18Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/perf2/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/perf2/tools/build-components m1 
+2026-09-04T21:41:21Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/perf2/target RUSTC_WRAPPER= cargo build --locked -p wamn-host -p wamn-ctl -p wamn-cdc-reader 
+2026-09-04T21:41:21Z docker build --platform=linux/amd64 --provenance=false --file /tmp/tmp.EKDKPwBW8X/host-image/Dockerfile --tag wamn-host:receiving-c64419a68af8-2648512-debug /tmp/tmp.EKDKPwBW8X/host-image 
+2026-09-04T21:41:24Z kind create cluster --name wamn-receiving-journey --config /tmp/tmp.EKDKPwBW8X/kind-config.yaml --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig 
+2026-09-04T21:41:46Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-04T21:41:59Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey create namespace wamn-receiving-journey 
+2026-09-04T21:41:59Z kind load docker-image wamn-host:receiving-c64419a68af8-2648512-debug --name wamn-receiving-journey 
+2026-09-04T21:42:12Z htpasswd \<credential-bearing\ arguments\ redacted\> 
+2026-09-04T21:42:13Z postgres \<credential-bearing\ arguments\ redacted\> 
+2026-09-04T21:42:13Z docker run --detach --name wamn-receiving-registry-c64419a68af8-2648512 --network kind --env REGISTRY_AUTH=htpasswd --env REGISTRY_AUTH_HTPASSWD_REALM=WAMN\ Receiving\ cluster\ journey --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd --volume /tmp/tmp.EKDKPwBW8X/htpasswd:/auth/htpasswd:ro registry:2 
+2026-09-04T21:42:13Z docker run --detach --name wamn-receiving-nats-c64419a68af8-2648512 --network kind nats:2.10-alpine --jetstream --store_dir /data --http_port 8222 
+2026-09-04T21:42:16Z cargo test production_two_package_release_serves_all_thirteen_pat_routes \<disposable\ PostgreSQL\ and\ OCI\ inputs\ redacted\> 
+2026-09-04T21:43:44Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/route-caller-pat-kube.json 
+2026-09-04T21:43:44Z env WASH_REG_USER=\<redacted\> WASH_REG_PASSWORD=\<redacted\> wash push --insecure --allow-latest --output json 172.28.0.9:5000/wamn/flow-http:receiving-c64419a68af8-2648512-debug /home/kaalin/.cache/wamn-lanes/perf2/target/wasm32-wasip2/debug/http_route.wasm 
+2026-09-04T21:43:45Z env WASH_REG_USER=\<redacted\> WASH_REG_PASSWORD=\<redacted\> wash push --insecure --allow-latest --output json 172.28.0.9:5000/wamn/materializer:receiving-c64419a68af8-2648512-debug /home/kaalin/.cache/wamn-lanes/perf2/target/wasm32-wasip2/debug/materializer.wasm 
+2026-09-04T21:43:45Z print-release-env \<credential-bearing\ arguments\ redacted\> 
+2026-09-04T21:43:45Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/host-secrets/guest-sql.json 
+2026-09-04T21:43:45Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/host-secrets/executor-platform.json 
+2026-09-04T21:43:45Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/host-secrets/identity-reader.json 
+2026-09-04T21:43:45Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/host-secrets/http-admitter.json 
+2026-09-04T21:43:46Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/host-secrets/event-materializer.json 
+2026-09-04T21:43:46Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey create secret generic wamn-registry-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=\<redacted\> --dry-run=client -o yaml 
+2026-09-04T21:43:46Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/registry-pull.yaml 
+2026-09-04T21:43:46Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/perf2/deploy/infra/cert-manager.yaml 
+2026-09-04T21:43:47Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n cert-manager wait --for=condition=Available deployment --all --timeout=240s 
+2026-09-04T21:43:58Z helm upgrade --install --create-namespace --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --kube-context kind-wamn-receiving-journey --namespace wamn-system wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 -f /home/kaalin/.cache/wamn-lanes/perf2/deploy/infra/values-wamn.yaml -f /tmp/tmp.EKDKPwBW8X/operator-values.yaml --wait --timeout 5m 
+2026-09-04T21:44:21Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-system get deployment runtime-operator -o json 
+2026-09-04T21:44:21Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/runtime-operator-events-rbac.yaml 
+2026-09-04T21:44:21Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get role wamn-runtime-operator-events -o json 
+2026-09-04T21:44:21Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get rolebinding wamn-runtime-operator-events -o json 
+2026-09-04T21:44:21Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/perf2/deploy/infra/tempo.yaml 
+2026-09-04T21:44:21Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/perf2/deploy/infra/otel-collector.yaml 
+2026-09-04T21:44:22Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-system wait --for=condition=Available deployment/tempo deployment/otel-collector --timeout=120s 
+2026-09-04T21:44:27Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/wasmcloud-ca-copy.json 
+2026-09-04T21:44:27Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/perf2/deploy/infra/wasmcloud-ca-issuer.yaml 
+2026-09-04T21:44:27Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s 
+2026-09-04T21:44:27Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/host-environment-certs.yaml 
+2026-09-04T21:44:28Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Ready certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s 
+2026-09-04T21:44:28Z helm upgrade --install --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --kube-context kind-wamn-receiving-journey --namespace wamn-receiving-journey wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 -f /tmp/tmp.EKDKPwBW8X/host-base.yaml -f /tmp/tmp.EKDKPwBW8X/host-overlay.yaml --wait --timeout 5m 
+2026-09-04T21:44:29Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey scale deployment/hostgroup-default --replicas=1 
+2026-09-04T21:44:29Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Available deployment/hostgroup-default --timeout=120s 
+2026-09-04T21:45:00Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey rollout status deployment/hostgroup-default --timeout=240s 
+2026-09-04T21:45:00Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/flow-http.yaml 
+2026-09-04T21:45:01Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Ready workloaddeployment/flow-http --timeout=240s 
+2026-09-04T21:45:11Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/startup-request-cold.yaml 
+2026-09-04T21:45:11Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Complete job/startup-request-cold --timeout=240s 
+2026-09-04T21:45:14Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey exec hostgroup-default-6df56bb7-4mz6h -c host -- find /tmp/wamn-wasmtime-cache/modules -type f \! -name \*.stats -printf \<inode\>\ \<mtime\>\ \<size\>\ \<path\>\\n 
+2026-09-04T21:45:14Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey exec hostgroup-default-6df56bb7-4mz6h -c host -- /bin/sh -c kill\ -TERM\ 1\;\ exit\ 0 
+2026-09-04T21:45:14Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=jsonpath=\{.status.containerStatuses\[0\].restartCount\}=1 pod/hostgroup-default-6df56bb7-4mz6h --timeout=120s 
+2026-09-04T21:45:15Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Ready pod/hostgroup-default-6df56bb7-4mz6h --timeout=120s 
+2026-09-04T21:45:26Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/startup-request-restart-first.yaml 
+2026-09-04T21:45:26Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Complete job/startup-request-restart-first --timeout=240s 
+2026-09-04T21:46:44Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EKDKPwBW8X/startup-request-steady.yaml 
+2026-09-04T21:46:44Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Complete job/startup-request-steady --timeout=240s 
+2026-09-04T21:46:47Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey get --raw /api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/22222222222222222222222222222222 
+2026-09-04T21:46:47Z kubectl --kubeconfig /tmp/tmp.EKDKPwBW8X/kubeconfig --context kind-wamn-receiving-journey get --raw /api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/33333333333333333333333333333333 
+2026-09-04T21:46:48Z kind delete cluster --name wamn-receiving-journey 
+2026-09-04T21:46:49Z docker rm --force --volumes wamn-receiving-pg18-c64419a68af8-2648512 
+2026-09-04T21:46:49Z docker rm --force --volumes wamn-receiving-registry-c64419a68af8-2648512 
+2026-09-04T21:46:49Z docker rm --force --volumes wamn-receiving-nats-c64419a68af8-2648512 
+2026-09-04T21:46:49Z docker image rm wamn-host:receiving-c64419a68af8-2648512-debug 
+2026-09-04T21:46:50Z rm -rf -- /tmp/tmp.EKDKPwBW8X 

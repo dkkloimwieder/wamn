@@ -1,0 +1,1399 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T21:14:31Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/pod-host-finalizer"
+                ],
+                "generateName": "hostgroup-default-7849d4f9d-",
+                "generation": 1,
+                "labels": {
+                    "app.kubernetes.io/instance": "wamn-host",
+                    "app.kubernetes.io/managed-by": "Helm",
+                    "app.kubernetes.io/name": "runtime-operator",
+                    "app.kubernetes.io/version": "2.8.0",
+                    "helm.sh/chart": "runtime-operator-2.8.0",
+                    "pod-template-hash": "7849d4f9d",
+                    "wasmcloud.com/hostgroup": "default",
+                    "wasmcloud.com/name": "hostgroup"
+                },
+                "name": "hostgroup-default-7849d4f9d-rq8mg",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "ReplicaSet",
+                        "name": "hostgroup-default-7849d4f9d",
+                        "uid": "13d45e23-8ac7-4c1f-9820-7844a0b5add5"
+                    }
+                ],
+                "resourceVersion": "1546",
+                "uid": "89a0bed4-e2a2-4950-94d5-fd56fd1ba4db"
+            },
+            "spec": {
+                "automountServiceAccountToken": false,
+                "containers": [
+                    {
+                        "args": [
+                            "host",
+                            "--host-name=$(WASMCLOUD_HOST_IP)",
+                            "--host-group=default",
+                            "--environment=$(WASMCLOUD_HOST_ENVIRONMENT)",
+                            "--scheduler-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+                            "--scheduler-nats-tls-ca=/runtime-cert/ca.crt",
+                            "--scheduler-nats-tls-cert=/runtime-cert/tls.crt",
+                            "--scheduler-nats-tls-key=/runtime-cert/tls.key",
+                            "--data-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+                            "--data-nats-tls-ca=/data-cert/ca.crt",
+                            "--data-nats-tls-cert=/data-cert/tls.crt",
+                            "--data-nats-tls-key=/data-cert/tls.key",
+                            "--oci-cache-dir=/oci-cache",
+                            "--http-addr=0.0.0.0:80",
+                            "--oci-ca-path=/runtime-cert/ca.crt",
+                            "--release-artifact-base=172.28.0.9:5000/wamn/releases",
+                            "--release-manifest-digest=sha256:05b41e28ad68505f7102b48e844a903269c6443a71ad6f83c9e6c467ca276c4e",
+                            "--allow-insecure-registries"
+                        ],
+                        "env": [
+                            {
+                                "name": "HOME",
+                                "value": "/tmp"
+                            },
+                            {
+                                "name": "WASMCLOUD_HOST_IP",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "status.podIP"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WASMCLOUD_HOST_ENVIRONMENT",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "metadata.namespace"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WASH_HOST_MAX_GUEST_MEMORY",
+                                "value": "4Gi"
+                            },
+                            {
+                                "name": "WASH_DEFAULT_HEAP_MEMORY",
+                                "value": "256MiB"
+                            },
+                            {
+                                "name": "WASH_CORE_INSTANCES",
+                                "value": "512"
+                            },
+                            {
+                                "name": "WAMN_PG_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-guest-acme--receiving--dev"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_PG_GUEST_POOL_MAX",
+                                "value": "14"
+                            },
+                            {
+                                "name": "WAMN_PG_PLATFORM_POOL_MAX",
+                                "value": "2"
+                            },
+                            {
+                                "name": "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT",
+                                "value": "64"
+                            },
+                            {
+                                "name": "WAMN_WASMTIME_CACHE_DIR",
+                                "value": "/tmp/wamn-wasmtime-cache"
+                            },
+                            {
+                                "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                                "value": "http://otel-collector.wamn-system.svc.cluster.local:4317"
+                            },
+                            {
+                                "name": "OTEL_BSP_SCHEDULE_DELAY",
+                                "value": "1"
+                            },
+                            {
+                                "name": "OTEL_BSP_MAX_EXPORT_BATCH_SIZE",
+                                "value": "1"
+                            },
+                            {
+                                "name": "DOCKER_CONFIG",
+                                "value": "/etc/wamn/registry"
+                            },
+                            {
+                                "name": "WAMN_REGISTRY_AUTH_FILE",
+                                "value": "/etc/wamn/registry/config.json"
+                            },
+                            {
+                                "name": "WAMN_COMPONENT_ARTIFACT_BASE",
+                                "value": "172.28.0.9:5000/wamn/components"
+                            },
+                            {
+                                "name": "WAMN_EVT_NATS_URL",
+                                "value": "nats://172.28.0.10:4222"
+                            },
+                            {
+                                "name": "WAMN_ORG",
+                                "value": "acme"
+                            },
+                            {
+                                "name": "WAMN_PROJECT",
+                                "value": "receiving"
+                            },
+                            {
+                                "name": "WAMN_SCHEMA",
+                                "value": "receiving"
+                            },
+                            {
+                                "name": "WAMN_SYSTEM_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-identity-reader-acme--receiving--dev",
+                                        "optional": false
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_EXECUTOR_PLATFORM_PG_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-executor-platform-acme--receiving--dev",
+                                        "optional": false
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_HTTP_ADMITTER_PG_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-http-admitter-acme--receiving--dev",
+                                        "optional": false
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_EVENT_MATERIALIZER_PG_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-event-materializer-acme--receiving--dev",
+                                        "optional": false
+                                    }
+                                }
+                            }
+                        ],
+                        "image": "wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imagePullPolicy": "Never",
+                        "livenessProbe": {
+                            "failureThreshold": 3,
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 20,
+                            "successThreshold": 1,
+                            "tcpSocket": {
+                                "port": "http"
+                            },
+                            "timeoutSeconds": 1
+                        },
+                        "name": "host",
+                        "ports": [
+                            {
+                                "containerPort": 80,
+                                "name": "http",
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "readinessProbe": {
+                            "failureThreshold": 3,
+                            "initialDelaySeconds": 5,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "tcpSocket": {
+                                "port": "http"
+                            },
+                            "timeoutSeconds": 1
+                        },
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "4Gi"
+                            },
+                            "requests": {
+                                "cpu": "250m",
+                                "memory": "256Mi"
+                            }
+                        },
+                        "securityContext": {
+                            "allowPrivilegeEscalation": false,
+                            "capabilities": {
+                                "drop": [
+                                    "ALL"
+                                ]
+                            },
+                            "readOnlyRootFilesystem": true,
+                            "runAsNonRoot": true
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/oci-cache",
+                                "name": "oci-cache"
+                            },
+                            {
+                                "mountPath": "/tmp",
+                                "name": "tmp"
+                            },
+                            {
+                                "mountPath": "/runtime-cert",
+                                "name": "runtime-cert",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/data-cert",
+                                "name": "data-cert",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/etc/wamn/registry",
+                                "name": "registry-pull",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Always",
+                "schedulerName": "default-scheduler",
+                "securityContext": {
+                    "fsGroup": 65532,
+                    "runAsGroup": 65532,
+                    "runAsNonRoot": true,
+                    "runAsUser": 65532,
+                    "seccompProfile": {
+                        "type": "RuntimeDefault"
+                    }
+                },
+                "serviceAccount": "wamn-host-runtime-operator-runtime",
+                "serviceAccountName": "wamn-host-runtime-operator-runtime",
+                "terminationGracePeriodSeconds": 0,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "emptyDir": {},
+                        "name": "oci-cache"
+                    },
+                    {
+                        "emptyDir": {},
+                        "name": "tmp"
+                    },
+                    {
+                        "name": "runtime-cert",
+                        "secret": {
+                            "defaultMode": 420,
+                            "secretName": "wasmcloud-runtime-tls"
+                        }
+                    },
+                    {
+                        "name": "data-cert",
+                        "secret": {
+                            "defaultMode": 420,
+                            "secretName": "wasmcloud-data-tls"
+                        }
+                    },
+                    {
+                        "name": "registry-pull",
+                        "secret": {
+                            "defaultMode": 420,
+                            "items": [
+                                {
+                                    "key": ".dockerconfigjson",
+                                    "path": "config.json"
+                                }
+                            ],
+                            "optional": false,
+                            "secretName": "wamn-registry-pull"
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "allocatedResources": {
+                    "cpu": "250m",
+                    "memory": "256Mi"
+                },
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:14:31Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:14:31Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:30Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:30Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:14:31Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "allocatedResources": {
+                            "cpu": "250m",
+                            "memory": "256Mi"
+                        },
+                        "containerID": "containerd://6c17537a7dc77eecf4042c559f8b62f13191bf7ead19a63b3321bf860f99d90e",
+                        "image": "docker.io/library/wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imageID": "docker.io/library/import-2026-09-04@sha256:594efc5f9f3e92b88af69cfd37c280c21e047d988c500e2159de9e933d4822ca",
+                        "lastState": {
+                            "terminated": {
+                                "containerID": "containerd://46a650a43be5129b1bf58b3e6b82b998ef3eedd2cf498e368a719dd6c6773c54",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-04T21:15:18Z",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-04T21:14:31Z"
+                            }
+                        },
+                        "name": "host",
+                        "ready": true,
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "4Gi"
+                            },
+                            "requests": {
+                                "cpu": "250m",
+                                "memory": "256Mi"
+                            }
+                        },
+                        "restartCount": 1,
+                        "started": true,
+                        "state": {
+                            "running": {
+                                "startedAt": "2026-09-04T21:15:19Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 65532,
+                                "supplementalGroups": [
+                                    65532
+                                ],
+                                "uid": 65532
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/oci-cache",
+                                "name": "oci-cache"
+                            },
+                            {
+                                "mountPath": "/tmp",
+                                "name": "tmp"
+                            },
+                            {
+                                "mountPath": "/runtime-cert",
+                                "name": "runtime-cert",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/data-cert",
+                                "name": "data-cert",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/etc/wamn/registry",
+                                "name": "registry-pull",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.7",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.7"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Running",
+                "podIP": "10.244.2.5",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.5"
+                    }
+                ],
+                "qosClass": "Burstable",
+                "resources": {
+                    "limits": {
+                        "cpu": "2",
+                        "memory": "4Gi"
+                    },
+                    "requests": {
+                        "cpu": "232m",
+                        "memory": "256Mi"
+                    }
+                },
+                "startTime": "2026-09-04T21:14:31Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T21:15:15Z",
+                "generateName": "startup-request-cold-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "5caa4c4f-ee6f-435b-a9e6-e2a3abcfb16f",
+                    "batch.kubernetes.io/job-name": "startup-request-cold",
+                    "controller-uid": "5caa4c4f-ee6f-435b-a9e6-e2a3abcfb16f",
+                    "job-name": "startup-request-cold"
+                },
+                "name": "startup-request-cold-tfjxc",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "startup-request-cold",
+                        "uid": "5caa4c4f-ee6f-435b-a9e6-e2a3abcfb16f"
+                    }
+                ],
+                "resourceVersion": "1500",
+                "uid": "9ed22c1f-2b93-4f9d-b315-7d68a6dbbea9"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-11111111111111111111111111111111-1111111111111111-01' \\\n    --data '[{\"request_id\":\"startup-cold\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=cold attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=cold status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "env": [
+                            {
+                                "name": "ROUTE_CALLER_PAT",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "token",
+                                        "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                    }
+                                }
+                            }
+                        ],
+                        "image": "wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-h2twl",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-h2twl",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:17Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:15Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:16Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:16Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:15Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://f2d9cb8dae6402f8958327aa4aebc92e93837c2f996248cbf52fe59a170e85ed",
+                        "image": "docker.io/library/wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imageID": "docker.io/library/import-2026-09-04@sha256:594efc5f9f3e92b88af69cfd37c280c21e047d988c500e2159de9e933d4822ca",
+                        "lastState": {},
+                        "name": "probe",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://f2d9cb8dae6402f8958327aa4aebc92e93837c2f996248cbf52fe59a170e85ed",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-04T21:15:15Z",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-04T21:15:15Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-h2twl",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.7",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.7"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.2.7",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.7"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-04T21:15:15Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T21:15:31Z",
+                "generateName": "startup-request-restart-first-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "f11399ad-3e7a-4a82-beb4-d9dbaa7b3a65",
+                    "batch.kubernetes.io/job-name": "startup-request-restart-first",
+                    "controller-uid": "f11399ad-3e7a-4a82-beb4-d9dbaa7b3a65",
+                    "job-name": "startup-request-restart-first"
+                },
+                "name": "startup-request-restart-first-7zvx7",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "startup-request-restart-first",
+                        "uid": "f11399ad-3e7a-4a82-beb4-d9dbaa7b3a65"
+                    }
+                ],
+                "resourceVersion": "1709",
+                "uid": "882f6c49-e1c3-446d-9c57-ca3d33b99679"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-22222222222222222222222222222222-2222222222222222-01' \\\n    --data '[{\"request_id\":\"startup-restart-first\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=restart-first attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=restart-first status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "env": [
+                            {
+                                "name": "ROUTE_CALLER_PAT",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "token",
+                                        "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                    }
+                                }
+                            }
+                        ],
+                        "image": "wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-kglgl",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-kglgl",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:16:19Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:31Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:16:18Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:16:18Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:15:31Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://fe0ca0bb7c95866fb3dab62d4e88c240deb9e6c211547f2621409be9b8bf3241",
+                        "image": "docker.io/library/wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imageID": "docker.io/library/import-2026-09-04@sha256:594efc5f9f3e92b88af69cfd37c280c21e047d988c500e2159de9e933d4822ca",
+                        "lastState": {},
+                        "name": "probe",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://fe0ca0bb7c95866fb3dab62d4e88c240deb9e6c211547f2621409be9b8bf3241",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-04T21:16:18Z",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-04T21:15:31Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-kglgl",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.7",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.7"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.2.8",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.8"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-04T21:15:31Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T21:16:21Z",
+                "generateName": "startup-request-steady-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "cd375650-c71b-410a-b392-21d3cc5d8847",
+                    "batch.kubernetes.io/job-name": "startup-request-steady",
+                    "controller-uid": "cd375650-c71b-410a-b392-21d3cc5d8847",
+                    "job-name": "startup-request-steady"
+                },
+                "name": "startup-request-steady-8x9w6",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "startup-request-steady",
+                        "uid": "cd375650-c71b-410a-b392-21d3cc5d8847"
+                    }
+                ],
+                "resourceVersion": "1735",
+                "uid": "c770968c-bea2-41d3-a129-b3d679d2e90d"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-33333333333333333333333333333333-3333333333333333-01' \\\n    --data '[{\"request_id\":\"startup-steady\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=steady attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=steady status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "env": [
+                            {
+                                "name": "ROUTE_CALLER_PAT",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "token",
+                                        "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                    }
+                                }
+                            }
+                        ],
+                        "image": "wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-jhskb",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-jhskb",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:16:22Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:16:21Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:16:21Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:16:21Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:16:21Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://c3411c3aeb6051017151da35226eab127dd0ce4d5f3f17d4f4b0eebbd49b8b79",
+                        "image": "docker.io/library/wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imageID": "docker.io/library/import-2026-09-04@sha256:594efc5f9f3e92b88af69cfd37c280c21e047d988c500e2159de9e933d4822ca",
+                        "lastState": {},
+                        "name": "probe",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://c3411c3aeb6051017151da35226eab127dd0ce4d5f3f17d4f4b0eebbd49b8b79",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-04T21:16:21Z",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-04T21:16:21Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-jhskb",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.7",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.7"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.2.9",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.9"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-04T21:16:21Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Pod\",\"metadata\":{\"annotations\":{},\"name\":\"warm-probe\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"containers\":[{\"command\":[\"/bin/sh\",\"-c\",\"sleep 3600\"],\"env\":[{\"name\":\"PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-e225143e5248-2560489-debug\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}\n"
+                },
+                "creationTimestamp": "2026-09-04T21:14:39Z",
+                "generation": 1,
+                "name": "warm-probe",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1341",
+                "uid": "16080d20-8e85-4b64-967f-178315b5257d"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "command": [
+                            "/bin/sh",
+                            "-c",
+                            "sleep 3600"
+                        ],
+                        "env": [
+                            {
+                                "name": "PAT",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "token",
+                                        "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                    }
+                                }
+                            }
+                        ],
+                        "image": "wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-hmqb6",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-hmqb6",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:14:40Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:14:39Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:14:40Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:14:40Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-04T21:14:39Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://235cb0510878004f489bc61eadef53e5b78018984253bda2ad1d5909cd366683",
+                        "image": "docker.io/library/wamn-host:receiving-e225143e5248-2560489-debug",
+                        "imageID": "docker.io/library/import-2026-09-04@sha256:594efc5f9f3e92b88af69cfd37c280c21e047d988c500e2159de9e933d4822ca",
+                        "lastState": {},
+                        "name": "probe",
+                        "ready": true,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": true,
+                        "state": {
+                            "running": {
+                                "startedAt": "2026-09-04T21:14:40Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-hmqb6",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.7",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.7"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Running",
+                "podIP": "10.244.2.6",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.6"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-04T21:14:39Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

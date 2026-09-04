@@ -1,0 +1,55 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "cea6a4a1-23e3-4375-946f-8fc3cf2c5ad5",
+            "hostname": "10.244.3.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-04T21:44:59Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "typical-bread-8396",
+                "namespace": "wamn-system",
+                "resourceVersion": "1354",
+                "uid": "4cfc2ac6-d1a9-4c64-9106-bdaeb9fcb3b6"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-04T21:44:59Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-04T21:45:00Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-04T21:45:00Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "6.112469",
+                "systemMemoryFree": 17503162368,
+                "systemMemoryTotal": 65437433856,
+                "version": "2.8.0"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}
