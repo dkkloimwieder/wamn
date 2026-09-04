@@ -132,11 +132,6 @@ effect_writer_role_login() {
         -c "SELECT rolcanlogin FROM pg_roles WHERE rolname = :'role'"
 }
 
-effect_writer_role_sessions() {
-    "$psql_bin" "$target_admin_database_url" -X -A -t -v "role=$1" \
-        -c "SELECT count(*) FROM pg_stat_activity WHERE usename = :'role'"
-}
-
 canonical_utc() {
     local value=$1 parsed
     [[ $value =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
@@ -209,7 +204,7 @@ rotate_effect_writer() {
     local desired=$rotate_effect_writer_generation current prior current_role= current_generation=
     local current_tenant= current_predecessor= legacy_scope=false
     local new new_role new_generation new_tenant new_predecessor= old_role= old_generation=
-    local old_login sessions login installed
+    local old_login login installed
     if ! current=$(installed_effect_writer_metadata); then
         echo "bootstrap: failed to inspect the installed effect-writer Secret" >&2
         exit 1
@@ -330,14 +325,20 @@ rotate_effect_writer() {
         fi
     fi
 
-    "$kubectl_bin" rollout restart deployment/executor --namespace "$namespace"
-    "$kubectl_bin" rollout status deployment/executor --namespace "$namespace" --timeout=120s
-    sessions=$(effect_writer_role_sessions "$new_role")
-    [[ $sessions =~ ^[0-9]+$ && $sessions -gt 0 ]] || {
-        echo "bootstrap: replacement effect-writer generation has no live private-pool session" >&2
-        exit 1
-    }
-
+    # NO PICKUP PROOF STANDS HERE, DELIBERATELY (wamn-0h0g.10.12). Publication
+    # used to be followed by a roll of deployment/executor and a
+    # `pg_stat_activity` count proving the replacement generation held a live
+    # private-pool session. Both were residue of `deploy/platform/runner.yaml`,
+    # which mounted this Secret at /etc/wamn/effect-writer before ea71c1c4
+    # deleted it. NOTHING IN deploy/platform MOUNTS IT NOW - the executor
+    # inherited the runner's role without its mount - so no pod ever opens a
+    # session as the replacement role and the count was 0 in any real cluster.
+    # The gate only ever passed against a stub that faked the session, so
+    # deleting it removes a fiction rather than a guarantee.
+    #
+    # THE LOST GUARANTEE HAS AN OWNER: wamn-0h0g.10.17 blocks the FIRST
+    # effect-writer consumer, because retiring the old generation below without
+    # proof of pickup is harmless only while nothing reads the credential.
     if [[ -n $old_role ]]; then
         if ! old_login=$(effect_writer_role_login "$old_role"); then
             echo "bootstrap: failed to verify old effect-writer generation" >&2
