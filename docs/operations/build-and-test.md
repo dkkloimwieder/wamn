@@ -1471,6 +1471,46 @@ tools/receiving-cluster-journey-run --apply \
   --evidence-dir /tmp/wamn-receiving-cluster-evidence
 ```
 
+**Run the seven harness proofs first. They cost a second and they stand in
+front of a twenty-five-minute cluster run.**
+
+```bash
+( for proof in tools/journey-*-proof; do "$proof" || exit; done )
+```
+
+The subshell and the bare `exit` are load-bearing, and the first draft of this
+line had neither. `for ...; do "$proof" || break; done` reports **exit 0 when a
+proof fails** — `break` succeeds, and the loop's status is the status of the
+last command it ran. Measured against three stub proofs, one of them failing:
+the `break` form printed the failure and exited 0; the subshell form printed it
+and exited 1. A command that stands in front of a twenty-five-minute cluster
+run, documented in the sentence that introduces the guards, silently disarmed.
+
+The journey's render and assert surface is lifted into seven shared harnesses,
+and each has an offline proof beside it — no cluster, no containers, no
+network, and the frozen cluster untouched. Together they are the whole
+regression net for that surface:
+
+| harness | proves |
+|---|---|
+| `journey-host-values.sh` | the host overlay renders, every derived secret anchor fires exactly once |
+| `journey-host-secrets.sh` | the declared role families match the emitted Secret set, and each Secret's shape |
+| `journey-rendered-identity.sh` | the overlay CLAIMS this application's identity — asserted, never rewritten |
+| `journey-workload.sh` | the workload manifest carries all five identity claims and one route host |
+| `journey-trace.sh` | a trace breakdown is complete, including this application's statement count |
+| `journey-materializer.sh` | the materializer manifest's eight identity values come from the declaration |
+| `journey-probe.sh` | the probe Job renders AND the rendered probe script actually runs |
+
+Each pins Receiving's bytes by digest against the block it replaced, renders a
+second application's declaration to prove the block is generic rather than
+merely parameterized, and carries a negative control per guard. Every one has
+been mutation-tested on exit code.
+
+They are deliberately NOT a `cargo test`: they are shell over checked-in
+templates, and wiring them into the Rust gate would make a one-second check
+cost a build.
+
+
 `wamn-10yt.8` measures the same published release under runtime-operator
 2.8.0's unchanged TCP liveness and readiness probes. It records cold runtime
 startup and a cache-seeding authenticated request, restarts the container in
@@ -1820,6 +1860,26 @@ one the listing produced. Removing it changed nothing because nothing could
 reach it. A surviving mutant means one of three things — the assertion is
 missing, the control does not isolate, or the code is dead — and they are
 distinguished by asking what input would reach it.
+
+**Fifth instance of the self-skipping family, and the most embarrassing
+one: the DOCUMENTED COMMAND for running a set of guards reported green while
+a guard failed.** The line was `for proof in tools/journey-*-proof; do
+"$proof" || break; done`. `break` succeeds, and a loop's exit status is the
+status of the last command it ran — so a failing proof printed its failure and
+the loop exited 0. The correct form is a subshell with a bare `exit`:
+`( for proof in ...; do "$proof" || exit; done )`.
+
+The family now reads: a **rename** can deselect a test (`--exact` against a
+name that no longer exists runs nothing and exits 0); an **env gate** can skip
+one; a **misspelling** can select none; a **zero-match scripted edit** produces
+a void mutant that reads as a survivor; and now a **loop** can run every check
+and discard the verdict. What they share is that the machinery ran, produced
+output, and returned success — so every one of them looks exactly like a pass.
+
+It was caught by three stub proofs, one failing, run through both forms: the
+`break` form exited 0 and the subshell form exited 1. Six seconds, against a
+line that would otherwise have stood in front of a twenty-five-minute cluster
+run telling people their guards were green.
 
 **`bash -n` is not a proof. A shell block is verified by RUNNING it against
 the real consumer.** The shell-grain form of the second-consumer rule: a
