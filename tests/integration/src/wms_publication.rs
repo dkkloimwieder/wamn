@@ -22,6 +22,10 @@ struct Operation {
     token: &'static str,
     attachment: &'static str,
     route: &'static str,
+    /// The node that RESPONDS. None means the entry node -- the single-node
+    /// shape -- and Some names the terminal of a composed graph, where the
+    /// entry node hands off and a later node answers.
+    respond: Option<&'static str>,
 }
 
 const OPERATIONS: [Operation; 7] = [
@@ -30,42 +34,53 @@ const OPERATIONS: [Operation; 7] = [
         token: "wamn-wms:pallet/get@1.0.0",
         attachment: "pallet-get-http",
         route: "/pallet/get",
+        respond: None,
     },
     Operation {
         wiring: "pallet_query",
         token: "wamn-wms:pallet/query@1.0.0",
         attachment: "pallet-query-http",
         route: "/pallet/query",
+        respond: None,
     },
     Operation {
         wiring: "inventory_adjust",
         token: "wamn-wms:inventory/adjust@1.0.0",
         attachment: "inventory-adjust-http",
         route: "/inventory/adjust",
+        respond: None,
     },
     Operation {
         wiring: "inventory_merge",
         token: "wamn-wms:inventory/merge@1.0.0",
         attachment: "inventory-merge-http",
         route: "/inventory/merge",
+        respond: None,
     },
     Operation {
         wiring: "inventory_split",
         token: "wamn-wms:inventory/split@1.0.0",
         attachment: "inventory-split-http",
         route: "/inventory/split",
+        respond: None,
     },
     Operation {
         wiring: "inventory_aggregate",
         token: "wamn-wms:inventory/aggregate@1.0.0",
         attachment: "inventory-aggregate-http",
         route: "/inventory/aggregate",
+        respond: None,
     },
     Operation {
-        wiring: "inventory_move",
+        // RULED wamn-362o.35: the move route serves the COMPOSED wiring --
+        // move -> label-render -> blob-put -- so both gate properties are
+        // claims about that path. The entry is still the command; the answer
+        // comes from the store node.
+        wiring: "inventory_move_and_label",
         token: "wamn-wms:inventory/move@1.0.0",
         attachment: "inventory-move-http",
         route: "/inventory/move",
+        respond: Some("store"),
     },
 ];
 
@@ -120,7 +135,16 @@ fn package_owned_inputs_declare_the_exact_seven_route_closure() {
             .unwrap_or_else(|| panic!("{} has no entry node", operation.wiring));
         assert_eq!(node.component, COMPONENT);
         assert_eq!(node.operation, operation.token);
-        assert_eq!(node.terminal, Some(WiringTerminal::Respond));
+        // Exactly one node responds, and it is the one the closure names: the
+        // entry for a single-node wiring, the store for the composed one.
+        let responders: Vec<&String> = wiring
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.terminal == Some(WiringTerminal::Respond))
+            .map(|(id, _)| id)
+            .collect();
+        let expected = operation.respond.unwrap_or(wiring.entry.as_str());
+        assert_eq!(responders, vec![expected], "{} responds from {expected}", operation.wiring);
 
         let fact = declaration
             .operations

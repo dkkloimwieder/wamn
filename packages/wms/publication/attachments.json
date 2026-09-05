@@ -87,7 +87,7 @@
   "inventory-move-http": {
     "kind": "http",
     "package-id": "wamn_wms",
-    "wiring-id": "inventory_move",
+    "wiring-id": "inventory_move_and_label",
     "wiring-version": 1,
     "definition-hash": "sha256:e828d1908ab670d3c36a8eb9d4c50d737645f3f84f3c0629659f6425f0af26a2",
     "definition": {
