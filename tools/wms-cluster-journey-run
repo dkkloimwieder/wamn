@@ -316,6 +316,11 @@ cleanup() {
       -n "$namespace" get pods -o json \
       >"$evidence_dir/failure-pods.json" 2>>"$failure_capture_errors"
     record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get service,endpointslice flow-http-nodeport -o json
+    kubectl --kubeconfig "$kubeconfig" --context "$context" \
+      -n "$namespace" get service,endpointslice flow-http-nodeport -o json \
+      >"$evidence_dir/failure-nodeport.json" 2>>"$failure_capture_errors" || true
+    record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
       -n "$namespace" get events -o json
     kubectl --kubeconfig "$kubeconfig" --context "$context" \
       -n "$namespace" get events -o json \
@@ -1978,16 +1983,50 @@ jq -e --arg host "$route_host" '
 # the kind config on purpose, and port-forward dies per connection, so the
 # route is exposed on a TEMPORARY NodePort and reached at a kind node's
 # docker-network address -- the same address shape as the databases.
+# flow-http is a SELECTOR-LESS Service: the operator manages its
+# EndpointSlice directly, naming the one host pod the workload is placed on.
+# A NodePort that copied its (null) selector selected nothing, and kube-proxy
+# refuses a port with no endpoints -- run 4's "connection refused"
+# (wamn-362o.43). So the NodePort is selector-less too, with its own
+# EndpointSlice mirroring flow-http's addresses and port.
 runtime_nodeport_service=$work_dir/flow-http-nodeport.yaml
-"${kube[@]}" -n "$namespace" get service flow-http -o json \
-  | jq '{apiVersion:"v1", kind:"Service", metadata:{name:"flow-http-nodeport", namespace:.metadata.namespace},
-         spec:{type:"NodePort", selector:.spec.selector, ports:[{name:"http", port:80, targetPort:.spec.ports[0].targetPort, protocol:"TCP"}]}}' \
+"${kube[@]}" -n "$namespace" get endpointslices -l kubernetes.io/service-name=flow-http -o json \
+  | jq --arg ns "$namespace" '
+      {apiVersion: "v1", kind: "List", items: [
+        {apiVersion: "v1", kind: "Service",
+         metadata: {name: "flow-http-nodeport", namespace: $ns},
+         spec: {type: "NodePort", ports: [{name: "http", port: 80, targetPort: 80, protocol: "TCP"}]}},
+        {apiVersion: "discovery.k8s.io/v1", kind: "EndpointSlice",
+         metadata: {name: "flow-http-nodeport", namespace: $ns,
+                    labels: {"kubernetes.io/service-name": "flow-http-nodeport"}},
+         addressType: "IPv4",
+         ports: [{name: "http", port: 80, protocol: "TCP"}],
+         endpoints: [.items[].endpoints[] | {addresses: .addresses, conditions: {ready: true}}]}]}' \
   >"$runtime_nodeport_service"
+jq -e '.items[1].endpoints | length > 0' >/dev/null "$runtime_nodeport_service" || {
+  echo "flow-http has no endpoint to mirror; the workload is placed on no host" >&2
+  exit 1
+}
 run "${kube[@]}" apply -f "$runtime_nodeport_service"
 runtime_node_port=$("${kube[@]}" -n "$namespace" get service flow-http-nodeport -o jsonpath='{.spec.ports[0].nodePort}')
 runtime_node_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' "$cluster-control-plane")
 [[ $runtime_node_port =~ ^[0-9]{4,5}$ && -n $runtime_node_ip ]] || {
-  echo "the temporary NodePort did not yield a reachable endpoint (port=$runtime_node_port ip=$runtime_node_ip)" >&2
+  echo "the temporary NodePort did not yield an endpoint (port=$runtime_node_port ip=$runtime_node_ip)" >&2
+  exit 1
+}
+# kube-proxy programs the port asynchronously (1.2 s measured on a disposable
+# kind cluster); the datapath is proven when the route answers ANY HTTP status
+# from this machine -- the unknown path is a 404, the route is answered by the
+# host, and a refused connection is what run 4 saw. Bounded.
+runtime_probe_status=
+for _ in $(seq 1 60); do
+  runtime_probe_status=$(curl --silent --output /dev/null --max-time 2 --write-out '%{http_code}' \
+    --header "Host: $route_host" "http://$runtime_node_ip:$runtime_node_port/" || true)
+  [[ $runtime_probe_status =~ ^[1-5][0-9][0-9]$ ]] && break
+  sleep 1
+done
+[[ $runtime_probe_status =~ ^[1-5][0-9][0-9]$ ]] || {
+  echo "the NodePort at $runtime_node_ip:$runtime_node_port answered no HTTP status in 60s (last: '$runtime_probe_status')" >&2
   exit 1
 }
 amend_journey_document "$journey_schema" "$journey_document" runtime \
@@ -2026,6 +2065,7 @@ label_key=$(jq -rs '.[0].key // empty' "$evidence_dir/labels-objects.json")
 printf 'verdict=pass movement_id=%s labels=%s\n' "$winning_movement_id" "$label_count" \
   >"$evidence_dir/wms-runtime.receipt"
 run "${kube[@]}" -n "$namespace" delete service flow-http-nodeport
+run "${kube[@]}" -n "$namespace" delete endpointslice flow-http-nodeport
 # =======================================================================
 
 materializer_manifest=$work_dir/materializer.yaml
