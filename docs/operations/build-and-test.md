@@ -1440,6 +1440,33 @@ registry services unchanged and stopped. Cleanup removes only this Compose
 project, its volumes, and its validated scratch path. Never substitute shared
 infrastructure or the frozen cluster.
 
+### `[WMS-CLUSTER-JOURNEY]` — the WMS release minted from the shell, on its own cluster
+
+The second application's journey, and the first minted through the product's
+verbs rather than the Rust producer: `tools/wms-cluster-journey-run` sources
+the nine harnesses, declares WMS's identity once, and drives
+`provision-project-env`, `apply-package`, `reconcile-package-data-access`,
+`push-component` (wms, label-render and blob-put, under the wms package
+scope), a locally served authoring gate for each wiring, `author-wiring`,
+`publish-release` and `push-release-manifest` from the shell. It seeds the
+FIXTURE rows a move needs — one product, two locations, one pallet with one
+quantity — which is precondition state, not simulation.
+
+```bash
+tools/wms-cluster-journey-run --apply \
+  --evidence-dir /tmp/wamn-wms-cluster-evidence
+```
+
+What it deliberately does not do yet, each named in the tool: `--measure-startup`
+is refused until `wamn-362o.10` lands `pallet.get` (the only possible probe today
+is a replay move, which no fixed statement count survives); `/inventory/move`
+stays on the plain wiring until `wamn-362o.26` binds blob-put's `labels` store
+and the ruled repoint lands as its own package-content commit; and nothing
+flows through the materializer, which is deployed and asserted idle because the
+overlay mounts its family. The two runtime assertions — exactly one
+`concurrency_conflict` under contention, one label per replayed movement — are
+`wamn-362o.27`'s test, which reads the journey's document and never provisions.
+
 ### `[RECEIVING-MATERIALIZER-JOURNEY]` — router-era causation and materialization
 
 This is the D19 primary gate and the production-fed source for
@@ -1482,7 +1509,7 @@ tools/receiving-cluster-journey-run --apply \
   --evidence-dir /tmp/wamn-receiving-cluster-evidence
 ```
 
-**Run the eight harness proofs first. They cost a second and they stand in
+**Run the nine harness proofs first. They cost a second and they stand in
 front of a twenty-five-minute cluster run.**
 
 ```bash
@@ -1497,7 +1524,7 @@ the `break` form printed the failure and exited 0; the subshell form printed it
 and exited 1. A command that stands in front of a twenty-five-minute cluster
 run, documented in the sentence that introduces the guards, silently disarmed.
 
-The journey's render and assert surface is lifted into eight shared harnesses,
+The journey's render and assert surface is lifted into nine shared harnesses,
 and each has an offline proof beside it — no cluster, no containers, no
 network, and the frozen cluster untouched. Together they are the whole
 regression net for that surface:
@@ -1512,6 +1539,7 @@ regression net for that surface:
 | `journey-materializer.sh` | the materializer manifest's eight identity values come from the declaration |
 | `journey-probe.sh` | the probe Job renders AND the rendered probe script actually runs |
 | `journey-document.sh` | the input document is written and amended against the schema the Rust struct generated |
+| `journey-mint.sh` | the declaration renders, the gate envelope and the per-family provisioning flags a shell mint needs |
 
 Each pins Receiving's bytes by digest against the block it replaced, renders a
 second application's declaration to prove the block is generic rather than

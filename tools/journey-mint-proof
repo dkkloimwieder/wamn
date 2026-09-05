@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-mint.sh. No cluster, no database: the three pure
+# renders the shell mint needs, against the checked-in WMS templates and
+# wirings, with pinned inputs.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-mint.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+WMS_TPL=$repo_root/packages/wms/publication/components/wms.json.in
+LABEL_TPL=$repo_root/components/no-std/label-render/declaration.json.in
+BLOB_TPL=$repo_root/components/execution/blob-put/declaration.json.in
+WIRING=$repo_root/packages/wms/publication/wirings/inventory_move_and_label.json
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+refused_saying() { local err; err=$("$@" 2>&1 >/dev/null) && return 1; [[ $err == *"$REASON"* ]]; }
+
+echo "1. declarations render with every placeholder filled, for all three templates"
+for tpl in "$WMS_TPL" "$LABEL_TPL" "$BLOB_TPL"; do
+  name=$(basename "$tpl" .json.in); name=${name%.in}
+  # The alias is UNGUESSABLE on purpose: the first draft passed the real one,
+  # labels, and a renderer that hardcoded it survived mutation.
+  render_component_declaration "$tpl" "$work/$name.json" quay-9-route-auth wamn_probe 7.7.7 crate-9
+  check "$(basename "$tpl") renders" $?
+  jq -e '.scope["tenant-id"] == "quay-9-route-auth"' >/dev/null "$work/$name.json"
+  check "  its tenant is the one handed in, not the template's" $?
+  ! grep -q '__[A-Z_]*__' "$work/$name.json"
+  check "  no placeholder survives" $?
+done
+# The wms template hardcodes its own package coordinate; the palette templates
+# take it from the caller. Both must end up scoped to a package.
+jq -e '.scope["package-id"] == "wamn_wms" and .scope["package-version"] == "1.0.0"' >/dev/null "$work/wms.json"
+check "the wms declaration keeps its own package coordinate" $?
+jq -e '.scope["package-id"] == "wamn_probe" and .scope["package-version"] == "7.7.7"' >/dev/null "$work/declaration.json"
+check "a palette declaration takes the caller's package coordinate" $?
+jq -e 'any(.connections[]?; .["store-alias"] == "crate-9")' >/dev/null "$work/declaration.json"
+check "blob-put's store alias is the one handed in" $?
+! grep -q '"labels"' "$work/declaration.json"
+check "  and the real alias does not appear anywhere, so a hardcoded one is visible" $?
+
+echo "2. controls on the declaration render"
+printf '{"scope":{"tenant-id":"__TENANT_ID__","package-id":"__PACKAGE_ID__","package-version":"__PACKAGE_VERSION__"},"component":"x","operations":{},"connections":[{"store-alias":"__STORE_ALIAS__","other":"__LEGACY_KEY__"}]}\n' >"$work/legacy.in"
+REASON="still carries the placeholder __LEGACY_KEY__" \
+  refused_saying render_component_declaration "$work/legacy.in" "$work/out.json" t p 1 a
+check "control: a placeholder the renderer does not know is refused, naming IT" $?
+REASON="no template at" refused_saying render_component_declaration "$work/nope.in" "$work/out.json" t p 1 a
+check "control: a missing template is refused" $?
+REASON="must all be given" refused_saying render_component_declaration "$WMS_TPL" "$work/out.json" "" p 1 a
+check "control: an empty tenant is refused before it becomes a tenant called nothing" $?
+printf '{"not":"a declaration"}\n' >"$work/bare.in"
+REASON="not a declaration with a scope" refused_saying render_component_declaration "$work/bare.in" "$work/out.json" t p 1 a
+check "control: a file without a scope is refused" $?
+
+echo "3. the gate envelope matches the Rust producer's shape"
+gate_document wamn_wms 1.0.0 wms dev inventory_move_and_label "$WIRING" >"$work/gate.json"
+check "the envelope renders" $?
+jq -e '
+  .document == "request" and
+  .body["schema-version"] == "0.1" and
+  .body["command-id"] == "gate-wamn_wms-inventory_move_and_label" and
+  .body.command.kind == "gate" and
+  .body.command.input.scope == {"project-id":"wms", environment:"dev"} and
+  .body.command.input["package-id"] == "wamn_wms" and
+  .body.command.input["package-version"] == "1.0.0" and
+  .body.command.input.document["wiring-id"] == "inventory_move_and_label"
+' >/dev/null "$work/gate.json"
+check "every field the Rust gate_document sets is present and equal" $?
+diff <(jq -S '.body.command.input.document' "$work/gate.json") <(jq -S . "$WIRING") >/dev/null
+check "the wiring document is embedded whole and unchanged" $?
+printf 'not json\n' >"$work/bad.json"
+REASON="is not one JSON document" refused_saying gate_document p 1 x y w "$work/bad.json"
+check "control: a wiring that is not JSON is refused here, not as a 400" $?
+printf '{"a":1}\n{"b":2}\n' >"$work/two.json"
+REASON="is not one JSON document" refused_saying gate_document p 1 x y w "$work/two.json"
+check "control: a file with two JSON values is refused" $?
+REASON="no wiring document at" refused_saying gate_document p 1 x y w "$work/absent.json"
+check "control: a missing wiring document is refused" $?
+
+echo "4. one prepared credential per declared family, where derive_host_secrets looks"
+flags=()
+family_generation_flags flags /s guest-sql.json executor-platform identity-reader http-admitter event-materializer
+check "the flag set builds" $?
+[[ ${#flags[@]} -eq 20 ]]; check "four families plus guest is five pairs of flag pairs, twenty words" $?
+expected='--prepare-executor-platform-generation a --emit-executor-platform-secret /s/executor-platform.json --prepare-identity-reader-generation a --emit-identity-reader-secret /s/identity-reader.json --prepare-http-admitter-generation a --emit-http-admitter-secret /s/http-admitter.json --prepare-event-materializer-generation a --emit-event-materializer-secret /s/event-materializer.json --prepare-guest-generation a --emit-guest-secret /s/guest-sql.json'
+[[ ${flags[*]} == "$expected" ]]; check "and they are exactly the flags, in declaration order, guest last" $?
+# The file names are the contract with derive_host_secrets: <family>.json and
+# the declared guest file. A flag emitting elsewhere is a Secret the journey
+# never applies.
+for f in executor-platform identity-reader http-admitter event-materializer; do
+  [[ " ${flags[*]} " == *" /s/$f.json "* ]]; check "  $f lands at /s/$f.json" $?
+done
+other=()
+family_generation_flags other /elsewhere guest-sql.json executor-platform
+[[ ${other[*]} == *"/elsewhere/executor-platform.json"* && ${other[*]} == *"/elsewhere/guest-sql.json"* ]]
+check "the directory comes from the caller, not the function" $?
+empty=()
+REASON="no families declared" refused_saying family_generation_flags empty /s guest-sql.json
+check "control: an empty family list is refused" $?
+bad=()
+REASON="is not a family stem" refused_saying family_generation_flags bad /s guest-sql.json 'executor platform'
+check "control: a family with a space is refused before it becomes two flags" $?
+nodir=()
+REASON="must be given" refused_saying family_generation_flags nodir "" guest-sql.json executor-platform
+check "control: an empty directory is refused" $?
+
+echo "5. nameref binding"
+binds() {
+  local n=$1
+  eval "declare -ga $n=(DECOY)"
+  collide() { eval "local -a $n=()"; family_generation_flags "$n" /s g.json identity-reader; eval "printf '%s\n' \"\${$n[*]}\""; }
+  local out; out=$(collide 2>/dev/null) || return 1
+  [[ $out != *DECOY* && $out == *identity-reader* ]]
+}
+for n in flags family_flags out args; do
+  binds "$n"; check "a caller array named '$n' binds to the caller" $?
+done
+! binds _fgf_out; check "control: colliding on the internal name is detected" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-mint: all properties hold"; else
+  echo "journey-mint: $failures failed"; exit 1; fi
