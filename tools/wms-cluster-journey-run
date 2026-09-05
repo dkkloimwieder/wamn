@@ -1020,8 +1020,8 @@ run_sensitive seed-fixture-rows env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 \
   -v loc_b="$app_fixture_location_b_id" -v pallet="$app_fixture_pallet_id" -f - <<'SQL'
 INSERT INTO wms.product (id, product_code) VALUES (:'product', 'PROD-101');
 INSERT INTO wms.location (id, location_code) VALUES (:'loc_a', 'LOC-A'), (:'loc_b', 'LOC-B');
-INSERT INTO wms.pallet (id, pallet_code, location_id) VALUES (:'pallet', 'PAL-301', :'loc_a');
-INSERT INTO wms.pallet_quantity (pallet_id, product_id, quantity) VALUES (:'pallet', :'product', 10);
+INSERT INTO wms.pallet (id, pallet_code, location_id, status) VALUES (:'pallet', 'PAL-301', :'loc_a', 'available');
+INSERT INTO wms.pallet_quantity (pallet_id, product_id, quantity, status) VALUES (:'pallet', :'product', 10, 'available');
 SQL
 # ================================================================================
 
