@@ -232,7 +232,10 @@ impl RouterDeliveryBridge {
                     &serde_json::Value::Null,
                 )
                 .await;
-                tracing::warn!(error = %error, "router delivery execution failed");
+                // The whole chain, not the top context: `invoke wiring node
+                // "store"` alone told six cluster runs nothing about WHY
+                // (wamn-362o.45).
+                tracing::warn!(error = %format_args!("{error:#}"), "router delivery execution failed");
                 Err(DeliveryError::ExecutionFailed)
             }
         }

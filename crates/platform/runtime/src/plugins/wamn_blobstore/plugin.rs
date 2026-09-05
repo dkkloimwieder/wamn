@@ -188,28 +188,38 @@ impl WamnBlobstore {
         component_id: &str,
         store_alias: &str,
     ) -> Result<BoundContainer, BindingError> {
+        // EVERY REFUSAL NAMES ITSELF. The guest sees one opaque error and the
+        // router logs one context line, so a refusal that stays silent here
+        // is undiagnosable from any evidence -- six cluster runs' worth
+        // (wamn-362o.45). The warn carries the alias and component, never
+        // the credential.
+        let refused = |reason: &'static str| {
+            tracing::warn!(
+                store_alias,
+                component_id,
+                reason,
+                "blobstore binding refused"
+            );
+            BindingError::Unauthorized
+        };
         let invocation = self
             .invocation(component_id)
-            .ok_or(BindingError::Unauthorized)?;
-        let wiring_version =
-            i32::try_from(invocation.wiring_version).map_err(|_| BindingError::Unauthorized)?;
-
-        // A CANDIDATE closure carries its own coordinates. A RELEASED one takes
-        // them from the mounted, digest-verified serving manifest — the same
-        // source the HTTP capability uses, so a guest cannot reach an object
-        // store under a release its HTTP calls would be refused against.
+            .ok_or_else(|| refused("no invocation is registered for the component"))?;
+        let wiring_version = i32::try_from(invocation.wiring_version)
+            .map_err(|_| refused("wiring version does not fit the authority's column"))?;
         let released_manifest = match &invocation.closure {
             ConnectionExecutionClosure::Released => Some(
                 self.release
                     .as_deref()
-                    .ok_or(BindingError::Unauthorized)?
+                    .ok_or_else(|| refused("a released closure with no release manifest mounted"))?
                     .manifest(),
             ),
             ConnectionExecutionClosure::Candidate { .. } => None,
         };
         let (effective_release_id, environment) =
-            release_coordinates(&invocation, released_manifest, &self.tenant)?;
-
+            release_coordinates(&invocation, released_manifest, &self.tenant).map_err(|_| {
+                refused("release coordinates: tenant, package or closure kind disagree with the manifest")
+            })?;
         let snapshot = self
             .postgres
             .connection_effect_snapshot(
@@ -233,23 +243,42 @@ impl WamnBlobstore {
                 tracing::warn!(error = %error, "blobstore connection authority snapshot failed");
                 BindingError::Unauthorized
             })?
-            .ok_or(BindingError::Unauthorized)?;
-
-        // The coordinates said WHICH release; this says the component and its
-        // wiring are actually IN it. Deriving one without checking the other
-        // would authorize an effect for a component the release never shipped
-        // — the weaker half of the guarantee the HTTP capability makes. The
-        // same function makes it there, so the two cannot drift apart.
+            .ok_or_else(|| {
+                tracing::warn!(
+                    store_alias,
+                    component_id,
+                    package_id = %invocation.package_id,
+                    effective_release_id,
+                    environment = %environment,
+                    wiring_id = %invocation.wiring_id,
+                    wiring_version,
+                    node_id = %invocation.node_id,
+                    component_digest = %invocation.component_digest,
+                    "blobstore binding refused: the connection authority holds no binding for this closure"
+                );
+                BindingError::Unauthorized
+            })?;
         if let Some(manifest) = released_manifest {
             authorize_release_closure(manifest, &invocation, &snapshot)
-                .map_err(|_| BindingError::Unauthorized)?;
+                .map_err(|_| refused("the release closure does not carry this component and wiring"))?;
         }
-
-        let bound = binding::resolve(&snapshot)?;
+        let bound = binding::resolve(&snapshot).map_err(|error| {
+            tracing::warn!(store_alias, component_id, error = %error, "blobstore binding refused: the binding does not resolve");
+            error
+        })?;
         let secret = self
             .vault
             .lookup(&self.project, &bound.credential_handle)
-            .ok_or(BindingError::NoCredential)?;
+            .ok_or_else(|| {
+                tracing::warn!(
+                    store_alias,
+                    component_id,
+                    credential_handle = %bound.credential_handle,
+                    project = %self.project,
+                    "blobstore binding refused: no credential under this project for the handle"
+                );
+                BindingError::NoCredential
+            })?;
         let store = build_store(&bound, &secret).map_err(|error| {
             tracing::warn!(error = %error, "blobstore client construction failed");
             BindingError::Unauthorized
