@@ -280,7 +280,7 @@ WAMN_VIRTUALIZATION_PLAN="$(
        | select($artifact.raw_file == ($targets[0].name + ".wasm"))
        | {package: $artifact.package,
           raw: ($owner.metadata.target_directory
-                + "/wasm32-wasip2/debug/" + $artifact.raw_file),
+                + "/wasm32-wasip2/release/" + $artifact.raw_file),
           output: ($owner.metadata.target_directory + "/"
                    + $virtual.output_subdirectory + "/" + $artifact.output_file)}] as $artifacts
     | select($artifacts | length == ($virtual.artifacts | length))
@@ -308,8 +308,18 @@ wamn_build() {
   # workspace's failure does not describe the other's state.
   for ((leg = 0; leg < WAMN_LEG_COUNT; leg += 1)); do
     manifest="$(jq -r --argjson leg "$leg" '.[$leg].manifest' <<<"$WAMN_PLAN")"
+    # RELEASE, NOT DEBUG. The served guest was a debug artifact: 20,496,492
+    # bytes against 533,473 for the same component under
+    # components/Cargo.toml's [profile.release] (opt-level "s", strip true) --
+    # 38x on the wire, and 24.4 s of compile against 9.2 s. The profile existed
+    # and this build path never asked for it, so every OCI push, every cold
+    # pull and every host compile paid for debuginfo nobody reads. The Dockerfile's
+    # component-builder stage has always used --release; only this path did not.
+    #
+    # It does NOT change instantiate: 350 us release against 345 us debug,
+    # inside the run-to-run spread (docs/perf/2026.09/4-instantiate/).
     arguments=(
-      build --locked --offline --target wasm32-wasip2
+      build --locked --offline --release --target wasm32-wasip2
       --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest"
     )
     while IFS= read -r package; do

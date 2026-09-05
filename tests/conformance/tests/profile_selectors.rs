@@ -707,6 +707,10 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
                 "build".to_string(),
                 "--locked".to_string(),
                 "--offline".to_string(),
+                // The served guest is a RELEASE artifact: 669,593 bytes against
+                // 20,634,368 for the same component built debug. This pin is what
+                // makes the profile a reviewed decision rather than a default.
+                "--release".to_string(),
                 "--target".to_string(),
                 "wasm32-wasip2".to_string(),
                 "--manifest-path".to_string(),
@@ -772,7 +776,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
             .expect("configured workspace must have fake metadata");
         let input = target_directory
             .join("wasm32-wasip2")
-            .join("debug")
+            .join("release")
             .join(raw_file);
         fs::create_dir_all(input.parent().expect("raw component must have a parent"))
             .expect("failed to create raw component directory");
@@ -1037,7 +1041,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .expect("raw file must be a string");
     let first_raw = target_directories[first_workspace]
         .join("wasm32-wasip2")
-        .join("debug")
+        .join("release")
         .join(first_raw_file);
     fs::write(&first_raw, "changed-after-build")
         .expect("failed to mutate raw component after build-only");

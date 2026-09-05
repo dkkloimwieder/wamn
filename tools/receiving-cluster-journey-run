@@ -449,8 +449,10 @@ run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked -p wamn-host -p wamn-ctl -p wamn-cdc-reader
 
-flow_http_wasm=$cargo_target_dir/wasm32-wasip2/debug/http_route.wasm
-materializer_wasm=$cargo_target_dir/wasm32-wasip2/debug/materializer.wasm
+# Release, matching tools/build-components and the Dockerfile's component
+# stage. These two were the last debug guests the journey pushed.
+flow_http_wasm=$cargo_target_dir/wasm32-wasip2/release/http_route.wasm
+materializer_wasm=$cargo_target_dir/wasm32-wasip2/release/materializer.wasm
 component_directory=$cargo_target_dir/virtualized/std-empty-environment
 for component in "${app_components[@]}"; do
   [[ -s "$component_directory/$component.wasm" ]] || {
