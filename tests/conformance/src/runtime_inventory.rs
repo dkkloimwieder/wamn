@@ -15,6 +15,20 @@ const ALLOWED_WASH_RUNTIME_FEATURES: [&str; 5] = [
     "washlet",
     "wasm_component_model_implements",
 ];
+/// Every wasmtime feature the workspace pin names, reviewed one by one.
+///
+/// THE WASH-RUNTIME ALLOWLIST BELOW DOES NOT COVER THIS. It reads
+/// `cargo tree -i wash-runtime`, so it says nothing about the wasmtime
+/// dependency wamn pins directly, and wasmtime's own defaults include `gc`,
+/// `component-model-async`, `debug-builtins`, `profiling` and `coredump` --
+/// features that change runtime and store semantics. `default-features = false`
+/// is the only thing keeping that surface small, and a `features = [...]`
+/// addition would otherwise be invisible. Adding one here is the review.
+///
+/// `parallel-compilation` was added 2026-09-04 (`wamn-0h0g.17.22`): it pulls
+/// rayon and nothing else, and without it Cranelift compiles on one core.
+const ALLOWED_WASMTIME_FEATURES: [&str; 2] = ["cache", "parallel-compilation"];
+const WORKSPACE_MANIFEST: &str = "Cargo.toml";
 const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
 /// The one production store the execution host creates, and the file that holds
 /// it. `18ba72b6` deleted the host plan-supply path this used to name, leaving
@@ -596,6 +610,55 @@ fn validate_no_component_database_urls(path: &str, source: &str) -> Result<(), S
     Ok(())
 }
 
+/// The wasmtime pin names exactly the reviewed features, and still drops
+/// defaults.
+///
+/// Parsed from the workspace manifest text rather than from `cargo tree`,
+/// because the question is what this repository DECLARES: a feature enabled by
+/// unification elsewhere is a different finding, and conflating them would let a
+/// declared one hide behind it.
+pub fn validate_wasmtime_feature_policy(manifest: &str) -> Result<(), String> {
+    let line = manifest
+        .lines()
+        .position(|line| line.starts_with("wasmtime = {"))
+        .ok_or_else(|| "the workspace manifest names no wasmtime pin".to_string())?;
+    let rest: String = manifest.lines().skip(line).collect::<Vec<_>>().join("\n");
+    let declaration = rest
+        .split_once("}")
+        .map(|(head, _)| head.to_string())
+        .ok_or_else(|| "the wasmtime pin is unterminated".to_string())?;
+    if !declaration.contains("default-features = false") {
+        return Err(
+            "the wasmtime pin must keep default-features = false: wasmtime's defaults carry gc, \
+             component-model-async, debug-builtins, profiling and coredump"
+                .to_string(),
+        );
+    }
+    let declared: BTreeSet<String> = declaration
+        .split_once("features = [")
+        .map(|(_, tail)| tail)
+        .unwrap_or("")
+        .split(']')
+        .next()
+        .unwrap_or("")
+        .split(',')
+        .map(|entry| entry.trim().trim_matches('"').to_string())
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    let allowed: BTreeSet<String> = ALLOWED_WASMTIME_FEATURES
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    if declared != allowed {
+        return Err(format!(
+            "unreviewed wasmtime features change runtime and store semantics: declared {:?}, \
+             reviewed {:?}",
+            declared, allowed
+        ));
+    }
+    Ok(())
+}
+
 fn validate_feature_policy(features: &BTreeSet<String>) -> Result<(), String> {
     if features.contains("host-component-plugins") {
         return Err(
@@ -893,6 +956,11 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
         all_features.extend(actual);
     }
     validate_feature_policy(&all_features).unwrap_or_else(|error| panic!("{error}"));
+    validate_wasmtime_feature_policy(
+        &fs::read_to_string(root.join(WORKSPACE_MANIFEST))
+            .expect("read the workspace manifest"),
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
     assert!(
         all_features.contains("wasm_component_model_implements"),
         "the shipped host and executor must enable named component-model imports"
@@ -1351,5 +1419,46 @@ fn weld_inventory_rejects_construction_after_the_first_bind() {
             error.starts_with("weld-mutant.rs must "),
             "{name} mutation failed for an unexpected reason: {error}"
         );
+    }
+}
+
+#[cfg(test)]
+mod wasmtime_feature_policy_tests {
+    use super::validate_wasmtime_feature_policy;
+
+    const REVIEWED: &str = "wasmtime = { version = \"47.0.3\", default-features = false, features = [\n    \"cache\",\n    \"parallel-compilation\",\n] }\n";
+
+    #[test]
+    fn the_reviewed_pin_is_accepted() {
+        validate_wasmtime_feature_policy(REVIEWED).expect("the shipped pin is reviewed");
+    }
+
+    #[test]
+    fn control_an_unreviewed_feature_is_refused() {
+        let mutated = REVIEWED.replace("\"cache\",", "\"cache\",\n    \"component-model-async\",");
+        let error = validate_wasmtime_feature_policy(&mutated)
+            .expect_err("an unreviewed wasmtime feature must fail closed");
+        assert!(error.contains("component-model-async"), "{error}");
+    }
+
+    #[test]
+    fn control_a_removed_feature_is_refused() {
+        let mutated = REVIEWED.replace("\n    \"parallel-compilation\",", "");
+        validate_wasmtime_feature_policy(&mutated)
+            .expect_err("silently dropping a reviewed feature must fail closed");
+    }
+
+    #[test]
+    fn control_restoring_wasmtime_defaults_is_refused() {
+        let mutated = REVIEWED.replace("default-features = false, ", "");
+        let error = validate_wasmtime_feature_policy(&mutated)
+            .expect_err("wasmtime defaults must stay off");
+        assert!(error.contains("default-features"), "{error}");
+    }
+
+    #[test]
+    fn control_an_absent_pin_is_refused() {
+        validate_wasmtime_feature_policy("anyhow = \"1\"\n")
+            .expect_err("a manifest with no wasmtime pin must fail closed");
     }
 }

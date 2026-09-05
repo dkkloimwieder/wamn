@@ -97,7 +97,17 @@ crossterm = { version = "0.29", default-features = false, features = ["event-str
 # shared 47.0.3 requirement; enforce that source identity in conformance.
 wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "2a183dfb4125c4fcbebe749ebfdead6ab52cdc61", default-features = false, features = ["oci"] }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
-wasmtime = { version = "47.0.3", default-features = false, features = ["cache"] }
+# parallel-compilation is a wasmtime DEFAULT that default-features=false drops.
+# Without it Cranelift compiles every component on one core: receiving took
+# 24,383 ms on an 8-core box against 27,250 ms under a 2-core pod cap -- a ratio
+# of 1.12, because core count cannot matter when one core does the work
+# (wamn-0h0g.17.22, docs/perf/2026.09/4-instantiate.md). It adds rayon and
+# nothing else. default-features stays false: that is the shared-wasmtime-family
+# constraint above, and naming one feature does not weaken it.
+wasmtime = { version = "47.0.3", default-features = false, features = [
+    "cache",
+    "parallel-compilation",
+] }
 wasmtime-wasi = "47.0.3"
 wasmtime-wasi-http = "47.0.3"
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch

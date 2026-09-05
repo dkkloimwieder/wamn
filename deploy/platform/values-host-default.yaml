@@ -198,12 +198,25 @@ runtime:
       resources:
         requests:
           memory: "256Mi"
-          cpu: "250m"
+          # A QUARTER CORE GUARANTEED is what the host had while a journey ran
+          # three kind nodes, PostgreSQL, NATS and a registry beside it. Raised
+          # to two so the measured host is not the throttled one; the ceiling
+          # below still bounds it (wamn-0h0g.17.23).
+          cpu: "2"
         limits:
           # Roomy on purpose: the S1 density/cap-kill measurements must hit
           # wasmtime's 256 MiB per-component cap, not the K8s OOM killer.
           memory: "4Gi"
-          cpu: "2"
+          # WHY 6 AND NOT 2. instantiate_async for one component is 313 us on
+          # bare metal and 1.30 ms under the old 2-core cap -- 4.2x, on an
+          # 8-core box, for the identical call. Every absolute millisecond in
+          # docs/perf/2026.09 carried that factor. Six leaves two cores for the
+          # kind nodes and the databases sharing the machine.
+          #
+          # THIS IS THE JOURNEY'S DEVELOPMENT OVERLAY, NOT A PRODUCTION LIMIT.
+          # A real deployment sets its own in its own values file; nothing here
+          # decides what a production host is allowed to use.
+          cpu: "6"
         # Native v2.8 Wasmtime controls. The chart removes these two keys from
         # the Kubernetes resources block and renders WASH_DEFAULT_HEAP_MEMORY /
         # WASH_CORE_INSTANCES; limits.memory becomes WASH_HOST_MAX_GUEST_MEMORY.
