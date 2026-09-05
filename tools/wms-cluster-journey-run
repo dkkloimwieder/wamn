@@ -770,6 +770,46 @@ scenario_worker=$cargo_target_dir/debug/wamn-scenario-worker
 management_pat_secret=$work_dir/management-author-pat.json
 project_db_secret=$work_dir/project-db.json
 
+# 0. THE CONTROL STORE, as the producer installs it before any verb
+#    (dev_environment.rs, the control-owner preamble): the wamn_system owner
+#    role -- NOLOGIN, no privileges, CREATE on the database -- then the
+#    control-author ACL role the portable store's grants name, then
+#    system-schema.sql and control-portable-store.sql applied AS wamn_system
+#    in one session, then the PUBLIC CONNECT and TEMPORARY floors. postgres-init.sql, the container's init mount, creates
+#    the cluster-wide workload roles and nothing of this; run 3
+#    (wamn-362o.38) stopped at provision-org's SET ROLE for the lack of it.
+psql_admin=(env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 -h "$postgres_ip" -p 5432 -U postgres)
+run_sensitive install-control-owner "${psql_admin[@]}" -d postgres -f - <<'SQL'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN
+    CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+END $$;
+DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;
+DO $workload_acl$ DECLARE role_name text := 'wamn_control_author'; BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN
+    EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name);
+  END IF;
+END $workload_acl$;
+SQL
+run_sensitive install-control-store "${psql_admin[@]}" -d postgres \
+  -c 'SET ROLE wamn_system' \
+  -f "$repo_root/deploy/sql/system-schema.sql" \
+  -f "$repo_root/deploy/sql/control-portable-store.sql" \
+  -c 'RESET ROLE'
+# Then the two floors the producer converges as superuser: PUBLIC loses
+# CONNECT on every database and TEMPORARY on the control database. The
+# identity-reader prepare refuses without the second (measured offline).
+run_sensitive converge-public-floor "${psql_admin[@]}" -d postgres -f - <<'SQL'
+DO $$ DECLARE database_name text; BEGIN
+  FOR database_name IN SELECT datname FROM pg_database WHERE datallowconn LOOP
+    EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', database_name);
+  END LOOP;
+END $$;
+DO $$ BEGIN EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;
+SQL
+
 # 1. PROVISION, as the producer does. provision-org stamps the org and its
 #    environment policies; the environment call carries the app password the
 #    verb demands when no workload action is selected, and EMITS what CNPG
@@ -809,7 +849,6 @@ project_database=$(jq -er '.spec.name' "$database_cr")
   exit 1
 }
 project_url=postgresql://postgres:probe@$postgres_ip:5432/$project_database
-psql_admin=(env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 -h "$postgres_ip" -p 5432 -U postgres)
 run_sensitive apply-role-sql "${psql_admin[@]}" -d postgres -f "$roles_sql"
 run_sensitive create-project-database "${psql_admin[@]}" -d postgres \
   -c "CREATE DATABASE \"$project_database\""
