@@ -93,7 +93,10 @@ pub use production_claim::{
     production_router_result_action,
 };
 pub use resources::{PgCursor, PgStatementTransaction, PgTransaction};
-pub use statements::{StatementField, StatementValueType, VerifiedStatement, VerifiedStatementSet};
+pub use statements::{
+    PreparedStatementSet, StatementField, StatementValueType, VerifiedStatement,
+    VerifiedStatementSet,
+};
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this
 /// workspace crate cannot name a family's credential without the class, and
@@ -279,11 +282,7 @@ impl WamnPostgres {
         if let Some(tenant) = config.get(TENANT_CONFIG_KEY) {
             let tenant = tenant.clone();
             self.set_tenant(scope, &tenant)?;
-            tracing::debug!(
-                component = scope,
-                tenant,
-                "wamn:postgres tenant registered"
-            );
+            tracing::debug!(component = scope, tenant, "wamn:postgres tenant registered");
         } else {
             tracing::warn!(
                 component = scope,

@@ -67,6 +67,15 @@ pub type VerifiedStatementSet = BTreeMap<String, VerifiedStatement>;
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct BoundStatementSet(BTreeMap<String, Arc<VerifiedStatement>>);
 
+/// One operation's statement set, verified against its digests and sealed --
+/// the per-DIGEST half of the statement bind.
+///
+/// Nothing in here is per request: the admitted facts it was lowered from name
+/// the component digest, so one of these serves every scope that binds the
+/// operation. Opaque, so a set that skipped verification cannot be bound.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedStatementSet(Arc<BoundStatementSet>);
+
 #[derive(Debug, Default)]
 pub(super) struct StatementScopes {
     bindings: HashMap<String, HashMap<String, Arc<BoundStatementSet>>>,
@@ -79,16 +88,15 @@ impl WamnPostgres {
     /// Binding verifies every map key against the exact SQL bytes. Rebinding the
     /// same facts is a no-op; changing facts under a live component/operation
     /// identity is refused.
-    pub fn bind_statement_operation(
-        &self,
-        component_id: &str,
-        operation: &str,
+    /// Verify every statement's digest and seal the set. Once per digest.
+    ///
+    /// The digest-mismatch refusal lives here, so a set whose SQL does not
+    /// hash to its digest is refused before it can be bound under any scope --
+    /// under the router driver that is at preparation, once, for every request
+    /// that would have followed.
+    pub fn prepare_statement_set(
         statements: VerifiedStatementSet,
-    ) -> anyhow::Result<()> {
-        anyhow::ensure!(!component_id.is_empty(), "statement-component-id-empty");
-        anyhow::ensure!(!operation.is_empty(), "statement-operation-empty");
-        // One span per operation; the journey report sums them per request
-        // (wamn-0h0g.17.25 measures whether this hash is the cost).
+    ) -> anyhow::Result<PreparedStatementSet> {
         tracing::info_span!("wamn.scope.verify").in_scope(|| {
             for (digest, statement) in &statements {
                 let observed = statement_digest(&statement.exact_sql);
@@ -99,13 +107,26 @@ impl WamnPostgres {
             }
             Ok::<(), anyhow::Error>(())
         })?;
-
-        let statements = Arc::new(BoundStatementSet(
+        Ok(PreparedStatementSet(Arc::new(BoundStatementSet(
             statements
                 .into_iter()
                 .map(|(digest, statement)| (digest, Arc::new(statement)))
                 .collect(),
-        ));
+        ))))
+    }
+
+    /// Bind a prepared set under a scope. Once per request.
+    ///
+    /// The rebind-conflict refusal stays here: a scope may not hold two
+    /// different sets for one operation.
+    pub fn bind_prepared_statement_operation(
+        &self,
+        component_id: &str,
+        operation: &str,
+        statements: &PreparedStatementSet,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(!component_id.is_empty(), "statement-component-id-empty");
+        anyhow::ensure!(!operation.is_empty(), "statement-operation-empty");
         let mut scopes = self
             .statement_scopes
             .write()
@@ -113,19 +134,26 @@ impl WamnPostgres {
         let operations = scopes.bindings.entry(component_id.to_owned()).or_default();
         if let Some(existing) = operations.get(operation) {
             anyhow::ensure!(
-                existing == &statements,
+                existing == &statements.0,
                 "statement-operation-rebind-conflict: {operation}"
             );
             return Ok(());
         }
-        operations.insert(operation.to_owned(), statements);
+        operations.insert(operation.to_owned(), Arc::clone(&statements.0));
         Ok(())
     }
 
-    /// Activate exactly one bound operation's statement set for an invocation.
-    ///
-    /// A failed activation first clears any prior scope, so a pooled component
-    /// cannot retain another operation's SQL authority.
+    /// Both halves in order, for a caller with one workload and one scope.
+    pub fn bind_statement_operation(
+        &self,
+        component_id: &str,
+        operation: &str,
+        statements: VerifiedStatementSet,
+    ) -> anyhow::Result<()> {
+        let prepared = Self::prepare_statement_set(statements)?;
+        self.bind_prepared_statement_operation(component_id, operation, &prepared)
+    }
+
     pub fn activate_statement_operation(
         &self,
         component_id: &str,

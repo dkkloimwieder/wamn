@@ -15,9 +15,9 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, AttachmentKind, ComponentOperationDependency,
-    ComponentSqlField, ComponentSqlValueType, DefinitionHash, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingWiring,
+    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentKind,
+    ComponentOperationDependency, ComponentSqlField, ComponentSqlValueType, DefinitionHash,
+    ServingComponent, ServingComponentOperation, ServingManifest, ServingWiring,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_event_wire::Causation;
@@ -38,9 +38,9 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::{WAMN_BLOBSTORE_ID, WamnBlobs
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
-    CandidateBindingWorld, CandidateWiringResolution, ReleaseIdentity, ResolvedActiveWiring,
-    SessionClaims, StatementField, StatementValueType, VerifiedStatement, VerifiedStatementSet,
-    WAMN_POSTGRES_ID, WamnPostgres,
+    CandidateBindingWorld, CandidateWiringResolution, PreparedStatementSet, ReleaseIdentity,
+    ResolvedActiveWiring, SessionClaims, StatementField, StatementValueType, VerifiedStatement,
+    VerifiedStatementSet, WAMN_POSTGRES_ID, WamnPostgres,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
@@ -50,9 +50,9 @@ use wash_runtime::engine::ctx::{Ctx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadComponent;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
-use wash_runtime::wit::{WitInterface, WitWorld};
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, Instance, InstancePre, Linker, TypedFunc};
+use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -573,8 +573,9 @@ impl RouterDriver {
         // registrations, and then layers its own binds on the clone.
         let base_linker = {
             let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
-            wasmtime_wasi::p2::add_to_linker_async(&mut linker)
-                .map_err(|error| anyhow::anyhow!("add the WASI p2 surface to the shared base linker: {error}"))?;
+            wasmtime_wasi::p2::add_to_linker_async(&mut linker).map_err(|error| {
+                anyhow::anyhow!("add the WASI p2 surface to the shared base linker: {error}")
+            })?;
             Arc::new(linker)
         };
         let cache = Arc::new(WiringCache::new(config.cache_capacity.get()));
@@ -2035,6 +2036,22 @@ fn lower_statement_field(field: &ComponentSqlField) -> StatementField {
     }
 }
 
+/// Lower and verify every operation's statement set out of the admitted facts.
+/// Per digest: the facts are immutable and name the component.
+fn prepare_statement_sets(
+    component: &AdmittedComponent,
+) -> anyhow::Result<BTreeMap<String, PreparedStatementSet>> {
+    component
+        .operations
+        .iter()
+        .map(|(operation, fact)| {
+            WamnPostgres::prepare_statement_set(lower_statement_set(&fact.statements))
+                .with_context(|| format!("prepare verified statements for operation {operation:?}"))
+                .map(|prepared| (operation.clone(), prepared))
+        })
+        .collect()
+}
+
 fn lower_statement_set(
     statements: &BTreeMap<String, wamn_catalog::ComponentSqlStatement>,
 ) -> VerifiedStatementSet {
@@ -2070,32 +2087,19 @@ impl PendingStatementScope {
     fn bind(
         postgres: Arc<WamnPostgres>,
         scope: Box<str>,
-        component: &AdmittedComponent,
+        statements: &BTreeMap<String, PreparedStatementSet>,
     ) -> anyhow::Result<Self> {
-        // MEASUREMENT SPLIT (wamn-0h0g.17.25). 0.97 ms per request at load 11
-        // and nobody had named what inside it costs: the clear, the lowering
-        // of every statement out of the admitted facts, or the bind -- which
-        // re-verifies every statement digest. Two passes instead of one loop
-        // so each has its own span; the bind errors arrive in the same order.
         tracing::info_span!("wamn.scope.clear").in_scope(|| postgres.clear_statement_scope(&scope));
         let pending = Self {
             postgres,
             scope,
             armed: true,
         };
-        let lowered: Vec<(&String, VerifiedStatementSet)> = tracing::info_span!("wamn.scope.lower")
-            .in_scope(|| {
-                component
-                    .operations
-                    .iter()
-                    .map(|(operation, fact)| (operation, lower_statement_set(&fact.statements)))
-                    .collect()
-            });
         tracing::info_span!("wamn.scope.bind").in_scope(|| {
-            for (operation, statements) in lowered {
+            for (operation, prepared) in statements {
                 pending
                     .postgres
-                    .bind_statement_operation(&pending.scope, operation, statements)
+                    .bind_prepared_statement_operation(&pending.scope, operation, prepared)
                     .with_context(|| {
                         format!("bind verified statements for operation {operation:?}")
                     })?;
@@ -2148,17 +2152,21 @@ impl Drop for ActiveStatementScope<'_> {
 /// THE LINKER HOLDS DEFINITIONS, NOT REQUEST STATE (1b moved the WASI surface
 /// to a shared base, 1c moved the nested host into the store), so one of these
 /// serves every request to its digest and `instantiate_async` is all that is
-/// left per request. `links` is what the nested-operation binds were built
-/// from: they come from the ADMITTED FACTS, not from the bytes, so a digest
-/// readmitted under different dependency pins must not reuse them -- the
-/// cache compares the map on every hit and rebuilds on a mismatch.
+/// left per request. `operations` is what the nested-operation binds and the
+/// statement sets were built from: they come from the ADMITTED FACTS, not from
+/// the bytes, so a digest readmitted under different dependency pins or
+/// statements must not reuse them -- the cache compares the map on every hit
+/// and rebuilds on a mismatch.
 #[derive(Clone)]
 struct PreparedComponent {
     pre: InstancePre<SharedCtx>,
     /// The workload's import set, projected onto the driver's one project, as
     /// [`WamnPostgres::register_workload_scope`] wants it.
     imports: HashSet<WitInterface>,
-    links: NestedOperationLinks,
+    operations: BTreeMap<String, AdmittedComponentOperation>,
+    /// Every operation's verified statement set, lowered and digest-checked
+    /// once here; a request binds these under its scope by `Arc`.
+    statements: BTreeMap<String, PreparedStatementSet>,
 }
 
 /// Prepared components by artifact digest, for the life of the process.
@@ -2228,8 +2236,14 @@ impl NodeInstance {
         // the digest names these bytes, so the prepared component is built for
         // this request and dropped with it.
         let prepared_component = tracing::info_span!("wamn.component.link").in_scope(|| {
-            let links = nested_operation_links(component_fact)?;
-            Self::prepare(base_linker, component, links, &postgres, &logging, config, component_fact)
+            Self::prepare(
+                base_linker,
+                component,
+                &postgres,
+                &logging,
+                config,
+                component_fact,
+            )
         })?;
         Self::instantiate_prepared(
             engine,
@@ -2279,13 +2293,12 @@ impl NodeInstance {
                 wamn.prepared_hit = tracing::field::Empty
             );
             let _entered = span.enter();
-            let links = nested_operation_links(component_fact)?;
             let digest = component_fact.component_digest.as_str();
             let hit = prepared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("prepared-component cache poisoned"))?
                 .get(digest)
-                .filter(|entry| entry.links == links)
+                .filter(|entry| entry.operations == component_fact.operations)
                 .cloned();
             match hit {
                 Some(entry) => {
@@ -2297,7 +2310,6 @@ impl NodeInstance {
                     let built = Self::prepare(
                         base_linker,
                         component,
-                        links,
                         &postgres,
                         &logging,
                         config,
@@ -2339,12 +2351,18 @@ impl NodeInstance {
     fn prepare(
         base_linker: &Arc<Linker<SharedCtx>>,
         component: Component,
-        links: NestedOperationLinks,
         postgres: &WamnPostgres,
         logging: &WamnLogging,
         config: &RouterDriverConfig,
         component_fact: &AdmittedComponent,
     ) -> anyhow::Result<PreparedComponent> {
+        let links = nested_operation_links(component_fact)?;
+        // Every statement's SQL hashed against its digest, once here rather
+        // than on every request (0.845 ms of every request before this,
+        // docs/perf/2026.09/1c-b-scope-split.md). A digest that does not name
+        // its SQL refuses the whole digest, at readiness under the preload.
+        let statements = tracing::info_span!("wamn.linker.statements")
+            .in_scope(|| prepare_statement_sets(component_fact))?;
         let mut linker: Linker<SharedCtx> =
             tracing::info_span!("wamn.linker.clone").in_scope(|| base_linker.as_ref().clone());
         tracing::info_span!("wamn.linker.nested")
@@ -2407,7 +2425,12 @@ impl NodeInstance {
             Ok::<(), anyhow::Error>(())
         })?;
         let pre = tracing::info_span!("wamn.linker.pre").in_scope(|| workload.pre_instantiate())?;
-        Ok(PreparedComponent { pre, imports, links })
+        Ok(PreparedComponent {
+            pre,
+            imports,
+            operations: component_fact.operations.clone(),
+            statements,
+        })
     }
 
     /// The per-REQUEST half: the store, its plugin map, and the instance.
@@ -2434,7 +2457,8 @@ impl NodeInstance {
         let PreparedComponent {
             pre,
             imports,
-            links: _,
+            operations: _,
+            statements,
         } = prepared_component;
         let (mut store, connection_http, blobstore, nested, statement_scope) = async {
             // The three per-request host objects. They ride the store's plugin
@@ -2504,16 +2528,12 @@ impl NodeInstance {
                 blobstore.revoke_invocation(&scope);
                 nested.revoke();
             });
-            // 0.605 ms of the 0.889 ms scope block, measured before anything
-            // was touched (docs/perf/2026.09/1c-residue-and-scope.md). Still
-            // per request, still the next thing to name.
+            // The per-request half of the statement bind: the prepared sets
+            // inserted under this scope. The verification and lowering that
+            // made this 0.97 ms live in `prepare`, once per digest.
             let pending_statement_scope = tracing::info_span!("wamn.linker.pending_scope")
                 .in_scope(|| {
-                    PendingStatementScope::bind(
-                        Arc::clone(&postgres),
-                        scope.clone(),
-                        component_fact,
-                    )
+                    PendingStatementScope::bind(Arc::clone(&postgres), scope.clone(), &statements)
                 })?;
             let ctx_span = tracing::info_span!("wamn.linker.ctx");
             let ctx_entered = ctx_span.enter();
@@ -2807,12 +2827,12 @@ mod tests {
         InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
     };
     use tracing_subscriber::layer::SubscriberExt as _;
-    use wamn_runtime::plugins::wamn_logging::WamnLoggingConfig;
     use wamn_catalog::{
         AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope,
         EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
         ServingRegistration, ServingRegistrationInput, ServingRelease,
     };
+    use wamn_runtime::plugins::wamn_logging::WamnLoggingConfig;
 
     use super::*;
 
@@ -3017,8 +3037,9 @@ mod tests {
                 operation_with_statements(BTreeMap::new()),
             ),
         ]));
+        let statements = prepare_statement_sets(&component).expect("empty sets prepare");
         let pending =
-            PendingStatementScope::bind(Arc::clone(&postgres), "scope-a".into(), &component)
+            PendingStatementScope::bind(Arc::clone(&postgres), "scope-a".into(), &statements)
                 .expect("bind every operation, including empty statement sets");
 
         postgres
@@ -3063,15 +3084,20 @@ mod tests {
             ),
         ]));
 
+        // The refusal moved to preparation: a digest that does not name its
+        // SQL is refused before any scope exists to bind it under, so nothing
+        // partial can ever have been bound.
+        let error = prepare_statement_sets(&component)
+            .expect_err("a digest that does not name its SQL is refused at preparation");
         assert!(
-            PendingStatementScope::bind(Arc::clone(&postgres), "scope-partial".into(), &component,)
-                .is_err()
+            format!("{error:#}").contains("statement-digest-mismatch"),
+            "the refusal names the mismatch: {error:#}"
         );
         assert!(
             postgres
                 .activate_statement_operation("scope-partial", "a-empty")
                 .is_err(),
-            "an operation bound before the failure must not remain available"
+            "no operation of a refused digest is ever bound"
         );
     }
 
@@ -3573,10 +3599,19 @@ mod tests {
 
         // COUNT: (postgres entries, postgres registrations, logging entries,
         // logging registrations). Two requests to digest a, then one to b.
+        // A fourth request carries digest a under DIFFERENT admitted facts:
+        // the same bytes readmitted with another operation. The entry must not
+        // be reused -- its nested links and statement sets came from the facts.
+        let mut fact_a_readmitted = fact_a.clone();
+        fact_a_readmitted.operations.insert(
+            "orders:extra@1.0.0".to_owned(),
+            operation_with_statements(BTreeMap::new()),
+        );
         for (fact, expected) in [
             (&fact_a, (1, 1, 1, 1)),
             (&fact_a, (1, 2, 1, 2)),
             (&fact_b, (2, 3, 2, 3)),
+            (&fact_a_readmitted, (3, 4, 3, 4)),
         ] {
             NodeInstance::instantiate_compiled(
                 &engine,
@@ -3596,7 +3631,12 @@ mod tests {
             )
             .await
             .expect("the fixture instantiates");
-            assert_eq!(counts(), expected, "after a request to {:?}", fact.component_digest);
+            assert_eq!(
+                counts(),
+                expected,
+                "after a request to {:?}",
+                fact.component_digest
+            );
         }
 
         // ORDER: a digest's linker entries end before its first registration
@@ -3612,13 +3652,30 @@ mod tests {
             .iter()
             .map(|span| attribute(span, "wamn.prepared_hit"))
             .collect();
-        assert_eq!(hits, [Some("false".to_owned()), Some("true".to_owned()), Some("false".to_owned())]);
+        assert_eq!(
+            hits,
+            [
+                Some("false".to_owned()),
+                Some("true".to_owned()),
+                Some("false".to_owned()),
+                Some("false".to_owned())
+            ]
+        );
         let entries = named("wamn.linker.plugins");
         let registers = named("wamn.linker.register");
-        assert_eq!((entries.len(), registers.len()), (2, 3));
-        assert!(entries[0].end_time <= registers[0].start_time, "digest a: entries before registration");
-        assert!(entries[1].end_time <= registers[2].start_time, "digest b: entries before registration");
-        assert!(registers[1].start_time >= entries[0].end_time, "the hit registers after the fill");
+        assert_eq!((entries.len(), registers.len()), (3, 4));
+        assert!(
+            entries[0].end_time <= registers[0].start_time,
+            "digest a: entries before registration"
+        );
+        assert!(
+            entries[1].end_time <= registers[2].start_time,
+            "digest b: entries before registration"
+        );
+        assert!(
+            registers[1].start_time >= entries[0].end_time,
+            "the hit registers after the fill"
+        );
     }
 
     #[test]
