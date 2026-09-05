@@ -22,6 +22,7 @@ report regenerates from data committed beside it.
 | `1c-c-statement-sets.md` | `1c-c-statement-sets/` | statement sets verified and lowered once per digest; `linker_setup` under 1 ms | done |
 | `p3-probe.md` | `p3-probe/` | probe: `wasi:http@0.3` serves the route; the unspanned residue's share does not move | done |
 | `5-residue-spans.md` | `5-residue-spans/` | spans around each host call on the p2 path (fork `2eadd937`): the residue is the guests' own paths — instrumentation only | done |
+| `6-throughput.md` | `6-throughput/` | concurrency 1–64 across the route, a no-DB route and the direct statement: the host's 2-core quota is what saturates first, at about 150 req/s | done |
 
 **Read the load average in each report before comparing absolute milliseconds
 across them.** The journey builds on the same machine it measures, so totals

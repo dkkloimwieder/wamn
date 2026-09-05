@@ -14,9 +14,10 @@
 //! quadruples once) the client count; while the server has headroom,
 //! throughput grows with it and p99 barely moves; once something saturates,
 //! throughput flattens and p99 grows with the queue. The knee is the last step
-//! that still scaled -- the first step whose throughput gain was under half of
-//! its concurrency gain names where p99 turned. No absolute number is asserted;
-//! the report records knee and peak so a later run can be compared to this one.
+//! that still scaled -- the first step that gains less than [`KNEE_MIN_GAIN`]
+//! in throughput over the step before it names where p99 turned. No absolute
+//! number is asserted; the report records knee and peak so a later run can be
+//! compared to this one.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -33,9 +34,9 @@ pub const INDEX_FILE: &str = "index.json";
 pub const SCHEMA_PATH: &str = "schema/wamn-throughput.schema.json";
 /// The schema tag the journey stamps on the document it writes.
 pub const INDEX_SCHEMA: &str = "wamn-throughput/v0.1";
-/// A step whose throughput gain fell under this fraction of its concurrency
-/// gain is where the layer stopped scaling.
-pub const KNEE_EFFICIENCY: f64 = 0.5;
+/// A step whose throughput is less than this multiple of the previous step's is
+/// where the layer stopped scaling.
+pub const KNEE_MIN_GAIN: f64 = 1.2;
 /// The marker the pgbench Job prints between its summary and its per-transaction
 /// log lines, so one log stream carries both.
 pub const PGBENCH_LOG_MARKER: &str = "===LOGS===";
@@ -221,9 +222,15 @@ pub struct GeneratorResult {
     /// Transport errors plus responses carrying a status other than the
     /// expected one (HTTP), or failed transactions (pgbench).
     pub errors: u64,
+    /// Requests still in flight when the step's fixed duration ended -- one per
+    /// client in a closed loop. Not errors: the generator abandoned them.
+    pub cut_off: u64,
     pub status_distribution: BTreeMap<String, u64>,
     pub duration_seconds: f64,
 }
+
+/// oha's reason for a request its deadline abandoned.
+const OHA_CUT_OFF: &str = "aborted due to deadline";
 
 /// oha `--output-format json`.
 pub fn parse_oha(json: &str, expected_status: Option<u16>) -> anyhow::Result<GeneratorResult> {
@@ -252,7 +259,8 @@ pub fn parse_oha(json: &str, expected_status: Option<u16>) -> anyhow::Result<Gen
             .unwrap_or_default()
     };
     let statuses = counts("statusCodeDistribution");
-    let transport = counts("errorDistribution");
+    let mut transport = counts("errorDistribution");
+    let cut_off = transport.remove(OHA_CUT_OFF).unwrap_or(0);
     let answered: u64 = statuses.values().sum();
     let failed: u64 = transport.values().sum();
     let unexpected: u64 = match expected_status {
@@ -267,12 +275,16 @@ pub fn parse_oha(json: &str, expected_status: Option<u16>) -> anyhow::Result<Gen
     for (reason, n) in transport {
         status_distribution.insert(format!("error: {reason}"), n);
     }
+    if cut_off > 0 {
+        status_distribution.insert("cut off at the deadline".to_owned(), cut_off);
+    }
     Ok(GeneratorResult {
         requests_per_second: number(&["summary", "requestsPerSec"])?,
         p50_ms: number(&["latencyPercentiles", "p50"])? * 1000.0,
         p99_ms: number(&["latencyPercentiles", "p99"])? * 1000.0,
         total_requests: answered + failed,
         errors: failed + unexpected,
+        cut_off,
         status_distribution,
         duration_seconds: number(&["summary", "total"])?,
     })
@@ -340,9 +352,38 @@ pub fn parse_pgbench(text: &str) -> anyhow::Result<GeneratorResult> {
         p99_ms: percentile(99),
         total_requests: total,
         errors: failed,
+        cut_off: 0,
         status_distribution,
         duration_seconds: duration,
     })
+}
+
+/// One counter out of a cgroup v2 `cpu.stat`.
+pub fn cpu_stat_counter(cpu_stat: &str, key: &str) -> Option<u64> {
+    cpu_stat
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix(key)
+                .and_then(|rest| rest.strip_prefix(' '))
+        })
+        .and_then(|value| value.trim().parse::<u64>().ok())
+}
+
+/// The share of CPU periods across a step in which the cgroup hit its quota;
+/// `None` when the container carries no quota (no `nr_periods` line moved).
+pub fn throttled_share(before: &str, after: &str) -> Option<f64> {
+    let periods = cpu_stat_counter(after, "nr_periods")? - cpu_stat_counter(before, "nr_periods")?;
+    let throttled =
+        cpu_stat_counter(after, "nr_throttled")? - cpu_stat_counter(before, "nr_throttled")?;
+    (periods > 0).then(|| ratio(throttled, periods))
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "cgroup period counts across a ten-second step sit far below 2^53"
+)]
+fn ratio(part: u64, whole: u64) -> f64 {
+    part as f64 / whole as f64
 }
 
 #[expect(
@@ -361,6 +402,22 @@ fn per_second(count: i64, seconds: f64) -> f64 {
     count as f64 / seconds
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "request counts across a ten-second step sit far below 2^53"
+)]
+fn requests_as_f64(requests: u64) -> f64 {
+    requests as f64
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a sample window in milliseconds sits far below 2^53"
+)]
+fn millis_to_seconds(millis: u128) -> f64 {
+    millis as f64 / 1000.0
+}
+
 /// `usage_usec` out of a cgroup v2 `cpu.stat`.
 pub fn cpu_usage_seconds(cpu_stat: &str) -> anyhow::Result<f64> {
     cpu_stat
@@ -377,15 +434,25 @@ pub struct ServerDelta {
     pub xact_commit: i64,
     pub xact_rollback: i64,
     pub sessions: i64,
-    /// Commits per second over the step, from the server's counters.
+    /// Commits per second over the sample window, from the server's counters.
     pub server_tps: f64,
     /// `numbackends` per database at the end of the step.
     pub numbackends_after: BTreeMap<String, i32>,
     /// Client backends by state at the end of the step, `datname/state`.
     pub activity_after: BTreeMap<String, i64>,
-    /// Average cores the host pod and the PostgreSQL container burned across the step.
+    /// Wall seconds between the before and after samples: the step's fixed
+    /// duration plus the Job's scheduling and image pull around it.
+    pub sample_window_seconds: f64,
+    /// Average cores the host pod and the PostgreSQL container burned across
+    /// the sample window.
     pub host_cpu_cores: f64,
     pub pg_cpu_cores: f64,
+    /// Host CPU per request: the pod's CPU seconds across the window over
+    /// every request the generator sent.
+    pub host_cpu_ms_per_request: f64,
+    /// Share of the host pod's CPU periods throttled at its quota across the
+    /// window; `None` when it carries no quota.
+    pub host_throttled_share: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -403,8 +470,11 @@ pub struct StepResult {
 pub struct Knee {
     /// The last concurrency that still scaled.
     pub concurrency: u32,
-    /// The step whose gain fell under [`KNEE_EFFICIENCY`]: where p99 turned.
+    /// The step whose throughput gain fell under [`KNEE_MIN_GAIN`]: where p99 turned.
     pub turns_at: u32,
+    /// Throughput at `turns_at` over throughput at the knee.
+    pub gain: f64,
+    /// Throughput gain per unit of concurrency gain at `turns_at`, for the record.
     pub efficiency: f64,
     pub p99_ms_before: f64,
     pub p99_ms_at: f64,
@@ -424,8 +494,11 @@ pub struct LayerVerdict {
     pub peak: Peak,
 }
 
-/// Throughput gain per unit of concurrency gain, step over step; the first
-/// step under [`KNEE_EFFICIENCY`] is where the layer turned.
+/// Throughput gain step over step; the first step that gains less than
+/// [`KNEE_MIN_GAIN`] is where the layer turned, and the step before it is the
+/// knee. Measured on the first sweep: the sub-linear 1→4 step of a layer still
+/// doubling its throughput is not a knee, and the step where throughput goes
+/// flat or falls is exactly the step where p99 jumps.
 pub fn knee(steps: &[(u32, f64, f64)]) -> Option<Knee> {
     steps.windows(2).find_map(|pair| {
         let (c0, rps0, p99_0) = pair[0];
@@ -433,10 +506,12 @@ pub fn knee(steps: &[(u32, f64, f64)]) -> Option<Knee> {
         if c1 <= c0 || rps0 <= 0.0 {
             return None;
         }
-        let efficiency = (rps1 / rps0 - 1.0) / (f64::from(c1) / f64::from(c0) - 1.0);
-        (efficiency < KNEE_EFFICIENCY).then_some(Knee {
+        let gain = rps1 / rps0;
+        let efficiency = (gain - 1.0) / (f64::from(c1) / f64::from(c0) - 1.0);
+        (gain < KNEE_MIN_GAIN).then_some(Knee {
             concurrency: c0,
             turns_at: c1,
+            gain,
             efficiency,
             p99_ms_before: p99_0,
             p99_ms_at: p99_1,
@@ -494,17 +569,26 @@ pub fn build_report(evidence_dir: &Path) -> anyhow::Result<Report> {
         .with_context(|| format!("{} c={}", step.layer, step.concurrency))?;
         let before: Sample = serde_json::from_str(&read(&step.before)?)?;
         let after: Sample = serde_json::from_str(&read(&step.after)?)?;
-        let duration = generator.duration_seconds.max(f64::EPSILON);
+        let window = millis_to_seconds(
+            after
+                .taken_at_unix_ms
+                .saturating_sub(before.taken_at_unix_ms),
+        )
+        .max(f64::EPSILON);
         let delta = |pick: fn(&DatabaseCounters) -> i64| -> i64 {
             after.databases.iter().map(pick).sum::<i64>()
                 - before.databases.iter().map(pick).sum::<i64>()
         };
         let xact_commit = delta(|d| d.xact_commit);
+        let host_cpu_before = read(&step.host_cpu_before)?;
+        let host_cpu_after = read(&step.host_cpu_after)?;
+        let host_cpu_seconds =
+            cpu_usage_seconds(&host_cpu_after)? - cpu_usage_seconds(&host_cpu_before)?;
         let server = ServerDelta {
             xact_commit,
             xact_rollback: delta(|d| d.xact_rollback),
             sessions: delta(|d| d.sessions),
-            server_tps: per_second(xact_commit, duration),
+            server_tps: per_second(xact_commit, window),
             numbackends_after: after
                 .databases
                 .iter()
@@ -524,12 +608,17 @@ pub fn build_report(evidence_dir: &Path) -> anyhow::Result<Report> {
                     )
                 })
                 .collect(),
-            host_cpu_cores: (cpu_usage_seconds(&read(&step.host_cpu_after)?)?
-                - cpu_usage_seconds(&read(&step.host_cpu_before)?)?)
-                / duration,
+            sample_window_seconds: window,
+            host_cpu_cores: host_cpu_seconds / window,
             pg_cpu_cores: (cpu_usage_seconds(&read(&step.pg_cpu_after)?)?
                 - cpu_usage_seconds(&read(&step.pg_cpu_before)?)?)
-                / duration,
+                / window,
+            host_cpu_ms_per_request: if generator.total_requests > 0 {
+                host_cpu_seconds * 1000.0 / requests_as_f64(generator.total_requests)
+            } else {
+                0.0
+            },
+            host_throttled_share: throttled_share(&host_cpu_before, &host_cpu_after),
         };
         results.push(StepResult {
             layer: step.layer.clone(),
@@ -576,7 +665,7 @@ impl Report {
         let _ = writeln!(out, "## Knee and peak per layer\n");
         let _ = writeln!(
             out,
-            "| layer | knee (last step that scaled) | p99 turns at | efficiency there | peak req/s | at c | p99 at peak |"
+            "| layer | knee (last step that scaled) | p99 turns at | throughput gain there | peak req/s | at c | p99 at peak |"
         );
         let _ = writeln!(out, "|---|---:|---:|---:|---:|---:|---:|");
         for v in &self.verdicts {
@@ -584,13 +673,13 @@ impl Report {
                 Some(k) => {
                     let _ = writeln!(
                         out,
-                        "| `{}` | **{}** | {} ({:.2} → {:.2} ms) | {:.2} | {:.0} | {} | {:.2} ms |",
+                        "| `{}` | **{}** | {} ({:.2} → {:.2} ms) | ×{:.2} | {:.0} | {} | {:.2} ms |",
                         v.layer,
                         k.concurrency,
                         k.turns_at,
                         k.p99_ms_before,
                         k.p99_ms_at,
-                        k.efficiency,
+                        k.gain,
                         v.peak.requests_per_second,
                         v.peak.concurrency,
                         v.peak.p99_ms
@@ -613,9 +702,12 @@ impl Report {
             );
             let _ = writeln!(
                 out,
-                "| c | req/s | p50 ms | p99 ms | errors | requests | server commits/s | backends | host cores | pg cores |"
+                "| c | req/s | p50 ms | p99 ms | errors | cut off | requests | server commits/s | backends | host cores | host CPU ms/req | host throttled | pg cores |"
             );
-            let _ = writeln!(out, "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+            let _ = writeln!(
+                out,
+                "|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+            );
             for r in self.results.iter().filter(|r| r.layer == layer.layer) {
                 let backends: Vec<String> = r
                     .server
@@ -623,18 +715,27 @@ impl Report {
                     .iter()
                     .map(|(db, n)| format!("{}={n}", short_db(db)))
                     .collect();
+                let throttled = r
+                    .server
+                    .host_throttled_share
+                    .map_or("no quota".to_owned(), |share| {
+                        format!("{:.0} %", share * 100.0)
+                    });
                 let _ = writeln!(
                     out,
-                    "| {} | {:.0} | {:.2} | {:.2} | {} | {} | {:.0} | {} | {:.2} | {:.2} |",
+                    "| {} | {:.0} | {:.2} | {:.2} | {} | {} | {} | {:.0} | {} | {:.2} | {:.1} | {} | {:.2} |",
                     r.concurrency,
                     r.generator.requests_per_second,
                     r.generator.p50_ms,
                     r.generator.p99_ms,
                     r.generator.errors,
+                    r.generator.cut_off,
                     r.generator.total_requests,
                     r.server.server_tps,
                     backends.join(" "),
                     r.server.host_cpu_cores,
+                    r.server.host_cpu_ms_per_request,
+                    throttled,
                     r.server.pg_cpu_cores,
                 );
             }
@@ -674,14 +775,22 @@ mod tests {
         assert!((got.requests_per_second - 4081.211897645458).abs() < 1e-9);
         assert!((got.p50_ms - 0.931111).abs() < 1e-9);
         assert!((got.p99_ms - 1.877135).abs() < 1e-9);
-        assert_eq!(got.total_requests, 8168);
-        // 8164 answers carried 501, not 200, plus four transport errors.
-        assert_eq!(got.errors, 8168);
+        // 8164 requests were answered; the four the deadline cut off are the
+        // four clients' last requests, neither answered nor errors.
+        assert_eq!(got.total_requests, 8164);
+        // 8164 answers carried 501, not 200.
+        assert_eq!(got.errors, 8164);
+        assert_eq!(got.cut_off, 4);
         assert_eq!(got.status_distribution["501"], 8164);
-        assert_eq!(got.status_distribution["error: aborted due to deadline"], 4);
-        // The same answers against the status they actually carried: only the
-        // transport errors count.
-        assert_eq!(parse_oha(OHA, Some(501)).expect("parse").errors, 4);
+        assert_eq!(got.status_distribution["cut off at the deadline"], 4);
+        assert!(
+            !got.status_distribution
+                .contains_key("error: aborted due to deadline")
+        );
+        // The same answers against the status they actually carried: nothing
+        // is an error.
+        let expected = parse_oha(OHA, Some(501)).expect("parse");
+        assert_eq!((expected.errors, expected.cut_off), (0, 4));
     }
 
     #[test]
@@ -724,6 +833,7 @@ mod tests {
         ];
         let k = knee(&series).expect("a knee");
         assert_eq!((k.concurrency, k.turns_at), (8, 16));
+        assert!((k.gain - 1.1).abs() < 1e-9);
         assert!((k.efficiency - 0.1).abs() < 1e-9);
         assert_eq!((k.p99_ms_before, k.p99_ms_at), (1.4, 4.0));
         assert_eq!(peak(&series).unwrap().concurrency, 16);
@@ -731,6 +841,33 @@ mod tests {
         assert_eq!(
             knee(&[(1, 10.0, 1.0), (4, 40.0, 1.0), (8, 80.0, 1.0)]),
             None
+        );
+        // The first sweep's shape: 1→4 gains ×2.1 on ×4 the clients (efficiency
+        // 0.37, sub-linear) and is still scaling; the knee is where throughput
+        // goes flat, which is where p99 jumps.
+        let measured = [
+            (1, 68.0, 20.8),
+            (4, 145.0, 44.0),
+            (8, 131.0, 94.2),
+            (16, 152.0, 148.9),
+        ];
+        let k = knee(&measured).expect("a knee");
+        assert_eq!((k.concurrency, k.turns_at), (4, 8));
+        assert!(k.gain < 1.0);
+    }
+
+    #[test]
+    fn the_throttled_share_is_read_across_the_step_and_absent_without_a_quota() {
+        let before = "usage_usec 1\nnr_periods 100\nnr_throttled 10\nthrottled_usec 5\n";
+        let after = "usage_usec 2\nnr_periods 238\nnr_throttled 80\nthrottled_usec 9\n";
+        let share = throttled_share(before, after).expect("a quota");
+        assert!((share - 70.0 / 138.0).abs() < 1e-12);
+        assert_eq!(throttled_share("usage_usec 1\n", "usage_usec 2\n"), None);
+        assert_eq!(cpu_stat_counter(after, "nr_throttled"), Some(80));
+        // A key that is a prefix of another must not match it.
+        assert_eq!(
+            cpu_stat_counter("nr_throttled_x 5\nnr_throttled 6\n", "nr_throttled"),
+            Some(6)
         );
     }
 

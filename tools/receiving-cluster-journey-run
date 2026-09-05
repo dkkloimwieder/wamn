@@ -1643,7 +1643,7 @@ if [[ "$measure_startup" == true ]]; then
           [oha_image]=$oha_image [pgbench_image]=$pgbench_image
           [route_host]=$route_host [secret_name]=$route_caller_secret_name
           [pg_host]=$postgres_ip [pg_port]=5432 [pg_database]=$project_database
-          [pg_user]=postgres [pg_password]=probe [sql]=$bench_sql [sampling_rate]=0.2
+          [pg_user]=postgres [pg_password]=probe [sql]=$bench_sql [sampling_rate]=0.05
         )
         case "$layer" in
           route)

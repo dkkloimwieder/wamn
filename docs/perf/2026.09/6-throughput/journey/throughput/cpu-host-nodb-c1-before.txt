@@ -1,0 +1,10 @@
+usage_usec 137690693
+user_usec 128912766
+system_usec 8777927
+nice_usec 0
+core_sched.force_idle_usec 0
+nr_periods 2038
+nr_throttled 476
+throttled_usec 878184
+nr_bursts 0
+burst_usec 0

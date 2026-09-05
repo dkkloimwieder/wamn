@@ -1,0 +1,233 @@
+{
+  "schema": "wamn-throughput/v0.1",
+  "source": "94c30a8a260052de25cb46d41d2ce40833bfa929",
+  "duration_seconds": 10,
+  "concurrency": [
+    1,
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "layers": [
+    {
+      "layer": "route",
+      "driver": "oha",
+      "target": "POST /purchase_order/get through flow-http, authenticated",
+      "expected_status": 200
+    },
+    {
+      "layer": "nodb",
+      "driver": "oha",
+      "target": "GET /no-such-route through flow-http: routed and answered 404 by the guest, no auth, no database",
+      "expected_status": 404
+    },
+    {
+      "layer": "pg",
+      "driver": "pgbench",
+      "target": "pgbench -M prepared, the generated purchase_order/get read against wamn-db-acme--receiving--dev--nvo5um9n as postgres",
+      "expected_status": null
+    }
+  ],
+  "steps": [
+    {
+      "layer": "route",
+      "concurrency": 1,
+      "result": "route-c1.out",
+      "before": "sample-route-c1-before.json",
+      "after": "sample-route-c1-after.json",
+      "host_cpu_before": "cpu-host-route-c1-before.txt",
+      "host_cpu_after": "cpu-host-route-c1-after.txt",
+      "pg_cpu_before": "cpu-pg-route-c1-before.txt",
+      "pg_cpu_after": "cpu-pg-route-c1-after.txt"
+    },
+    {
+      "layer": "route",
+      "concurrency": 4,
+      "result": "route-c4.out",
+      "before": "sample-route-c4-before.json",
+      "after": "sample-route-c4-after.json",
+      "host_cpu_before": "cpu-host-route-c4-before.txt",
+      "host_cpu_after": "cpu-host-route-c4-after.txt",
+      "pg_cpu_before": "cpu-pg-route-c4-before.txt",
+      "pg_cpu_after": "cpu-pg-route-c4-after.txt"
+    },
+    {
+      "layer": "route",
+      "concurrency": 8,
+      "result": "route-c8.out",
+      "before": "sample-route-c8-before.json",
+      "after": "sample-route-c8-after.json",
+      "host_cpu_before": "cpu-host-route-c8-before.txt",
+      "host_cpu_after": "cpu-host-route-c8-after.txt",
+      "pg_cpu_before": "cpu-pg-route-c8-before.txt",
+      "pg_cpu_after": "cpu-pg-route-c8-after.txt"
+    },
+    {
+      "layer": "route",
+      "concurrency": 16,
+      "result": "route-c16.out",
+      "before": "sample-route-c16-before.json",
+      "after": "sample-route-c16-after.json",
+      "host_cpu_before": "cpu-host-route-c16-before.txt",
+      "host_cpu_after": "cpu-host-route-c16-after.txt",
+      "pg_cpu_before": "cpu-pg-route-c16-before.txt",
+      "pg_cpu_after": "cpu-pg-route-c16-after.txt"
+    },
+    {
+      "layer": "route",
+      "concurrency": 32,
+      "result": "route-c32.out",
+      "before": "sample-route-c32-before.json",
+      "after": "sample-route-c32-after.json",
+      "host_cpu_before": "cpu-host-route-c32-before.txt",
+      "host_cpu_after": "cpu-host-route-c32-after.txt",
+      "pg_cpu_before": "cpu-pg-route-c32-before.txt",
+      "pg_cpu_after": "cpu-pg-route-c32-after.txt"
+    },
+    {
+      "layer": "route",
+      "concurrency": 64,
+      "result": "route-c64.out",
+      "before": "sample-route-c64-before.json",
+      "after": "sample-route-c64-after.json",
+      "host_cpu_before": "cpu-host-route-c64-before.txt",
+      "host_cpu_after": "cpu-host-route-c64-after.txt",
+      "pg_cpu_before": "cpu-pg-route-c64-before.txt",
+      "pg_cpu_after": "cpu-pg-route-c64-after.txt"
+    },
+    {
+      "layer": "nodb",
+      "concurrency": 1,
+      "result": "nodb-c1.out",
+      "before": "sample-nodb-c1-before.json",
+      "after": "sample-nodb-c1-after.json",
+      "host_cpu_before": "cpu-host-nodb-c1-before.txt",
+      "host_cpu_after": "cpu-host-nodb-c1-after.txt",
+      "pg_cpu_before": "cpu-pg-nodb-c1-before.txt",
+      "pg_cpu_after": "cpu-pg-nodb-c1-after.txt"
+    },
+    {
+      "layer": "nodb",
+      "concurrency": 4,
+      "result": "nodb-c4.out",
+      "before": "sample-nodb-c4-before.json",
+      "after": "sample-nodb-c4-after.json",
+      "host_cpu_before": "cpu-host-nodb-c4-before.txt",
+      "host_cpu_after": "cpu-host-nodb-c4-after.txt",
+      "pg_cpu_before": "cpu-pg-nodb-c4-before.txt",
+      "pg_cpu_after": "cpu-pg-nodb-c4-after.txt"
+    },
+    {
+      "layer": "nodb",
+      "concurrency": 8,
+      "result": "nodb-c8.out",
+      "before": "sample-nodb-c8-before.json",
+      "after": "sample-nodb-c8-after.json",
+      "host_cpu_before": "cpu-host-nodb-c8-before.txt",
+      "host_cpu_after": "cpu-host-nodb-c8-after.txt",
+      "pg_cpu_before": "cpu-pg-nodb-c8-before.txt",
+      "pg_cpu_after": "cpu-pg-nodb-c8-after.txt"
+    },
+    {
+      "layer": "nodb",
+      "concurrency": 16,
+      "result": "nodb-c16.out",
+      "before": "sample-nodb-c16-before.json",
+      "after": "sample-nodb-c16-after.json",
+      "host_cpu_before": "cpu-host-nodb-c16-before.txt",
+      "host_cpu_after": "cpu-host-nodb-c16-after.txt",
+      "pg_cpu_before": "cpu-pg-nodb-c16-before.txt",
+      "pg_cpu_after": "cpu-pg-nodb-c16-after.txt"
+    },
+    {
+      "layer": "nodb",
+      "concurrency": 32,
+      "result": "nodb-c32.out",
+      "before": "sample-nodb-c32-before.json",
+      "after": "sample-nodb-c32-after.json",
+      "host_cpu_before": "cpu-host-nodb-c32-before.txt",
+      "host_cpu_after": "cpu-host-nodb-c32-after.txt",
+      "pg_cpu_before": "cpu-pg-nodb-c32-before.txt",
+      "pg_cpu_after": "cpu-pg-nodb-c32-after.txt"
+    },
+    {
+      "layer": "nodb",
+      "concurrency": 64,
+      "result": "nodb-c64.out",
+      "before": "sample-nodb-c64-before.json",
+      "after": "sample-nodb-c64-after.json",
+      "host_cpu_before": "cpu-host-nodb-c64-before.txt",
+      "host_cpu_after": "cpu-host-nodb-c64-after.txt",
+      "pg_cpu_before": "cpu-pg-nodb-c64-before.txt",
+      "pg_cpu_after": "cpu-pg-nodb-c64-after.txt"
+    },
+    {
+      "layer": "pg",
+      "concurrency": 1,
+      "result": "pg-c1.out",
+      "before": "sample-pg-c1-before.json",
+      "after": "sample-pg-c1-after.json",
+      "host_cpu_before": "cpu-host-pg-c1-before.txt",
+      "host_cpu_after": "cpu-host-pg-c1-after.txt",
+      "pg_cpu_before": "cpu-pg-pg-c1-before.txt",
+      "pg_cpu_after": "cpu-pg-pg-c1-after.txt"
+    },
+    {
+      "layer": "pg",
+      "concurrency": 4,
+      "result": "pg-c4.out",
+      "before": "sample-pg-c4-before.json",
+      "after": "sample-pg-c4-after.json",
+      "host_cpu_before": "cpu-host-pg-c4-before.txt",
+      "host_cpu_after": "cpu-host-pg-c4-after.txt",
+      "pg_cpu_before": "cpu-pg-pg-c4-before.txt",
+      "pg_cpu_after": "cpu-pg-pg-c4-after.txt"
+    },
+    {
+      "layer": "pg",
+      "concurrency": 8,
+      "result": "pg-c8.out",
+      "before": "sample-pg-c8-before.json",
+      "after": "sample-pg-c8-after.json",
+      "host_cpu_before": "cpu-host-pg-c8-before.txt",
+      "host_cpu_after": "cpu-host-pg-c8-after.txt",
+      "pg_cpu_before": "cpu-pg-pg-c8-before.txt",
+      "pg_cpu_after": "cpu-pg-pg-c8-after.txt"
+    },
+    {
+      "layer": "pg",
+      "concurrency": 16,
+      "result": "pg-c16.out",
+      "before": "sample-pg-c16-before.json",
+      "after": "sample-pg-c16-after.json",
+      "host_cpu_before": "cpu-host-pg-c16-before.txt",
+      "host_cpu_after": "cpu-host-pg-c16-after.txt",
+      "pg_cpu_before": "cpu-pg-pg-c16-before.txt",
+      "pg_cpu_after": "cpu-pg-pg-c16-after.txt"
+    },
+    {
+      "layer": "pg",
+      "concurrency": 32,
+      "result": "pg-c32.out",
+      "before": "sample-pg-c32-before.json",
+      "after": "sample-pg-c32-after.json",
+      "host_cpu_before": "cpu-host-pg-c32-before.txt",
+      "host_cpu_after": "cpu-host-pg-c32-after.txt",
+      "pg_cpu_before": "cpu-pg-pg-c32-before.txt",
+      "pg_cpu_after": "cpu-pg-pg-c32-after.txt"
+    },
+    {
+      "layer": "pg",
+      "concurrency": 64,
+      "result": "pg-c64.out",
+      "before": "sample-pg-c64-before.json",
+      "after": "sample-pg-c64-after.json",
+      "host_cpu_before": "cpu-host-pg-c64-before.txt",
+      "host_cpu_after": "cpu-host-pg-c64-after.txt",
+      "pg_cpu_before": "cpu-pg-pg-c64-before.txt",
+      "pg_cpu_after": "cpu-pg-pg-c64-after.txt"
+    }
+  ]
+}
