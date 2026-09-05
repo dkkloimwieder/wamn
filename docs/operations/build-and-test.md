@@ -1618,7 +1618,7 @@ tools/receiving-cluster-journey-run --apply --measure-startup \
 The helper refuses a dirty source tree or a pre-existing scratch cluster. Every
 Kubernetes and Helm command names its private kubeconfig/context; it never
 addresses the frozen `kind-wamn` cluster. PostgreSQL, authenticated OCI,
-cluster, port-forward, and the uniquely tagged debug host image are exact-owned
+cluster, port-forward, and the uniquely tagged release host image are exact-owned
 scratch resources. Cleanup absence and a SHA-256 evidence inventory are part of
 the passing verdict.
 

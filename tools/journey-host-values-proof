@@ -92,9 +92,9 @@ grep -q 'replicas: 0' "$work/measure/host-overlay.yaml"; check "measure arm rend
 # is left in place and named, so the diff is available.
 declare -A pinned=(
   [normal/host-base.yaml]=de5f914bcd485c8a223a8b32e2a9cea41947a1905365de747f22362f01104d3e
-  [normal/host-overlay.yaml]=a1236bb611e8135c554cc88bba249a01b72345951430d683f097f910584f86b5
+  [normal/host-overlay.yaml]=bbca90c7a0a3d1a44ccba9650f8c5ab68b8cfe61079b9ec950a6f599e95953d9
   [measure/host-base.yaml]=abe22dc41bd0fc9dae257baed2dd6db0e0eec432473330facdcc13050c908977
-  [measure/host-overlay.yaml]=d817c627a24d7746078d7d6533810416a92881f47eb281c9f2c02c20b80ae74a
+  [measure/host-overlay.yaml]=36c40a94f2b6938f5c5b581620ef3d217065e3cadf4f138934727f6942b41abf
 )
 keep=$(mktemp -d)
 for rel in "${!pinned[@]}"; do

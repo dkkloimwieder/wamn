@@ -146,7 +146,7 @@ chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 chart_version=2.8.0
 route_host=receiving.localhost
 run_id=$$
-host_tag=receiving-${short_head}-${run_id}-debug
+host_tag=receiving-${short_head}-${run_id}-release
 host_image=wamn-host:${host_tag}
 postgres_container=wamn-receiving-pg18-${short_head}-${run_id}
 registry_container=wamn-receiving-registry-${short_head}-${run_id}
@@ -457,8 +457,16 @@ fi
 
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   "$repo_root/tools/build-components" m1
+# THE HOST IS A RELEASE BUILD (wamn-0h0g.17.31). Through 6-throughput.md the
+# journey copied target/debug/wamn-host into its image and measured that: 15-33
+# ms of host CPU per request, a knee at four clients on a 2-core quota. The
+# two-stage Dockerfile has always built the host with --release; only this path
+# did not -- the guest-profile defect of 4-instantiate.md, one layer down. The
+# tools the journey runs on this machine stay debug.
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo build --locked -p wamn-host -p wamn-ctl -p wamn-cdc-reader
+  cargo build --locked --release -p wamn-host
+run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+  cargo build --locked -p wamn-ctl -p wamn-cdc-reader
 
 # Release, matching tools/build-components and the Dockerfile's component
 # stage. These two were the last debug guests the journey pushed.
@@ -489,14 +497,14 @@ done
 
 host_context=$work_dir/host-image
 mkdir -- "$host_context"
-install -m 0755 "$cargo_target_dir/debug/wamn-host" "$host_context/wamn-host"
+install -m 0755 "$cargo_target_dir/release/wamn-host" "$host_context/wamn-host"
 cat >"$host_context/Dockerfile" <<EOF
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \\
  && rm -rf /var/lib/apt/lists/*
 COPY wamn-host /usr/local/bin/wamn-host
 ENV HOME=/tmp
-LABEL wamn.dev/source-head="$head" wamn.dev/build-profile="debug"
+LABEL wamn.dev/source-head="$head" wamn.dev/build-profile="release"
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 EOF
 host_image_owned=true
@@ -505,7 +513,7 @@ run docker build --platform=linux/amd64 --provenance=false \
 docker image inspect "$host_image" >"$evidence_dir/host-image.json"
 jq -e --arg head "$head" '
   .[0].Config.Labels["wamn.dev/source-head"] == $head and
-  .[0].Config.Labels["wamn.dev/build-profile"] == "debug"
+  .[0].Config.Labels["wamn.dev/build-profile"] == "release"
 ' >/dev/null "$evidence_dir/host-image.json"
 
 cluster_owned=true
@@ -1472,29 +1480,41 @@ if [[ "$measure_startup" == true ]]; then
   # next landing that moves the ratio.
   overhead_ratio_ceiling=9
 
-  assert_overhead_ratio() {
+  # THE GATE ASSERTS THE MEDIAN OF FIVE STEADY REQUESTS (wamn-0h0g.17.29). One
+  # request read 10.55 against a ceiling of 9 while the four hot requests of the
+  # same minute on the same host read 5.6-7.5: a single sample is the machine's
+  # moment, not the host's shape. The median of five is load-tolerant the way
+  # the ratio itself is meant to be. The receipt keeps overhead_ratio= as the
+  # median and lists every sample beside it.
+  assert_overhead_ratio_median() {
     # THREE STATEMENTS, NOT ONE. `local a=$1 b=...$a...` declares every name
     # first and assigns after, so the $phase in the second assignment expands the
     # freshly-declared UNSET local and dies under set -u. It cost a full journey.
-    local phase=$1
-    local breakdown=$evidence_dir/trace-breakdown-$phase.json
-    local ratio
-    ratio=$(jq -r '.overhead_ratio // "null"' "$breakdown")
-    if [[ "$ratio" == null ]]; then
-      echo "$phase trace carries no statement or instantiate span, so the" \
-        "overhead ratio cannot be computed" >&2
-      exit 1
-    fi
-    if ! awk -v r="$ratio" -v c="$overhead_ratio_ceiling" \
+    local phase breakdown ratio median
+    local -a ratios=()
+    for phase in "$@"; do
+      breakdown=$evidence_dir/trace-breakdown-$phase.json
+      ratio=$(jq -r '.overhead_ratio // "null"' "$breakdown")
+      if [[ "$ratio" == null ]]; then
+        echo "$phase trace carries no statement or instantiate span, so the" \
+          "overhead ratio cannot be computed" >&2
+        exit 1
+      fi
+      ratios+=("$ratio")
+    done
+    median=$(printf '%s\n' "${ratios[@]}" | jq -s 'sort | .[length / 2 | floor]')
+    if ! awk -v r="$median" -v c="$overhead_ratio_ceiling" \
         'BEGIN { exit !(r <= c) }'; then
-      echo "$phase overhead ratio $ratio exceeds the ceiling" \
-        "$overhead_ratio_ceiling: handle_http_request is more than" \
-        "${overhead_ratio_ceiling}x the statement plus instantiate it contains" >&2
+      echo "steady overhead ratio median $median over ${#ratios[@]} requests" \
+        "(${ratios[*]}) exceeds the ceiling $overhead_ratio_ceiling:" \
+        "handle_http_request is more than ${overhead_ratio_ceiling}x the" \
+        "statement plus instantiate it contains" >&2
       exit 1
     fi
-    printf 'verdict=pass phase=%s overhead_ratio=%s ceiling=%s\n' \
-      "$phase" "$ratio" "$overhead_ratio_ceiling" \
-      >"$evidence_dir/overhead-ratio-$phase.receipt"
+    printf 'verdict=pass phase=steady overhead_ratio=%s ceiling=%s samples=%s ratios=%s\n' \
+      "$median" "$overhead_ratio_ceiling" "${#ratios[@]}" \
+      "$(IFS=,; printf '%s' "${ratios[*]}")" \
+      >"$evidence_dir/overhead-ratio-steady.receipt"
   }
 
   run_startup_request cold startup-cold \
@@ -1571,6 +1591,12 @@ if [[ "$measure_startup" == true ]]; then
     22222222222222222222222222222222 2222222222222222
   run_startup_request steady startup-steady \
     33333333333333333333333333333333 3333333333333333
+  # FOUR MORE STEADY REQUESTS, for the ratio gate's median (wamn-0h0g.17.29).
+  # The first keeps its name and its breakdown, so nothing that read them moves.
+  for sample in 2 3 4 5; do
+    run_startup_request "steady-$sample" "startup-steady-$sample" \
+      "3333333333333333333333333333000$sample" "333333333333000$sample"
+  done
   # FALSE, not true: the executor-platform acquisition belonged to the wiring
   # resolve the FIRST request used to perform. The release preload now does it at
   # startup, in its own trace, so a served request -- restart-first included --
@@ -1579,6 +1605,10 @@ if [[ "$measure_startup" == true ]]; then
     22222222222222222222222222222222 false
   collect_trace_breakdown steady \
     33333333333333333333333333333333 false
+  for sample in 2 3 4 5; do
+    collect_trace_breakdown "steady-$sample" \
+      "3333333333333333333333333333000$sample" false
+  done
 
   # THE THROUGHPUT SWEEP (wamn-0h0g.17.27). Every number above is one request
   # at a time; this asks how many at once, and where p99 turns. Three layers so
@@ -1707,7 +1737,7 @@ if [[ "$measure_startup" == true ]]; then
 
   # Hot only. A restart-first request still pays its pool connects, so it is not
   # the steady state the ratio describes.
-  assert_overhead_ratio steady
+  assert_overhead_ratio_median steady steady-2 steady-3 steady-4 steady-5
   "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
     find /tmp/wamn-wasmtime-cache/modules -type f ! -name '*.stats' \
       -printf '%i %T@ %s %p\n' \

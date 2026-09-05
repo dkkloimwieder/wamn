@@ -100,9 +100,19 @@ runtime:
       resources:
         requests:
           memory: "256Mi"
-          cpu: "250m"
+          # ALIGNED WITH values-host-default.yaml (wamn-0h0g.17.30). This overlay
+          # was cut at 84af9ebc with the default's then-values, 250m/2; when
+          # 2fff2c03 raised the default to 2/6 ("WHY 6 AND NOT 2") it edited
+          # only the default, and the journey deploys THIS file. So every
+          # measurement through docs/perf/2026.09/6-throughput.md ran under the
+          # 2-core cap that comment says it removed: throttled in 44-68 % of
+          # its CPU periods at four clients, with PostgreSQL, both pools and
+          # NATS idle. The single-request experiment read the cap as inert;
+          # the throughput sweep reads it as the first thing that saturates.
+          # Both were true; the sweep is the one that matters.
+          cpu: "2"
         limits:
           memory: "4Gi"
-          cpu: "2"
+          cpu: "6"
         defaultHeapMemory: "256MiB"
         coreInstances: 512
