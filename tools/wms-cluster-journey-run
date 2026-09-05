@@ -2062,7 +2062,11 @@ CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   2>&1 | tee "$evidence_dir/wms-runtime.log"
 assert_one_test_ran "$evidence_dir/wms-runtime.log" \
   contention_and_replay_through_the_composed_route
-mapfile -t contention_lines < <(grep -E '^WMS_CONTENTION_PASS movement_id=[0-9a-f-]{36}$' "$evidence_dir/wms-runtime.log")
+# The receipt is matched anywhere on a line, not at line start: cargo's
+# --nocapture prints "test <name> ... " with no newline before the test's own
+# stdout, so run 9's receipt followed the test name on one line and a
+# line-anchored match found nothing (wamn-362o.48). Still exactly one.
+mapfile -t contention_lines < <(grep -oE 'WMS_CONTENTION_PASS movement_id=[0-9a-f-]{36}' "$evidence_dir/wms-runtime.log")
 [[ ${#contention_lines[@]} -eq 1 ]] || {
   echo "the runtime assertions emitted ${#contention_lines[@]} pass receipts, want 1" >&2
   exit 1

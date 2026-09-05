@@ -192,7 +192,9 @@ async fn contention_and_replay_through_the_composed_route() -> anyhow::Result<()
         "a replay returns the original result, not a second move: {replayed}"
     );
 
-    println!("WMS_CONTENTION_PASS movement_id={movement_id}");
+    // On its own line: under --nocapture cargo prints "test <name> ... " with
+    // no newline before the test's stdout, and the journey reads this receipt.
+    println!("\nWMS_CONTENTION_PASS movement_id={movement_id}");
     Ok(())
 }
 
