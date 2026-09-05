@@ -1,1 +1,0 @@
-{"class":"bounded_list","fields":[{"path":"product_id","type":"uuid","nullable":false,"values":[]},{"path":"location_id","type":"uuid","nullable":false,"values":[]},{"path":"status","type":"text","nullable":false,"values":["available","held"]},{"path":"quantity","type":"numeric","nullable":false,"values":[]},{"path":"pallet_count","type":"int64","nullable":false,"values":[]}]}

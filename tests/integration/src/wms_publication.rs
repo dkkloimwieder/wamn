@@ -28,61 +28,24 @@ struct Operation {
     respond: Option<&'static str>,
 }
 
-const OPERATIONS: [Operation; 7] = [
-    Operation {
-        wiring: "pallet_get",
-        token: "wamn-wms:pallet/get@1.0.0",
-        attachment: "pallet-get-http",
-        route: "/pallet/get",
-        respond: None,
-    },
-    Operation {
-        wiring: "pallet_query",
-        token: "wamn-wms:pallet/query@1.0.0",
-        attachment: "pallet-query-http",
-        route: "/pallet/query",
-        respond: None,
-    },
-    Operation {
-        wiring: "inventory_adjust",
-        token: "wamn-wms:inventory/adjust@1.0.0",
-        attachment: "inventory-adjust-http",
-        route: "/inventory/adjust",
-        respond: None,
-    },
-    Operation {
-        wiring: "inventory_merge",
-        token: "wamn-wms:inventory/merge@1.0.0",
-        attachment: "inventory-merge-http",
-        route: "/inventory/merge",
-        respond: None,
-    },
-    Operation {
-        wiring: "inventory_split",
-        token: "wamn-wms:inventory/split@1.0.0",
-        attachment: "inventory-split-http",
-        route: "/inventory/split",
-        respond: None,
-    },
-    Operation {
-        wiring: "inventory_aggregate",
-        token: "wamn-wms:inventory/aggregate@1.0.0",
-        attachment: "inventory-aggregate-http",
-        route: "/inventory/aggregate",
-        respond: None,
-    },
-    Operation {
-        // RULED wamn-362o.35: the move route serves the COMPOSED wiring --
-        // move -> label-render -> blob-put -- so both gate properties are
-        // claims about that path. The entry is still the command; the answer
-        // comes from the store node.
-        wiring: "inventory_move_and_label",
-        token: "wamn-wms:inventory/move@1.0.0",
-        attachment: "inventory-move-http",
-        route: "/inventory/move",
-        respond: Some("store"),
-    },
-];
+// RULED wamn-362o.39: A PACKAGE DECLARES WHAT IT SHIPS. The guest exports
+// inventory/move alone (the deferral wamn-362o.10 records), and admission
+// compares the declaration against the bytes and refuses any difference --
+// the first push-component ever run for WMS refused six declared handlers
+// the guest lacked. So the shipped closure is one route; the declaration,
+// the wirings, attachments.json and THIS table widen together, in one
+// commit, when the guest grows.
+const OPERATIONS: [Operation; 1] = [Operation {
+    // RULED wamn-362o.35: the move route serves the COMPOSED wiring --
+    // move -> label-render -> blob-put -- so both gate properties are
+    // claims about that path. The entry is still the command; the answer
+    // comes from the store node.
+    wiring: "inventory_move_and_label",
+    token: "wamn-wms:inventory/move@1.0.0",
+    attachment: "inventory-move-http",
+    route: "/inventory/move",
+    respond: Some("store"),
+}];
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -108,7 +71,7 @@ fn declaration() -> ComponentDeclaration {
 }
 
 #[test]
-fn package_owned_inputs_declare_the_exact_seven_route_closure() {
+fn package_owned_inputs_declare_the_exact_shipped_route_closure() {
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_value(read_json(&publication_root().join("attachments.json")))
             .expect("the WMS attachment map decodes");
