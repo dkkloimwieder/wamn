@@ -757,55 +757,96 @@ write_journey_document journey_spec "$journey_schema" "$journey_document"
 # ===================== THE MINT, THROUGH THE PRODUCT'S VERBS =====================
 # RULED wamn-362o.25 (A): WMS is minted from this shell through wamn-ctl's
 # verbs, not through the Rust producer Receiving uses. The verbs are the
-# product; the Receiving test predates them. Order mirrors that producer's
-# proven sequence: provision -> apply -> reconcile -> push -> gate + author
-# -> publish -> push manifest -> fixture seed.
+# product; the Receiving test predates them. Order mirrors that producer
+# (tests/integration/src/dev_environment.rs) CALL FOR CALL, including what it
+# does around the verbs: org -> environment -> the SQL it emits, applied ->
+# platform floor -> run plane -> one prepare per family -> apply -> reconcile
+# -> push -> gate + author -> publish -> bind -> push manifest -> fixture seed.
+# Run 2 (wamn-362o.37) is why "call for call": a verb's flags read from its
+# parser are not its contract; its argument groups and what the proven caller
+# applies after it are.
 ctl=$cargo_target_dir/debug/wamn-ctl
 scenario_worker=$cargo_target_dir/debug/wamn-scenario-worker
 management_pat_secret=$work_dir/management-author-pat.json
-control_author_secret=$work_dir/control-author.json
-management_admitter_secret=$work_dir/management-admitter.json
 project_db_secret=$work_dir/project-db.json
 
-# 1. PROVISION. One call emits every credential the rest of the mint needs:
-#    the five host-Secret families the overlay mounts, named the way
-#    derive_host_secrets expects them (<family>.json, guest-sql.json) and
-#    NOTHING else in that directory; the two role credentials the wiring gate
-#    serves with; and the two PATs -- the management author (the publisher
-#    principal rides in its annotation) and the route caller.
-family_flags=()
-family_generation_flags family_flags "$host_secret_directory" "$app_guest_secret_file" "${app_role_families[@]}"
-run_sensitive provision-project-env "$ctl" provision-project-env \
+# 1. PROVISION, as the producer does. provision-org stamps the org and its
+#    environment policies; the environment call carries the app password the
+#    verb demands when no workload action is selected, and EMITS what CNPG
+#    applies in production -- the Database CR, the role SQL, the privilege SQL
+#    -- for psql to stand in for here, exactly as provision_route does; then
+#    the platform floor and the run plane on the project database; then ONE
+#    prepare per family, because the verb's workload-action group is
+#    single-select. Five families address the project database and carry its
+#    admin URL; identity-reader and control-author do not. The two gate
+#    credentials live in wamn-system, the five host families in the journey's
+#    namespace, where derive_host_secrets expects them (<family>.json,
+#    guest-sql.json for the App family) and NOTHING else in that directory.
+run_sensitive provision-org "$ctl" provision-org \
+  --org "$app_org" --template trials --pool route-auth-pg18 \
+  --system-database-url "$system_url"
+database_cr=$work_dir/database.json
+roles_sql=$work_dir/roles.sql
+privileges_sql=$work_dir/privileges.sql
+run_sensitive provision-project-env env WAMN_APP_PASSWORD=unused-legacy-secret \
+  "$ctl" provision-project-env \
   --org "$app_org" --project "$app_project" --env "$app_environment" --tenant "$app_tenant" \
   --system-database-url "$system_url" --cluster route-auth-pg18 \
-  --app-host "$postgres_ip" --app-port 5432 \
-  --namespace "$namespace" --secret-namespace "$namespace" \
+  --app-host "$postgres_ip" --app-port 5432 --namespace "$namespace" \
+  --emit-database "$database_cr" --emit-role-sql "$roles_sql" --emit-privilege-sql "$privileges_sql" \
   --emit-secret "$project_db_secret" \
-  "${family_flags[@]}" \
-  --prepare-control-author-generation a --emit-control-author-secret "$control_author_secret" \
-  --prepare-management-admitter-generation a --emit-management-admitter-secret "$management_admitter_secret" \
   --emit-management-author-pat-secret "$management_pat_secret" \
   --emit-route-caller-pat-secret "$route_caller_secret"
-for secret in "$management_pat_secret" "$control_author_secret" "$management_admitter_secret" "$project_db_secret"; do
-  chmod 0600 "$secret"
-done
 publisher_principal=$(jq -er '.metadata.annotations["wamn.io/principal-subject"]' "$management_pat_secret")
 secret_url() { jq -er '.stringData.url' "$1"; }
 
-# The project environment's instance suffix is what provisioning minted; the
-# database name and URL derive from it. psql -f - because -c does not
-# interpolate psql variables (the bash -n law entry).
-instance_suffix=$(printf '%s\n' \
-  "SELECT instance_suffix FROM registry.project_envs" \
-  "  WHERE org = :'org' AND project = :'project' AND env = :'env';" |
-  PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres -d postgres -Atq \
-    -v org="$app_org" -v project="$app_project" -v env="$app_environment" -f -)
-if [[ ! "$instance_suffix" =~ ^[a-z0-9]{8}$ ]]; then
-  echo "production provisioning emitted an invalid project instance suffix" >&2
+# The project database is named by the emitted Database CR -- the same name
+# the registry's instance suffix derives -- and created here by psql in place
+# of the operator. CREATE DATABASE is its own autocommit statement.
+project_database=$(jq -er '.spec.name' "$database_cr")
+[[ $project_database == "wamn-db-${app_org}--${app_project}--${app_environment}--"[a-z0-9]* ]] || {
+  echo "the emitted Database CR names $project_database, not this environment's database" >&2
   exit 1
-fi
-project_database=wamn-db-${app_org}--${app_project}--${app_environment}--$instance_suffix
+}
 project_url=postgresql://postgres:probe@$postgres_ip:5432/$project_database
+psql_admin=(env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 -h "$postgres_ip" -p 5432 -U postgres)
+run_sensitive apply-role-sql "${psql_admin[@]}" -d postgres -f "$roles_sql"
+run_sensitive create-project-database "${psql_admin[@]}" -d postgres \
+  -c "CREATE DATABASE \"$project_database\""
+run_sensitive apply-privilege-sql "${psql_admin[@]}" -d postgres -f "$privileges_sql"
+run_sensitive install-catalog-schema "${psql_admin[@]}" -d "$project_database" \
+  -f "$repo_root/deploy/sql/catalog-schema.sql"
+run_sensitive install-app-schema "${psql_admin[@]}" -d "$project_database" \
+  -f "$repo_root/deploy/sql/app-schema.sql"
+run_sensitive reconcile-run-plane "$ctl" reconcile-run-plane \
+  --system-database-url "$system_url" --admin-database-url "$project_url" \
+  --org "$app_org" --project "$app_project" --tenant "$app_tenant" --env "$app_environment" \
+  --schema wamn_run
+
+prepare_family() { # <family> <secret directory> <namespace> <project admin url or "">
+  local family=$1 directory=$2 secret_namespace=$3 target=$4
+  local flags=() target_flags=()
+  family_generation_flags flags "$directory" "$app_guest_secret_file" "$family"
+  [[ -z $target ]] || target_flags=(--target-admin-database-url "$target")
+  run_sensitive "prepare-$family" "$ctl" provision-project-env \
+    --org "$app_org" --project "$app_project" --env "$app_environment" --tenant "$app_tenant" \
+    --system-database-url "$system_url" --namespace "$secret_namespace" \
+    "${target_flags[@]}" "${flags[@]}"
+}
+prepare_family guest              "$host_secret_directory" "$namespace" "$project_url"
+prepare_family executor-platform  "$host_secret_directory" "$namespace" "$project_url"
+prepare_family event-materializer "$host_secret_directory" "$namespace" "$project_url"
+prepare_family http-admitter      "$host_secret_directory" "$namespace" "$project_url"
+prepare_family identity-reader    "$host_secret_directory" "$namespace" ""
+gate_secret_directory=$work_dir/gate-credentials
+install -d -m 0700 "$gate_secret_directory"
+prepare_family control-author      "$gate_secret_directory" wamn-system ""
+prepare_family management-admitter "$gate_secret_directory" wamn-system "$project_url"
+control_author_secret=$gate_secret_directory/control-author.json
+management_admitter_secret=$gate_secret_directory/management-admitter.json
+for secret in "$management_pat_secret" "$control_author_secret" "$management_admitter_secret" "$project_db_secret"; do
+  chmod 0600 "$secret"
+done
 
 # 2. APPLY the package -- migrations and operation grants -- and reconcile
 #    its data-access grants.

@@ -80,26 +80,33 @@ check "control: a file with two JSON values is refused" $?
 REASON="no wiring document at" refused_saying gate_document p 1 x y w "$work/absent.json"
 check "control: a missing wiring document is refused" $?
 
-echo "4. one prepared credential per declared family, where derive_host_secrets looks"
+echo "4. one prepared credential per call, where derive_host_secrets looks"
 flags=()
-family_generation_flags flags /s guest-sql.json executor-platform identity-reader http-admitter event-materializer
-check "the flag set builds" $?
-[[ ${#flags[@]} -eq 20 ]]; check "four families plus guest is five pairs of flag pairs, twenty words" $?
-expected='--prepare-executor-platform-generation a --emit-executor-platform-secret /s/executor-platform.json --prepare-identity-reader-generation a --emit-identity-reader-secret /s/identity-reader.json --prepare-http-admitter-generation a --emit-http-admitter-secret /s/http-admitter.json --prepare-event-materializer-generation a --emit-event-materializer-secret /s/event-materializer.json --prepare-guest-generation a --emit-guest-secret /s/guest-sql.json'
-[[ ${flags[*]} == "$expected" ]]; check "and they are exactly the flags, in declaration order, guest last" $?
-# The file names are the contract with derive_host_secrets: <family>.json and
-# the declared guest file. A flag emitting elsewhere is a Secret the journey
-# never applies.
-for f in executor-platform identity-reader http-admitter event-materializer; do
-  [[ " ${flags[*]} " == *" /s/$f.json "* ]]; check "  $f lands at /s/$f.json" $?
+family_generation_flags flags /s guest-sql.json executor-platform
+check "one family's flags build" $?
+[[ ${#flags[@]} -eq 4 ]]; check "one family is one action and one Secret: four words" $?
+[[ ${flags[*]} == '--prepare-executor-platform-generation a --emit-executor-platform-secret /s/executor-platform.json' ]]
+check "and they are exactly its prepare and its emit, at <family>.json" $?
+# The file names are the contract with derive_host_secrets: <family>.json for
+# every family and the declared guest file for the App family, whose cli_stem
+# is guest. A flag emitting elsewhere is a Secret the journey never applies.
+for f in identity-reader http-admitter event-materializer; do
+  one=(); family_generation_flags one /s guest-sql.json "$f"
+  [[ ${one[*]} == "--prepare-$f-generation a --emit-$f-secret /s/$f.json" ]]; check "  $f lands at /s/$f.json" $?
 done
+guest=(); family_generation_flags guest /s guest-sql.json guest
+[[ ${guest[*]} == '--prepare-guest-generation a --emit-guest-secret /s/guest-sql.json' ]]
+check "  guest (the App family) lands at the declared guest file" $?
 other=()
 family_generation_flags other /elsewhere guest-sql.json executor-platform
-[[ ${other[*]} == *"/elsewhere/executor-platform.json"* && ${other[*]} == *"/elsewhere/guest-sql.json"* ]]
+[[ ${other[*]} == *"/elsewhere/executor-platform.json"* ]]
 check "the directory comes from the caller, not the function" $?
 empty=()
-REASON="no families declared" refused_saying family_generation_flags empty /s guest-sql.json
-check "control: an empty family list is refused" $?
+REASON="exactly one family per call" refused_saying family_generation_flags empty /s guest-sql.json
+check "control: no family is refused" $?
+two=()
+REASON="one workload action per invocation" refused_saying family_generation_flags two /s guest-sql.json executor-platform identity-reader
+check "control: two families in one call are refused naming the verb's law (run 2's failure)" $?
 bad=()
 REASON="is not a family stem" refused_saying family_generation_flags bad /s guest-sql.json 'executor platform'
 check "control: a family with a space is refused before it becomes two flags" $?

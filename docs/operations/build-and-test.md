@@ -1475,11 +1475,19 @@ docker rm -f wamn-bind-connection-pg18 # BY EXPLICIT NAME. Never prune.
 
 The second application's journey, and the first minted through the product's
 verbs rather than the Rust producer: `tools/wms-cluster-journey-run` sources
-the nine harnesses, declares WMS's identity once, and drives
-`provision-project-env`, `apply-package`, `reconcile-package-data-access`,
-`push-component` (wms, label-render and blob-put, under the wms package
-scope), a locally served authoring gate for each wiring, `author-wiring`,
-`publish-release` and `push-release-manifest` from the shell. It seeds the
+the nine harnesses, declares WMS's identity once, and drives the product's
+verbs from the shell in the order the Rust producer proved, call for call:
+`provision-org`, `provision-project-env` for the environment (emitting the
+Database CR, role SQL and privilege SQL that psql applies in place of the
+operator), the platform floor, `reconcile-run-plane`, then
+`provision-project-env` ONCE PER FAMILY — the verb's workload-action group is
+single-select, which cluster run 2 measured (`wamn-362o.37`) — then
+`apply-package`, `reconcile-package-data-access`, `push-component` (wms,
+label-render and blob-put, under the wms package scope), a locally served
+authoring gate for each wiring, `author-wiring`, `publish-release`,
+`bind-connection` and `push-release-manifest`. A verb's flags read from its
+parser are not its call contract; its argument groups and what the proven
+caller applies around it are. It seeds the
 FIXTURE rows a move needs — one product, two locations, one pallet with one
 quantity — which is precondition state, not simulation.
 

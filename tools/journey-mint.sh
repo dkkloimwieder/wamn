@@ -4,7 +4,7 @@
 #
 #   render_component_declaration <template.in> <out.json> <tenant> <package-id> <package-version> <store-alias>
 #   gate_document <package-id> <package-version> <project> <environment> <wiring-id> <wiring.json>
-#   family_generation_flags <out-array-name> <secret-directory> <guest-secret-file> <family>...
+#   family_generation_flags <out-array-name> <secret-directory> <guest-secret-file> <family>
 #
 # LAW: each reads only what it is handed and the files it is told to read or
 # write; touches no cluster and no database; returns rather than exits.
@@ -84,10 +84,16 @@ gate_document() {
   }
 }
 
-# The provisioning flags that ask for one prepared credential per declared
-# family, written where derive_host_secrets will look for it: <family>.json
-# for each family and the declared guest file for the App family, whose
-# cli_stem is "guest". Appends to the named array.
+# The provisioning flags that ask for ONE family's prepared credential, written
+# where derive_host_secrets will look for it: <family>.json, or the declared
+# guest file for the App family, whose cli_stem is "guest". Appends to the
+# named array.
+#
+# ONE FAMILY PER CALL, BY THE VERB'S LAW. provision-project-env's workload
+# actions form a single-select group (WORKLOAD_ACTION_GROUP, multiple(false)):
+# a second family's action in the same invocation is a parse error, not a
+# second credential. WMS cluster run 2 (wamn-362o.37) paid for that with a
+# full build and cluster; this refuses it in milliseconds.
 family_generation_flags() {
   local -n _fgf_out=$1
   local directory=$2 guest_file=$3
@@ -97,16 +103,18 @@ family_generation_flags() {
     echo "family_generation_flags: secret directory and guest file must be given" >&2
     return 1
   }
-  [[ $# -gt 0 ]] || {
-    echo "family_generation_flags: no families declared" >&2
+  [[ $# -eq 1 ]] || {
+    echo "family_generation_flags: exactly one family per call ($# given): provision-project-env takes one workload action per invocation" >&2
     return 1
   }
-  for family in "$@"; do
-    [[ $family =~ ^[a-z]+(-[a-z]+)*$ ]] || {
-      echo "family_generation_flags: $family is not a family stem" >&2
-      return 1
-    }
+  family=$1
+  [[ $family =~ ^[a-z]+(-[a-z]+)*$ ]] || {
+    echo "family_generation_flags: $family is not a family stem" >&2
+    return 1
+  }
+  if [[ $family == guest ]]; then
+    _fgf_out+=(--prepare-guest-generation a --emit-guest-secret "$directory/$guest_file")
+  else
     _fgf_out+=(--prepare-"$family"-generation a --emit-"$family"-secret "$directory/$family.json")
-  done
-  _fgf_out+=(--prepare-guest-generation a --emit-guest-secret "$directory/$guest_file")
+  fi
 }
