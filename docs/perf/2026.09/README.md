@@ -17,7 +17,7 @@ report regenerates from data committed beside it.
 | `1b-linker-clone.md` | `1b-linker-clone/` | link the WASI surface once, clone it per request | done |
 | `4-instantiate.md` | `4-instantiate/`, `4a-release-profile/` | the served guest was a debug build; instantiate is not size-driven | done |
 | `1c-residue-and-scope.md` | `1c-a-residue/`, `1c-scope-split/` | what `linker_setup` is made of — instrumentation only | done |
-| `1c-instance-pre.md` | | un-fuse registration from linker population, cache the `InstancePre` | next |
+| `1c-instance-pre.md` | `1c-instance-pre/` | un-fuse registration from linker population, seal one `InstancePre` per digest | done |
 
 **Read the load average in each report before comparing absolute milliseconds
 across them.** The journey builds on the same machine it measures, so totals
