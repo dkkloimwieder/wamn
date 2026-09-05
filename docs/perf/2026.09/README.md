@@ -23,6 +23,7 @@ report regenerates from data committed beside it.
 | `p3-probe.md` | `p3-probe/` | probe: `wasi:http@0.3` serves the route; the unspanned residue's share does not move | done |
 | `5-residue-spans.md` | `5-residue-spans/` | spans around each host call on the p2 path (fork `2eadd937`): the residue is the guests' own paths — instrumentation only | done |
 | `6-throughput.md` | `6-throughput/` | concurrency 1–64 across the route, a no-DB route and the direct statement: the host's 2-core quota is what saturates first, at about 150 req/s | done |
+| `7-release-host.md` | `7-release-host/` | the host as a release build on the default 6-core cap: 4.8 ms in-host, 1,650 req/s at the knee, the guest SQL pool is what saturates next | done |
 
 **Read the load average in each report before comparing absolute milliseconds
 across them.** The journey builds on the same machine it measures, so totals

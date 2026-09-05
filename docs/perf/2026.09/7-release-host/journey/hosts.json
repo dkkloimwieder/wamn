@@ -1,0 +1,55 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "ddc46df7-40d6-476b-9272-4b9704183b0a",
+            "hostname": "10.244.2.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-05T23:06:05Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "outrageous-cake-8764",
+                "namespace": "wamn-system",
+                "resourceVersion": "1245",
+                "uid": "5459f079-5c3d-44c9-a549-6db48c28781d"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-05T23:06:05Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-05T23:06:06Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-05T23:06:07Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "5.0697083",
+                "systemMemoryFree": 22321848320,
+                "systemMemoryTotal": 65437433856,
+                "version": "2.8.0"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

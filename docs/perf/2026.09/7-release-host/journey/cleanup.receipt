@@ -1,0 +1,1 @@
+verdict=pass cluster=wamn-receiving-journey containers=wamn-receiving-pg18-abf857175a8e-973710,wamn-receiving-registry-abf857175a8e-973710,wamn-receiving-nats-abf857175a8e-973710 reader_pid= image=wamn-host:receiving-abf857175a8e-973710-release
