@@ -4,5 +4,5 @@ world blob-put {
   import wasmcloud:blobstore/types@0.1.0;
   import wasmcloud:blobstore/container@0.1.0;
   import wasmcloud:blobstore/blobstore@0.1.0;
-  export wamn:node/handler@0.1.0;
+  export wamn:node/async-handler@0.1.0;
 }

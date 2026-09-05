@@ -31,13 +31,25 @@
 //! container is environment-owned, and a guest that could name it would need
 //! the coordinate the confinement exists to keep from it.
 
+// THIS NODE EXPORTS THE ASYNC CONTRACT, wamn:node/async-handler (RULED
+// wamn-362o.46). Every wasmcloud:blobstore function is `async func` carrying
+// streams, and the component model forbids a synchronously-lifted export from
+// blocking on an async import: blob-put's first-ever execution, WMS cluster
+// run 7, trapped with "cannot block a synchronous task before returning" on
+// the blocking bridge that used to sit here. And the validator permits the
+// `async` canonical option only on an `async func` type, so the lift needs
+// the async-typed contract: same `run` shape, awaited. The router dispatches
+// on the exported interface and drives it through call_async; admission
+// admits the async lift on this contract alone. label-render, which imports
+// nothing async, keeps `handler`.
 wit_bindgen::generate!({
     world: "blob-put",
     path: "wit",
     generate_all,
+    async: ["export:wamn:node/async-handler@0.1.0#run"],
 });
 
-use exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
+use exports::wamn::node::async_handler::{Emission, Guest, NodeContext, NodeError};
 use wamn::node::types::ErrorDetail;
 
 /// One JSON-pointer wiring parameter.
@@ -70,7 +82,7 @@ fn pointer_param<'a>(
 struct Component;
 
 impl Guest for Component {
-    fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
+    async fn run(context: NodeContext, input: String) -> Result<Emission, NodeError> {
         let config = serde_json::from_str::<serde_json::Value>(&context.config)
             .map_err(|_| terminal("invalid_config", "config is not JSON"))?;
         let store_alias = config
@@ -130,7 +142,7 @@ impl Guest for Component {
                 })?
                 .as_bytes()
                 .to_vec();
-            let written = block_on(write_object(store_alias.clone(), key.clone(), body))?;
+            let written = write_object(store_alias.clone(), key.clone(), body).await?;
             let Some(record) = value.as_object_mut() else {
                 return Err(invalid_input(
                     "item_value_not_object",
@@ -179,9 +191,6 @@ async fn write_object(
     Ok(name)
 }
 
-fn block_on<T: 'static>(future: impl std::future::Future<Output = T> + 'static) -> T {
-    wit_bindgen::block_on(future)
-}
 
 fn invalid_input(code: &str, message: impl Into<String>) -> NodeError {
     NodeError::InvalidInput(ErrorDetail {

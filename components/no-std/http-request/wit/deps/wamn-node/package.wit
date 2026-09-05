@@ -159,9 +159,29 @@ interface handler {
   run: func(ctx: node-context, input: json) -> result<emission, node-error>;
 }
 
+/// The async variant of the handler contract, for nodes that await async
+/// capability imports (RULED wamn-362o.46). The component model permits the
+/// `async` canonical option only on an `async func` type -- an async lift of
+/// `handler.run` is refused by the validator -- so a node that must await
+/// (blob-put over wasmcloud:blobstore's async streams was the first) exports
+/// THIS interface, with the same `run` shape typed async, and the router
+/// dispatches on whichever handler interface a node exports. Named for what
+/// it is, not versioned: nothing outside this tree consumes the node ABI.
+/// Sync nodes keep `handler`.
+interface async-handler {
+  use types.{json, node-context, emission, node-error};
+
+  run: async func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
 /// Reference world pinning the handler shape over inline JSON. Production
 /// components may export several operation-named interfaces with that shape.
 /// Effect authority is composed onto a guest rather than enumerated here.
 world node {
   export handler;
+}
+
+/// Reference world for an async node: the same contract, awaited.
+world async-node {
+  export async-handler;
 }

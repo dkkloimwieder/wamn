@@ -20,7 +20,7 @@
     "store": {
       "component": "blob-put",
       "interface-version": "0.1.0",
-      "operation": "wamn:node/handler@0.1.0",
+      "operation": "wamn:node/async-handler@0.1.0",
       "params": {
         "store_alias": "labels",
         "key_field": "/movement_id",

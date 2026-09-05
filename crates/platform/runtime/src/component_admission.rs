@@ -22,6 +22,8 @@ mod node_contract {
 
 use node_contract::wamn::node::types as node_types;
 
+/// The async node contract; the one export an async lift is admitted on.
+pub const ASYNC_HANDLER_OPERATION: &str = "wamn:node/async-handler@0.1.0";
 const HANDLER_SIGNATURE: &str =
     "wamn:node/handler@0.1.0::run(node-context, string) -> result<emission, node-error>";
 
@@ -108,7 +110,7 @@ pub fn validate_component_admission(
     })?;
     let raw = component.engine();
     let component_type = component.component_type();
-    let validate_handler_signature = |item: ComponentItem| -> anyhow::Result<()> {
+    let validate_handler_signature = |export: &str, item: ComponentItem| -> anyhow::Result<()> {
         let ComponentItem::ComponentInstance(instance) = item else {
             anyhow::bail!("item is not an interface instance");
         };
@@ -118,7 +120,13 @@ pub fn validate_component_admission(
         let ComponentItem::ComponentFunc(run) = run.ty else {
             anyhow::bail!("interface member run is not a component function");
         };
-        if run.async_() {
+        // The async lift belongs to the async-typed contract only
+        // (wamn:node/async-handler, RULED wamn-362o.46): the component model
+        // permits the `async` canonical option solely on an `async func`
+        // type, and a sync node must not present the async ABI to a router
+        // that pools it as a pure function. The type check below is the same
+        // for both contracts.
+        if run.async_() && export != ASYNC_HANDLER_OPERATION {
             anyhow::bail!("run uses the async ABI");
         }
         run.typecheck::<
@@ -153,7 +161,7 @@ pub fn validate_component_admission(
         let item = component_type
             .get_export(raw, export)
             .expect("equal declaration and byte export sets contain every operation");
-        if let Err(error) = validate_handler_signature(item.ty) {
+        if let Err(error) = validate_handler_signature(export, item.ty) {
             return Err(operation_signature_mismatch(&component_name, export, error));
         }
     }
@@ -197,7 +205,7 @@ pub fn validate_component_admission(
         let item = component_type
             .get_import(raw, dependency)
             .expect("the component import inventory contains the dependency");
-        if let Err(error) = validate_handler_signature(item.ty) {
+        if let Err(error) = validate_handler_signature(dependency, item.ty) {
             return Err(ComponentAdmissionError::new(
                 ComponentAdmissionErrorKind::OperationSignatureMismatch,
                 &component_name,
@@ -350,7 +358,7 @@ mod tests {
         ComponentParameterDeclaration, ComponentPortDeclaration,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
-    use wit_parser::{ManglingAndAbi, Resolve};
+    use wit_parser::{LiftLowerAbi, ManglingAndAbi, Resolve};
 
     use super::*;
 
@@ -403,6 +411,35 @@ mod tests {
     }
 
     fn component_bytes_with_exports(imports: &str, extra_exports: &str) -> Vec<u8> {
+        component_bytes_with_abi(imports, extra_exports, ManglingAndAbi::Standard32)
+    }
+
+    /// The same fixture with a chosen lift/lower ABI, so an ASYNC-LIFTED
+    /// export can be built: the legacy mangling with the async-callback ABI
+    /// lifts every export `async`.
+    fn component_bytes_with_abi(imports: &str, extra_exports: &str, abi: ManglingAndAbi) -> Vec<u8> {
+        component_bytes_exporting(OPERATION, imports, extra_exports, abi)
+    }
+
+    /// The fixture with a chosen handler interface as its operation export.
+    fn component_bytes_exporting(
+        operation: &str,
+        imports: &str,
+        extra_exports: &str,
+        abi: ManglingAndAbi,
+    ) -> Vec<u8> {
+        try_component_bytes_exporting(operation, imports, extra_exports, abi)
+            .expect("fixture component encodes")
+    }
+
+    /// The same, handing back the encoder's verdict: a shape the component
+    /// model itself refuses never reaches admission.
+    fn try_component_bytes_exporting(
+        operation: &str,
+        imports: &str,
+        extra_exports: &str,
+        abi: ManglingAndAbi,
+    ) -> anyhow::Result<Vec<u8>> {
         let mut resolve = Resolve::new();
         resolve
             .push_str(
@@ -416,7 +453,7 @@ mod tests {
                 .expect("fixture dependency parses");
         }
         let fixture = format!(
-            "package test:component@1.0.0; world fixture {{ {imports} export wamn:node/handler@0.1.0; {extra_exports} }}"
+            "package test:component@1.0.0; world fixture {{ {imports} export {operation}; {extra_exports} }}"
         );
         let package = resolve
             .push_str("fixture.wit", &fixture)
@@ -424,7 +461,7 @@ mod tests {
         let world = resolve
             .select_world(&[package], Some("fixture"))
             .expect("fixture world resolves");
-        let mut module = dummy_module(&resolve, world, ManglingAndAbi::Standard32);
+        let mut module = dummy_module(&resolve, world, abi);
         embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
             .expect("fixture component metadata embeds");
         ComponentEncoder::default()
@@ -432,7 +469,6 @@ mod tests {
             .expect("fixture core module is accepted")
             .validate(true)
             .encode()
-            .expect("fixture component encodes")
     }
 
     fn request() -> ComponentAdmissionRequest {
@@ -566,6 +602,60 @@ mod tests {
             ComponentAdmissionErrorKind::InvalidComponentBytes
         );
     }
+
+    /// RULED wamn-362o.46: an async node exports wamn:node/async-handler and
+    /// lifts `run` async; the pin admits the lift THERE, and the type check is
+    /// the same one handler.run passes.
+    #[test]
+    fn an_async_lifted_run_on_async_handler_is_admitted() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let bytes = component_bytes_exporting(
+            ASYNC_HANDLER_OPERATION,
+            "",
+            "",
+            ManglingAndAbi::Legacy(LiftLowerAbi::AsyncCallback),
+        );
+        let mut request = request();
+        let operation = request
+            .declaration
+            .operations
+            .remove(OPERATION)
+            .expect("the fixture declares the handler operation");
+        request
+            .declaration
+            .operations
+            .insert(ASYNC_HANDLER_OPERATION.to_string(), operation);
+        // The fixture's lift is asserted, not assumed: the dummy builder
+        // applies the async ABI only where the type allows it, so a test that
+        // skipped this check would pass on a sync lift and prove nothing.
+        let component = Component::new(engine.inner(), &bytes).expect("fixture instantiates");
+        let raw = component.engine();
+        let ComponentItem::ComponentInstance(instance) = component
+            .component_type()
+            .get_export(raw, ASYNC_HANDLER_OPERATION)
+            .expect("the async handler interface is exported")
+            .ty
+        else {
+            panic!("the async handler export is not an interface instance");
+        };
+        let ComponentItem::ComponentFunc(run) =
+            instance.get_export(raw, "run").expect("run is exported").ty
+        else {
+            panic!("run is not a component function");
+        };
+        assert!(run.async_(), "the fixture's run is async-lifted");
+        validate_component_admission(&engine, &bytes, request)
+            .expect("an async-lifted run on the async handler contract is admitted");
+    }
+
+    // No test builds the refused shape -- an async lift of the sync-typed
+    // handler.run -- because no tool will: the component model permits the
+    // `async` canonical option only on an `async func` type (wasmparser's
+    // check_asyncness refused blob-put's first attempt at virtualization), and
+    // wit-component's dummy builder simply lifts a sync-typed function
+    // synchronously whatever ABI it is asked for. Admission's own refusal of
+    // run.async_() on `handler` stands as defence in depth behind the
+    // validator, unreachable by any component that validates.
 
     #[test]
     fn actual_unadmitted_component_import_refuses() {

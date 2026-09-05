@@ -35,6 +35,12 @@ fn handler(declaration: &Value) -> &Value {
     &declaration["operations"]["wamn:node/handler@0.1.0"]
 }
 
+/// The async node contract (RULED wamn-362o.46): blob-put awaits its store,
+/// so it exports wamn:node/async-handler rather than handler.
+fn async_handler(declaration: &Value) -> &Value {
+    &declaration["operations"]["wamn:node/async-handler@0.1.0"]
+}
+
 fn parameter_names(node: &Value) -> Vec<String> {
     node["parameters"]
         .as_array()
@@ -114,7 +120,7 @@ fn entry_envelope_schema() -> serde_json::Value {
 #[test]
 fn blob_put_locates_its_key_and_body_by_wiring_parameter() {
     let document = declaration("components/execution/blob-put/declaration.json.in");
-    let node = handler(&document);
+    let node = async_handler(&document);
     assert_eq!(
         parameter_names(node),
         ["store_alias", "key_field", "body_field"]

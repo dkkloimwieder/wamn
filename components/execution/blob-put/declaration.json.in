@@ -7,7 +7,7 @@
   "component": "blob-put",
   "interface-version": "0.1.0",
   "operations": {
-    "wamn:node/handler@0.1.0": {
+    "wamn:node/async-handler@0.1.0": {
       "input-ports": [
         {
           "name": "input",
