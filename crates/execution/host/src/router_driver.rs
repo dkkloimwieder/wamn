@@ -2163,6 +2163,13 @@ impl NodeInstance {
                     allowed_hosts: Arc::clone(&allowed_hosts),
                     ..Default::default()
                 };
+                // The three per-request host objects, the imports projection and
+                // WorkloadComponent::new are the 1.02 ms `linker_setup` residue
+                // that the 1b split left unnamed. Entered guards rather than
+                // in_scope closures: these sections declare bindings the rest of
+                // the block uses.
+                let hosts_span = tracing::info_span!("wamn.linker.hosts");
+                let hosts_entered = hosts_span.enter();
                 let connection_http = Arc::new(ConnectionHttp::new(
                     Arc::clone(&postgres),
                     Arc::clone(&credentials),
@@ -2197,11 +2204,14 @@ impl NodeInstance {
                     components,
                     invocation: std::sync::Mutex::new(None),
                 });
+                drop(hosts_entered);
                 tracing::info_span!("wamn.linker.nested")
                     .in_scope(|| add_nested_operation_links(&mut linker, Arc::clone(&nested), component_fact))?;
                 let loopback = Arc::new(std::sync::Mutex::new(
                     wash_runtime::sockets::loopback::Network::default(),
                 ));
+                let workload_span = tracing::info_span!("wamn.linker.workload");
+                let workload_entered = workload_span.enter();
                 let mut workload = WorkloadComponent::new(
                     "router-driver",
                     "router-driver",
@@ -2214,6 +2224,9 @@ impl NodeInstance {
                     loopback,
                     InstancePolicy::Ephemeral,
                 );
+                drop(workload_entered);
+                let imports_span = tracing::info_span!("wamn.linker.imports");
+                let imports_entered = imports_span.enter();
                 let imports = workload.world().imports;
                 // The driver has one credential-exact project. Route every named
                 // Postgres instance through that same trusted project rather than
@@ -2232,6 +2245,7 @@ impl NodeInstance {
                         interface
                     })
                     .collect();
+                drop(imports_entered);
                 async {
                     let mut item = WorkloadItem::Component(&mut workload);
                     postgres
@@ -2254,6 +2268,8 @@ impl NodeInstance {
                 }
                 .instrument(tracing::info_span!("wamn.linker.plugins"))
                 .await?;
+                let scope_span = tracing::info_span!("wamn.linker.scope");
+                let scope_entered = scope_span.enter();
                 let scope: Box<str> = workload.id().into();
                 // Linker setup is not an identity bind. In particular WamnLogging's
                 // plugin hook seeds even an empty claim. Clear every registry before
@@ -2285,6 +2301,7 @@ impl NodeInstance {
                 // phase that measured 0.093 ms -- 3% of linker_setup. The number
                 // is recorded in docs/perf/2026.09/1b-linker-clone.md; the guard
                 // is worth more than keeping the span.
+                drop(scope_entered);
                 let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
                 // Instantiation executes guest start code, so it needs the same bounded
                 // ceiling as a call. One tick is only 10 ms and interrupts valid
