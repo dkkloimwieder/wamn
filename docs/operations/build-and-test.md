@@ -1556,7 +1556,7 @@ tools/receiving-cluster-journey-run --apply \
   --evidence-dir /tmp/wamn-receiving-cluster-evidence
 ```
 
-**Run the nine harness proofs first. They cost a second and they stand in
+**Run the ten harness proofs first. They cost a second and they stand in
 front of a twenty-five-minute cluster run.**
 
 ```bash
@@ -1571,7 +1571,7 @@ the `break` form printed the failure and exited 0; the subshell form printed it
 and exited 1. A command that stands in front of a twenty-five-minute cluster
 run, documented in the sentence that introduces the guards, silently disarmed.
 
-The journey's render and assert surface is lifted into nine shared harnesses,
+The journey's render and assert surface is lifted into ten shared harnesses,
 and each has an offline proof beside it — no cluster, no containers, no
 network, and the frozen cluster untouched. Together they are the whole
 regression net for that surface:
@@ -1587,6 +1587,7 @@ regression net for that surface:
 | `journey-probe.sh` | the probe Job renders AND the rendered probe script actually runs |
 | `journey-document.sh` | the input document is written and amended against the schema the Rust struct generated |
 | `journey-mint.sh` | the declaration renders, the gate envelope and the per-family provisioning flags a shell mint needs |
+| `journey-throughput.sh` | a throughput step's Job renders per layer, digest-pinned, the PAT through Kubernetes expansion, AND the rendered pgbench script actually runs |
 
 Each pins Receiving's bytes by digest against the block it replaced, renders a
 second application's declaration to prove the block is generic rather than
@@ -1620,6 +1621,50 @@ addresses the frozen `kind-wamn` cluster. PostgreSQL, authenticated OCI,
 cluster, port-forward, and the uniquely tagged debug host image are exact-owned
 scratch resources. Cleanup absence and a SHA-256 evidence inventory are part of
 the passing verdict.
+
+### `[RECEIVING-THROUGHPUT-BENCH]` — concurrency 1 to 64 across three layers, the knee
+
+`wamn-0h0g.17.27`. Every number in `docs/perf/2026.09` is one request at a
+time; this asks how many at once and where p99 turns. On the same
+measure-startup cluster, after the steady request, the runner sweeps
+concurrency 1, 4, 8, 16, 32, 64 for ten seconds a step across three layers so
+the cost attributes: the authenticated route end-to-end, the same generated
+statement from a direct PostgreSQL client, and a route the guest answers 404
+to without touching a database. **The load generator is a stock tool in a pod,
+pinned by digest** (owner ruling): `oha` for the HTTP layers, `pgbench` from the
+pinned `postgres` image for the direct layer. Rust does only the counter
+sampling and the report: `wamn-throughput sample` reads `pg_stat_database`,
+`pg_stat_activity` and NATS `/varz` before and after every step, and
+`wamn-throughput report` reduces the generators' own output plus those samples
+to one row per step and a knee and a peak per layer (`throughput/report.md`,
+`throughput/summary.json`). The host pod's and the PostgreSQL container's
+`cpu.stat` are captured around each step as well, so what saturates first is
+read from the machine, not inferred.
+
+```bash
+tools/receiving-cluster-journey-run --apply --throughput \
+  --evidence-dir /tmp/wamn-receiving-throughput-evidence
+```
+
+The sweep runs before the overhead-ratio gate, so a red ratio does not cost it
+its evidence. Its shape gate is the ignored test below, which needs only the
+sweep's directory and asserts no absolute number — every layer ran every step,
+every step produced a rate and a p99, every error count is recorded, and the
+knee and peak were computed. The knee and the peak are recorded in the report;
+a ceiling ratchets later, on a landing.
+
+```bash
+WAMN_THROUGHPUT_EVIDENCE_DIR=/tmp/wamn-receiving-throughput-evidence/throughput \
+  cargo test -p wamn-proof-integration --lib --locked --offline \
+  throughput_bench_live::tests::every_layer_ran_the_whole_sweep_and_its_knee_is_recorded \
+  -- --ignored --exact --nocapture
+```
+
+The render is `tools/journey-throughput.sh`, proved offline by
+`tools/journey-throughput-proof` like the other harnesses; the index document
+the shell writes is strict on the Rust side (`deny_unknown_fields`) and its
+schema is checked in at `tests/integration/schema/wamn-throughput.schema.json`,
+regenerated with `wamn-throughput schema`.
 
 ### Other live gates that carry their command in-source
 

@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-throughput.sh. No cluster: a jq-checked render per
+# layer, the guards refused by name, and the pgbench script actually RUN
+# against a stub pgbench.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-throughput.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+refused_saying() { local err; err=$("$@" 2>&1 >/dev/null) && return 1; [[ $err == *"$REASON"* ]]; }
+
+OHA='ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f'
+PGB='postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d'
+
+# Everything unguessable, so a value reaching the output by any route other
+# than the array shows itself.
+declare -A route_spec=(
+  [job]=bench-route-c4 [namespace]=wamn-receiving-journey [layer]=route
+  [concurrency]=4 [duration_seconds]=10 [oha_image]=$OHA
+  [url]=http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get
+  [route_host]=receiving.localhost [secret_name]=wamn-route-caller
+  [body]='[{"request_id":"bench","id":"00000000-0000-0000-0000-000000000301"}]'
+)
+declare -A nodb_spec=(
+  [job]=bench-nodb-c64 [namespace]=wamn-receiving-journey [layer]=nodb
+  [concurrency]=64 [duration_seconds]=10 [oha_image]=$OHA
+  [url]=http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route
+  [route_host]=receiving.localhost
+)
+declare -A pg_spec=(
+  [job]=bench-pg-c16 [namespace]=wamn-receiving-journey [layer]=pg
+  [concurrency]=16 [duration_seconds]=10 [pgbench_image]=$PGB
+  [pg_host]=10.89.0.7 [pg_port]=5432 [pg_database]=wamn-db-acme--receiving--dev--x
+  [pg_user]=postgres [pg_password]=probe [sampling_rate]=0.2
+  [sql]="SELECT model.id FROM receiving.purchase_order AS model WHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;"
+)
+
+echo "1. the route layer: oha, POST, the PAT through Kubernetes expansion, no shell"
+render_throughput_job route_spec "$work/route.json"; check "renders" $?
+jq -e '.kind == "Job" and .metadata.name == "bench-route-c4" and
+  .spec.backoffLimit == 0 and .spec.activeDeadlineSeconds == 120 and
+  .spec.template.spec.restartPolicy == "Never"' "$work/route.json" >/dev/null
+check "a one-shot Job with a deadline of three durations plus ninety seconds" $?
+jq -e --arg img "$OHA" '.spec.template.spec.containers[0] |
+  .image == $img and .command == ["/bin/oha"] and
+  (.args | index("-c") as $i | .[$i+1] == "4") and
+  (.args | index("-z") as $i | .[$i+1] == "10s") and
+  (.args | index("--output-format") as $i | .[$i+1] == "json") and
+  (.args | index("-m") as $i | .[$i+1] == "POST") and
+  (.args | index("Host: receiving.localhost")) != null and
+  (.args | index("Authorization: Bearer $(ROUTE_CALLER_PAT)")) != null and
+  (.args | index("-d") as $i | .[$i+1] | fromjson | .[0].request_id == "bench") and
+  .args[-1] == "http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get"' \
+  "$work/route.json" >/dev/null
+check "the digest-pinned image, the concurrency, duration, JSON output, headers, body and URL are the spec's" $?
+jq -e '.spec.template.spec.containers[0].env == [
+  { name: "ROUTE_CALLER_PAT", valueFrom: { secretKeyRef: { name: "wamn-route-caller", key: "token" } } }]' \
+  "$work/route.json" >/dev/null
+check "the PAT comes from the named Secret and appears nowhere else" $?
+! grep -q 'probe\|password' "$work/route.json"; check "no credential-shaped literal in the HTTP Job" $?
+
+echo "2. the no-DB layer: GET, unauthenticated, no Secret at all"
+render_throughput_job nodb_spec "$work/nodb.json"; check "renders" $?
+jq -e '.spec.template.spec.containers[0] |
+  (has("env") | not) and
+  (.args | index("-m") as $i | .[$i+1] == "GET") and
+  (.args | index("-d")) == null and
+  (.args | index("-c") as $i | .[$i+1] == "64") and
+  .args[-1] == "http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route"' \
+  "$work/nodb.json" >/dev/null
+check "GET, no body, no env, the spec's concurrency and URL" $?
+
+echo "3. the direct-PostgreSQL layer: pgbench under sh, the statement written from a quoted heredoc"
+render_throughput_job pg_spec "$work/pg.json"; check "renders" $?
+jq -e --arg img "$PGB" '.spec.template.spec.containers[0] |
+  .image == $img and .command == ["/bin/sh", "-ec"] and
+  .env == [{ name: "PGPASSWORD", value: "probe" }] and
+  (.args[0] | contains("-c 16 -j 8 -T 10")) and
+  (.args[0] | contains("--sampling-rate 0.2")) and
+  (.args[0] | contains("-h 10.89.0.7 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--x")) and
+  (.args[0] | contains("echo ===LOGS===")) and
+  (.args[0] | contains("receiving.purchase_order"))' "$work/pg.json" >/dev/null
+check "the pinned image, the password env, clients, capped threads, sampling rate, target and statement" $?
+
+echo "4. THE PGBENCH SCRIPT RUNS -- broken shell here is a forty-minute failure"
+mkdir -p "$work/bin"
+cat >"$work/bin/pgbench" <<'STUB'
+#!/bin/sh
+# Records its arguments, checks the script file it was pointed at, and writes
+# the log file a real -l run leaves behind.
+printf '%s\n' "$@" >/tmp/stub-pgbench-args
+f=""; prev=""
+for a in "$@"; do [ "$prev" = "-f" ] && f=$a; prev=$a; done
+[ -n "$f" ] && [ -s "$f" ] || { echo "stub: no script file" >&2; exit 3; }
+grep -q "receiving.purchase_order" "$f" || { echo "stub: statement not in script" >&2; exit 3; }
+grep -q "'00000000-0000-0000-0000-000000000301'::uuid" "$f" || { echo "stub: literal lost its quotes" >&2; exit 3; }
+echo "tps = 123.4 (without initial connection time)"
+echo "number of transactions actually processed: 1234"
+echo "number of failed transactions: 0 (0.000%)"
+echo "duration: 10 s"
+printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >/tmp/pgb.stub
+STUB
+chmod +x "$work/bin/pgbench"
+rm -f /tmp/pgb.stub /tmp/stub-pgbench-args
+( cd "$work" && PATH="$work/bin:$PATH" sh -ec "$(jq -r '.spec.template.spec.containers[0].args[0]' "$work/pg.json")" ) \
+  >"$work/pg.log" 2>&1
+check "the rendered script exits 0 against the stub" $?
+grep -q '^tps = 123.4' "$work/pg.log" && grep -q '^===LOGS===$' "$work/pg.log" && grep -q '^0 2 103 0 ' "$work/pg.log"
+check "the summary, then the marker, then the log lines, in that order" $?
+[[ $(grep -n '^===LOGS===$' "$work/pg.log" | cut -d: -f1) -lt $(grep -n '^0 1 471' "$work/pg.log" | cut -d: -f1) ]]
+check "the marker precedes the log" $?
+grep -qx -- '--sampling-rate' /tmp/stub-pgbench-args && grep -qx -- '0.2' /tmp/stub-pgbench-args
+check "pgbench received the sampling rate as its own argument" $?
+rm -f /tmp/pgb.stub /tmp/stub-pgbench-args /tmp/bench.sql
+
+echo "5. refusals, each naming the cause"
+declare -A bad; for k in "${!route_spec[@]}"; do bad[$k]=${route_spec[$k]}; done; unset 'bad[secret_name]'
+REASON='route spec is missing secret_name' refused_saying render_throughput_job bad "$work/x.json"
+check "a route spec without its Secret is refused by name" $?
+declare -A bad2; for k in "${!pg_spec[@]}"; do bad2[$k]=${pg_spec[$k]}; done; bad2[layer]=redis
+REASON='unknown layer redis' refused_saying render_throughput_job bad2 "$work/x.json"
+check "an unknown layer is refused" $?
+declare -A bad3; for k in "${!nodb_spec[@]}"; do bad3[$k]=${nodb_spec[$k]}; done; bad3[concurrency]=four
+REASON='concurrency must be a positive integer' refused_saying render_throughput_job bad3 "$work/x.json"
+check "a non-numeric concurrency is refused" $?
+declare -A bad4; for k in "${!nodb_spec[@]}"; do bad4[$k]=${nodb_spec[$k]}; done; bad4[oha_image]=ghcr.io/hatoo/oha:latest
+REASON='oha_image must be pinned by digest' refused_saying render_throughput_job bad4 "$work/x.json"
+check "a tag where a digest is required is refused" $?
+declare -A bad5; for k in "${!route_spec[@]}"; do bad5[$k]=${route_spec[$k]}; done; unset 'bad5[layer]'
+REASON='spec is missing layer' refused_saying render_throughput_job bad5 "$work/x.json"
+check "a spec without a layer is refused" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-throughput-proof: all checks passed"; else
+  echo "journey-throughput-proof: $failures check(s) FAILED"; exit 1; fi

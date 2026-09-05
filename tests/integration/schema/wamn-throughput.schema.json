@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "LayerSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "driver": {
+          "description": "`oha` or `pgbench`.",
+          "type": "string"
+        },
+        "expected_status": {
+          "description": "The HTTP status every response is expected to carry; absent for pgbench.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "layer": {
+          "type": "string"
+        },
+        "target": {
+          "description": "What the generator was pointed at, for the report.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "driver",
+        "layer",
+        "target"
+      ],
+      "type": "object"
+    },
+    "StepSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "type": "string"
+        },
+        "before": {
+          "description": "[`Sample`] taken just before and just after the step.",
+          "type": "string"
+        },
+        "concurrency": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "host_cpu_after": {
+          "type": "string"
+        },
+        "host_cpu_before": {
+          "description": "`cpu.stat` of the host pod's container, before and after.",
+          "type": "string"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "pg_cpu_after": {
+          "type": "string"
+        },
+        "pg_cpu_before": {
+          "description": "`cpu.stat` of the PostgreSQL container, before and after.",
+          "type": "string"
+        },
+        "result": {
+          "description": "The generator's own output: oha's JSON, or pgbench's summary followed by [`PGBENCH_LOG_MARKER`] and its sampled per-transaction log.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "after",
+        "before",
+        "concurrency",
+        "host_cpu_after",
+        "host_cpu_before",
+        "layer",
+        "pg_cpu_after",
+        "pg_cpu_before",
+        "result"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "One step per layer per concurrency, naming the files the step produced. Strict on both sides: a key the shell invents fails here, naming it.",
+  "properties": {
+    "concurrency": {
+      "description": "The concurrency sweep, in the order it ran.",
+      "items": {
+        "format": "uint32",
+        "minimum": 0.0,
+        "type": "integer"
+      },
+      "type": "array"
+    },
+    "duration_seconds": {
+      "description": "Fixed duration of every step, in seconds.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "layers": {
+      "items": {
+        "$ref": "#/definitions/LayerSpec"
+      },
+      "type": "array"
+    },
+    "schema": {
+      "type": "string"
+    },
+    "source": {
+      "description": "The git head the measured host was built from.",
+      "type": "string"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/definitions/StepSpec"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "concurrency",
+    "duration_seconds",
+    "layers",
+    "schema",
+    "source",
+    "steps"
+  ],
+  "title": "ThroughputIndex",
+  "type": "object"
+}

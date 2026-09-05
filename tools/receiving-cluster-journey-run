@@ -5,12 +5,15 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: receiving-cluster-journey-run [--apply] [--measure-startup] --evidence-dir DIR
+usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] --evidence-dir DIR
 
 Without --apply, print the immutable plan and exit.
 
   --apply              Build and run the journey, then tear down owned resources
   --measure-startup    Measure cold/restart startup and two warm requests, then stop
+  --throughput         After the steady request, sweep concurrency 1..64 across the
+                       route, a no-DB route and the statement direct (implies
+                       --measure-startup); evidence under throughput/
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-receiving-journey. Every Kubernetes and Helm
@@ -21,11 +24,13 @@ EOF
 
 apply=false
 measure_startup=false
+throughput=false
 evidence_dir=
 while (($#)); do
   case "$1" in
     --apply) apply=true; shift ;;
     --measure-startup) measure_startup=true; shift ;;
+    --throughput) throughput=true; measure_startup=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
@@ -52,6 +57,8 @@ source "$script_dir/journey-materializer.sh"
 source "$script_dir/journey-probe.sh"
 # shellcheck source=tools/journey-document.sh
 source "$script_dir/journey-document.sh"
+# shellcheck source=tools/journey-throughput.sh
+source "$script_dir/journey-throughput.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -152,7 +159,9 @@ if [[ "$apply" != true ]]; then
   printf '  cluster/context: %s / %s\n' "$cluster" "$context"
   printf '  namespace: %s\n' "$namespace"
   printf '  route host: %s (setup overlay only)\n' "$route_host"
-  if [[ "$measure_startup" == true ]]; then
+  if [[ "$throughput" == true ]]; then
+    printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> throughput sweep (route, no-DB route, direct statement; c=1..64) -> exact teardown\n'
+  elif [[ "$measure_startup" == true ]]; then
     printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> exact teardown\n'
   else
     printf '  order: build -> production mint/attest -> CDC + JetStream -> operator 2.8.0 -> host + materializer ready -> HTTP receipt -> causal inspection + ACK -> cross-environment refusal -> exact teardown\n'
@@ -1570,6 +1579,132 @@ if [[ "$measure_startup" == true ]]; then
     22222222222222222222222222222222 false
   collect_trace_breakdown steady \
     33333333333333333333333333333333 false
+
+  # THE THROUGHPUT SWEEP (wamn-0h0g.17.27). Every number above is one request
+  # at a time; this asks how many at once, and where p99 turns. Three layers so
+  # the cost attributes: the route end-to-end, the same statement from a direct
+  # PostgreSQL client, and a route the guest answers without touching a
+  # database. The load generators are stock tools in pods, pinned by digest;
+  # the Rust half samples PostgreSQL's own counters around every step and
+  # reduces the evidence to a knee and a peak per layer. Nothing here asserts a
+  # number: the knee is the result, recorded beside the traces so the next run
+  # is compared to this one. Runs BEFORE the ratio gate so a red ratio does not
+  # cost the sweep its evidence.
+  run_throughput_sweep() {
+    local sweep_dir=$evidence_dir/throughput
+    local -a sweep=(1 4 8 16 32 64)
+    local duration_seconds=10
+    local oha_image='ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f'
+    local pgbench_image='postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d'
+    local tool nats_ip bench_id bench_sql pg_sample_url layer c job
+    mkdir -p "$sweep_dir"
+
+    # The Rust half, built once; sampling through cargo run would put a cargo
+    # start inside every step's window.
+    record_command cargo build --locked --offline -p wamn-proof-integration --bin wamn-throughput
+    cargo build --locked --offline -p wamn-proof-integration --bin wamn-throughput
+    tool=$(cargo metadata --no-deps --format-version 1 | jq -r .target_directory)/debug/wamn-throughput
+    [[ -x $tool ]] || { echo "throughput tool not built at $tool" >&2; exit 1; }
+
+    pg_sample_url="postgresql://postgres:probe@127.0.0.1:$postgres_host_port/postgres"
+    nats_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
+      "$nats_container")
+    bench_id=$(jq -er '.id' <<<"$app_probe_body")
+    # THE SAME STATEMENT, by construction: the generated read the route runs,
+    # schema-qualified for a client that sets no search_path, with the probe's
+    # id in place of the bind parameter. Both rewrites must land or the layer
+    # would measure a different query.
+    bench_sql=$(sed -e "s/^FROM purchase_order AS model\$/FROM $app_schema.purchase_order AS model/" \
+      -e "s/= \$1::uuid;\$/= '$bench_id'::uuid;/" \
+      "$repo_root/packages/receiving/generated/sql/purchase_order/get.sql")
+    grep -qF "FROM $app_schema.purchase_order AS model" <<<"$bench_sql" &&
+      grep -qF "'$bench_id'::uuid" <<<"$bench_sql" || {
+      echo "the bench statement did not derive from the generated read" >&2
+      exit 1
+    }
+
+    take_sample() { # <layer> <c> <before|after>
+      "$tool" sample --pg-url "$pg_sample_url" --database postgres \
+        --database "$project_database" --nats-varz "http://$nats_ip:8222/varz" \
+        --out "$sweep_dir/sample-$1-c$2-$3.json"
+      "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
+        cat /sys/fs/cgroup/cpu.stat >"$sweep_dir/cpu-host-$1-c$2-$3.txt"
+      docker exec "$postgres_container" cat /sys/fs/cgroup/cpu.stat \
+        >"$sweep_dir/cpu-pg-$1-c$2-$3.txt"
+    }
+
+    : >"$sweep_dir/steps.jsonl"
+    for layer in route nodb pg; do
+      for c in "${sweep[@]}"; do
+        job=bench-$layer-c$c
+        declare -A bench_spec=(
+          [job]=$job [namespace]=$namespace [layer]=$layer
+          [concurrency]=$c [duration_seconds]=$duration_seconds
+          [oha_image]=$oha_image [pgbench_image]=$pgbench_image
+          [route_host]=$route_host [secret_name]=$route_caller_secret_name
+          [pg_host]=$postgres_ip [pg_port]=5432 [pg_database]=$project_database
+          [pg_user]=postgres [pg_password]=probe [sql]=$bench_sql [sampling_rate]=0.2
+        )
+        case "$layer" in
+          route)
+            bench_spec[url]="http://flow-http.$namespace.svc.cluster.local$app_probe_route"
+            bench_spec[body]=$(jq -cn --argjson fields "$app_probe_body" \
+              '[{request_id: "bench"} + $fields]')
+            ;;
+          nodb)
+            bench_spec[url]="http://flow-http.$namespace.svc.cluster.local/no-such-route"
+            ;;
+        esac
+        render_throughput_job bench_spec "$work_dir/$job.json"
+        take_sample "$layer" "$c" before
+        run "${kube[@]}" apply -f "$work_dir/$job.json"
+        if ! "${kube[@]}" -n "$namespace" wait --for=condition=Complete "job/$job" \
+            --timeout=$((duration_seconds * 3 + 120))s; then
+          "${kube[@]}" -n "$namespace" logs "job/$job" >"$sweep_dir/$layer-c$c.out" || true
+          "${kube[@]}" -n "$namespace" get pods -l "job-name=$job" -o json \
+            >"$sweep_dir/$layer-c$c-pods.json" || true
+          echo "throughput step $job did not complete" >&2
+          exit 1
+        fi
+        "${kube[@]}" -n "$namespace" logs "job/$job" >"$sweep_dir/$layer-c$c.out"
+        take_sample "$layer" "$c" after
+        jq -nc --arg layer "$layer" --argjson c "$c" '{
+          layer: $layer, concurrency: $c,
+          result: "\($layer)-c\($c).out",
+          before: "sample-\($layer)-c\($c)-before.json",
+          after: "sample-\($layer)-c\($c)-after.json",
+          host_cpu_before: "cpu-host-\($layer)-c\($c)-before.txt",
+          host_cpu_after: "cpu-host-\($layer)-c\($c)-after.txt",
+          pg_cpu_before: "cpu-pg-\($layer)-c\($c)-before.txt",
+          pg_cpu_after: "cpu-pg-\($layer)-c\($c)-after.txt"
+        }' >>"$sweep_dir/steps.jsonl"
+        unset bench_spec
+        sleep 2
+      done
+    done
+
+    jq -n --arg source "$head" --argjson duration "$duration_seconds" \
+      --arg route_target "POST $app_probe_route through flow-http, authenticated" \
+      --arg nodb_target "GET /no-such-route through flow-http: routed and answered 404 by the guest, no auth, no database" \
+      --arg pg_target "pgbench -M prepared, the generated purchase_order/get read against $project_database as postgres" \
+      --slurpfile steps "$sweep_dir/steps.jsonl" '{
+        schema: "wamn-throughput/v0.1", source: $source, duration_seconds: $duration,
+        concurrency: [1, 4, 8, 16, 32, 64],
+        layers: [
+          { layer: "route", driver: "oha", target: $route_target, expected_status: 200 },
+          { layer: "nodb", driver: "oha", target: $nodb_target, expected_status: 404 },
+          { layer: "pg", driver: "pgbench", target: $pg_target, expected_status: null }
+        ],
+        steps: $steps
+      }' >"$sweep_dir/index.json"
+    record_command "$tool" report --evidence-dir "$sweep_dir"
+    "$tool" report --evidence-dir "$sweep_dir" --out-md "$sweep_dir/report.md" \
+      --out-json "$sweep_dir/summary.json" | tee "$sweep_dir/verdict.txt"
+  }
+  if [[ "$throughput" == true ]]; then
+    run_throughput_sweep
+  fi
+
   # Hot only. A restart-first request still pays its pool connects, so it is not
   # the steady state the ratio describes.
   assert_overhead_ratio steady
