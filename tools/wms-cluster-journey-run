@@ -263,6 +263,15 @@ host_image_owned=false
 run_complete=false
 
 cleanup() {
+  # The authoring gate is a LOCAL process this journey spawned; on any exit
+  # after it started -- a gate refusal exits inside the wiring loop -- it must
+  # die here or it outlives the run, still bound to its port, and the next
+  # journey's gate fails to bind while the stale one answers 500 to its
+  # requests (measured on the offline mint proof, wamn-362o.42).
+  if [[ -n ${gate_pid:-} ]]; then
+    kill "$gate_pid" 2>/dev/null || true
+    wait "$gate_pid" 2>/dev/null || true
+  fi
   local status=$? cleanup_failed=false failure_capture_errors
   trap - EXIT HUP INT TERM
   # Opt-in hold BEFORE teardown, so an observer can keep watching cluster state
