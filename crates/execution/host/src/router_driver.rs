@@ -2279,8 +2279,13 @@ impl NodeInstance {
                 let ctx = Ctx::builder(scope.to_string(), scope.to_string())
                     .with_plugins(plugins)
                     .build();
-                let mut store = tracing::info_span!("wamn.linker.store")
-                    .in_scope(|| Store::new(engine.inner(), SharedCtx::new(ctx)));
+                // NOT WRAPPED IN A SPAN. runtime_inventory pins this exact
+                // statement as the single production ExecutionHost store
+                // constructor, and 1b's instrumentation broke that guard for a
+                // phase that measured 0.093 ms -- 3% of linker_setup. The number
+                // is recorded in docs/perf/2026.09/1b-linker-clone.md; the guard
+                // is worth more than keeping the span.
+                let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
                 // Instantiation executes guest start code, so it needs the same bounded
                 // ceiling as a call. One tick is only 10 ms and interrupts valid
                 // virtualized std components before their instance is ready.
