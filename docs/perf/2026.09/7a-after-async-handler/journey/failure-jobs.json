@@ -1,0 +1,2708 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"1\",\"wamn.bench/layer\":\"nodb\"},\"name\":\"bench-nodb-c1\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"1\",\"--output-format\",\"json\",\"-m\",\"GET\",\"-H\",\"Host: receiving.localhost\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route\"],\"command\":[\"/bin/oha\"],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:31:55Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "1",
+                    "wamn.bench/layer": "nodb"
+                },
+                "name": "bench-nodb-c1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2132",
+                "uid": "dc5012ae-85be-4a01-95f1-f4b8c588cca8"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "dc5012ae-85be-4a01-95f1-f4b8c588cca8"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "dc5012ae-85be-4a01-95f1-f4b8c588cca8",
+                            "batch.kubernetes.io/job-name": "bench-nodb-c1",
+                            "controller-uid": "dc5012ae-85be-4a01-95f1-f4b8c588cca8",
+                            "job-name": "bench-nodb-c1"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "1",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "GET",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:32:08Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:32:08Z",
+                        "lastTransitionTime": "2026-09-05T23:32:08Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:32:08Z",
+                        "lastTransitionTime": "2026-09-05T23:32:08Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:31:55Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"16\",\"wamn.bench/layer\":\"nodb\"},\"name\":\"bench-nodb-c16\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"16\",\"--output-format\",\"json\",\"-m\",\"GET\",\"-H\",\"Host: receiving.localhost\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route\"],\"command\":[\"/bin/oha\"],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:32:44Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "16",
+                    "wamn.bench/layer": "nodb"
+                },
+                "name": "bench-nodb-c16",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2303",
+                "uid": "bc675d16-93f1-4b24-abaa-8e6df1508aa6"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "bc675d16-93f1-4b24-abaa-8e6df1508aa6"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "bc675d16-93f1-4b24-abaa-8e6df1508aa6",
+                            "batch.kubernetes.io/job-name": "bench-nodb-c16",
+                            "controller-uid": "bc675d16-93f1-4b24-abaa-8e6df1508aa6",
+                            "job-name": "bench-nodb-c16"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "16",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "GET",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:32:57Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:32:57Z",
+                        "lastTransitionTime": "2026-09-05T23:32:57Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:32:57Z",
+                        "lastTransitionTime": "2026-09-05T23:32:57Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:32:44Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"32\",\"wamn.bench/layer\":\"nodb\"},\"name\":\"bench-nodb-c32\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"32\",\"--output-format\",\"json\",\"-m\",\"GET\",\"-H\",\"Host: receiving.localhost\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route\"],\"command\":[\"/bin/oha\"],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:32:59Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "32",
+                    "wamn.bench/layer": "nodb"
+                },
+                "name": "bench-nodb-c32",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2361",
+                "uid": "2e887edd-a00a-446a-9dcf-7c05a12a4b49"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "2e887edd-a00a-446a-9dcf-7c05a12a4b49"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "2e887edd-a00a-446a-9dcf-7c05a12a4b49",
+                            "batch.kubernetes.io/job-name": "bench-nodb-c32",
+                            "controller-uid": "2e887edd-a00a-446a-9dcf-7c05a12a4b49",
+                            "job-name": "bench-nodb-c32"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "32",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "GET",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:33:13Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:33:13Z",
+                        "lastTransitionTime": "2026-09-05T23:33:13Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:33:13Z",
+                        "lastTransitionTime": "2026-09-05T23:33:13Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:32:59Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"4\",\"wamn.bench/layer\":\"nodb\"},\"name\":\"bench-nodb-c4\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"4\",\"--output-format\",\"json\",\"-m\",\"GET\",\"-H\",\"Host: receiving.localhost\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route\"],\"command\":[\"/bin/oha\"],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:32:11Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "4",
+                    "wamn.bench/layer": "nodb"
+                },
+                "name": "bench-nodb-c4",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2189",
+                "uid": "a75f3c9a-985c-4afa-9e13-12db3c51129e"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "a75f3c9a-985c-4afa-9e13-12db3c51129e"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "a75f3c9a-985c-4afa-9e13-12db3c51129e",
+                            "batch.kubernetes.io/job-name": "bench-nodb-c4",
+                            "controller-uid": "a75f3c9a-985c-4afa-9e13-12db3c51129e",
+                            "job-name": "bench-nodb-c4"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "4",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "GET",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:32:24Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:32:24Z",
+                        "lastTransitionTime": "2026-09-05T23:32:24Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:32:24Z",
+                        "lastTransitionTime": "2026-09-05T23:32:24Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:32:11Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"64\",\"wamn.bench/layer\":\"nodb\"},\"name\":\"bench-nodb-c64\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"64\",\"--output-format\",\"json\",\"-m\",\"GET\",\"-H\",\"Host: receiving.localhost\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route\"],\"command\":[\"/bin/oha\"],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:33:15Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "64",
+                    "wamn.bench/layer": "nodb"
+                },
+                "name": "bench-nodb-c64",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2421",
+                "uid": "3e2fa8e1-fed4-4c03-9142-3cb1b81121e2"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "3e2fa8e1-fed4-4c03-9142-3cb1b81121e2"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "3e2fa8e1-fed4-4c03-9142-3cb1b81121e2",
+                            "batch.kubernetes.io/job-name": "bench-nodb-c64",
+                            "controller-uid": "3e2fa8e1-fed4-4c03-9142-3cb1b81121e2",
+                            "job-name": "bench-nodb-c64"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "64",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "GET",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:33:29Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:33:29Z",
+                        "lastTransitionTime": "2026-09-05T23:33:29Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:33:29Z",
+                        "lastTransitionTime": "2026-09-05T23:33:29Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:33:15Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"8\",\"wamn.bench/layer\":\"nodb\"},\"name\":\"bench-nodb-c8\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"8\",\"--output-format\",\"json\",\"-m\",\"GET\",\"-H\",\"Host: receiving.localhost\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route\"],\"command\":[\"/bin/oha\"],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:32:27Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "8",
+                    "wamn.bench/layer": "nodb"
+                },
+                "name": "bench-nodb-c8",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2246",
+                "uid": "e702a7d7-e8f1-4523-baa7-2bbe61442149"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "e702a7d7-e8f1-4523-baa7-2bbe61442149"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "e702a7d7-e8f1-4523-baa7-2bbe61442149",
+                            "batch.kubernetes.io/job-name": "bench-nodb-c8",
+                            "controller-uid": "e702a7d7-e8f1-4523-baa7-2bbe61442149",
+                            "job-name": "bench-nodb-c8"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "8",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "GET",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:32:41Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:32:41Z",
+                        "lastTransitionTime": "2026-09-05T23:32:41Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:32:41Z",
+                        "lastTransitionTime": "2026-09-05T23:32:41Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:32:27Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"1\",\"wamn.bench/layer\":\"pg\"},\"name\":\"bench-pg-c1\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"cat \\u003e/tmp/bench.sql \\u003c\\u003c'SQL'\\nSELECT\\n    model.created_at,\\n    model.id,\\n    model.purchase_order_number,\\n    model.row_version,\\n    model.status,\\n    model.supplier_id,\\n    model.updated_at\\nFROM receiving.purchase_order AS model\\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\\nSQL\\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\\\\n  -n -M prepared -c 1 -j 1 -T 10 \\\\\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\\necho ===LOGS===\\ncat /tmp/pgb*\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"PGPASSWORD\",\"value\":\"probe\"}],\"image\":\"postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"pgbench\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:33:32Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "1",
+                    "wamn.bench/layer": "pg"
+                },
+                "name": "bench-pg-c1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2492",
+                "uid": "8bda2ef6-6e92-40f2-94a5-ce55f80a1cbe"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "8bda2ef6-6e92-40f2-94a5-ce55f80a1cbe"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "8bda2ef6-6e92-40f2-94a5-ce55f80a1cbe",
+                            "batch.kubernetes.io/job-name": "bench-pg-c1",
+                            "controller-uid": "8bda2ef6-6e92-40f2-94a5-ce55f80a1cbe",
+                            "job-name": "bench-pg-c1"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "cat \u003e/tmp/bench.sql \u003c\u003c'SQL'\nSELECT\n    model.created_at,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at\nFROM receiving.purchase_order AS model\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\nSQL\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\n  -n -M prepared -c 1 -j 1 -T 10 \\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\necho ===LOGS===\ncat /tmp/pgb*"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "PGPASSWORD",
+                                        "value": "probe"
+                                    }
+                                ],
+                                "image": "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "pgbench",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:33:52Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:33:52Z",
+                        "lastTransitionTime": "2026-09-05T23:33:52Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:33:52Z",
+                        "lastTransitionTime": "2026-09-05T23:33:52Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:33:32Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"16\",\"wamn.bench/layer\":\"pg\"},\"name\":\"bench-pg-c16\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"cat \\u003e/tmp/bench.sql \\u003c\\u003c'SQL'\\nSELECT\\n    model.created_at,\\n    model.id,\\n    model.purchase_order_number,\\n    model.row_version,\\n    model.status,\\n    model.supplier_id,\\n    model.updated_at\\nFROM receiving.purchase_order AS model\\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\\nSQL\\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\\\\n  -n -M prepared -c 16 -j 8 -T 10 \\\\\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\\necho ===LOGS===\\ncat /tmp/pgb*\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"PGPASSWORD\",\"value\":\"probe\"}],\"image\":\"postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"pgbench\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:34:27Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "16",
+                    "wamn.bench/layer": "pg"
+                },
+                "name": "bench-pg-c16",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2666",
+                "uid": "79b174a3-f145-4181-817b-c635ab9f3fd0"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "79b174a3-f145-4181-817b-c635ab9f3fd0"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "79b174a3-f145-4181-817b-c635ab9f3fd0",
+                            "batch.kubernetes.io/job-name": "bench-pg-c16",
+                            "controller-uid": "79b174a3-f145-4181-817b-c635ab9f3fd0",
+                            "job-name": "bench-pg-c16"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "cat \u003e/tmp/bench.sql \u003c\u003c'SQL'\nSELECT\n    model.created_at,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at\nFROM receiving.purchase_order AS model\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\nSQL\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\n  -n -M prepared -c 16 -j 8 -T 10 \\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\necho ===LOGS===\ncat /tmp/pgb*"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "PGPASSWORD",
+                                        "value": "probe"
+                                    }
+                                ],
+                                "image": "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "pgbench",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:34:40Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:34:40Z",
+                        "lastTransitionTime": "2026-09-05T23:34:40Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:34:40Z",
+                        "lastTransitionTime": "2026-09-05T23:34:40Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:34:27Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"32\",\"wamn.bench/layer\":\"pg\"},\"name\":\"bench-pg-c32\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"cat \\u003e/tmp/bench.sql \\u003c\\u003c'SQL'\\nSELECT\\n    model.created_at,\\n    model.id,\\n    model.purchase_order_number,\\n    model.row_version,\\n    model.status,\\n    model.supplier_id,\\n    model.updated_at\\nFROM receiving.purchase_order AS model\\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\\nSQL\\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\\\\n  -n -M prepared -c 32 -j 8 -T 10 \\\\\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\\necho ===LOGS===\\ncat /tmp/pgb*\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"PGPASSWORD\",\"value\":\"probe\"}],\"image\":\"postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"pgbench\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:34:43Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "32",
+                    "wamn.bench/layer": "pg"
+                },
+                "name": "bench-pg-c32",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2719",
+                "uid": "d5b61c30-56cf-41e7-8f19-1e2b4d362e26"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "d5b61c30-56cf-41e7-8f19-1e2b4d362e26"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "d5b61c30-56cf-41e7-8f19-1e2b4d362e26",
+                            "batch.kubernetes.io/job-name": "bench-pg-c32",
+                            "controller-uid": "d5b61c30-56cf-41e7-8f19-1e2b4d362e26",
+                            "job-name": "bench-pg-c32"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "cat \u003e/tmp/bench.sql \u003c\u003c'SQL'\nSELECT\n    model.created_at,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at\nFROM receiving.purchase_order AS model\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\nSQL\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\n  -n -M prepared -c 32 -j 8 -T 10 \\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\necho ===LOGS===\ncat /tmp/pgb*"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "PGPASSWORD",
+                                        "value": "probe"
+                                    }
+                                ],
+                                "image": "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "pgbench",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:34:56Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:34:56Z",
+                        "lastTransitionTime": "2026-09-05T23:34:56Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:34:56Z",
+                        "lastTransitionTime": "2026-09-05T23:34:56Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:34:43Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"4\",\"wamn.bench/layer\":\"pg\"},\"name\":\"bench-pg-c4\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"cat \\u003e/tmp/bench.sql \\u003c\\u003c'SQL'\\nSELECT\\n    model.created_at,\\n    model.id,\\n    model.purchase_order_number,\\n    model.row_version,\\n    model.status,\\n    model.supplier_id,\\n    model.updated_at\\nFROM receiving.purchase_order AS model\\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\\nSQL\\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\\\\n  -n -M prepared -c 4 -j 4 -T 10 \\\\\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\\necho ===LOGS===\\ncat /tmp/pgb*\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"PGPASSWORD\",\"value\":\"probe\"}],\"image\":\"postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"pgbench\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:33:54Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "4",
+                    "wamn.bench/layer": "pg"
+                },
+                "name": "bench-pg-c4",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2551",
+                "uid": "87e2fb63-8210-4d73-b506-7a3355d69d67"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "87e2fb63-8210-4d73-b506-7a3355d69d67"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "87e2fb63-8210-4d73-b506-7a3355d69d67",
+                            "batch.kubernetes.io/job-name": "bench-pg-c4",
+                            "controller-uid": "87e2fb63-8210-4d73-b506-7a3355d69d67",
+                            "job-name": "bench-pg-c4"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "cat \u003e/tmp/bench.sql \u003c\u003c'SQL'\nSELECT\n    model.created_at,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at\nFROM receiving.purchase_order AS model\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\nSQL\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\n  -n -M prepared -c 4 -j 4 -T 10 \\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\necho ===LOGS===\ncat /tmp/pgb*"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "PGPASSWORD",
+                                        "value": "probe"
+                                    }
+                                ],
+                                "image": "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "pgbench",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:34:08Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:34:08Z",
+                        "lastTransitionTime": "2026-09-05T23:34:08Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:34:08Z",
+                        "lastTransitionTime": "2026-09-05T23:34:08Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:33:54Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"64\",\"wamn.bench/layer\":\"pg\"},\"name\":\"bench-pg-c64\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"cat \\u003e/tmp/bench.sql \\u003c\\u003c'SQL'\\nSELECT\\n    model.created_at,\\n    model.id,\\n    model.purchase_order_number,\\n    model.row_version,\\n    model.status,\\n    model.supplier_id,\\n    model.updated_at\\nFROM receiving.purchase_order AS model\\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\\nSQL\\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\\\\n  -n -M prepared -c 64 -j 8 -T 10 \\\\\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\\necho ===LOGS===\\ncat /tmp/pgb*\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"PGPASSWORD\",\"value\":\"probe\"}],\"image\":\"postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"pgbench\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:34:59Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "64",
+                    "wamn.bench/layer": "pg"
+                },
+                "name": "bench-pg-c64",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2779",
+                "uid": "3f974bdb-41ff-4c6a-bff2-a5a6e9b60ff5"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "3f974bdb-41ff-4c6a-bff2-a5a6e9b60ff5"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "3f974bdb-41ff-4c6a-bff2-a5a6e9b60ff5",
+                            "batch.kubernetes.io/job-name": "bench-pg-c64",
+                            "controller-uid": "3f974bdb-41ff-4c6a-bff2-a5a6e9b60ff5",
+                            "job-name": "bench-pg-c64"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "cat \u003e/tmp/bench.sql \u003c\u003c'SQL'\nSELECT\n    model.created_at,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at\nFROM receiving.purchase_order AS model\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\nSQL\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\n  -n -M prepared -c 64 -j 8 -T 10 \\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\necho ===LOGS===\ncat /tmp/pgb*"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "PGPASSWORD",
+                                        "value": "probe"
+                                    }
+                                ],
+                                "image": "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "pgbench",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:35:12Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:35:12Z",
+                        "lastTransitionTime": "2026-09-05T23:35:12Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:35:12Z",
+                        "lastTransitionTime": "2026-09-05T23:35:12Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:34:59Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"8\",\"wamn.bench/layer\":\"pg\"},\"name\":\"bench-pg-c8\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"cat \\u003e/tmp/bench.sql \\u003c\\u003c'SQL'\\nSELECT\\n    model.created_at,\\n    model.id,\\n    model.purchase_order_number,\\n    model.row_version,\\n    model.status,\\n    model.supplier_id,\\n    model.updated_at\\nFROM receiving.purchase_order AS model\\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\\nSQL\\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\\\\n  -n -M prepared -c 8 -j 8 -T 10 \\\\\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\\necho ===LOGS===\\ncat /tmp/pgb*\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"PGPASSWORD\",\"value\":\"probe\"}],\"image\":\"postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"pgbench\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:34:11Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "8",
+                    "wamn.bench/layer": "pg"
+                },
+                "name": "bench-pg-c8",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2605",
+                "uid": "b099fdef-4b00-47ff-9e93-a3ae05b038fe"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "b099fdef-4b00-47ff-9e93-a3ae05b038fe"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "b099fdef-4b00-47ff-9e93-a3ae05b038fe",
+                            "batch.kubernetes.io/job-name": "bench-pg-c8",
+                            "controller-uid": "b099fdef-4b00-47ff-9e93-a3ae05b038fe",
+                            "job-name": "bench-pg-c8"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "cat \u003e/tmp/bench.sql \u003c\u003c'SQL'\nSELECT\n    model.created_at,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at\nFROM receiving.purchase_order AS model\nWHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;\nSQL\npgbench -h 172.28.0.8 -p 5432 -U postgres -d wamn-db-acme--receiving--dev--6ops3w4x \\\n  -n -M prepared -c 8 -j 8 -T 10 \\\n  -f /tmp/bench.sql -l --log-prefix /tmp/pgb --sampling-rate 0.05\necho ===LOGS===\ncat /tmp/pgb*"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "PGPASSWORD",
+                                        "value": "probe"
+                                    }
+                                ],
+                                "image": "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "pgbench",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:34:24Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:34:24Z",
+                        "lastTransitionTime": "2026-09-05T23:34:24Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:34:24Z",
+                        "lastTransitionTime": "2026-09-05T23:34:24Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:34:11Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"1\",\"wamn.bench/layer\":\"route\"},\"name\":\"bench-route-c1\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"1\",\"--output-format\",\"json\",\"-m\",\"POST\",\"-H\",\"Host: receiving.localhost\",\"-H\",\"Content-Type: application/json\",\"-H\",\"Authorization: Bearer $(ROUTE_CALLER_PAT)\",\"-d\",\"[{\\\"request_id\\\":\\\"bench\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get\"],\"command\":[\"/bin/oha\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:30:15Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "1",
+                    "wamn.bench/layer": "route"
+                },
+                "name": "bench-route-c1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1790",
+                "uid": "1fc493bd-017e-45c3-8448-e3003b97215a"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "1fc493bd-017e-45c3-8448-e3003b97215a"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "1fc493bd-017e-45c3-8448-e3003b97215a",
+                            "batch.kubernetes.io/job-name": "bench-route-c1",
+                            "controller-uid": "1fc493bd-017e-45c3-8448-e3003b97215a",
+                            "job-name": "bench-route-c1"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "1",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "POST",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "-H",
+                                    "Content-Type: application/json",
+                                    "-H",
+                                    "Authorization: Bearer $(ROUTE_CALLER_PAT)",
+                                    "-d",
+                                    "[{\"request_id\":\"bench\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:30:32Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:32Z",
+                        "lastTransitionTime": "2026-09-05T23:30:32Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:32Z",
+                        "lastTransitionTime": "2026-09-05T23:30:32Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:30:15Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"16\",\"wamn.bench/layer\":\"route\"},\"name\":\"bench-route-c16\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"16\",\"--output-format\",\"json\",\"-m\",\"POST\",\"-H\",\"Host: receiving.localhost\",\"-H\",\"Content-Type: application/json\",\"-H\",\"Authorization: Bearer $(ROUTE_CALLER_PAT)\",\"-d\",\"[{\\\"request_id\\\":\\\"bench\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get\"],\"command\":[\"/bin/oha\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:31:07Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "16",
+                    "wamn.bench/layer": "route"
+                },
+                "name": "bench-route-c16",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1960",
+                "uid": "71da83cc-dfdf-4094-b02b-6efc2eba4588"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "71da83cc-dfdf-4094-b02b-6efc2eba4588"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "71da83cc-dfdf-4094-b02b-6efc2eba4588",
+                            "batch.kubernetes.io/job-name": "bench-route-c16",
+                            "controller-uid": "71da83cc-dfdf-4094-b02b-6efc2eba4588",
+                            "job-name": "bench-route-c16"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "16",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "POST",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "-H",
+                                    "Content-Type: application/json",
+                                    "-H",
+                                    "Authorization: Bearer $(ROUTE_CALLER_PAT)",
+                                    "-d",
+                                    "[{\"request_id\":\"bench\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:31:20Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:31:20Z",
+                        "lastTransitionTime": "2026-09-05T23:31:20Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:31:20Z",
+                        "lastTransitionTime": "2026-09-05T23:31:20Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:31:07Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"32\",\"wamn.bench/layer\":\"route\"},\"name\":\"bench-route-c32\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"32\",\"--output-format\",\"json\",\"-m\",\"POST\",\"-H\",\"Host: receiving.localhost\",\"-H\",\"Content-Type: application/json\",\"-H\",\"Authorization: Bearer $(ROUTE_CALLER_PAT)\",\"-d\",\"[{\\\"request_id\\\":\\\"bench\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get\"],\"command\":[\"/bin/oha\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:31:23Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "32",
+                    "wamn.bench/layer": "route"
+                },
+                "name": "bench-route-c32",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2018",
+                "uid": "7dd56f86-63ca-4f50-96a1-0d0fd1767ab6"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "7dd56f86-63ca-4f50-96a1-0d0fd1767ab6"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "7dd56f86-63ca-4f50-96a1-0d0fd1767ab6",
+                            "batch.kubernetes.io/job-name": "bench-route-c32",
+                            "controller-uid": "7dd56f86-63ca-4f50-96a1-0d0fd1767ab6",
+                            "job-name": "bench-route-c32"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "32",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "POST",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "-H",
+                                    "Content-Type: application/json",
+                                    "-H",
+                                    "Authorization: Bearer $(ROUTE_CALLER_PAT)",
+                                    "-d",
+                                    "[{\"request_id\":\"bench\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:31:36Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:31:36Z",
+                        "lastTransitionTime": "2026-09-05T23:31:36Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:31:36Z",
+                        "lastTransitionTime": "2026-09-05T23:31:36Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:31:23Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"4\",\"wamn.bench/layer\":\"route\"},\"name\":\"bench-route-c4\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"4\",\"--output-format\",\"json\",\"-m\",\"POST\",\"-H\",\"Host: receiving.localhost\",\"-H\",\"Content-Type: application/json\",\"-H\",\"Authorization: Bearer $(ROUTE_CALLER_PAT)\",\"-d\",\"[{\\\"request_id\\\":\\\"bench\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get\"],\"command\":[\"/bin/oha\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:30:35Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "4",
+                    "wamn.bench/layer": "route"
+                },
+                "name": "bench-route-c4",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1846",
+                "uid": "c380d95e-c6f3-4c7b-8f8a-15c61fef1a51"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "c380d95e-c6f3-4c7b-8f8a-15c61fef1a51"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "c380d95e-c6f3-4c7b-8f8a-15c61fef1a51",
+                            "batch.kubernetes.io/job-name": "bench-route-c4",
+                            "controller-uid": "c380d95e-c6f3-4c7b-8f8a-15c61fef1a51",
+                            "job-name": "bench-route-c4"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "4",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "POST",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "-H",
+                                    "Content-Type: application/json",
+                                    "-H",
+                                    "Authorization: Bearer $(ROUTE_CALLER_PAT)",
+                                    "-d",
+                                    "[{\"request_id\":\"bench\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:30:48Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:48Z",
+                        "lastTransitionTime": "2026-09-05T23:30:48Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:48Z",
+                        "lastTransitionTime": "2026-09-05T23:30:48Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:30:35Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"64\",\"wamn.bench/layer\":\"route\"},\"name\":\"bench-route-c64\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"64\",\"--output-format\",\"json\",\"-m\",\"POST\",\"-H\",\"Host: receiving.localhost\",\"-H\",\"Content-Type: application/json\",\"-H\",\"Authorization: Bearer $(ROUTE_CALLER_PAT)\",\"-d\",\"[{\\\"request_id\\\":\\\"bench\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get\"],\"command\":[\"/bin/oha\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:31:39Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "64",
+                    "wamn.bench/layer": "route"
+                },
+                "name": "bench-route-c64",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "2073",
+                "uid": "1c7cb0b9-5312-4bc7-80b2-8b029a082f5d"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "1c7cb0b9-5312-4bc7-80b2-8b029a082f5d"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "1c7cb0b9-5312-4bc7-80b2-8b029a082f5d",
+                            "batch.kubernetes.io/job-name": "bench-route-c64",
+                            "controller-uid": "1c7cb0b9-5312-4bc7-80b2-8b029a082f5d",
+                            "job-name": "bench-route-c64"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "64",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "POST",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "-H",
+                                    "Content-Type: application/json",
+                                    "-H",
+                                    "Authorization: Bearer $(ROUTE_CALLER_PAT)",
+                                    "-d",
+                                    "[{\"request_id\":\"bench\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:31:52Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:31:52Z",
+                        "lastTransitionTime": "2026-09-05T23:31:52Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:31:52Z",
+                        "lastTransitionTime": "2026-09-05T23:31:52Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:31:39Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"labels\":{\"wamn.bench/concurrency\":\"8\",\"wamn.bench/layer\":\"route\"},\"name\":\"bench-route-c8\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"--no-tui\",\"-z\",\"10s\",\"-c\",\"8\",\"--output-format\",\"json\",\"-m\",\"POST\",\"-H\",\"Host: receiving.localhost\",\"-H\",\"Content-Type: application/json\",\"-H\",\"Authorization: Bearer $(ROUTE_CALLER_PAT)\",\"-d\",\"[{\\\"request_id\\\":\\\"bench\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]\",\"http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get\"],\"command\":[\"/bin/oha\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"oha\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:30:51Z",
+                "generation": 1,
+                "labels": {
+                    "wamn.bench/concurrency": "8",
+                    "wamn.bench/layer": "route"
+                },
+                "name": "bench-route-c8",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1903",
+                "uid": "7181cc1e-2f28-42e5-9d32-5f97682a0bad"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 120,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "7181cc1e-2f28-42e5-9d32-5f97682a0bad"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "7181cc1e-2f28-42e5-9d32-5f97682a0bad",
+                            "batch.kubernetes.io/job-name": "bench-route-c8",
+                            "controller-uid": "7181cc1e-2f28-42e5-9d32-5f97682a0bad",
+                            "job-name": "bench-route-c8"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "--no-tui",
+                                    "-z",
+                                    "10s",
+                                    "-c",
+                                    "8",
+                                    "--output-format",
+                                    "json",
+                                    "-m",
+                                    "POST",
+                                    "-H",
+                                    "Host: receiving.localhost",
+                                    "-H",
+                                    "Content-Type: application/json",
+                                    "-H",
+                                    "Authorization: Bearer $(ROUTE_CALLER_PAT)",
+                                    "-d",
+                                    "[{\"request_id\":\"bench\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]",
+                                    "http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get"
+                                ],
+                                "command": [
+                                    "/bin/oha"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+                                "imagePullPolicy": "IfNotPresent",
+                                "name": "oha",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:31:04Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:31:04Z",
+                        "lastTransitionTime": "2026-09-05T23:31:04Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:31:04Z",
+                        "lastTransitionTime": "2026-09-05T23:31:04Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:30:51Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-cold\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-11111111111111111111111111111111-1111111111111111-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-cold\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=cold attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=cold status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-382571de7c96-1047310-release\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:28:18Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "01df07fd-18a6-4b26-a597-0bb3af38c5d6",
+                    "batch.kubernetes.io/job-name": "startup-request-cold",
+                    "controller-uid": "01df07fd-18a6-4b26-a597-0bb3af38c5d6",
+                    "job-name": "startup-request-cold"
+                },
+                "name": "startup-request-cold",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1315",
+                "uid": "01df07fd-18a6-4b26-a597-0bb3af38c5d6"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "01df07fd-18a6-4b26-a597-0bb3af38c5d6"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "01df07fd-18a6-4b26-a597-0bb3af38c5d6",
+                            "batch.kubernetes.io/job-name": "startup-request-cold",
+                            "controller-uid": "01df07fd-18a6-4b26-a597-0bb3af38c5d6",
+                            "job-name": "startup-request-cold"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-11111111111111111111111111111111-1111111111111111-01' \\\n    --data '[{\"request_id\":\"startup-cold\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=cold attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=cold status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-382571de7c96-1047310-release",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:28:23Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:28:23Z",
+                        "lastTransitionTime": "2026-09-05T23:28:23Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:28:23Z",
+                        "lastTransitionTime": "2026-09-05T23:28:23Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:28:18Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-restart-first\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-22222222222222222222222222222222-2222222222222222-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-restart-first\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=restart-first attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=restart-first status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-382571de7c96-1047310-release\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:28:35Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "c75c8632-5592-438f-a571-be076b2b2f58",
+                    "batch.kubernetes.io/job-name": "startup-request-restart-first",
+                    "controller-uid": "c75c8632-5592-438f-a571-be076b2b2f58",
+                    "job-name": "startup-request-restart-first"
+                },
+                "name": "startup-request-restart-first",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1580",
+                "uid": "c75c8632-5592-438f-a571-be076b2b2f58"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "c75c8632-5592-438f-a571-be076b2b2f58"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "c75c8632-5592-438f-a571-be076b2b2f58",
+                            "batch.kubernetes.io/job-name": "startup-request-restart-first",
+                            "controller-uid": "c75c8632-5592-438f-a571-be076b2b2f58",
+                            "job-name": "startup-request-restart-first"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-22222222222222222222222222222222-2222222222222222-01' \\\n    --data '[{\"request_id\":\"startup-restart-first\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=restart-first attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=restart-first status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-382571de7c96-1047310-release",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:29:51Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:29:51Z",
+                        "lastTransitionTime": "2026-09-05T23:29:51Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:29:51Z",
+                        "lastTransitionTime": "2026-09-05T23:29:51Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:28:35Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-steady\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-33333333333333333333333333333333-3333333333333333-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-steady\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=steady attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=steady status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-382571de7c96-1047310-release\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:29:51Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "66dc6048-3101-433e-a2e0-e0d41da7a1f8",
+                    "batch.kubernetes.io/job-name": "startup-request-steady",
+                    "controller-uid": "66dc6048-3101-433e-a2e0-e0d41da7a1f8",
+                    "job-name": "startup-request-steady"
+                },
+                "name": "startup-request-steady",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1605",
+                "uid": "66dc6048-3101-433e-a2e0-e0d41da7a1f8"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "66dc6048-3101-433e-a2e0-e0d41da7a1f8"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "66dc6048-3101-433e-a2e0-e0d41da7a1f8",
+                            "batch.kubernetes.io/job-name": "startup-request-steady",
+                            "controller-uid": "66dc6048-3101-433e-a2e0-e0d41da7a1f8",
+                            "job-name": "startup-request-steady"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-33333333333333333333333333333333-3333333333333333-01' \\\n    --data '[{\"request_id\":\"startup-steady\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=steady attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=steady status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-382571de7c96-1047310-release",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:29:54Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:29:54Z",
+                        "lastTransitionTime": "2026-09-05T23:29:54Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:29:54Z",
+                        "lastTransitionTime": "2026-09-05T23:29:54Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:29:51Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-steady-2\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-33333333333333333333333333330002-3333333333330002-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-steady-2\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=steady-2 attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=steady-2 status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-382571de7c96-1047310-release\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:29:54Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "3dfdd3bd-acab-4618-8e9a-218248e46863",
+                    "batch.kubernetes.io/job-name": "startup-request-steady-2",
+                    "controller-uid": "3dfdd3bd-acab-4618-8e9a-218248e46863",
+                    "job-name": "startup-request-steady-2"
+                },
+                "name": "startup-request-steady-2",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1629",
+                "uid": "3dfdd3bd-acab-4618-8e9a-218248e46863"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "3dfdd3bd-acab-4618-8e9a-218248e46863"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "3dfdd3bd-acab-4618-8e9a-218248e46863",
+                            "batch.kubernetes.io/job-name": "startup-request-steady-2",
+                            "controller-uid": "3dfdd3bd-acab-4618-8e9a-218248e46863",
+                            "job-name": "startup-request-steady-2"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-33333333333333333333333333330002-3333333333330002-01' \\\n    --data '[{\"request_id\":\"startup-steady-2\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=steady-2 attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=steady-2 status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-382571de7c96-1047310-release",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:29:57Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:29:57Z",
+                        "lastTransitionTime": "2026-09-05T23:29:57Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:29:57Z",
+                        "lastTransitionTime": "2026-09-05T23:29:57Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:29:54Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-steady-3\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-33333333333333333333333333330003-3333333333330003-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-steady-3\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=steady-3 attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=steady-3 status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-382571de7c96-1047310-release\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:29:57Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "2cfa1b87-903b-4b8c-9050-70d15373e796",
+                    "batch.kubernetes.io/job-name": "startup-request-steady-3",
+                    "controller-uid": "2cfa1b87-903b-4b8c-9050-70d15373e796",
+                    "job-name": "startup-request-steady-3"
+                },
+                "name": "startup-request-steady-3",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1655",
+                "uid": "2cfa1b87-903b-4b8c-9050-70d15373e796"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "2cfa1b87-903b-4b8c-9050-70d15373e796"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "2cfa1b87-903b-4b8c-9050-70d15373e796",
+                            "batch.kubernetes.io/job-name": "startup-request-steady-3",
+                            "controller-uid": "2cfa1b87-903b-4b8c-9050-70d15373e796",
+                            "job-name": "startup-request-steady-3"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-33333333333333333333333333330003-3333333333330003-01' \\\n    --data '[{\"request_id\":\"startup-steady-3\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=steady-3 attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=steady-3 status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-382571de7c96-1047310-release",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:30:00Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:00Z",
+                        "lastTransitionTime": "2026-09-05T23:30:00Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:00Z",
+                        "lastTransitionTime": "2026-09-05T23:30:00Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:29:57Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-steady-4\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-33333333333333333333333333330004-3333333333330004-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-steady-4\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=steady-4 attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=steady-4 status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-382571de7c96-1047310-release\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:30:00Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "ef7a0257-37df-4d38-bea2-a9b812adf9c2",
+                    "batch.kubernetes.io/job-name": "startup-request-steady-4",
+                    "controller-uid": "ef7a0257-37df-4d38-bea2-a9b812adf9c2",
+                    "job-name": "startup-request-steady-4"
+                },
+                "name": "startup-request-steady-4",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1679",
+                "uid": "ef7a0257-37df-4d38-bea2-a9b812adf9c2"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "ef7a0257-37df-4d38-bea2-a9b812adf9c2"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "ef7a0257-37df-4d38-bea2-a9b812adf9c2",
+                            "batch.kubernetes.io/job-name": "startup-request-steady-4",
+                            "controller-uid": "ef7a0257-37df-4d38-bea2-a9b812adf9c2",
+                            "job-name": "startup-request-steady-4"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-33333333333333333333333333330004-3333333333330004-01' \\\n    --data '[{\"request_id\":\"startup-steady-4\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=steady-4 attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=steady-4 status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-382571de7c96-1047310-release",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:30:03Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:03Z",
+                        "lastTransitionTime": "2026-09-05T23:30:03Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:03Z",
+                        "lastTransitionTime": "2026-09-05T23:30:03Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:30:00Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-steady-5\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-33333333333333333333333333330005-3333333333330005-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-steady-5\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=steady-5 attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=steady-5 status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-382571de7c96-1047310-release\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T23:30:03Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "656d5623-8c96-4ab8-ac88-801ee6353c5c",
+                    "batch.kubernetes.io/job-name": "startup-request-steady-5",
+                    "controller-uid": "656d5623-8c96-4ab8-ac88-801ee6353c5c",
+                    "job-name": "startup-request-steady-5"
+                },
+                "name": "startup-request-steady-5",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1704",
+                "uid": "656d5623-8c96-4ab8-ac88-801ee6353c5c"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "656d5623-8c96-4ab8-ac88-801ee6353c5c"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "656d5623-8c96-4ab8-ac88-801ee6353c5c",
+                            "batch.kubernetes.io/job-name": "startup-request-steady-5",
+                            "controller-uid": "656d5623-8c96-4ab8-ac88-801ee6353c5c",
+                            "job-name": "startup-request-steady-5"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-33333333333333333333333333330005-3333333333330005-01' \\\n    --data '[{\"request_id\":\"startup-steady-5\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=steady-5 attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=steady-5 status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-382571de7c96-1047310-release",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T23:30:06Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:06Z",
+                        "lastTransitionTime": "2026-09-05T23:30:06Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T23:30:06Z",
+                        "lastTransitionTime": "2026-09-05T23:30:06Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T23:30:03Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

@@ -1,0 +1,20 @@
+{
+  "verdict": "pass",
+  "phase": "steady-4",
+  "http_total_ms": 5.567,
+  "authentication_ms": 0.892928,
+  "resolution_ms": 0.014848,
+  "artifact_pull_ms": 0,
+  "compile_ms": 0,
+  "linker_setup_ms": 0.096,
+  "link_ms": 0.076032,
+  "instantiate_ms": 0.089088,
+  "executor_platform_acquire_ms": 0,
+  "callable_http_acquire_ms": 0.014592,
+  "guest_sql_acquire_ms": 0.022784,
+  "sql_ms": 0.229376,
+  "guest_db_call_ms": 0.498432,
+  "root_ms": 3.310848,
+  "real_work_ms": 0.31846399999999997,
+  "overhead_ratio": 10.39630225080386
+}

@@ -1,0 +1,125 @@
+{
+  "taken_at_unix_ms": 1788651051330,
+  "databases": [
+    {
+      "datname": "postgres",
+      "numbackends": 2,
+      "xact_commit": 18672,
+      "xact_rollback": 0,
+      "blks_read": 724,
+      "blks_hit": 140683,
+      "tup_returned": 256038,
+      "tup_fetched": 73990,
+      "sessions": 75,
+      "active_time_ms": 1116.549
+    },
+    {
+      "datname": "wamn-db-acme--receiving--dev--6ops3w4x",
+      "numbackends": 8,
+      "xact_commit": 28034,
+      "xact_rollback": 0,
+      "blks_read": 72,
+      "blks_hit": 215942,
+      "tup_returned": 457051,
+      "tup_fetched": 229249,
+      "sessions": 91,
+      "active_time_ms": 1865.9
+    }
+  ],
+  "activity": [
+    {
+      "datname": "postgres",
+      "state": "active",
+      "count": 1
+    },
+    {
+      "datname": "postgres",
+      "state": "idle",
+      "count": 1
+    },
+    {
+      "datname": "wamn-db-acme--receiving--dev--6ops3w4x",
+      "state": "idle",
+      "count": 8
+    }
+  ],
+  "nats": {
+    "auth_timeout": 2,
+    "cluster": {},
+    "config_load_time": "2026-09-05T23:26:36.898823561Z",
+    "connections": 1,
+    "cores": 8,
+    "cpu": 0,
+    "gateway": {},
+    "git_commit": "f91ddd8",
+    "go": "go1.24.2",
+    "gomaxprocs": 8,
+    "host": "0.0.0.0",
+    "http_base_path": "",
+    "http_host": "0.0.0.0",
+    "http_port": 8222,
+    "http_req_stats": {
+      "/healthz": 1,
+      "/varz": 5
+    },
+    "https_port": 0,
+    "in_bytes": 8472708,
+    "in_msgs": 19912,
+    "jetstream": {
+      "config": {
+        "max_memory": 49078075392,
+        "max_storage": 110249779200,
+        "store_dir": "/data/jetstream",
+        "sync_interval": 120000000000
+      },
+      "stats": {
+        "accounts": 1,
+        "api": {
+          "errors": 0,
+          "total": 0
+        },
+        "ha_assets": 0,
+        "memory": 0,
+        "reserved_memory": 0,
+        "reserved_storage": 0,
+        "storage": 0
+      }
+    },
+    "leaf": {},
+    "leafnodes": 0,
+    "max_connections": 65536,
+    "max_control_line": 4096,
+    "max_payload": 1048576,
+    "max_pending": 67108864,
+    "mem": 19009536,
+    "mqtt": {},
+    "now": "2026-09-05T23:30:51.329355259Z",
+    "out_bytes": 0,
+    "out_msgs": 0,
+    "ping_interval": 120000000000,
+    "ping_max": 2,
+    "port": 4222,
+    "proto": 1,
+    "remotes": 0,
+    "routes": 0,
+    "server_id": "NA7KSHR5FGHHVE3Q3YWIKOZHILYWWBOOLT2B75J7HLOHBC5ZWI4BZAX6",
+    "server_name": "NA7KSHR5FGHHVE3Q3YWIKOZHILYWWBOOLT2B75J7HLOHBC5ZWI4BZAX6",
+    "slow_consumer_stats": {
+      "clients": 0,
+      "gateways": 0,
+      "leafs": 0,
+      "routes": 0
+    },
+    "slow_consumers": 0,
+    "start": "2026-09-05T23:26:36.898823561Z",
+    "subscriptions": 64,
+    "system_account": "$SYS",
+    "tls_timeout": 2,
+    "total_connections": 2,
+    "uptime": "4m14s",
+    "version": "2.10.29",
+    "websocket": {},
+    "write_deadline": 10000000000
+  },
+  "nats_error": null
+}
