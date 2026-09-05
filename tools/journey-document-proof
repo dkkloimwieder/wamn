@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# Proof for tools/journey-document.sh. No cluster: a writer and an amender over
+# the CHECKED-IN schema the Rust struct generated, pinned to the checked-in
+# example the Rust side parses.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/tools/journey-document.sh"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+SCHEMA=$repo_root/tests/integration/schema/wamn-journey.schema.json
+EXAMPLE=$repo_root/tests/integration/schema/wamn-journey.example.json
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+refused_saying() { local err; err=$("$@" 2>&1 >/dev/null) && return 1; [[ $err == *"$REASON"* ]]; }
+
+# The example's values. Deliberately not Receiving's, and each one distinct, so
+# a field landing under the wrong key is visible as itself. The Rust test that
+# parses the checked-in example asserts several of these by name; change them
+# together or the pin breaks in one direction only.
+build_spec() {
+  eval "declare -gA $1=(
+    [system_pg_url]=postgresql://postgres:probe@10.0.0.9:5432/postgres
+    [component_directory]=/tmp/example/components
+    [compilation_cache_directory]=/tmp/example/wasmtime-cache
+    [flow_http_wasm]=/tmp/example/http_route.wasm
+    [component_artifact_base]=10.0.0.7:5000/wamn/components
+    [release_artifact_base]=10.0.0.7:5000/wamn/releases
+    [route_host]=example.localhost
+    [registry_auth_file]=/tmp/example/docker/config.json
+    [host_secret_directory]=/tmp/example/host-secrets
+    [host_secret_namespace]=wamn-example-journey
+    [route_caller_secret_output]=/tmp/example/route-caller-pat.json
+  )"
+}
+PHASE='{"project_pg_url":"postgresql://postgres:probe@10.0.0.9:5432/wamn-db-example","nats_url":"nats://10.0.0.8:4222","receipt_id":"00000000-0000-0000-0000-00000000c0de"}'
+
+echo "1. the schema is the contract, and it is the checked-in one"
+[[ -f $SCHEMA ]]; check "the checked-in schema exists where the Rust drift test pins it" $?
+jq -e '.additionalProperties == false' "$SCHEMA" >/dev/null
+check "the schema forbids unknown keys, which is what makes it a contract" $?
+
+echo "2. the writer, pinned to the example the Rust side parses"
+build_spec ex
+write_journey_document ex "$SCHEMA" "$work/ex.json"; check "the example spec writes" $?
+# Before the amendment: every required key, and ONLY required keys.
+[[ $(jq -r 'keys[]' "$work/ex.json" | sort | tr '\n' ' ') == $(jq -r '.required[]' "$SCHEMA" | sort | tr '\n' ' ') ]]
+check "the written document carries exactly the schema's required keys" $?
+# The writer claims its bytes do not depend on bash's hash order. Assert it
+# HERE, on the pre-amendment file: the amender re-sorts the whole document, so
+# the byte-pin below would pass with a writer emitting in hash order -- and did,
+# until this line. A mutant that emits in hash order is killed only by this.
+jq -S . "$work/ex.json" | diff -q - "$work/ex.json" >/dev/null
+check "the written document is already in sorted key order, before any amendment" $?
+amend_journey_document "$SCHEMA" "$work/ex.json" materializer "$PHASE"
+check "the materializer phase amends in" $?
+[[ $(jq -r 'keys[]' "$work/ex.json" | sort | tr '\n' ' ') == $(jq -r '.properties | keys[]' "$SCHEMA" | sort | tr '\n' ' ') ]]
+check "after the amendment it carries exactly the schema's properties" $?
+diff -q "$work/ex.json" "$EXAMPLE" >/dev/null
+check "and it is byte-identical to the checked-in example the Rust test parses" $?
+
+echo "3. a second application writes its own values into the same shape"
+build_spec other
+other[route_host]=hopper.localhost
+other[host_secret_namespace]=wamn-hopper-journey
+other[system_pg_url]=postgresql://postgres:probe@10.9.9.9:5432/postgres
+write_journey_document other "$SCHEMA" "$work/other.json"; check "a second spec writes" $?
+while IFS='|' read -r want gone; do
+  grep -qF -- "$want" "$work/other.json" && ! grep -qF -- "$gone" "$work/other.json"
+  check "[$want] replaces [$gone]" $?
+done <<'PAIRS'
+"route_host": "hopper.localhost"|"route_host": "example.localhost"
+"host_secret_namespace": "wamn-hopper-journey"|"host_secret_namespace": "wamn-example-journey"
+10.9.9.9:5432/postgres|10.0.0.9:5432/postgres
+PAIRS
+
+echo "4. refusals, each naming the field, each isolated"
+build_spec short; unset "short[route_host]"
+REASON="missing required route_host" refused_saying write_journey_document short "$SCHEMA" "$work/out.json"
+check "control: a spec missing a required key is refused, naming IT" $?
+build_spec typo; typo[route_hots]=typo.localhost
+REASON="carries route_hots, which the schema does not declare" \
+  refused_saying write_journey_document typo "$SCHEMA" "$work/out.json"
+check "control: a key the schema does not declare is refused, naming IT" $?
+# Isolation: that spec has every required key, so only the unknown-key guard
+# can be what refused it.
+build_spec typo2; typo2[route_hots]=typo.localhost
+for key in $(jq -r '.required[]' "$SCHEMA"); do [[ -v typo2[$key] ]] || exit 1; done
+check "control isolates: the typo spec is complete, so only the unknown-key guard refused" $?
+build_spec empty; empty[host_secret_directory]=
+REASON="value for host_secret_directory is empty" refused_saying write_journey_document empty "$SCHEMA" "$work/out.json"
+check "control: an empty value is refused before it becomes an empty string on the far side" $?
+build_spec noschema
+REASON="no schema at" refused_saying write_journey_document noschema "$work/nope.json" "$work/out.json"
+check "control: a missing schema is refused" $?
+printf '{"title":"not a schema"}\n' >"$work/bare.json"
+REASON="does not carry required and properties" \
+  refused_saying write_journey_document noschema "$work/bare.json" "$work/out.json"
+check "control: a file that is not a schema is refused, not read as an empty contract" $?
+
+echo "5. the amendment is a phase becoming known, once"
+build_spec am; write_journey_document am "$SCHEMA" "$work/am.json"
+REASON="is not a key the schema declares" \
+  refused_saying amend_journey_document "$SCHEMA" "$work/am.json" materialiser "$PHASE"
+check "control: amending a key the schema does not declare is refused, naming IT" $?
+REASON="is not JSON" refused_saying amend_journey_document "$SCHEMA" "$work/am.json" materializer 'not json'
+check "control: a non-JSON value is refused" $?
+amend_journey_document "$SCHEMA" "$work/am.json" materializer "$PHASE"
+REASON="already carries materializer" \
+  refused_saying amend_journey_document "$SCHEMA" "$work/am.json" materializer "$PHASE"
+check "control: amending the same phase twice is refused" $?
+REASON="no document at" refused_saying amend_journey_document "$SCHEMA" "$work/absent.json" materializer "$PHASE"
+check "control: amending a document that does not exist is refused" $?
+
+echo "6. nameref binding"
+binds() {
+  local n=$1
+  build_spec "$n"
+  eval "$n[route_host]=DECOY.localhost"
+  collide() {
+    eval "local -A $n=(
+      [system_pg_url]=postgresql://postgres:probe@10.0.0.9:5432/postgres
+      [component_directory]=/tmp/example/components
+      [compilation_cache_directory]=/tmp/example/wasmtime-cache
+      [flow_http_wasm]=/tmp/example/http_route.wasm
+      [component_artifact_base]=10.0.0.7:5000/wamn/components
+      [release_artifact_base]=10.0.0.7:5000/wamn/releases
+      [route_host]=example.localhost
+      [registry_auth_file]=/tmp/example/docker/config.json
+      [host_secret_directory]=/tmp/example/host-secrets
+      [host_secret_namespace]=wamn-example-journey
+      [route_caller_secret_output]=/tmp/example/route-caller-pat.json
+    )"
+    write_journey_document "$n" "$SCHEMA" "$work/nr.json"
+  }
+  collide 2>/dev/null || return 1
+  ! grep -q DECOY "$work/nr.json"
+}
+for n in spec journey_spec config params; do
+  binds "$n"; check "a caller array named '$n' binds to the caller" $?
+done
+! binds _wjd_spec; check "control: colliding on the internal name is detected" $?
+
+echo
+if [[ $failures -eq 0 ]]; then echo "journey-document: all properties hold"; else
+  echo "journey-document: $failures failed"; exit 1; fi

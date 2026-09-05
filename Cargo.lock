@@ -5581,6 +5581,7 @@ dependencies = [
  "opentelemetry_sdk",
  "pg_walstream",
  "reqwest",
+ "schemars",
  "serde",
  "serde_json",
  "tokio",

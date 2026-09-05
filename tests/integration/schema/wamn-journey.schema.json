@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "MaterializerPhase": {
+      "additionalProperties": false,
+      "description": "The materializer phase's inputs: the project-environment database the route phase provisioned, the event stream it subscribes to, and the receipt the trigger produced. The NATS URL is known from the start, but the only reader that needs it is this phase's, so it rides here rather than being a required top-level field a route-only run would have to invent.",
+      "properties": {
+        "nats_url": {
+          "type": "string"
+        },
+        "project_pg_url": {
+          "type": "string"
+        },
+        "receipt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "nats_url",
+        "project_pg_url",
+        "receipt_id"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "Sole field authority for the cluster journey's input document.\n\nAn environment variable carries a process setting; data crosses a boundary as a declared, schema'd artifact. This document replaced thirteen `WAMN_*` environment variables that had grown one name at a time, each encoding whatever its author was thinking about -- the application, the test, the database -- until two PG18 URLs sat one segment apart in a flat namespace with nothing to say they were different things. As fields they are `system_pg_url` and, in the materializer phase, `project_pg_url`, and the question does not arise.\n\nThe shell writes it once, with `jq`, from the values it owns; this crate reads it strictly. `deny_unknown_fields` is what makes it a contract: a key the writer invents and the reader does not know fails here, not forty minutes into a cluster run as an empty string.",
+  "properties": {
+    "compilation_cache_directory": {
+      "type": "string"
+    },
+    "component_artifact_base": {
+      "type": "string"
+    },
+    "component_directory": {
+      "type": "string"
+    },
+    "flow_http_wasm": {
+      "type": "string"
+    },
+    "host_secret_directory": {
+      "type": "string"
+    },
+    "host_secret_namespace": {
+      "type": "string"
+    },
+    "materializer": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/MaterializerPhase"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Known only after the route phase has provisioned the project environment and the materializer trigger has produced a receipt. The shell amends the document with it then; before that it is absent, and the materializer test refuses to run rather than read an empty string."
+    },
+    "registry_auth_file": {
+      "type": "string"
+    },
+    "release_artifact_base": {
+      "type": "string"
+    },
+    "route_caller_secret_output": {
+      "type": "string"
+    },
+    "route_host": {
+      "type": "string"
+    },
+    "system_pg_url": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "compilation_cache_directory",
+    "component_artifact_base",
+    "component_directory",
+    "flow_http_wasm",
+    "host_secret_directory",
+    "host_secret_namespace",
+    "registry_auth_file",
+    "release_artifact_base",
+    "route_caller_secret_output",
+    "route_host",
+    "system_pg_url"
+  ],
+  "title": "JourneyDocument",
+  "type": "object"
+}

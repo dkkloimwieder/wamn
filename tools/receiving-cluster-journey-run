@@ -50,6 +50,8 @@ source "$script_dir/journey-workload.sh"
 source "$script_dir/journey-materializer.sh"
 # shellcheck source=tools/journey-probe.sh
 source "$script_dir/journey-probe.sh"
+# shellcheck source=tools/journey-document.sh
+source "$script_dir/journey-document.sh"
 cd -- "$repo_root"
 
 head=$(git rev-parse --verify HEAD)
@@ -676,19 +678,33 @@ assert_one_test_ran() {
 }
 
 route_caller_secret=$work_dir/route-caller-pat.json
+# THE JOURNEY'S INPUTS ARE ONE DOCUMENT, not a dozen environment variables. An
+# environment variable carries a process setting; data crosses a boundary as a
+# declared, schema'd artifact. The schema is generated from the Rust struct
+# that reads this file and is drift-tested there; write_journey_document reads
+# the same schema, so a key this side invents or omits is refused HERE, naming
+# it, rather than by the Rust side after the build. The only environment
+# variables the test invocation still carries are process settings: where the
+# target directory is, that no wrapper wraps rustc, and where this file is.
+journey_schema=$repo_root/tests/integration/schema/wamn-journey.schema.json
+journey_document=$work_dir/journey.json
+declare -A journey_spec=(
+  [system_pg_url]=$system_url
+  [component_directory]=$component_directory
+  [compilation_cache_directory]=$compilation_cache_directory
+  [flow_http_wasm]=$flow_http_wasm
+  [component_artifact_base]=$component_artifact_base
+  [release_artifact_base]=$release_artifact_base
+  [route_host]=$route_host
+  [registry_auth_file]=$docker_config_directory/config.json
+  [host_secret_directory]=$host_secret_directory
+  [host_secret_namespace]=$namespace
+  [route_caller_secret_output]=$route_caller_secret
+)
+write_journey_document journey_spec "$journey_schema" "$journey_document"
 record_command cargo test production_two_package_release_serves_all_thirteen_pat_routes \
-  '<disposable PostgreSQL and OCI inputs redacted>'
-WAMN_ROUTE_PG18_URL="$system_url" \
-WAMN_ROUTE_COMPONENT_DIRECTORY="$component_directory" \
-WAMN_ROUTE_COMPILATION_CACHE_DIRECTORY="$compilation_cache_directory" \
-WAMN_ROUTE_FLOW_HTTP_WASM="$flow_http_wasm" \
-WAMN_ROUTE_COMPONENT_ARTIFACT_BASE="$component_artifact_base" \
-WAMN_ROUTE_RELEASE_ARTIFACT_BASE="$release_artifact_base" \
-WAMN_ROUTE_HOST="$route_host" \
-WAMN_ROUTE_REGISTRY_AUTH_FILE="$docker_config_directory/config.json" \
-WAMN_ROUTE_SECRET_OUTPUT_DIRECTORY="$host_secret_directory" \
-WAMN_ROUTE_SECRET_NAMESPACE="$namespace" \
-WAMN_ROUTE_CALLER_SECRET_OUTPUT="$route_caller_secret" \
+  '<journey document with disposable PostgreSQL and OCI inputs redacted>'
+WAMN_JOURNEY_DOCUMENT="$journey_document" \
 CARGO_TARGET_DIR="$cargo_target_dir" \
 RUSTC_WRAPPER= \
   cargo test -p wamn-proof-integration --lib --locked --offline \
@@ -1819,11 +1835,17 @@ jq -e '
 materializer_receipt_id=$(jq -er '.[0].value.receipt_id' \
   "$evidence_dir/materializer-receipt.json")
 
+# The materializer phase's inputs are amended in as ONE object, once. Two of
+# them were not known when the document was written -- the project database is
+# provisioned by the route phase and the receipt is produced by the trigger --
+# and the third, the event stream, has only this phase as its reader.
+amend_journey_document "$journey_schema" "$journey_document" materializer \
+  "$(jq -n --arg project_pg_url "$project_url" --arg nats_url "$nats_url" \
+    --arg receipt_id "$materializer_receipt_id" \
+    '{project_pg_url: $project_pg_url, nats_url: $nats_url, receipt_id: $receipt_id}')"
 record_command cargo test production_materializer_consumes_the_causal_receipt_exactly_once \
-  '<disposable PostgreSQL, NATS, and receipt inputs redacted>'
-WAMN_RECEIVING_MATERIALIZER_PG_URL="$project_url" \
-WAMN_RECEIVING_MATERIALIZER_NATS_URL="$nats_url" \
-WAMN_RECEIVING_MATERIALIZER_RECEIPT_ID="$materializer_receipt_id" \
+  '<journey document amended with the project database and receipt, redacted>'
+WAMN_JOURNEY_DOCUMENT="$journey_document" \
 CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once \

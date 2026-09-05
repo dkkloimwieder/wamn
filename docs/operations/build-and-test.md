@@ -1345,6 +1345,7 @@ RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY="$RECEIVING_ROUTE_SCRATCH/host-secrets"
 RECEIVING_ROUTE_CALLER_SECRET_OUTPUT="$RECEIVING_ROUTE_SCRATCH/route-caller-pat.json"
 RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY="$RECEIVING_ROUTE_SCRATCH/wasmtime-cache"
 RECEIVING_ROUTE_SECRET_NAMESPACE=wamn-receiving-route
+RECEIVING_ROUTE_JOURNEY_DOCUMENT="$RECEIVING_ROUTE_SCRATCH/journey.json"
 install -d -m 0700 "$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY" \
   "$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY"
 
@@ -1402,17 +1403,27 @@ test "$(curl --config "$RECEIVING_ROUTE_CURL_AUTH" --silent --show-error \
   --output /dev/null --write-out '%{http_code}' \
   "http://${RECEIVING_ROUTE_AUTHORITY}/v2/")" = 200
 
-WAMN_ROUTE_PG18_URL="postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/postgres" \
-WAMN_ROUTE_COMPONENT_DIRECTORY="$RECEIVING_ROUTE_COMPONENTS" \
-WAMN_ROUTE_COMPILATION_CACHE_DIRECTORY="$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY" \
-WAMN_ROUTE_FLOW_HTTP_WASM="$RECEIVING_ROUTE_FLOW_HTTP" \
-WAMN_ROUTE_COMPONENT_ARTIFACT_BASE="$RECEIVING_ROUTE_AUTHORITY/wamn/components" \
-WAMN_ROUTE_RELEASE_ARTIFACT_BASE="$RECEIVING_ROUTE_AUTHORITY/wamn/releases" \
-WAMN_ROUTE_HOST="$RECEIVING_ROUTE_HOST" \
-WAMN_ROUTE_REGISTRY_AUTH_FILE="$RECEIVING_ROUTE_DOCKER_AUTH" \
-WAMN_ROUTE_SECRET_OUTPUT_DIRECTORY="$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY" \
-WAMN_ROUTE_CALLER_SECRET_OUTPUT="$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT" \
-WAMN_ROUTE_SECRET_NAMESPACE="$RECEIVING_ROUTE_SECRET_NAMESPACE" \
+# The test's inputs are ONE document, not a dozen environment variables. The
+# schema is generated from the Rust struct that reads the file and drift-tested
+# there; the writer reads the same schema, so a key this side invents or omits
+# is refused here, naming it, rather than by the Rust side after the build.
+source tools/journey-document.sh
+declare -A journey_spec=(
+  [system_pg_url]="postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/postgres"
+  [component_directory]="$RECEIVING_ROUTE_COMPONENTS"
+  [compilation_cache_directory]="$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY"
+  [flow_http_wasm]="$RECEIVING_ROUTE_FLOW_HTTP"
+  [component_artifact_base]="$RECEIVING_ROUTE_AUTHORITY/wamn/components"
+  [release_artifact_base]="$RECEIVING_ROUTE_AUTHORITY/wamn/releases"
+  [route_host]="$RECEIVING_ROUTE_HOST"
+  [registry_auth_file]="$RECEIVING_ROUTE_DOCKER_AUTH"
+  [host_secret_directory]="$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY"
+  [host_secret_namespace]="$RECEIVING_ROUTE_SECRET_NAMESPACE"
+  [route_caller_secret_output]="$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT"
+)
+write_journey_document journey_spec \
+  tests/integration/schema/wamn-journey.schema.json "$RECEIVING_ROUTE_JOURNEY_DOCUMENT"
+WAMN_JOURNEY_DOCUMENT="$RECEIVING_ROUTE_JOURNEY_DOCUMENT" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes \
   -- --ignored --exact --nocapture --test-threads=1
@@ -1471,7 +1482,7 @@ tools/receiving-cluster-journey-run --apply \
   --evidence-dir /tmp/wamn-receiving-cluster-evidence
 ```
 
-**Run the seven harness proofs first. They cost a second and they stand in
+**Run the eight harness proofs first. They cost a second and they stand in
 front of a twenty-five-minute cluster run.**
 
 ```bash
@@ -1486,7 +1497,7 @@ the `break` form printed the failure and exited 0; the subshell form printed it
 and exited 1. A command that stands in front of a twenty-five-minute cluster
 run, documented in the sentence that introduces the guards, silently disarmed.
 
-The journey's render and assert surface is lifted into seven shared harnesses,
+The journey's render and assert surface is lifted into eight shared harnesses,
 and each has an offline proof beside it — no cluster, no containers, no
 network, and the frozen cluster untouched. Together they are the whole
 regression net for that surface:
@@ -1500,6 +1511,7 @@ regression net for that surface:
 | `journey-trace.sh` | a trace breakdown is complete, including this application's statement count |
 | `journey-materializer.sh` | the materializer manifest's eight identity values come from the declaration |
 | `journey-probe.sh` | the probe Job renders AND the rendered probe script actually runs |
+| `journey-document.sh` | the input document is written and amended against the schema the Rust struct generated |
 
 Each pins Receiving's bytes by digest against the block it replaced, renders a
 second application's declaration to prove the block is generic rather than
@@ -1800,6 +1812,25 @@ the mutated property.** Both halves matter. Completion rules out the crash
 disguise; failing on the mutated property rules out a kill for an unrelated
 reason, which proves the mutant is detectable but not that the assertion you
 care about detects it.
+
+**A surviving mutant can be masked by a normalizer DOWNSTREAM of the property
+it breaks. Assert a claim at the layer that makes it.** The journey-document
+writer claims its bytes do not depend on bash's hash order, and emits in the
+schema's key order under `jq -S`. The mutant that emits in hash order with no
+sort SURVIVED — and was not equivalent. The proof's byte-pin sits after the
+amender, and the amender re-sorts the whole document under its own `-S`, so
+the writer's order never reached the diff. It looked like an equivalent
+mutant and was a claim nobody tested. One assertion on the pre-amendment
+file — `jq -S . out | diff - out` — kills it. The general shape: when a mutant
+survives and the first explanation is "equivalent," find what sits between the
+mutated code and the assertion, and ask whether it repairs the damage.
+
+**A guard that matches a substring is caught by a superstring — even a guard
+in a one-line chain.** `! grep -q JourneyInputs` was meant to prove a type was
+gone after a rename; `DevJourneyInputs` still existed, the guard fired, and the
+chain aborted before the build it was gating. Ten seconds, and only because
+the failure was loud. The uniqueness corollary applies to a throwaway `grep`
+exactly as it applies to a renderer's anchor.
 
 **And a mutant must prove it LANDED before its survival means anything.** A
 substitution that matched nothing changes no code, so the proof passes and the

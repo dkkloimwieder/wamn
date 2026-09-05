@@ -1,0 +1,18 @@
+{
+  "compilation_cache_directory": "/tmp/example/wasmtime-cache",
+  "component_artifact_base": "10.0.0.7:5000/wamn/components",
+  "component_directory": "/tmp/example/components",
+  "flow_http_wasm": "/tmp/example/http_route.wasm",
+  "host_secret_directory": "/tmp/example/host-secrets",
+  "host_secret_namespace": "wamn-example-journey",
+  "materializer": {
+    "nats_url": "nats://10.0.0.8:4222",
+    "project_pg_url": "postgresql://postgres:probe@10.0.0.9:5432/wamn-db-example",
+    "receipt_id": "00000000-0000-0000-0000-00000000c0de"
+  },
+  "registry_auth_file": "/tmp/example/docker/config.json",
+  "release_artifact_base": "10.0.0.7:5000/wamn/releases",
+  "route_caller_secret_output": "/tmp/example/route-caller-pat.json",
+  "route_host": "example.localhost",
+  "system_pg_url": "postgresql://postgres:probe@10.0.0.9:5432/postgres"
+}

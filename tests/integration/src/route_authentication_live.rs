@@ -17,6 +17,8 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{
     InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::Client;
@@ -866,7 +868,36 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     admin_task.abort();
 }
 
-struct JourneyInputs {
+/// The one process setting the cluster journey hands this crate: the path to
+/// its input document. Everything else crosses as fields of that document.
+const JOURNEY_DOCUMENT_ENV: &str = "WAMN_JOURNEY_DOCUMENT";
+/// Checked-in schema generated from [`JourneyDocument`], relative to this
+/// crate's manifest. Regenerate with the ignored test beside its drift test.
+const JOURNEY_SCHEMA_PATH: &str = "schema/wamn-journey.schema.json";
+/// A complete example the shell writer reproduces byte-for-byte and this crate
+/// parses, so the two sides are pinned to one artifact rather than to each
+/// other's reading of the schema.
+const JOURNEY_EXAMPLE_PATH: &str = "schema/wamn-journey.example.json";
+
+/// Sole field authority for the cluster journey's input document.
+///
+/// An environment variable carries a process setting; data crosses a boundary
+/// as a declared, schema'd artifact. This document replaced thirteen
+/// `WAMN_*` environment variables that had grown one name at a time, each
+/// encoding whatever its author was thinking about -- the application, the
+/// test, the database -- until two PG18 URLs sat one segment apart in a flat
+/// namespace with nothing to say they were different things. As fields they
+/// are `system_pg_url` and, in the materializer phase, `project_pg_url`, and
+/// the question does not arise.
+///
+/// The shell writes it once, with `jq`, from the values it owns; this crate
+/// reads it strictly. `deny_unknown_fields` is what makes it a contract: a key
+/// the writer invents and the reader does not know fails here, not forty
+/// minutes into a cluster run as an empty string.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct JourneyDocument {
+    system_pg_url: String,
     component_directory: PathBuf,
     compilation_cache_directory: PathBuf,
     flow_http_wasm: PathBuf,
@@ -877,31 +908,188 @@ struct JourneyInputs {
     host_secret_directory: PathBuf,
     host_secret_namespace: String,
     route_caller_secret_output: PathBuf,
+    /// Known only after the route phase has provisioned the project
+    /// environment and the materializer trigger has produced a receipt. The
+    /// shell amends the document with it then; before that it is absent, and
+    /// the materializer test refuses to run rather than read an empty string.
+    materializer: Option<MaterializerPhase>,
 }
 
-impl JourneyInputs {
+/// The materializer phase's inputs: the project-environment database the
+/// route phase provisioned, the event stream it subscribes to, and the receipt
+/// the trigger produced. The NATS URL is known from the start, but the only
+/// reader that needs it is this phase's, so it rides here rather than being a
+/// required top-level field a route-only run would have to invent.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct MaterializerPhase {
+    project_pg_url: String,
+    nats_url: String,
+    receipt_id: String,
+}
+
+impl JourneyDocument {
     fn required() -> anyhow::Result<Self> {
-        Ok(Self {
-            component_directory: required_journey_path("WAMN_ROUTE_COMPONENT_DIRECTORY")?,
-            compilation_cache_directory: required_journey_path(
-                "WAMN_ROUTE_COMPILATION_CACHE_DIRECTORY",
-            )?,
-            flow_http_wasm: required_journey_path("WAMN_ROUTE_FLOW_HTTP_WASM")?,
-            component_artifact_base: required_journey(
-                "WAMN_ROUTE_COMPONENT_ARTIFACT_BASE",
-            )?,
-            release_artifact_base: required_journey("WAMN_ROUTE_RELEASE_ARTIFACT_BASE")?,
-            route_host: required_journey("WAMN_ROUTE_HOST")?,
-            registry_auth_file: required_journey_path("WAMN_ROUTE_REGISTRY_AUTH_FILE")?,
-            host_secret_directory: required_journey_path(
-                "WAMN_ROUTE_SECRET_OUTPUT_DIRECTORY",
-            )?,
-            host_secret_namespace: required_journey("WAMN_ROUTE_SECRET_NAMESPACE")?,
-            route_caller_secret_output: required_journey_path(
-                "WAMN_ROUTE_CALLER_SECRET_OUTPUT",
-            )?,
-        })
+        let path = required_journey_path(JOURNEY_DOCUMENT_ENV)?;
+        let bytes =
+            std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        parse_journey_document(&bytes)
+            .with_context(|| format!("{} is not a valid journey document", path.display()))
     }
+
+    /// Every scalar the document carries, named, so emptiness is refused with
+    /// the field's name rather than surfacing as a path that does not exist.
+    fn scalars(&self) -> [(&'static str, &str); 11] {
+        fn path(value: &Path) -> &str {
+            value.to_str().unwrap_or("")
+        }
+        [
+            ("system_pg_url", &self.system_pg_url),
+            ("component_directory", path(&self.component_directory)),
+            (
+                "compilation_cache_directory",
+                path(&self.compilation_cache_directory),
+            ),
+            ("flow_http_wasm", path(&self.flow_http_wasm)),
+            ("component_artifact_base", &self.component_artifact_base),
+            ("release_artifact_base", &self.release_artifact_base),
+            ("route_host", &self.route_host),
+            ("registry_auth_file", path(&self.registry_auth_file)),
+            ("host_secret_directory", path(&self.host_secret_directory)),
+            ("host_secret_namespace", &self.host_secret_namespace),
+            (
+                "route_caller_secret_output",
+                path(&self.route_caller_secret_output),
+            ),
+        ]
+    }
+}
+
+/// Parse one strict journey document. Unknown keys, missing keys and empty
+/// values are all refusals, each naming the field.
+fn parse_journey_document(bytes: &[u8]) -> anyhow::Result<JourneyDocument> {
+    let document: JourneyDocument = serde_json::from_slice(bytes)
+        .context("journey document disagrees with its generated schema")?;
+    for (field, value) in document.scalars() {
+        anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
+    }
+    if let Some(materializer) = &document.materializer {
+        for (field, value) in [
+            ("materializer.project_pg_url", &materializer.project_pg_url),
+            ("materializer.nats_url", &materializer.nats_url),
+            ("materializer.receipt_id", &materializer.receipt_id),
+        ] {
+            anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
+        }
+    }
+    Ok(document)
+}
+
+/// Byte-stable pretty JSON Schema generated from the strict document type.
+fn journey_document_schema_bytes() -> Vec<u8> {
+    let schema = serde_json::to_value(schemars::schema_for!(JourneyDocument))
+        .expect("journey document schema serializes");
+    let mut bytes = serde_json::to_vec_pretty(&schema).expect("journey document schema serializes");
+    bytes.push(b'\n');
+    bytes
+}
+
+#[test]
+fn checked_in_journey_schema_matches_generated_bytes() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_SCHEMA_PATH);
+    let checked_in = std::fs::read(&path).expect("read the checked-in journey schema");
+    assert_eq!(checked_in, journey_document_schema_bytes());
+}
+
+#[test]
+#[ignore = "schema regeneration command only"]
+fn regenerate_checked_in_journey_schema() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_SCHEMA_PATH);
+    std::fs::write(path, journey_document_schema_bytes())
+        .expect("write the generated journey schema");
+}
+
+/// The generated schema and the strict parser share ONE field authority: a
+/// field cannot exist in the parser and be absent from the schema, or the
+/// reverse, and the schema says which fields a writer must supply.
+#[test]
+fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
+    let first = journey_document_schema_bytes();
+    assert_eq!(first, journey_document_schema_bytes());
+    assert_eq!(first.last(), Some(&b'\n'));
+
+    let schema: serde_json::Value = serde_json::from_slice(&first).expect("parse the schema");
+    assert_eq!(schema["additionalProperties"], false);
+    let properties = schema["properties"].as_object().expect("object properties");
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .expect("required set")
+        .iter()
+        .map(|key| key.as_str().expect("required key"))
+        .collect();
+    // Every scalar the parser refuses-when-empty is a required property, and
+    // the only property that is not required is the phase the shell amends in.
+    let example = parse_journey_document(&example_document()).expect("example parses");
+    for (field, _) in example.scalars() {
+        assert!(properties.contains_key(field), "schema lacks {field}");
+        assert!(required.contains(&field), "schema does not require {field}");
+    }
+    assert_eq!(properties.len(), example.scalars().len() + 1);
+    assert!(properties.contains_key("materializer"));
+    assert!(!required.contains(&"materializer"));
+    let phase = &schema["definitions"]["MaterializerPhase"];
+    assert_eq!(phase["additionalProperties"], false);
+    assert_eq!(
+        phase["required"],
+        serde_json::json!(["nats_url", "project_pg_url", "receipt_id"])
+    );
+
+    // And the refusals name the field, so a forty-minute run does not fail
+    // under a message about something else.
+    let mut missing: serde_json::Value =
+        serde_json::from_slice(&example_document()).expect("example is JSON");
+    missing.as_object_mut().expect("object").remove("route_host");
+    let error = parse_journey_document(&serde_json::to_vec(&missing).expect("serialize"))
+        .expect_err("a missing required field is refused");
+    assert!(format!("{error:#}").contains("route_host"), "{error:#}");
+
+    let mut unknown: serde_json::Value =
+        serde_json::from_slice(&example_document()).expect("example is JSON");
+    unknown["route_hots"] = serde_json::json!("typo.localhost");
+    let error = parse_journey_document(&serde_json::to_vec(&unknown).expect("serialize"))
+        .expect_err("an unknown field is refused, not ignored");
+    assert!(format!("{error:#}").contains("route_hots"), "{error:#}");
+
+    let mut empty: serde_json::Value =
+        serde_json::from_slice(&example_document()).expect("example is JSON");
+    empty["host_secret_namespace"] = serde_json::json!("");
+    let error = parse_journey_document(&serde_json::to_vec(&empty).expect("serialize"))
+        .expect_err("an empty value is refused, not passed through");
+    assert!(format!("{error:#}").contains("host_secret_namespace"), "{error:#}");
+
+    let mut no_phase: serde_json::Value =
+        serde_json::from_slice(&example_document()).expect("example is JSON");
+    no_phase.as_object_mut().expect("object").remove("materializer");
+    let parsed = parse_journey_document(&serde_json::to_vec(&no_phase).expect("serialize"))
+        .expect("the materializer phase is optional until the shell amends it in");
+    assert!(parsed.materializer.is_none());
+}
+
+/// The checked-in example is what the shell writer reproduces byte-for-byte;
+/// parsing it here is what pins the two sides to one artifact.
+#[test]
+fn the_checked_in_example_document_parses_with_every_field() {
+    let document = parse_journey_document(&example_document()).expect("example parses");
+    assert_eq!(document.route_host, "example.localhost");
+    assert_eq!(document.host_secret_namespace, "wamn-example-journey");
+    assert_eq!(document.registry_auth_file, Path::new("/tmp/example/docker/config.json"));
+    let phase = document.materializer.expect("the example carries the amended phase");
+    assert_eq!(phase.receipt_id, "00000000-0000-0000-0000-00000000c0de");
+}
+
+fn example_document() -> Vec<u8> {
+    std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_EXAMPLE_PATH))
+        .expect("read the checked-in journey example")
 }
 
 struct DevJourneyInputs {
@@ -1821,7 +2009,7 @@ fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyCompo
 }
 
 async fn push_journey_components(
-    inputs: &JourneyInputs,
+    inputs: &JourneyDocument,
     project_url: &str,
     system_url: &str,
     declarations: &[JourneyComponentDeclaration],
@@ -2062,7 +2250,7 @@ async fn author_journey_wirings(project_url: &str, system_url: &str) -> anyhow::
 }
 
 async fn publish_journey_release(
-    inputs: &JourneyInputs,
+    inputs: &JourneyDocument,
     project_url: &str,
     system_url: &str,
     publisher: &str,
@@ -2307,7 +2495,7 @@ fn released_component_digests(
 }
 
 async fn build_journey_runtime(
-    inputs: &JourneyInputs,
+    inputs: &JourneyDocument,
     credentials: &JourneyCredentials,
     release: Arc<ReleaseManifestWeld>,
 ) -> anyhow::Result<(
@@ -2720,8 +2908,8 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
 #[tokio::test]
 #[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts"]
 async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {
-    let system_url = required_journey(JOURNEY_URL_ENV)?;
-    let inputs = JourneyInputs::required()?;
+    let inputs = JourneyDocument::required()?;
+    let system_url = inputs.system_pg_url.clone();
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
     let (admin, admin_task) = connect(&system_url).await?;
@@ -3355,9 +3543,16 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
 #[tokio::test]
 #[ignore = "requires the disposable Receiving journey after its production materializer settles"]
 async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> anyhow::Result<()> {
-    let project_url = required_journey("WAMN_RECEIVING_MATERIALIZER_PG_URL")?;
-    let nats_url = required_journey("WAMN_RECEIVING_MATERIALIZER_NATS_URL")?;
-    let receipt_id = required_journey("WAMN_RECEIVING_MATERIALIZER_RECEIPT_ID")?;
+    let document = JourneyDocument::required()?;
+    let MaterializerPhase {
+        project_pg_url: project_url,
+        nats_url,
+        receipt_id,
+    } = document.materializer.context(
+        "the journey document carries no materializer phase: the route phase must \
+         provision the project environment and the trigger must produce a receipt \
+         before this test runs",
+    )?;
     let (project, project_task) = connect(&project_url).await?;
 
     let registrations = project
