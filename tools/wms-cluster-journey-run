@@ -105,8 +105,15 @@ app_catalog=default
 # returns the same movement_id by construction (command-identity-from-claim).
 # The value check is that a movement id came back at all -- the route answered
 # through the guest, not from a placeholder.
+# THE FIXTURE, declared once. The seed writes these rows, the probe moves this
+# pallet, and the runtime assertions (wamn-362o.27) receive the same ids
+# through the journey document -- one declaration, three readers, no copy.
+app_fixture_product_id=00000000-0000-0000-0000-000000000101
+app_fixture_location_a_id=00000000-0000-0000-0000-000000000201
+app_fixture_location_b_id=00000000-0000-0000-0000-000000000202
+app_fixture_pallet_id=00000000-0000-0000-0000-000000000301
 app_probe_route=/inventory/move
-app_probe_body='{"value":{"idempotency_key":"startup-probe-move","pallet_id":"00000000-0000-0000-0000-000000000301","to_location_id":"00000000-0000-0000-0000-000000000202","expected_row_version":1,"occurred_at":"2026-09-05T00:00:00.000000Z"}}'
+app_probe_body='{"value":{"idempotency_key":"startup-probe-move","pallet_id":"'"$app_fixture_pallet_id"'","to_location_id":"'"$app_fixture_location_b_id"'","expected_row_version":1,"occurred_at":"2026-09-05T00:00:00.000000Z"}}'
 app_probe_value_check='.movement_id | test("^[0-9a-f-]{36}$")'
 # inventory.move's happy path: find_replay, claim, lock, validate, select,
 # insert, move, finalize -- measured in components/data/wms-data/src/
@@ -917,16 +924,13 @@ run_sensitive push-release-manifest "$ctl" push-release-manifest \
 #    LOC-A with one quantity. Fixed ids so the probe body and wamn-362o.27's
 #    assertions can name them. After publish, as the Rust producer seeds.
 run_sensitive seed-fixture-rows env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 \
-  -h "$postgres_ip" -p 5432 -U postgres -d "$project_database" -f - <<'SQL'
-INSERT INTO wms.product (id, product_code) VALUES
-  ('00000000-0000-0000-0000-000000000101', 'PROD-101');
-INSERT INTO wms.location (id, location_code) VALUES
-  ('00000000-0000-0000-0000-000000000201', 'LOC-A'),
-  ('00000000-0000-0000-0000-000000000202', 'LOC-B');
-INSERT INTO wms.pallet (id, pallet_code, location_id) VALUES
-  ('00000000-0000-0000-0000-000000000301', 'PAL-301', '00000000-0000-0000-0000-000000000201');
-INSERT INTO wms.pallet_quantity (pallet_id, product_id, quantity) VALUES
-  ('00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000101', 10);
+  -h "$postgres_ip" -p 5432 -U postgres -d "$project_database" \
+  -v product="$app_fixture_product_id" -v loc_a="$app_fixture_location_a_id" \
+  -v loc_b="$app_fixture_location_b_id" -v pallet="$app_fixture_pallet_id" -f - <<'SQL'
+INSERT INTO wms.product (id, product_code) VALUES (:'product', 'PROD-101');
+INSERT INTO wms.location (id, location_code) VALUES (:'loc_a', 'LOC-A'), (:'loc_b', 'LOC-B');
+INSERT INTO wms.pallet (id, pallet_code, location_id) VALUES (:'pallet', 'PAL-301', :'loc_a');
+INSERT INTO wms.pallet_quantity (pallet_id, product_id, quantity) VALUES (:'pallet', :'product', 10);
 SQL
 # ================================================================================
 
@@ -1871,6 +1875,67 @@ jq -e --arg host "$route_host" '
   . == {status:404,content_type:"application/json",host:$host,
         body:{error:{code:"route-not-found"}}}
 ' >/dev/null "$evidence_dir/flow-http-response.json"
+
+# ================ THE RUNTIME ASSERTIONS (wamn-362o.27) ================
+# Two moves of one pallet in flight together yield exactly one
+# concurrency_conflict and one success that moved the stock; the winner's
+# body replayed returns the same movement id; and the composed wiring left
+# exactly one label object, named by that id. The first two are a Rust test
+# reading the journey document; the third is the object store's own client.
+#
+# REACHING THE ROUTE FROM HERE. This journey strips host port mappings from
+# the kind config on purpose, and port-forward dies per connection, so the
+# route is exposed on a TEMPORARY NodePort and reached at a kind node's
+# docker-network address -- the same address shape as the databases.
+runtime_nodeport_service=$work_dir/flow-http-nodeport.yaml
+"${kube[@]}" -n "$namespace" get service flow-http -o json \
+  | jq '{apiVersion:"v1", kind:"Service", metadata:{name:"flow-http-nodeport", namespace:.metadata.namespace},
+         spec:{type:"NodePort", selector:.spec.selector, ports:[{name:"http", port:80, targetPort:.spec.ports[0].targetPort, protocol:"TCP"}]}}' \
+  >"$runtime_nodeport_service"
+run "${kube[@]}" apply -f "$runtime_nodeport_service"
+runtime_node_port=$("${kube[@]}" -n "$namespace" get service flow-http-nodeport -o jsonpath='{.spec.ports[0].nodePort}')
+runtime_node_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' "$cluster-control-plane")
+[[ $runtime_node_port =~ ^[0-9]{4,5}$ && -n $runtime_node_ip ]] || {
+  echo "the temporary NodePort did not yield a reachable endpoint (port=$runtime_node_port ip=$runtime_node_ip)" >&2
+  exit 1
+}
+amend_journey_document "$journey_schema" "$journey_document" runtime \
+  "$(jq -n --arg endpoint "http://$runtime_node_ip:$runtime_node_port" \
+      --arg pallet "$app_fixture_pallet_id" --arg to "$app_fixture_location_b_id" \
+      '{route_endpoint: $endpoint, pallet_id: $pallet, to_location_id: $to}')"
+record_command cargo test wms_runtime_live::contention_and_replay_through_the_composed_route \
+  '<journey document with the runtime phase redacted>'
+WAMN_JOURNEY_DOCUMENT="$journey_document" \
+CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+  cargo test -p wamn-proof-integration --lib --locked --offline \
+  wms_runtime_live::contention_and_replay_through_the_composed_route \
+  -- --ignored --exact --nocapture --test-threads=1 \
+  2>&1 | tee "$evidence_dir/wms-runtime.log"
+assert_one_test_ran "$evidence_dir/wms-runtime.log" \
+  contention_and_replay_through_the_composed_route
+mapfile -t contention_lines < <(grep -E '^WMS_CONTENTION_PASS movement_id=[0-9a-f-]{36}$' "$evidence_dir/wms-runtime.log")
+[[ ${#contention_lines[@]} -eq 1 ]] || {
+  echo "the runtime assertions emitted ${#contention_lines[@]} pass receipts, want 1" >&2
+  exit 1
+}
+winning_movement_id=${contention_lines[0]#WMS_CONTENTION_PASS movement_id=}
+# ONE LABEL, NAMED BY THE WINNER. The store's own client lists the prefix the
+# composed wiring writes under; the loser produced no movement and the
+# startup probe is refused, so exactly one object may exist, and it is the
+# winner's.
+docker run --rm --network kind --entrypoint sh minio/mc -c \
+  "mc alias set journey '$minio_endpoint' '$minio_access_key' '$minio_secret_key' >/dev/null && mc ls --json journey/labels/wms/" \
+  >"$evidence_dir/labels-objects.json"
+label_count=$(jq -s 'length' "$evidence_dir/labels-objects.json")
+label_key=$(jq -rs '.[0].key // empty' "$evidence_dir/labels-objects.json")
+[[ $label_count -eq 1 && $label_key == "$winning_movement_id" ]] || {
+  echo "expected exactly one label object named $winning_movement_id under wms/, found $label_count: $label_key" >&2
+  exit 1
+}
+printf 'verdict=pass movement_id=%s labels=%s\n' "$winning_movement_id" "$label_count" \
+  >"$evidence_dir/wms-runtime.receipt"
+run "${kube[@]}" -n "$namespace" delete service flow-http-nodeport
+# =======================================================================
 
 materializer_manifest=$work_dir/materializer.yaml
 # The template is a GENERIC example; every identity field in it is a

@@ -896,23 +896,44 @@ const JOURNEY_EXAMPLE_PATH: &str = "schema/wamn-journey.example.json";
 /// minutes into a cluster run as an empty string.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct JourneyDocument {
+pub(crate) struct JourneyDocument {
     system_pg_url: String,
     component_directory: PathBuf,
     compilation_cache_directory: PathBuf,
     flow_http_wasm: PathBuf,
     component_artifact_base: String,
     release_artifact_base: String,
-    route_host: String,
+    pub(crate) route_host: String,
     registry_auth_file: PathBuf,
     host_secret_directory: PathBuf,
     host_secret_namespace: String,
-    route_caller_secret_output: PathBuf,
+    pub(crate) route_caller_secret_output: PathBuf,
     /// Known only after the route phase has provisioned the project
     /// environment and the materializer trigger has produced a receipt. The
     /// shell amends the document with it then; before that it is absent, and
     /// the materializer test refuses to run rather than read an empty string.
     materializer: Option<MaterializerPhase>,
+    /// Known only once the released route is reachable from this machine and
+    /// the fixture rows exist (wamn-362o.27). The shell amends it in; the
+    /// runtime assertions refuse to run without it rather than guess an
+    /// endpoint or a pallet.
+    pub(crate) runtime: Option<RuntimePhase>,
+}
+
+/// The runtime-assertion phase: where the released route answers from this
+/// machine, and the fixture the journey seeded, declared ONCE there and handed
+/// over here so the test carries no second copy of it.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RuntimePhase {
+    /// The route's origin as reachable from the test -- a temporary NodePort
+    /// on a kind node's docker-network address. The Host header still names
+    /// the released route host.
+    pub(crate) route_endpoint: String,
+    /// The fixture pallet the contention moves.
+    pub(crate) pallet_id: String,
+    /// The fixture location it moves to.
+    pub(crate) to_location_id: String,
 }
 
 /// The materializer phase's inputs: the project-environment database the
@@ -929,7 +950,7 @@ struct MaterializerPhase {
 }
 
 impl JourneyDocument {
-    fn required() -> anyhow::Result<Self> {
+    pub(crate) fn required() -> anyhow::Result<Self> {
         let path = required_journey_path(JOURNEY_DOCUMENT_ENV)?;
         let bytes =
             std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
@@ -978,6 +999,15 @@ fn parse_journey_document(bytes: &[u8]) -> anyhow::Result<JourneyDocument> {
             ("materializer.project_pg_url", &materializer.project_pg_url),
             ("materializer.nats_url", &materializer.nats_url),
             ("materializer.receipt_id", &materializer.receipt_id),
+        ] {
+            anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
+        }
+    }
+    if let Some(runtime) = &document.runtime {
+        for (field, value) in [
+            ("runtime.route_endpoint", &runtime.route_endpoint),
+            ("runtime.pallet_id", &runtime.pallet_id),
+            ("runtime.to_location_id", &runtime.to_location_id),
         ] {
             anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
         }
@@ -1034,9 +1064,17 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
         assert!(properties.contains_key(field), "schema lacks {field}");
         assert!(required.contains(&field), "schema does not require {field}");
     }
-    assert_eq!(properties.len(), example.scalars().len() + 1);
-    assert!(properties.contains_key("materializer"));
-    assert!(!required.contains(&"materializer"));
+    assert_eq!(properties.len(), example.scalars().len() + 2);
+    for phase in ["materializer", "runtime"] {
+        assert!(properties.contains_key(phase));
+        assert!(!required.contains(&phase));
+    }
+    let runtime = &schema["definitions"]["RuntimePhase"];
+    assert_eq!(runtime["additionalProperties"], false);
+    assert_eq!(
+        runtime["required"],
+        serde_json::json!(["pallet_id", "route_endpoint", "to_location_id"])
+    );
     let phase = &schema["definitions"]["MaterializerPhase"];
     assert_eq!(phase["additionalProperties"], false);
     assert_eq!(
@@ -1085,6 +1123,9 @@ fn the_checked_in_example_document_parses_with_every_field() {
     assert_eq!(document.registry_auth_file, Path::new("/tmp/example/docker/config.json"));
     let phase = document.materializer.expect("the example carries the amended phase");
     assert_eq!(phase.receipt_id, "00000000-0000-0000-0000-00000000c0de");
+    let runtime = document.runtime.expect("the example carries the runtime phase");
+    assert_eq!(runtime.route_endpoint, "http://10.0.0.2:30999");
+    assert_eq!(runtime.pallet_id, "00000000-0000-0000-0000-000000000301");
 }
 
 fn example_document() -> Vec<u8> {

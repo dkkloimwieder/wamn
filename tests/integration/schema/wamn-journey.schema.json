@@ -22,6 +22,30 @@
         "receipt_id"
       ],
       "type": "object"
+    },
+    "RuntimePhase": {
+      "additionalProperties": false,
+      "description": "The runtime-assertion phase: where the released route answers from this machine, and the fixture the journey seeded, declared ONCE there and handed over here so the test carries no second copy of it.",
+      "properties": {
+        "pallet_id": {
+          "description": "The fixture pallet the contention moves.",
+          "type": "string"
+        },
+        "route_endpoint": {
+          "description": "The route's origin as reachable from the test -- a temporary NodePort on a kind node's docker-network address. The Host header still names the released route host.",
+          "type": "string"
+        },
+        "to_location_id": {
+          "description": "The fixture location it moves to.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "pallet_id",
+        "route_endpoint",
+        "to_location_id"
+      ],
+      "type": "object"
     }
   },
   "description": "Sole field authority for the cluster journey's input document.\n\nAn environment variable carries a process setting; data crosses a boundary as a declared, schema'd artifact. This document replaced thirteen `WAMN_*` environment variables that had grown one name at a time, each encoding whatever its author was thinking about -- the application, the test, the database -- until two PG18 URLs sat one segment apart in a flat namespace with nothing to say they were different things. As fields they are `system_pg_url` and, in the materializer phase, `project_pg_url`, and the question does not arise.\n\nThe shell writes it once, with `jq`, from the values it owns; this crate reads it strictly. `deny_unknown_fields` is what makes it a contract: a key the writer invents and the reader does not know fails here, not forty minutes into a cluster run as an empty string.",
@@ -66,6 +90,17 @@
     },
     "route_host": {
       "type": "string"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/RuntimePhase"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Known only once the released route is reachable from this machine and the fixture rows exist (wamn-362o.27). The shell amends it in; the runtime assertions refuse to run without it rather than guess an endpoint or a pallet."
     },
     "system_pg_url": {
       "type": "string"

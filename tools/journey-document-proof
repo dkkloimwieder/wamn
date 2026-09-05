@@ -37,6 +37,7 @@ build_spec() {
   )"
 }
 PHASE='{"project_pg_url":"postgresql://postgres:probe@10.0.0.9:5432/wamn-db-example","nats_url":"nats://10.0.0.8:4222","receipt_id":"00000000-0000-0000-0000-00000000c0de"}'
+RUNTIME='{"route_endpoint":"http://10.0.0.2:30999","pallet_id":"00000000-0000-0000-0000-000000000301","to_location_id":"00000000-0000-0000-0000-000000000202"}'
 
 echo "1. the schema is the contract, and it is the checked-in one"
 [[ -f $SCHEMA ]]; check "the checked-in schema exists where the Rust drift test pins it" $?
@@ -57,8 +58,10 @@ jq -S . "$work/ex.json" | diff -q - "$work/ex.json" >/dev/null
 check "the written document is already in sorted key order, before any amendment" $?
 amend_journey_document "$SCHEMA" "$work/ex.json" materializer "$PHASE"
 check "the materializer phase amends in" $?
+amend_journey_document "$SCHEMA" "$work/ex.json" runtime "$RUNTIME"
+check "the runtime phase amends in" $?
 [[ $(jq -r 'keys[]' "$work/ex.json" | sort | tr '\n' ' ') == $(jq -r '.properties | keys[]' "$SCHEMA" | sort | tr '\n' ' ') ]]
-check "after the amendment it carries exactly the schema's properties" $?
+check "after both amendments it carries exactly the schema's properties" $?
 diff -q "$work/ex.json" "$EXAMPLE" >/dev/null
 check "and it is byte-identical to the checked-in example the Rust test parses" $?
 

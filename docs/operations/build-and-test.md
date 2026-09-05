@@ -1488,15 +1488,23 @@ tools/wms-cluster-journey-run --apply \
   --evidence-dir /tmp/wamn-wms-cluster-evidence
 ```
 
-What it deliberately does not do yet, each named in the tool: `--measure-startup`
-is refused until `wamn-362o.10` lands `pallet.get` (the only possible probe today
-is a replay move, which no fixed statement count survives); `/inventory/move`
-stays on the plain wiring until `wamn-362o.26` binds blob-put's `labels` store
-and the ruled repoint lands as its own package-content commit; and nothing
-flows through the materializer, which is deployed and asserted idle because the
-overlay mounts its family. The two runtime assertions — exactly one
-`concurrency_conflict` under contention, one label per replayed movement — are
-`wamn-362o.27`'s test, which reads the journey's document and never provisions.
+The two runtime assertions structure cannot make ride inside it: the journey
+exposes the released route on a temporary NodePort, amends the document's
+`runtime` phase with that endpoint and the fixture ids it seeded, and runs
+`wms_runtime_live::contention_and_replay_through_the_composed_route`, which
+fires two moves of one pallet behind one barrier and asserts exactly one
+success that moved the stock (its own response carries the target location
+and `row_version` 2) and exactly one `concurrency_conflict` that observed
+that version, then replays the winner's body and gets the same
+`movement_id`. The test prints the winner's id; the journey lists the store
+with `mc` and asserts exactly one label object under `wms/`, named by it.
+The test asserts and never provisions; no environment variable carries data.
+
+What it deliberately does not do, named in the tool: `--measure-startup` is
+refused until `wamn-362o.10` lands `pallet.get` (the only possible probe today
+is a replay move, which no fixed statement count survives), and nothing flows
+through the materializer, which is deployed and asserted idle because the
+overlay mounts its family.
 
 ### `[RECEIVING-MATERIALIZER-JOURNEY]` — router-era causation and materialization
 
