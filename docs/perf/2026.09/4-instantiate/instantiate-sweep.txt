@@ -1,0 +1,12 @@
+# instantiate_async, measured directly against the production engine
+
+host: bare metal, load 1.73 2.17 1.62
+engine: build_engine(&[]) -- pooling allocator, memory_init_cow at wasmtime's default (enabled)
+
+artifact                                 MiB compile_ms    pre_ms inst_mean_us inst_min_us
+label_render.wasm                       2.94       2976      0.01        76.3        67.1
+http_request.wasm                       3.78       4559      0.02       159.9       152.4
+http_route.wasm                         8.01       8247      0.53       426.8       415.0
+client_acme_receiving.wasm              9.42      12986      0.10       324.6       296.4
+materializer.wasm                      14.51      19334      0.16       402.2       390.7
+receiving.wasm                         19.55      22031      0.10       312.5       296.1
