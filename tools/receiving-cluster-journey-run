@@ -1455,7 +1455,13 @@ if [[ "$measure_startup" == true ]]; then
   #    ?  wamn-0h0g.17.16, .17.17   the unspanned fork and guest residue
   #    ?  1b, 4                     the Linker cache and the instance pool
   #    3  the directive's target
-  overhead_ratio_ceiling=12
+  # RATCHET ON LANDINGS, NOT ON WISHES (owner ruling, 2026-09-05). 12 armed the
+  # gate; 9 now that the InstancePre and the per-digest statement sets have
+  # landed (measured 6.49, 6.90, 6.87 -- and 8.25 on the run that carried the
+  # scope-split instrumentation, which a ceiling of 8 would have reddened, and a
+  # gate that reds on the run that measures it is the wrong number); 8 on the
+  # next landing that moves the ratio.
+  overhead_ratio_ceiling=9
 
   assert_overhead_ratio() {
     # THREE STATEMENTS, NOT ONE. `local a=$1 b=...$a...` declares every name
