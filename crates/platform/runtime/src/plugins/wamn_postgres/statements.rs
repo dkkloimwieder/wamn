@@ -87,13 +87,18 @@ impl WamnPostgres {
     ) -> anyhow::Result<()> {
         anyhow::ensure!(!component_id.is_empty(), "statement-component-id-empty");
         anyhow::ensure!(!operation.is_empty(), "statement-operation-empty");
-        for (digest, statement) in &statements {
-            let observed = statement_digest(&statement.exact_sql);
-            anyhow::ensure!(
-                digest == &observed,
-                "statement-digest-mismatch: expected {digest}, observed {observed}"
-            );
-        }
+        // One span per operation; the journey report sums them per request
+        // (wamn-0h0g.17.25 measures whether this hash is the cost).
+        tracing::info_span!("wamn.scope.verify").in_scope(|| {
+            for (digest, statement) in &statements {
+                let observed = statement_digest(&statement.exact_sql);
+                anyhow::ensure!(
+                    digest == &observed,
+                    "statement-digest-mismatch: expected {digest}, observed {observed}"
+                );
+            }
+            Ok::<(), anyhow::Error>(())
+        })?;
 
         let statements = Arc::new(BoundStatementSet(
             statements

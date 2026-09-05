@@ -2072,22 +2072,36 @@ impl PendingStatementScope {
         scope: Box<str>,
         component: &AdmittedComponent,
     ) -> anyhow::Result<Self> {
-        postgres.clear_statement_scope(&scope);
+        // MEASUREMENT SPLIT (wamn-0h0g.17.25). 0.97 ms per request at load 11
+        // and nobody had named what inside it costs: the clear, the lowering
+        // of every statement out of the admitted facts, or the bind -- which
+        // re-verifies every statement digest. Two passes instead of one loop
+        // so each has its own span; the bind errors arrive in the same order.
+        tracing::info_span!("wamn.scope.clear").in_scope(|| postgres.clear_statement_scope(&scope));
         let pending = Self {
             postgres,
             scope,
             armed: true,
         };
-        for (operation, fact) in &component.operations {
-            pending
-                .postgres
-                .bind_statement_operation(
-                    &pending.scope,
-                    operation,
-                    lower_statement_set(&fact.statements),
-                )
-                .with_context(|| format!("bind verified statements for operation {operation:?}"))?;
-        }
+        let lowered: Vec<(&String, VerifiedStatementSet)> = tracing::info_span!("wamn.scope.lower")
+            .in_scope(|| {
+                component
+                    .operations
+                    .iter()
+                    .map(|(operation, fact)| (operation, lower_statement_set(&fact.statements)))
+                    .collect()
+            });
+        tracing::info_span!("wamn.scope.bind").in_scope(|| {
+            for (operation, statements) in lowered {
+                pending
+                    .postgres
+                    .bind_statement_operation(&pending.scope, operation, statements)
+                    .with_context(|| {
+                        format!("bind verified statements for operation {operation:?}")
+                    })?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })?;
         Ok(pending)
     }
 
