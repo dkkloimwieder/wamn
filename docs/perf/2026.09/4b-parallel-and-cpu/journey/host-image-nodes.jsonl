@@ -1,0 +1,3 @@
+{"node":"wamn-receiving-journey-control-plane","runtime_digest":"sha256:edbe3ca7cbdecb8fb4e2dd7a7c7a8738ba8adc2970e41a81342960b047d13c86","config_id":"sha256:d86a29f7c5de419e97c8f914f1af2589bbe552350d6c2af2362fc0a8917eed00"}
+{"node":"wamn-receiving-journey-worker","runtime_digest":"sha256:edbe3ca7cbdecb8fb4e2dd7a7c7a8738ba8adc2970e41a81342960b047d13c86","config_id":"sha256:d86a29f7c5de419e97c8f914f1af2589bbe552350d6c2af2362fc0a8917eed00"}
+{"node":"wamn-receiving-journey-worker2","runtime_digest":"sha256:edbe3ca7cbdecb8fb4e2dd7a7c7a8738ba8adc2970e41a81342960b047d13c86","config_id":"sha256:d86a29f7c5de419e97c8f914f1af2589bbe552350d6c2af2362fc0a8917eed00"}

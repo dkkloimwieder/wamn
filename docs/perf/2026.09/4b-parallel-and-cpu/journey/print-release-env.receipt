@@ -1,0 +1,6 @@
+# deploy/platform/executor.yaml env:
+WAMN_RELEASE_ARTIFACT_BASE=172.28.0.9:5000/wamn/releases
+WAMN_RELEASE_MANIFEST_DIGEST=sha256:117166d61dfa9792bcf8ac73d5079672be54e4007f43534cfe6dd487ce384911
+# deploy/platform/values-host-receiving-pat.yaml hostGroups[].extraArgs
+--release-artifact-base=172.28.0.9:5000/wamn/releases
+--release-manifest-digest=sha256:117166d61dfa9792bcf8ac73d5079672be54e4007f43534cfe6dd487ce384911
