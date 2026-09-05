@@ -59,6 +59,27 @@ uniform `wamn:node` seam and existing digest-keyed pool; services depend inward
 on execution-host, runtime, catalog and router. `to_port` is enforced whenever a
 target has multiple inputs and may be omitted only for a single-input target.
 
+### Composition: an edge carries the route envelope
+
+RULED `wamn-362o.42` (2026-09-05). A wiring edge carries one value of one
+schema, and the authoring gate compares the two port-schema digests of every
+edge for equality. The value on an edge is the **route envelope** — the array
+of `{request_id, value}` / `{request_id, error}` items the entry operation
+emits and the route answers with — so a palette node declares `{"type":
+"array"}` on both ports, byte-identical to the entry's, applies itself to each
+item's `value`, passes error items through untouched, and enriches rather than
+replaces (the route answers with what the last node emits). Wiring pointers
+resolve against the item value. `label-render` and `blob-put` are the first
+two nodes written to this rule; the first composed edge the gate ever
+evaluated refused on the array-versus-object mismatch that preceded it.
+
+Noted as future exploration, not planned: a **router fan-out** that delivers
+the envelope's items one at a time and reassembles after the last node (its
+own design: ordering, partial failure, the reassembly point), which would let
+palette nodes stay per-item; and **per-item outcome reporting** for nodes
+whose work can fail per item (`blob-put` fails the emission as a whole
+today).
+
 ## Ingress and durability
 
 1. **Hot HTTP:** attachment → router → response, with no run or queue row.

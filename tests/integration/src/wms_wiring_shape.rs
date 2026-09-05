@@ -83,18 +83,30 @@ fn the_move_result_carries_every_field_the_pallet_label_names() {
 /// parameter downstream could recover it — a pointer can find a field, not
 /// resurrect one.
 #[test]
-fn label_render_declares_an_enriching_output() {
+fn label_render_declares_the_envelope_on_both_ports() {
+    // RULED wamn-362o.42: an edge carries the route envelope, one value of one
+    // schema, and the gate compares port-schema DIGESTS for equality. So the
+    // palette's ports are the entry's ports, byte for byte -- the first edge
+    // the gate ever evaluated refused on exactly this. What the node does to
+    // each item's value (enrich it with zpl) is the guest's contract, held in
+    // its docs and by the composed route's runtime assertions, not in a port
+    // schema the gate would then refuse.
     let document = declaration("components/no-std/label-render/declaration.json.in");
     let node = handler(&document);
-    let output = &node["output-ports"][0]["schema"];
-
-    assert_eq!(output["required"], serde_json::json!(["zpl"]));
-    assert_eq!(
-        output["additionalProperties"],
-        serde_json::json!(true),
-        "a replacing output would strand every upstream field at this hop"
-    );
+    let envelope = entry_envelope_schema();
+    assert_eq!(node["input-ports"][0]["schema"], envelope, "input is the envelope");
+    assert_eq!(node["output-ports"][0]["schema"], envelope, "output is the envelope");
     assert_eq!(parameter_names(node), ["template_id"]);
+}
+
+/// The schema the entry operation emits on `main`: the route envelope. Every
+/// edge in the composed wiring must carry exactly this.
+fn entry_envelope_schema() -> serde_json::Value {
+    let document = declaration("packages/wms/publication/components/wms.json.in");
+    let operation = &document["operations"]["wamn-wms:inventory/move@1.0.0"];
+    let schema = operation["output-ports"][0]["schema"].clone();
+    assert_eq!(schema, serde_json::json!({"type": "array"}), "the entry emits the envelope");
+    schema
 }
 
 /// HOP 3 — blob-put maps its own inputs with pointers, so it composes with a
@@ -129,12 +141,17 @@ fn blob_put_locates_its_key_and_body_by_wiring_parameter() {
     }
 
     // The input names no members: what it needs is found by pointer, so the
-    // node imposes no shape on whatever precedes it.
+    // node imposes no shape on whatever precedes it -- and, RULED
+    // wamn-362o.42, both ports are the route envelope the entry emits, which
+    // is what the gate's digest rule compares on each edge.
     let input = &node["input-ports"][0]["schema"];
     assert!(
         input.get("required").is_none(),
         "blob-put still demands member names, which re-couples it to its predecessor: {input}"
     );
+    let envelope = entry_envelope_schema();
+    assert_eq!(*input, envelope, "input is the envelope");
+    assert_eq!(node["output-ports"][0]["schema"], envelope, "output is the envelope");
 }
 
 /// THE CHAIN, end to end on paper: the fields a wirer would point at exist.

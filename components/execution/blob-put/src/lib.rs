@@ -12,6 +12,19 @@
 //! That is why the key is a required INPUT field with no default and no
 //! fallback: there is no code path here that invents one.
 //!
+//! # The payload is the route envelope
+//!
+//! RULED `wamn-362o.42`: an edge carries the route envelope — an array of
+//! items, each `{request_id, value}` or `{request_id, error}` — and the
+//! platform has no fan-out, so this node writes ONE OBJECT PER ITEM VALUE,
+//! resolving `key_field` and `body_field` against each item's value, and
+//! passes error items through untouched. It ENRICHES each value it wrote
+//! with `stored: {container, key}` rather than replacing the payload, because
+//! the route answers with what the last node emits and a caller is owed the
+//! operation's result, not this node's receipt alone. A failed write fails
+//! the emission as a whole; per-item outcome reporting is noted as future
+//! work in `docs/exe-model.md`, beside the router fan-out alternative.
+//!
 //! # Why the container is not named here
 //!
 //! The node names its own declared store ALIAS, from the wiring parameter. The
@@ -76,43 +89,61 @@ impl Guest for Component {
         let key_field = pointer_param(&config, "key_field")?;
         let body_field = pointer_param(&config, "body_field")?;
 
-        let input = serde_json::from_str::<serde_json::Value>(&input)
+        let mut envelope = serde_json::from_str::<serde_json::Value>(&input)
             .map_err(|_| invalid_input("input_not_json", "input is not JSON"))?;
-        // Required, with no default and no generated fallback — see the module
-        // docs. This is the whole at-least-once contract in one lookup.
-        let key = input
-            .pointer(key_field)
-            .and_then(serde_json::Value::as_str)
-            .filter(|key| !key.is_empty())
-            .ok_or_else(|| {
-                invalid_input(
-                    "missing_key",
-                    format!(
-                        "key_field {key_field:?} resolves to no non-empty string: the caller \
-                         supplies a deterministic object key, and this node never generates one"
-                    ),
-                )
-            })?;
-        let body = input
-            .pointer(body_field)
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                invalid_input(
-                    "missing_body",
-                    format!("body_field {body_field:?} resolves to no string"),
-                )
-            })?;
-
-        let written = block_on(write_object(
-            store_alias,
-            key.to_string(),
-            body.as_bytes().to_vec(),
-        ))?;
-        let payload = serde_json::to_string(&serde_json::json!({
-            "container": written,
-            "key": key,
-        }))
-        .map_err(|_| terminal("result_not_encodable", "result is not encodable"))?;
+        let items = envelope.as_array_mut().ok_or_else(|| {
+            invalid_input(
+                "input_not_envelope",
+                "input must be the route envelope: a JSON array of items",
+            )
+        })?;
+        for item in items.iter_mut() {
+            let Some(value) = item.get_mut("value") else {
+                continue;
+            };
+            // Required, with no default and no generated fallback — see the
+            // module docs. This is the whole at-least-once contract in one
+            // lookup.
+            let key = value
+                .pointer(key_field)
+                .and_then(serde_json::Value::as_str)
+                .filter(|key| !key.is_empty())
+                .ok_or_else(|| {
+                    invalid_input(
+                        "missing_key",
+                        format!(
+                            "key_field {key_field:?} resolves to no non-empty string in an item's \
+                             value: the caller supplies a deterministic object key, and this node \
+                             never generates one"
+                        ),
+                    )
+                })?
+                .to_string();
+            let body = value
+                .pointer(body_field)
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    invalid_input(
+                        "missing_body",
+                        format!("body_field {body_field:?} resolves to no string in an item's value"),
+                    )
+                })?
+                .as_bytes()
+                .to_vec();
+            let written = block_on(write_object(store_alias.clone(), key.clone(), body))?;
+            let Some(record) = value.as_object_mut() else {
+                return Err(invalid_input(
+                    "item_value_not_object",
+                    "an item's value must be a JSON object",
+                ));
+            };
+            record.insert(
+                "stored".to_string(),
+                serde_json::json!({ "container": written, "key": key }),
+            );
+        }
+        let payload = serde_json::to_string(&envelope)
+            .map_err(|_| terminal("result_not_encodable", "result is not encodable"))?;
         Ok(Emission {
             payload,
             port: None,
