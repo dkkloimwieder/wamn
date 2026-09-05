@@ -56,6 +56,10 @@ runtime:
         - { name: WAMN_ORG, value: acme }
         - { name: WAMN_PROJECT, value: wms }
         - { name: WAMN_SCHEMA, value: wms }
+        # Host-held connection credentials, by HANDLE (wamn-362o.26). The file
+        # is `{ "<project>": { "<handle>": "<secret>" } }`; blob-put's labels
+        # store binds to the handle labels-store and never sees the material.
+        - { name: WAMN_CREDENTIALS_FILE, value: /etc/wamn/credentials/credentials.json }
         - name: WAMN_SYSTEM_URL
           valueFrom:
             secretKeyRef:
@@ -88,9 +92,19 @@ runtime:
             items:
               - key: .dockerconfigjson
                 path: config.json
+        - name: connection-credentials
+          secret:
+            secretName: wamn-object-store-credentials-acme--wms--dev
+            optional: false
+            items:
+              - key: credentials.json
+                path: credentials.json
       volumeMounts:
         - name: registry-pull
           mountPath: /etc/wamn/registry
+          readOnly: true
+        - name: connection-credentials
+          mountPath: /etc/wamn/credentials
           readOnly: true
       ociCaPaths:
         - "/runtime-cert/ca.crt"

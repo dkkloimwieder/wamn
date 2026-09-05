@@ -24,6 +24,11 @@
 #     namespace, host_tag, component_artifact_base, release_artifact_base
 #     manifest_digest, nats_url, guest_secret_name
 #     secret_name:<family>      one per declared family
+#     object_store_secret_name  the host-held connection-credentials Secret this
+#                               application mounts (wamn-362o.26), or EMPTY when
+#                               it mounts none. Empty is a declaration, not a
+#                               default: the overlay is then required to carry
+#                               no such Secret, and one that does is refused.
 #
 # Positional: $2 is the directory to write host-base.yaml and host-overlay.yaml
 # into. The third argument is the replica count to RENDER -- already decided by
@@ -48,7 +53,7 @@ render_host_values() {
     template_tag template_replicas template_namespace
     org project environment role_families guest_secret_anchor
     namespace host_tag component_artifact_base release_artifact_base
-    manifest_digest nats_url guest_secret_name
+    manifest_digest nats_url guest_secret_name object_store_secret_name
   )
   local key
   for key in "${required[@]}"; do
@@ -108,7 +113,7 @@ render_host_values() {
       }
       if (wrong) exit 1
     }
-  ' "${_rhv_spec[host_base_template]}" >"$host_base"
+  ' "${_rhv_spec[host_base_template]}" >"$host_base" || return 1
   # Every secret anchor DERIVED, never spelled out. The generating rule is
   # workload_secret_name: wamn-<family>-<org>--<project>--<env>. A second
   # application declares its own families and identity and gets its own anchors;
@@ -122,6 +127,12 @@ render_host_values() {
     for family in ${_rhv_spec[role_families]}; do
       printf '%s\n' "name: wamn-${family}-${_rhv_spec[org]}--${_rhv_spec[project]}--${_rhv_spec[environment]}=name: ${_rhv_spec[secret_name:$family]}"
     done
+    # The object-store credentials Secret is identity-derived like the family
+    # Secrets, and optional per application: declared non-empty it is an anchor
+    # that must fire exactly once; declared empty it must not appear at all.
+    if [[ -n ${_rhv_spec[object_store_secret_name]} ]]; then
+      printf '%s\n' "secretName: wamn-object-store-credentials-${_rhv_spec[org]}--${_rhv_spec[project]}--${_rhv_spec[environment]}=secretName: ${_rhv_spec[object_store_secret_name]}"
+    fi
   )
   host_overlay=$out_dir/host-overlay.yaml
   awk -v anchor_map="$host_overlay_anchor_map" \
@@ -190,6 +201,13 @@ render_host_values() {
       }
       if (wrong) exit 1
     }
-  ' "${_rhv_spec[host_values_overlay]}" >"$host_overlay"
+  ' "${_rhv_spec[host_values_overlay]}" >"$host_overlay" || return 1
 
+  if [[ -z ${_rhv_spec[object_store_secret_name]} ]]; then
+    local undeclared="wamn-object-store-credentials-${_rhv_spec[org]}--${_rhv_spec[project]}--${_rhv_spec[environment]}"
+    if grep -Fq -- "$undeclared" "$host_overlay"; then
+      echo "render_host_values: the overlay mounts $undeclared but this application declares no object-store credentials" >&2
+      return 1
+    fi
+  fi
 }

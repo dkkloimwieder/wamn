@@ -1023,6 +1023,7 @@ declare -A host_values_spec=(
   [manifest_digest]=$manifest_digest
   [nats_url]=$nats_url
   [guest_secret_name]=$guest_secret_name
+  [object_store_secret_name]=
 )
 for family in "${app_role_families[@]}"; do
   host_values_spec[secret_name:$family]=${host_secret_name_by_family[$family]}

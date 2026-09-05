@@ -45,17 +45,21 @@ common="
   [secret_name:identity-reader]=probe-identity-reader
   [secret_name:http-admitter]=probe-http-admitter
   [secret_name:event-materializer]=probe-event-materializer
+  [object_store_secret_name]=
 "
 # Values chosen so a hardcoded stand-in cannot match them by coincidence.
-render_app() { # <out> <replicas> <org> <project> <env> <overlay>
+render_app() { # <out> <replicas> <org> <project> <env> <overlay> [object-store secret name]
   local out=$1 replicas=$2
   eval "local -A app_spec=(
     $common
     [org]=$3 [project]=$4 [environment]=$5
     [host_values_overlay]=$repo_root/$6
+    [object_store_secret_name]=${7:-}
   )"
   render_host_values app_spec "$out" "$replicas"
 }
+
+refused_saying() { local err; err=$("$@" 2>&1 >/dev/null) && return 1; [[ $err == *"$REASON"* ]]; }
 
 check() { # <label> <condition-exit>
   if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
@@ -108,11 +112,26 @@ check "every derived secret anchor fired (no template name survives)" $?
 echo "2. second consumer"
 WMS=deploy/platform/values-host-wms-pat.yaml
 mkdir -p "$work/wms"
-render_app "$work/wms" 3 acme wms dev "$WMS"
+# WMS mounts a host-held object-store credential (wamn-362o.26); the name
+# handed in is unguessable so a renderer passing the template's own through
+# is visible.
+render_app "$work/wms" 3 acme wms dev "$WMS" probe-object-store-9
 grep -q 'WAMN_PROJECT, value: wms' "$work/wms/host-overlay.yaml"
 check "WMS overlay carries its own identity" $?
 ! grep -q 'acme--wms--dev' "$work/wms/host-overlay.yaml"
 check "every WMS-derived anchor fired" $?
+grep -q 'secretName: probe-object-store-9' "$work/wms/host-overlay.yaml"
+check "the object-store credentials Secret is the declared one" $?
+# Declared per application, in both directions: an application declaring no
+# object-store credential must not be handed an overlay that mounts one, and an
+# application declaring one must not be handed an overlay that mounts none.
+mkdir -p "$work/wms-none" "$work/rcv-some"
+REASON="declares no object-store credentials" \
+  refused_saying render_app "$work/wms-none" 3 acme wms dev "$WMS" ""
+check "control: the WMS overlay rendered for an application declaring none is refused, naming it" $?
+REASON="anchor matched 0 times" \
+  refused_saying render_app "$work/rcv-some" 3 acme receiving dev "$RCV" probe-object-store-9
+check "control: the Receiving overlay rendered for an application declaring one is refused" $?
 ! diff -q "$work/normal/host-overlay.yaml" "$work/wms/host-overlay.yaml" >/dev/null
 check "the two applications render differently" $?
 

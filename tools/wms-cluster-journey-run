@@ -121,6 +121,10 @@ app_event_stream=EVT_${app_org}_${app_environment}
 # materializer neither refuses nor fails.
 app_materializer_workload=${app_project}-materializer
 app_materializer_trigger=${app_materializer_workload}-trigger
+# The object-store credentials Secret the host mounts BY HANDLE
+# (wamn-362o.26): identity-derived like every family Secret, and the overlay
+# names the same derivation as a literal the render holds it to.
+app_credentials_secret=wamn-object-store-credentials-${app_org}--${app_project}--${app_environment}
 # The guest artifacts THIS application ships, in TWO shapes. wms and blob_put
 # are std guests the virtualizer normalizes into one directory; label_render
 # is a no-std guest built by its own workspace and never virtualized. Both
@@ -142,6 +146,7 @@ host_image=wamn-host:${host_tag}
 postgres_container=wamn-wms-pg18-${short_head}-${run_id}
 registry_container=wamn-wms-registry-${short_head}-${run_id}
 nats_container=wamn-wms-nats-${short_head}-${run_id}
+minio_container=wamn-wms-minio-${short_head}-${run_id}
 cargo_target_dir=${CARGO_TARGET_DIR:-$repo_root/target}
 
 if [[ "$apply" != true ]]; then
@@ -352,6 +357,11 @@ cleanup() {
     record_command docker rm --force --volumes "$nats_container"
     docker rm --force --volumes "$nats_container" >/dev/null 2>&1 || cleanup_failed=true
   fi
+  if [[ "$containers_owned" == true ]] &&
+     docker container inspect "$minio_container" >/dev/null 2>&1; then
+    record_command docker rm --force --volumes "$minio_container"
+    docker rm --force --volumes "$minio_container" >/dev/null 2>&1 || cleanup_failed=true
+  fi
   if [[ "$host_image_owned" == true ]] &&
      docker image inspect "$host_image" >/dev/null 2>&1; then
     record_command docker image rm "$host_image"
@@ -367,6 +377,7 @@ cleanup() {
   if docker container inspect "$registry_container" >/dev/null 2>&1; then
     cleanup_failed=true
   fi
+  if docker container inspect "$minio_container" >/dev/null 2>&1; then cleanup_failed=true; fi
   if docker container inspect "$nats_container" >/dev/null 2>&1; then
     cleanup_failed=true
   fi
@@ -378,13 +389,13 @@ cleanup() {
   [[ ! -e "$work_dir" ]] || cleanup_failed=true
 
   if [[ "$cleanup_failed" == false ]]; then
-    printf 'verdict=pass cluster=%s containers=%s,%s,%s reader_pid=%s image=%s\n' \
-      "$cluster" "$postgres_container" "$registry_container" "$nats_container" \
+    printf 'verdict=pass cluster=%s containers=%s,%s,%s,%s reader_pid=%s image=%s\n' \
+      "$cluster" "$postgres_container" "$registry_container" "$nats_container" "$minio_container" \
       "$reader_pid" "$host_image" \
       >"$evidence_dir/cleanup.receipt"
   else
-    printf 'verdict=fail cluster=%s containers=%s,%s,%s reader_pid=%s image=%s\n' \
-      "$cluster" "$postgres_container" "$registry_container" "$nats_container" \
+    printf 'verdict=fail cluster=%s containers=%s,%s,%s,%s reader_pid=%s image=%s\n' \
+      "$cluster" "$postgres_container" "$registry_container" "$nats_container" "$minio_container" \
       "$reader_pid" "$host_image" \
       >"$evidence_dir/cleanup.receipt"
     [[ $status -ne 0 ]] || status=1
@@ -571,6 +582,15 @@ run docker run --detach --name "$registry_container" --network kind \
 nats_owned=true
 run docker run --detach --name "$nats_container" --network kind \
   nats:2.10-alpine --jetstream --store_dir /data --http_port 8222
+# THE OBJECT STORE (wamn-362o.26): a named disposable MinIO beside the other
+# three, not deploy/infra/minio.yaml, which is install-once infrastructure for
+# the real cluster. The credential is minted by this journey and reaches the
+# host only as a Secret it mounts; blob-put sees a handle.
+minio_access_key=wamn-labels-store
+minio_secret_key=$(openssl rand -hex 32)
+run_sensitive minio docker run --detach --name "$minio_container" --network kind \
+  --env "MINIO_ROOT_USER=$minio_access_key" --env "MINIO_ROOT_PASSWORD=$minio_secret_key" \
+  minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
 
 postgres_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$postgres_container")
@@ -578,6 +598,8 @@ postgres_host_port=$(docker port "$postgres_container" 5432/tcp)
 postgres_host_port=${postgres_host_port##*:}
 registry_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$registry_container")
+minio_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
+  "$minio_container")
 nats_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$nats_container")
 for address in "$postgres_ip" "$registry_ip" "$nats_ip"; do
@@ -665,6 +687,16 @@ test "$(curl --config "$curl_config" --silent --show-error --connect-timeout 2 \
 
 system_url=postgresql://postgres:probe@$postgres_ip:5432/postgres
 nats_url=nats://$nats_ip:4222
+# The bucket blob-put writes into. An author may name an object but never a
+# container (the descriptor's own test), so the container exists before any
+# release does. mc is the store's client, run once and removed with --rm.
+minio_endpoint=http://$minio_ip:9000
+for _ in $(seq 1 30); do
+  curl --silent --output /dev/null "$minio_endpoint/minio/health/live" && break
+  sleep 1
+done
+run_sensitive minio-bucket docker run --rm --network kind --entrypoint sh minio/mc -c \
+  "mc alias set journey '$minio_endpoint' '$minio_access_key' '$minio_secret_key' >/dev/null && mc mb journey/labels"
 component_artifact_base=$registry_authority/wamn/components
 release_artifact_base=$registry_authority/wamn/releases
 host_secret_directory=$work_dir/host-secrets
@@ -788,8 +820,17 @@ push_journey_component() { # <name> <bytes> <template.in> <store alias or ""> <a
     --artifact-base "$component_artifact_base" \
     --registry-auth-file "$docker_config_directory/config.json" --insecure-registry \
     "${admit[@]}" \
-    --project-database-url "$project_url" --control-database-url "$system_url"
+    --project-database-url "$project_url" --control-database-url "$system_url" \
+    | tee "$evidence_dir/push-component-$name.log"
+  # push-component prints the admitted digest as its last line; bind-connection
+  # needs it to name the component whose alias it binds.
+  pushed_digest[$name]=$(tail -1 "$evidence_dir/push-component-$name.log")
+  [[ ${pushed_digest[$name]} =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "push-component $name did not print an admitted digest" >&2
+    exit 1
+  }
 }
+declare -A pushed_digest=()
 push_journey_component wms "$component_directory/wms.wasm" \
   "$app_package_dir/publication/components/wms.json.in" "" wamn:node wamn:postgres
 push_journey_component label-render "$no_std_component_directory/label_render.wasm" \
@@ -852,6 +893,18 @@ run_sensitive publish-release "$ctl" publish-release \
   --package "$app_package_id@$app_package_version" "${wiring_targets[@]}" \
   --attachments "$app_package_dir/publication/attachments.json" \
   --route-host "$route_host" --package-manifest "$app_package_dir/wamn.json"
+# THE NINTH VERB (wamn-362o.33): bind blob-put's labels alias to an
+# environment-owned instance of the object store, carrying the credential's
+# HANDLE. After publish-release, because the binding is release-scoped; before
+# the manifest is pushed, so what is attested is complete.
+labels_definition=$work_dir/labels-store.definition.json
+jq -n --arg endpoint "$minio_endpoint" '{endpoint: $endpoint, container: "labels", prefix: "wms/"}' \
+  >"$labels_definition"
+run_sensitive bind-connection "$ctl" bind-connection \
+  --database-url "$project_url" --tenant "$app_tenant" --environment "$app_environment" \
+  --instance-id labels-store --requirement-type blobstore \
+  --definition "$labels_definition" --credential-handle labels-store \
+  --effective-release-id 1 --component-digest "${pushed_digest[blob-put]}" --store-alias labels
 run_sensitive push-release-manifest "$ctl" push-release-manifest \
   --database-url "$project_url" --control-database-url "$system_url" \
   --org "$app_org" --project "$app_project" --tenant "$app_tenant" \
@@ -1032,6 +1085,24 @@ derive_host_secrets host_secret_spec host_secrets
 for family in guest "${app_role_families[@]}"; do
   run "${kube[@]}" apply -f "${host_secrets[path:$family]}"
 done
+# The object-store credential the host holds BY HANDLE (wamn-362o.26). Its
+# Secret name is derived like every other identity-bearing name here, and the
+# overlay references the same derivation as a literal it must agree with.
+credentials_file=$work_dir/credentials.json
+jq -n --arg project "$app_project" --arg handle labels-store \
+  --arg secret "$(jq -nc --arg a "$minio_access_key" --arg k "$minio_secret_key" \
+    '{ACCESS_KEY_ID: $a, ACCESS_SECRET_KEY: $k}')" \
+  '{($project): {($handle): $secret}}' >"$credentials_file"
+chmod 0600 "$credentials_file"
+credentials_secret=$work_dir/credentials-secret.yaml
+"${kube[@]}" -n "$namespace" create secret generic "$app_credentials_secret" \
+  --from-file=credentials.json="$credentials_file" --dry-run=client -o yaml >"$credentials_secret"
+chmod 0600 "$credentials_secret"
+run_sensitive apply-credentials-secret "${kube[@]}" apply -f "$credentials_secret"
+grep -Fq "secretName: $app_credentials_secret" "$repo_root/$app_host_values_overlay" || {
+  echo "the host overlay does not mount $app_credentials_secret; the host would hold no credential for labels-store" >&2
+  exit 1
+}
 
 guest_secret=${host_secrets[path:guest]}
 guest_secret_name=${host_secrets[name:guest]}
@@ -1174,6 +1245,7 @@ declare -A host_values_spec=(
   [manifest_digest]=$manifest_digest
   [nats_url]=$nats_url
   [guest_secret_name]=$guest_secret_name
+  [object_store_secret_name]=$app_credentials_secret
 )
 for family in "${app_role_families[@]}"; do
   host_values_spec[secret_name:$family]=${host_secret_name_by_family[$family]}
