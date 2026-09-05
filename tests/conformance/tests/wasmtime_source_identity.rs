@@ -289,7 +289,9 @@ fn direct_wasmtime_consumers_inherit_workspace_source_contract() {
 
     assert_eq!(
         workspace.get("wasmtime").map(String::as_str),
-        Some("{version=\"47.0.3\",default-features=false,features=[\"cache\"]}"),
+        Some(
+            "{version=\"47.0.3\",default-features=false,features=[\"cache\",\"parallel-compilation\"]}"
+        ),
         "workspace must own the cache-enabled canonical `wasmtime` requirement"
     );
 

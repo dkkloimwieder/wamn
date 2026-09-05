@@ -104,10 +104,7 @@ wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "2a18
 # (wamn-0h0g.17.22, docs/perf/2026.09/4-instantiate.md). It adds rayon and
 # nothing else. default-features stays false: that is the shared-wasmtime-family
 # constraint above, and naming one feature does not weaken it.
-wasmtime = { version = "47.0.3", default-features = false, features = [
-    "cache",
-    "parallel-compilation",
-] }
+wasmtime = { version = "47.0.3", default-features = false, features = ["cache", "parallel-compilation"] }
 wasmtime-wasi = "47.0.3"
 wasmtime-wasi-http = "47.0.3"
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
