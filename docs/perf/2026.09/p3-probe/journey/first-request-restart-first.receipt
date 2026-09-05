@@ -1,0 +1,1 @@
+verdict=pass phase=restart-first status=200 first_byte_ms=135.523 total_ms=136.043 recovery_seconds=38 ceiling_seconds=120
