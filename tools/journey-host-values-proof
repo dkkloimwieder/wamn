@@ -87,9 +87,9 @@ grep -q 'replicas: 0' "$work/measure/host-overlay.yaml"; check "measure arm rend
 # read the diff, and only then update the digest. On failure the rendered file
 # is left in place and named, so the diff is available.
 declare -A pinned=(
-  [normal/host-base.yaml]=ffd6b90c631a6a98b63c4c486ed9800981cd43c6ed67481599b9504c927ffd13
+  [normal/host-base.yaml]=de5f914bcd485c8a223a8b32e2a9cea41947a1905365de747f22362f01104d3e
   [normal/host-overlay.yaml]=a1236bb611e8135c554cc88bba249a01b72345951430d683f097f910584f86b5
-  [measure/host-base.yaml]=10343a03074e7fadbbf7574e6569a0334f3ae43dbe1256db83ff162135db569e
+  [measure/host-base.yaml]=abe22dc41bd0fc9dae257baed2dd6db0e0eec432473330facdcc13050c908977
   [measure/host-overlay.yaml]=d817c627a24d7746078d7d6533810416a92881f47eb281c9f2c02c20b80ae74a
 )
 keep=$(mktemp -d)
