@@ -242,10 +242,28 @@ pub fn validate_component_admission(
     })
 }
 
+/// Whether an import is a cross-package APPLICATION call rather than a
+/// platform capability -- the same question, keyed on the same capability
+/// registry, as `wamn_catalog`'s classifier of the same name.
+///
+/// This copy kept the namespace heuristic ("not `wasi` and not `wamn` ⇒ an
+/// application call") after the catalog's was moved onto the registry, so the
+/// first push of a blobstore guest through `push-component` refused
+/// `wasmcloud:blobstore/*` as undeclared operation dependencies
+/// (`wamn-362o.41`). Matching is on the registered PACKAGE at any version:
+/// this asks what KIND of import it is, and refusing a version is admission's
+/// job elsewhere.
+///
+/// The `wasi` and `wamn` families are platform-kind even when unregistered
+/// (`wasi:sockets`): those imports must reach the import policy, which fails
+/// closed by ABSENCE and names them -- the raw-socket screen's contract.
+/// Classifying them as application dependencies would refuse them one step
+/// earlier, as a dependency mismatch, and lose that name.
 fn is_application_operation_import(name: &str) -> bool {
-    wamn_component_policy::import_pkg(name)
+    let platform_family = wamn_component_policy::import_pkg(name)
         .split_once(':')
-        .is_some_and(|(namespace, _)| !matches!(namespace, "wasi" | "wamn"))
+        .is_some_and(|(namespace, _)| matches!(namespace, "wasi" | "wamn"));
+    !(platform_family || wamn_component_policy::is_registered_package(name))
 }
 
 fn operation_signature_mismatch(
@@ -305,6 +323,27 @@ pub fn component_digest(component_bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// `wamn-362o.41`: the classifier keys on the capability registry, so a
+    /// registered platform capability outside the `wasi`/`wamn` namespaces is
+    /// a platform import, and an unregistered package is an application call.
+    #[test]
+    fn registered_capabilities_are_platform_imports_whatever_their_namespace() {
+        for platform in [
+            "wasmcloud:blobstore/blobstore@0.1.0",
+            "wasmcloud:blobstore/container@0.1.0",
+            "wasmcloud:blobstore/types@0.1.0",
+            "wasi:clocks/wall-clock@0.2.0",
+            "wamn:postgres/client@0.1.0",
+            // unregistered but platform-family: the import policy's to refuse, by name
+            "wasi:sockets/tcp@0.2.3",
+        ] {
+            assert!(!super::is_application_operation_import(platform), "{platform} is a platform capability");
+        }
+        for application in ["acme:orders/record@1.0.0", "wamn-receiving:receiving/record-receipt@1.0.0"] {
+            assert!(super::is_application_operation_import(application), "{application} is an application call");
+        }
+    }
+
     use serde_json::json;
     use wamn_catalog::{
         ComponentOperationDeclaration, ComponentOperationDependency, ComponentPackageScope,
