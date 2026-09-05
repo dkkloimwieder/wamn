@@ -19,6 +19,7 @@ report regenerates from data committed beside it.
 | `1c-residue-and-scope.md` | `1c-a-residue/`, `1c-scope-split/` | what `linker_setup` is made of — instrumentation only | done |
 | `1c-instance-pre.md` | `1c-instance-pre/` | un-fuse registration from linker population, seal one `InstancePre` per digest | done |
 | `1c-b-scope-split.md` | `1c-b-scope-split/` | inside `pending_scope`: the per-request statement digest hash — instrumentation only | done |
+| `1c-c-statement-sets.md` | `1c-c-statement-sets/` | statement sets verified and lowered once per digest; `linker_setup` under 1 ms | done |
 
 **Read the load average in each report before comparing absolute milliseconds
 across them.** The journey builds on the same machine it measures, so totals
