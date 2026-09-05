@@ -256,6 +256,7 @@ cluster_owned=false
 postgres_owned=false
 registry_owned=false
 nats_owned=false
+minio_owned=false
 reader_owned=false
 reader_pid=
 host_image_owned=false
@@ -364,7 +365,7 @@ cleanup() {
     record_command docker rm --force --volumes "$nats_container"
     docker rm --force --volumes "$nats_container" >/dev/null 2>&1 || cleanup_failed=true
   fi
-  if [[ "$containers_owned" == true ]] &&
+  if [[ "$minio_owned" == true ]] &&
      docker container inspect "$minio_container" >/dev/null 2>&1; then
     record_command docker rm --force --volumes "$minio_container"
     docker rm --force --volumes "$minio_container" >/dev/null 2>&1 || cleanup_failed=true
@@ -480,7 +481,7 @@ for component in "${app_components[@]}"; do
 done
 # The no-std guests come from their own workspace's release build, which
 # tools/build-components m1 drives; they are never virtualized.
-no_std_component_directory=$repo_root/components/no-std/target/wasm32-wasip2/release
+no_std_component_directory=$cargo_target_dir/wasm32-wasip2/release
 for component in "${app_no_std_components[@]}"; do
   [[ -s "$no_std_component_directory/$component.wasm" ]] || {
     echo "missing no-std journey component: $component" >&2
@@ -598,6 +599,7 @@ minio_secret_key=$(openssl rand -hex 32)
 run_sensitive minio docker run --detach --name "$minio_container" --network kind \
   --env "MINIO_ROOT_USER=$minio_access_key" --env "MINIO_ROOT_PASSWORD=$minio_secret_key" \
   minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+minio_owned=true
 
 postgres_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
   "$postgres_container")
