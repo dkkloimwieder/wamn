@@ -1,0 +1,330 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-cold\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-11111111111111111111111111111111-1111111111111111-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-cold\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=cold attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=cold status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-b435b974887f-623643-debug\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T21:24:34Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "c192c8b4-01b4-4e64-abfd-d0b2aefca0cc",
+                    "batch.kubernetes.io/job-name": "startup-request-cold",
+                    "controller-uid": "c192c8b4-01b4-4e64-abfd-d0b2aefca0cc",
+                    "job-name": "startup-request-cold"
+                },
+                "name": "startup-request-cold",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1494",
+                "uid": "c192c8b4-01b4-4e64-abfd-d0b2aefca0cc"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "c192c8b4-01b4-4e64-abfd-d0b2aefca0cc"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "c192c8b4-01b4-4e64-abfd-d0b2aefca0cc",
+                            "batch.kubernetes.io/job-name": "startup-request-cold",
+                            "controller-uid": "c192c8b4-01b4-4e64-abfd-d0b2aefca0cc",
+                            "job-name": "startup-request-cold"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-11111111111111111111111111111111-1111111111111111-01' \\\n    --data '[{\"request_id\":\"startup-cold\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=cold attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=cold status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-b435b974887f-623643-debug",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T21:24:37Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T21:24:37Z",
+                        "lastTransitionTime": "2026-09-05T21:24:37Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T21:24:37Z",
+                        "lastTransitionTime": "2026-09-05T21:24:37Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T21:24:34Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-restart-first\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-22222222222222222222222222222222-2222222222222222-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-restart-first\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=restart-first attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=restart-first status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-b435b974887f-623643-debug\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T21:24:49Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "347c59a6-4517-478d-90c4-8ebfe7e8f5c5",
+                    "batch.kubernetes.io/job-name": "startup-request-restart-first",
+                    "controller-uid": "347c59a6-4517-478d-90c4-8ebfe7e8f5c5",
+                    "job-name": "startup-request-restart-first"
+                },
+                "name": "startup-request-restart-first",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1764",
+                "uid": "347c59a6-4517-478d-90c4-8ebfe7e8f5c5"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "347c59a6-4517-478d-90c4-8ebfe7e8f5c5"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "347c59a6-4517-478d-90c4-8ebfe7e8f5c5",
+                            "batch.kubernetes.io/job-name": "startup-request-restart-first",
+                            "controller-uid": "347c59a6-4517-478d-90c4-8ebfe7e8f5c5",
+                            "job-name": "startup-request-restart-first"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-22222222222222222222222222222222-2222222222222222-01' \\\n    --data '[{\"request_id\":\"startup-restart-first\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=restart-first attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=restart-first status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-b435b974887f-623643-debug",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T21:26:07Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T21:26:07Z",
+                        "lastTransitionTime": "2026-09-05T21:26:07Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T21:26:07Z",
+                        "lastTransitionTime": "2026-09-05T21:26:07Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T21:24:49Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        },
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"startup-request-steady\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":200,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"# BOUNDED RETRY, reporting EVERY attempt. The question this\\n# answers is product-versus-journey: a route that returns 404\\n# immediately after a host restart and then recovers means\\n# Kubernetes readiness precedes in-host route registration and\\n# this journey waited on the wrong signal; one that never\\n# recovers means released routes are lost across a restart. A\\n# single attempt cannot tell those apart, and every attempt's\\n# status and elapsed time is the measurement.\\nprobe_start=$(date +%s)\\nattempt=0\\nwhile :; do\\n  attempt=$((attempt + 1))\\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\\\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\\\\n    --header 'Host: receiving.localhost' \\\\\\n    --header 'Content-Type: application/json' \\\\\\n    --header \\\"Authorization: Bearer $ROUTE_CALLER_PAT\\\" \\\\\\n    --header 'traceparent: 00-33333333333333333333333333333333-3333333333333333-01' \\\\\\n    --data '[{\\\"request_id\\\":\\\"startup-steady\\\",\\\"id\\\":\\\"00000000-0000-0000-0000-000000000301\\\"}]' \\\\\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\\n  set -- $metrics\\n  probe_elapsed=$(( $(date +%s) - probe_start ))\\n  printf '%s\\\\n' \\\\\\n    \\\"RECEIVING_STARTUP_ATTEMPT phase=steady attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\\\"\\n  [ \\\"$1\\\" = 200 ] \\u0026\\u0026 break\\n  [ \\\"$probe_elapsed\\\" -ge 150 ] \\u0026\\u0026 break\\n  sleep 1\\ndone\\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\\n# 'test' exits here and anything printed after it is never\\n# printed at all -- which made a non-200 probe silent by\\n# construction: exit 1, an empty log, and no way to tell a 503\\n# from a timeout without another cluster.\\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\\n# unquoted, so a backtick is command substitution run by the\\n# LOCAL shell at render time. The first draft of these two lines\\n# quoted the shell name that way; rendering ran it on this\\n# machine and substituted its empty output, deleting the\\n# sentence from every manifest the journey wrote.\\nprintf '%s\\\\n' \\\\\\n  \\\"RECEIVING_STARTUP_REQUEST phase=steady status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\\\"\\nprintf 'RECEIVING_STARTUP_BODY '\\ntr -d '\\\\n' \\u003c/tmp/body\\nprintf '\\\\n'\\ntest \\\"$1\\\" = 200\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_CALLER_PAT\",\"valueFrom\":{\"secretKeyRef\":{\"key\":\"token\",\"name\":\"wamn-pat-route-caller-acme--receiving--dev\"}}}],\"image\":\"wamn-host:receiving-b435b974887f-623643-debug\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-05T21:26:07Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "3dfe1789-edcc-432f-ad6d-f240055cfaf2",
+                    "batch.kubernetes.io/job-name": "startup-request-steady",
+                    "controller-uid": "3dfe1789-edcc-432f-ad6d-f240055cfaf2",
+                    "job-name": "startup-request-steady"
+                },
+                "name": "startup-request-steady",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1790",
+                "uid": "3dfe1789-edcc-432f-ad6d-f240055cfaf2"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 200,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "3dfe1789-edcc-432f-ad6d-f240055cfaf2"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "3dfe1789-edcc-432f-ad6d-f240055cfaf2",
+                            "batch.kubernetes.io/job-name": "startup-request-steady",
+                            "controller-uid": "3dfe1789-edcc-432f-ad6d-f240055cfaf2",
+                            "job-name": "startup-request-steady"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "# BOUNDED RETRY, reporting EVERY attempt. The question this\n# answers is product-versus-journey: a route that returns 404\n# immediately after a host restart and then recovers means\n# Kubernetes readiness precedes in-host route registration and\n# this journey waited on the wrong signal; one that never\n# recovers means released routes are lost across a restart. A\n# single attempt cannot tell those apart, and every attempt's\n# status and elapsed time is the measurement.\nprobe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header 'Host: receiving.localhost' \\\n    --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" \\\n    --header 'traceparent: 00-33333333333333333333333333333333-3333333333333333-01' \\\n    --data '[{\"request_id\":\"startup-steady\",\"id\":\"00000000-0000-0000-0000-000000000301\"}]' \\\n    'http://flow-http.wamn-receiving-journey.svc.cluster.local/purchase_order/get') || metrics='000 0 0'\n  set -- $metrics\n  probe_elapsed=$(( $(date +%s) - probe_start ))\n  printf '%s\\n' \\\n    \"RECEIVING_STARTUP_ATTEMPT phase=steady attempt=$attempt status=$1 since_restart_seconds=$probe_elapsed time_total_seconds=$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$probe_elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\n# REPORT BEFORE ASSERTING. The shell is 'sh -ec', so a failing\n# 'test' exits here and anything printed after it is never\n# printed at all -- which made a non-200 probe silent by\n# construction: exit 1, an empty log, and no way to tell a 503\n# from a timeout without another cluster.\n# APOSTROPHES, NOT BACKTICKS. This heredoc's delimiter is\n# unquoted, so a backtick is command substitution run by the\n# LOCAL shell at render time. The first draft of these two lines\n# quoted the shell name that way; rendering ran it on this\n# machine and substituted its empty output, deleting the\n# sentence from every manifest the journey wrote.\nprintf '%s\\n' \\\n  \"RECEIVING_STARTUP_REQUEST phase=steady status=$1 time_starttransfer_seconds=$2 time_total_seconds=$3 recovery_seconds=$probe_elapsed\"\nprintf 'RECEIVING_STARTUP_BODY '\ntr -d '\\n' \u003c/tmp/body\nprintf '\\n'\ntest \"$1\" = 200\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_CALLER_PAT",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "key": "token",
+                                                "name": "wamn-pat-route-caller-acme--receiving--dev"
+                                            }
+                                        }
+                                    }
+                                ],
+                                "image": "wamn-host:receiving-b435b974887f-623643-debug",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-05T21:26:10Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-05T21:26:10Z",
+                        "lastTransitionTime": "2026-09-05T21:26:10Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-05T21:26:10Z",
+                        "lastTransitionTime": "2026-09-05T21:26:10Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-05T21:26:07Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}
