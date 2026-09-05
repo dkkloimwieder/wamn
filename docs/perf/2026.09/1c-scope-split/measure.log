@@ -1,0 +1,19 @@
+REQ n=1 phase=COLD tid=c0000000000000000000000000000011 status=200 ttfb_s=0.105899 total_s=0.106076
+REQ n=2 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20002 status=200 ttfb_s=0.018780 total_s=0.018848
+REQ n=3 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20003 status=200 ttfb_s=0.019394 total_s=0.019474
+REQ n=4 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20004 status=200 ttfb_s=0.018958 total_s=0.019038
+REQ n=5 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20005 status=200 ttfb_s=0.019111 total_s=0.024048
+REQ n=w phase=WRITE tid=a0000000000000000000000000000077 status=200 ttfb_s=0.018396 total_s=0.018500
+trace cold c0000000000000000000000000000011 spans=34
+trace hot d2d2d2d2d2d2d2d2d2d2d2d2d2d20002 spans=34
+trace hot d2d2d2d2d2d2d2d2d2d2d2d2d2d20003 spans=34
+trace hot d2d2d2d2d2d2d2d2d2d2d2d2d2d20004 spans=34
+trace hot d2d2d2d2d2d2d2d2d2d2d2d2d2d20005 spans=34
+trace write a0000000000000000000000000000077 spans=35
+=== 1cs DONE ===
+REQ n=1 phase=COLD tid=c0000000000000000000000000000011 status=200 ttfb_s=0.105899 total_s=0.106076
+REQ n=2 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20002 status=200 ttfb_s=0.018780 total_s=0.018848
+REQ n=3 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20003 status=200 ttfb_s=0.019394 total_s=0.019474
+REQ n=4 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20004 status=200 ttfb_s=0.018958 total_s=0.019038
+REQ n=5 phase=HOT tid=d2d2d2d2d2d2d2d2d2d2d2d2d2d20005 status=200 ttfb_s=0.019111 total_s=0.024048
+REQ n=w phase=WRITE tid=a0000000000000000000000000000077 status=200 ttfb_s=0.018396 total_s=0.018500
