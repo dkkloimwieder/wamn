@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -2284,7 +2285,23 @@ fn generic_custom_operation_path_preserves_shipped_receiving_bytes() {
         RECEIVING_MANIFEST,
         &RECEIVING_SOURCES,
         GenerationProvenance::new("wamn-schema-generator/0.1.0", "rust-1.98.0"),
-        &StatementTransactionality::default(),
+        // THE SHIPPED BYTES CARRY POSTGRESQL'S VERDICTS, so the generation this
+        // compares against must carry the same ones. 3c added the classification
+        // and regenerated the packages but left this call unclassified, which
+        // made every write statement differ and the test red on main. Frozen
+        // here rather than read back out of the artifact: reading it from the
+        // file under test would compare the file with itself.
+        &StatementTransactionality::from_paths(BTreeMap::from([
+            ("command/record_receipt/claim_command.sql".to_owned(), true),
+            ("command/record_receipt/finalize_command.sql".to_owned(), true),
+            ("command/record_receipt/find_replay.sql".to_owned(), false),
+            ("command/record_receipt/finish_purchase_order.sql".to_owned(), true),
+            ("command/record_receipt/insert_receipt.sql".to_owned(), true),
+            ("command/record_receipt/insert_receipt_line.sql".to_owned(), true),
+            ("command/record_receipt/lock_purchase_order.sql".to_owned(), true),
+            ("command/record_receipt/update_purchase_order_line.sql".to_owned(), true),
+            ("command/record_receipt/validate_receipt_line.sql".to_owned(), true),
+        ])),
     ))
     .unwrap();
     let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../packages/receiving");
