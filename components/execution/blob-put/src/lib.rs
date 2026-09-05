@@ -179,18 +179,57 @@ async fn write_object(
         .name()
         .await
         .map_err(|error| terminal("container_unnamed", &format!("{error:?}")))?;
-    // The body is handed over BEFORE the write is awaited, and the writer is
-    // dropped to signal end-of-stream — the host commits only on that clean
-    // end, so a body abandoned here never reaches the store.
-    writer.write_all(body).await;
-    drop(writer);
-    container
-        .write_data(key, reader)
-        .await
-        .map_err(|error| terminal("write_failed", &format!("{error:?}")))?;
+    // THE WRITE AND THE HAND-OVER RUN TOGETHER (wamn-362o.47). A component-
+    // model stream write completes only as its reader consumes, and the
+    // reader reaches the host inside `write-data`. Awaiting the body write
+    // first -- what this node did on its first invocation -- waits on a
+    // consumer that has not been handed the stream: "deadlock detected: event
+    // loop cannot make further progress". So the two futures are driven
+    // together; the writer still drops at end-of-body, which is the clean
+    // end the host commits on, so a body abandoned here never reaches the
+    // store.
+    let fill = async move {
+        writer.write_all(body).await;
+        drop(writer);
+    };
+    let (written, ()) = join2(container.write_data(key, reader), fill).await;
+    written.map_err(|error| terminal("write_failed", &format!("{error:?}")))?;
     Ok(name)
 }
 
+/// Drive two futures to completion together. Dependency-free on purpose:
+/// wit-bindgen's `async-spawn` would reach every guest in this workspace
+/// through feature unification and move their digests for one node's need.
+async fn join2<A, B>(a: A, b: B) -> (A::Output, B::Output)
+where
+    A: std::future::Future,
+    B: std::future::Future,
+{
+    use std::pin::pin;
+    use std::task::Poll;
+    let mut a = pin!(a);
+    let mut b = pin!(b);
+    let mut a_out = None;
+    let mut b_out = None;
+    std::future::poll_fn(|cx| {
+        if a_out.is_none() {
+            if let Poll::Ready(value) = a.as_mut().poll(cx) {
+                a_out = Some(value);
+            }
+        }
+        if b_out.is_none() {
+            if let Poll::Ready(value) = b.as_mut().poll(cx) {
+                b_out = Some(value);
+            }
+        }
+        if a_out.is_some() && b_out.is_some() {
+            Poll::Ready((a_out.take().unwrap(), b_out.take().unwrap()))
+        } else {
+            Poll::Pending
+        }
+    })
+    .await
+}
 
 fn invalid_input(code: &str, message: impl Into<String>) -> NodeError {
     NodeError::InvalidInput(ErrorDetail {
