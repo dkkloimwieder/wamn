@@ -17,7 +17,7 @@ use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
 use wash_runtime::types::LocalResources;
 
 pub(super) const EXPECTED_VERSION: &str = "2.8.0";
-pub(super) const EXPECTED_REVISION: &str = "2a183dfb4125c4fcbebe749ebfdead6ab52cdc61";
+pub(super) const EXPECTED_REVISION: &str = "2eadd9371cd154cbe78abb1c8608940e1a37802f";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {

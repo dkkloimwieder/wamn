@@ -138,10 +138,10 @@
 # sets either key yet; when ruling 4's mount lands it goes on the host-tier
 # file's host group, since this release has no host group to hang it on.
 #
-# Pinned: runtime rev 2a183dfb, whose chart is upstream 5c4ec4a3 = chart 2.8.0.
-# The fork patch at that rev (wamn-2w3x.2) touches crates/wash-runtime only and
-# no chart template, so the seam verified at 5c4ec4a3 holds unchanged at
-# 2a183dfb. Both expressions were re-verified present and unrenamed at this pin;
+# Pinned: runtime rev 2eadd937, whose chart is upstream 5c4ec4a3 = chart 2.8.0.
+# The two fork patches at that rev (wamn-2w3x.2, wamn-2w3x.3) touch
+# crates/wash-runtime only and no chart template, so the seam verified at
+# 5c4ec4a3 holds unchanged at 2eadd937. Both expressions were re-verified present and unrenamed at this pin;
 # this is a fresh check, not a carry-forward from the 2.7.0 record. The install above pulls chart 2.8.0, the chart the
 # pinned runtime rev carries. Not yet exercised against a cluster — the kind
 # cluster is frozen, so this install is proved at the RC's fresh-namespace
