@@ -708,16 +708,49 @@ fn load_component_statement_facts(
     Ok(selected)
 }
 
+/// The manifest operations one pushed component is expected to serve, or the
+/// refusal when its exports and the manifest disagree.
+///
+/// The manifest is the package's own declaration of ITS components -- the
+/// data component groups whose operations it registers. A platform palette
+/// node (`label-render`, `blob-put`: one `wamn:node` handler, no registered
+/// operation) is not the package's to declare, so a component ABSENT from the
+/// manifest is admitted iff it registers no manifest operation, with an empty
+/// expected set (RULED `wamn-362o.40`). A component that claims a registered
+/// operation must be a manifest member, as before: that is the fence against
+/// a stranger serving the package's operations.
+///
+/// ABSENT FROM THE MANIFEST DOES NOT MEAN UNEXAMINED. The palette node's
+/// identity and posture are governed on the same push: its imports pass the
+/// tenant allowlist and the capability registry's posture
+/// (`wamn_component_policy::analyze_tenant`), and its declared exports are
+/// checked against the component bytes (`wamn_runtime::component_admission`)
+/// before this function runs. This branch only
+/// declines to look for manifest operations that, by construction, it does
+/// not serve; it is not a bypass of admission.
 fn validate_component_operation_assignment(
     manifest: &wamn_schema_generator::PackageManifest,
     component: &AdmittedComponent,
     expected: &BTreeMap<String, ExpectedOperationContract>,
 ) -> Result<BTreeSet<String>, ComponentProjectionError> {
     if !manifest.components.contains_key(&component.component) {
+        let registered = component
+            .operations
+            .iter()
+            .filter_map(|(export, declared)| {
+                declared
+                    .registered_operation
+                    .as_deref()
+                    .map(|registered| format!("{export} -> {registered}"))
+            })
+            .collect::<Vec<_>>();
+        if registered.is_empty() {
+            return Ok(BTreeSet::new());
+        }
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorKind::StatementComponentMismatch,
             format!(
-                "component {:?} is absent from the package manifest",
+                "component {:?} is absent from the package manifest yet registers manifest operations: {registered:?}",
                 component.component
             ),
         ));
@@ -2043,6 +2076,83 @@ mod tests {
         assert_eq!(
             error.kind(),
             ComponentProjectionErrorKind::StatementComponentMismatch
+        );
+    }
+
+    fn overlay_manifest() -> wamn_schema_generator::PackageManifest {
+        serde_json::from_str(include_str!(
+            "../../../packages/client_acme_receiving/wamn.json"
+        ))
+        .expect("repository overlay manifest parses")
+    }
+
+    /// A component absent from the manifest, exporting one handler and
+    /// registering nothing: the palette-node shape.
+    fn stranger(manifest: &wamn_schema_generator::PackageManifest, name: &str, registered: Option<&str>) -> AdmittedComponent {
+        AdmittedComponent {
+            scope: wamn_catalog::ComponentPackageScope {
+                tenant_id: "tenant-a".to_owned(),
+                package_id: manifest.package.id.clone(),
+                package_version: manifest.package.version.clone(),
+            },
+            component: name.to_owned(),
+            interface_version: "0.1.0".to_owned(),
+            operations: BTreeMap::from([(
+                "wamn:node/handler@0.1.0".to_owned(),
+                AdmittedComponentOperation {
+                    registered_operation: registered.map(str::to_owned),
+                    dependencies: Vec::new(),
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    statements: BTreeMap::new(),
+                },
+            )]),
+            component_digest: format!("sha256:{}", "a".repeat(64)),
+            imports: Vec::new(),
+            imports_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            effects: Vec::new(),
+        }
+    }
+
+    /// RULED wamn-362o.40: a palette node is not the package's to declare.
+    #[test]
+    fn palette_node_absent_from_the_manifest_serves_no_manifest_operation() {
+        let manifest = overlay_manifest();
+        assert!(!manifest.components.contains_key("label-render"));
+        let expected =
+            expected_operation_contracts(&manifest).expect("operation contract coordinates derive");
+
+        let served = validate_component_operation_assignment(
+            &manifest,
+            &stranger(&manifest, "label-render", None),
+            &expected,
+        )
+        .expect("an unregistered palette node is admitted without manifest membership");
+
+        assert!(served.is_empty(), "a palette node serves no manifest operation: {served:?}");
+    }
+
+    /// The other half of the ruling: membership is still the fence for anyone
+    /// claiming to SERVE the package's operations.
+    #[test]
+    fn stranger_registering_a_manifest_operation_is_refused_on_membership() {
+        let manifest = overlay_manifest();
+        let expected =
+            expected_operation_contracts(&manifest).expect("operation contract coordinates derive");
+        let registered = expected.keys().next().expect("the manifest registers operations").clone();
+
+        let error = validate_component_operation_assignment(
+            &manifest,
+            &stranger(&manifest, "stranger", Some(&registered)),
+            &expected,
+        )
+        .expect_err("a stranger registering a manifest operation was admitted");
+
+        assert_eq!(error.kind(), ComponentProjectionErrorKind::StatementComponentMismatch);
+        assert!(
+            error.to_string().contains("absent from the package manifest yet registers"),
+            "the refusal names the membership rule: {error}"
         );
     }
 
