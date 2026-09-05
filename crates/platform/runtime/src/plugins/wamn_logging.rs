@@ -149,6 +149,10 @@ struct Counters {
     dropped: AtomicU64,
     /// Emitted to the OTLP logger by the drain task.
     emitted: AtomicU64,
+    /// Linker-entry binds: one per digest under the router driver.
+    linker_entries: AtomicU64,
+    /// Scope registrations: one per request under the router driver.
+    scope_registrations: AtomicU64,
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +342,63 @@ impl WamnLogging {
             .write()
             .expect("claims lock poisoned")
             .remove(component_id);
+    }
+
+    /// The per-REQUEST half of the workload bind: the claim keyed by `scope`.
+    ///
+    /// Un-fused from [`HostPlugin::on_workload_item_bind`] so the router driver
+    /// can run this once per request while [`Self::add_linker_entries`] runs
+    /// once per digest. Registers nothing when the workload does not import
+    /// wasi:logging, exactly as the fused hook did.
+    pub fn register_workload_scope(
+        &self,
+        scope: &str,
+        config: &HashMap<String, String>,
+        interfaces: &WitInterfaces<'_>,
+    ) {
+        if !interfaces.contains("wasi", "logging", &[]) {
+            return;
+        }
+        self.counters
+            .scope_registrations
+            .fetch_add(1, Ordering::Relaxed);
+        let tenant = config.get(TENANT_CONFIG_KEY).cloned().unwrap_or_default();
+        let project = config.get(PROJECT_CONFIG_KEY).cloned().unwrap_or_default();
+        if tenant.is_empty() {
+            tracing::warn!(
+                component = scope,
+                "component imports wasi:logging but sets no {TENANT_CONFIG_KEY}; logs enrich as 'unregistered'"
+            );
+        }
+        self.set_claim(scope, &tenant, &project);
+    }
+
+    /// The per-DIGEST half: the wasi:logging host definitions on `linker`.
+    ///
+    /// Captures nothing per request -- `log` reaches this plugin through the
+    /// store's active ctx -- so a linker carrying the entry is shareable by
+    /// digest and can back an `InstancePre`.
+    pub fn add_linker_entries(
+        &self,
+        linker: &mut Linker<SharedCtx>,
+        interfaces: &WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        if !interfaces.contains("wasi", "logging", &[]) {
+            return Ok(());
+        }
+        self.counters.linker_entries.fetch_add(1, Ordering::Relaxed);
+        logging::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+        Ok(())
+    }
+
+    /// Linker-entry binds since startup: one per digest under the driver.
+    pub fn linker_entry_binds(&self) -> u64 {
+        self.counters.linker_entries.load(Ordering::Relaxed)
+    }
+
+    /// Scope registrations since startup: one per request under the driver.
+    pub fn scope_registrations(&self) -> u64 {
+        self.counters.scope_registrations.load(Ordering::Relaxed)
     }
 
     /// Read back the registered `(tenant, project)` claim for a component id, or
@@ -635,21 +696,9 @@ impl HostPlugin for WamnLogging {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        if !interfaces.contains("wasi", "logging", &[]) {
-            return Ok(());
-        }
-        let cfg = &item.local_resources().config;
-        let tenant = cfg.get(TENANT_CONFIG_KEY).cloned().unwrap_or_default();
-        let project = cfg.get(PROJECT_CONFIG_KEY).cloned().unwrap_or_default();
-        if tenant.is_empty() {
-            tracing::warn!(
-                component = item.id(),
-                "component imports wasi:logging but sets no {TENANT_CONFIG_KEY}; logs enrich as 'unregistered'"
-            );
-        }
-        self.set_claim(item.id(), &tenant, &project);
-        logging::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
-        Ok(())
+        // The wash host path: one workload, one bind, both halves in order.
+        self.register_workload_scope(item.id(), &item.local_resources().config, &interfaces);
+        self.add_linker_entries(item.linker(), &interfaces)
     }
 }
 

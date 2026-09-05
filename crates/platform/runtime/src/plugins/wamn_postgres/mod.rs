@@ -54,7 +54,7 @@ use std::sync::Arc;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
-use wash_runtime::wasmtime::component::Linker;
+use wash_runtime::wasmtime::component::{Component, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod claims;
@@ -225,6 +225,16 @@ pub const DEFAULT_PROJECT: &str = "default";
 // Plugin configuration
 // ---------------------------------------------------------------------------
 
+/// How many times each half of the un-fused workload bind has run.
+///
+/// Observability for the count rule on `wamn-0h0g.17.15` -- registration once
+/// per request, linker entries once per digest -- not state a request reads.
+#[derive(Default)]
+pub(crate) struct BindCounters {
+    linker_entries: std::sync::atomic::AtomicU64,
+    scope_registrations: std::sync::atomic::AtomicU64,
+}
+
 impl WamnPostgres {
     fn bind_configured_workload_authority(
         &self,
@@ -235,6 +245,176 @@ impl WamnPostgres {
             self.bind_workload_authority(component_id, authority)?;
         }
         Ok(())
+    }
+
+    /// The per-REQUEST half of the workload bind: every claim keyed by `scope`.
+    ///
+    /// Un-fused from [`HostPlugin::on_workload_item_bind`] so the router driver
+    /// can run this once per request while [`Self::add_linker_entries`] runs
+    /// once per digest and backs a shared `InstancePre`. Registers nothing when
+    /// the workload imports no wamn:postgres interface, exactly as the fused
+    /// hook did.
+    pub fn register_workload_scope(
+        &self,
+        scope: &str,
+        config: &std::collections::HashMap<String, String>,
+        interfaces: &WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        let has_client = interfaces.contains("wamn", "postgres", &["client"]);
+        let has_statements = interfaces.contains("wamn", "postgres", &["statements"]);
+        if !has_client && !has_statements {
+            return Ok(());
+        }
+        self.bind_counters
+            .scope_registrations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.bind_configured_workload_authority(scope, config)?;
+        if let Some(authority) = config.get(AUTHORITY_CONFIG_KEY) {
+            tracing::debug!(
+                component = scope,
+                authority,
+                "wamn:postgres workload authority registered"
+            );
+        }
+        if let Some(tenant) = config.get(TENANT_CONFIG_KEY) {
+            let tenant = tenant.clone();
+            self.set_tenant(scope, &tenant)?;
+            tracing::debug!(
+                component = scope,
+                tenant,
+                "wamn:postgres tenant registered"
+            );
+        } else {
+            tracing::warn!(
+                component = scope,
+                "component imports wamn:postgres but sets no {TENANT_CONFIG_KEY}; calls will be refused"
+            );
+        }
+        if let Some(project) = config.get(PROJECT_CONFIG_KEY) {
+            let project = project.clone();
+            self.set_project(scope, &project)?;
+            tracing::debug!(
+                component = scope,
+                project,
+                "wamn:postgres project registered"
+            );
+        }
+        if let Some(schema) = config.get(SCHEMA_CONFIG_KEY) {
+            let schema = schema.clone();
+            self.set_schema(scope, &schema)?;
+            tracing::debug!(
+                component = scope,
+                schema,
+                "wamn:postgres search_path schema registered"
+            );
+        }
+        if let Some(runner) = config.get(RUNNER_CONFIG_KEY) {
+            let runner = runner.clone();
+            self.set_runner(scope, &runner)?;
+            tracing::debug!(
+                component = scope,
+                runner,
+                "wamn:postgres runner lease-owner registered"
+            );
+        }
+        // Release identity is deliberately NOT read here. Under ruling
+        // `wamn-0h0g.15.102` the mounted manifest is the sole carrier of the
+        // (release version, manifest digest) pair, so the serving process injects
+        // it from its loaded weld at instantiation — see
+        // `ExecutionHost::instantiate`. A bind-time config read would be a second,
+        // *asserted* carrier that cannot correct the welded one, and the pair it
+        // asserted could disagree with the manifest the same pod resolves plans
+        // against.
+        Ok(())
+    }
+
+    /// The per-DIGEST half: this plugin's host definitions on `linker`.
+    ///
+    /// CAPTURES NOTHING PER-REQUEST. Every definition reaches its state through
+    /// the store's active ctx, so a linker carrying these entries is shareable
+    /// by digest -- which is what lets the driver seal it into an `InstancePre`
+    /// once and instantiate from it on every request.
+    pub fn add_linker_entries(
+        &self,
+        linker: &mut Linker<SharedCtx>,
+        component: &Component,
+        interfaces: &WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        let has_client = interfaces.contains("wamn", "postgres", &["client"]);
+        let has_statements = interfaces.contains("wamn", "postgres", &["statements"]);
+        if !has_client && !has_statements {
+            return Ok(());
+        }
+        self.bind_counters
+            .linker_entries
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(feature = "wasm_component_model_implements"))]
+        let _ = component;
+        #[cfg(not(feature = "wasm_component_model_implements"))]
+        {
+            if has_client {
+                client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+            }
+            if has_statements {
+                statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+            }
+        }
+
+        #[cfg(feature = "wasm_component_model_implements")]
+        {
+            let mut named = std::collections::HashMap::new();
+            let mut has_unnamed = false;
+            for interface in interfaces.iter().filter(|interface| {
+                interface.namespace == "wamn"
+                    && interface.package == "postgres"
+                    && interface.interfaces.contains("client")
+            }) {
+                if let Some(name) = interface.name.as_deref() {
+                    named.insert(name.to_string(), NamedProject::from_interface(interface)?);
+                } else {
+                    has_unnamed = true;
+                }
+            }
+            bindings::wamn::postgres::types::add_to_linker::<_, SharedCtx>(
+                linker,
+                extract_active_ctx,
+            )?;
+            if has_unnamed {
+                client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+            }
+            if has_statements {
+                statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+            }
+            if !named.is_empty() {
+                bindings::named_imports::wamn::postgres::client::add_to_linker::<_, SharedCtx>(
+                    linker,
+                    component,
+                    |name| {
+                        named.get(name).cloned().ok_or_else(|| {
+                            wash_runtime::wasmtime::Error::msg(format!(
+                                "unknown named wamn:postgres import {name:?}"
+                            ))
+                        })
+                    },
+                    extract_active_ctx,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Linker-entry binds since startup: one per digest under the driver.
+    pub fn linker_entry_binds(&self) -> u64 {
+        self.bind_counters
+            .linker_entries
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Scope registrations since startup: one per request under the driver.
+    pub fn scope_registrations(&self) -> u64 {
+        self.bind_counters
+            .scope_registrations
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -265,121 +445,10 @@ impl HostPlugin for WamnPostgres {
         item: &mut WorkloadItem<'a>,
         interfaces: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        let has_client = interfaces.contains("wamn", "postgres", &["client"]);
-        let has_statements = interfaces.contains("wamn", "postgres", &["statements"]);
-        if !has_client && !has_statements {
-            return Ok(());
-        }
-        self.bind_configured_workload_authority(item.id(), &item.local_resources().config)?;
-        if let Some(authority) = item.local_resources().config.get(AUTHORITY_CONFIG_KEY) {
-            tracing::debug!(
-                component = item.id(),
-                authority,
-                "wamn:postgres workload authority registered"
-            );
-        }
-        if let Some(tenant) = item.local_resources().config.get(TENANT_CONFIG_KEY) {
-            let tenant = tenant.clone();
-            self.set_tenant(item.id(), &tenant)?;
-            tracing::debug!(
-                component = item.id(),
-                tenant,
-                "wamn:postgres tenant registered"
-            );
-        } else {
-            tracing::warn!(
-                component = item.id(),
-                "component imports wamn:postgres but sets no {TENANT_CONFIG_KEY}; calls will be refused"
-            );
-        }
-        if let Some(project) = item.local_resources().config.get(PROJECT_CONFIG_KEY) {
-            let project = project.clone();
-            self.set_project(item.id(), &project)?;
-            tracing::debug!(
-                component = item.id(),
-                project,
-                "wamn:postgres project registered"
-            );
-        }
-        if let Some(schema) = item.local_resources().config.get(SCHEMA_CONFIG_KEY) {
-            let schema = schema.clone();
-            self.set_schema(item.id(), &schema)?;
-            tracing::debug!(
-                component = item.id(),
-                schema,
-                "wamn:postgres search_path schema registered"
-            );
-        }
-        if let Some(runner) = item.local_resources().config.get(RUNNER_CONFIG_KEY) {
-            let runner = runner.clone();
-            self.set_runner(item.id(), &runner)?;
-            tracing::debug!(
-                component = item.id(),
-                runner,
-                "wamn:postgres runner lease-owner registered"
-            );
-        }
-        // Release identity is deliberately NOT read here. Under ruling
-        // `wamn-0h0g.15.102` the mounted manifest is the sole carrier of the
-        // (release version, manifest digest) pair, so the serving process injects
-        // it from its loaded weld at instantiation — see
-        // `ExecutionHost::instantiate`. A bind-time config read would be a second,
-        // *asserted* carrier that cannot correct the welded one, and the pair it
-        // asserted could disagree with the manifest the same pod resolves plans
-        // against.
-        #[cfg(not(feature = "wasm_component_model_implements"))]
-        {
-            if has_client {
-                client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
-            }
-            if has_statements {
-                statement_wit::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
-            }
-        }
-
-        #[cfg(feature = "wasm_component_model_implements")]
-        {
-            let mut named = std::collections::HashMap::new();
-            let mut has_unnamed = false;
-            for interface in interfaces.iter().filter(|interface| {
-                interface.namespace == "wamn"
-                    && interface.package == "postgres"
-                    && interface.interfaces.contains("client")
-            }) {
-                if let Some(name) = interface.name.as_deref() {
-                    named.insert(name.to_string(), NamedProject::from_interface(interface)?);
-                } else {
-                    has_unnamed = true;
-                }
-            }
-            let component = item.component().clone();
-            let linker = item.linker();
-            bindings::wamn::postgres::types::add_to_linker::<_, SharedCtx>(
-                linker,
-                extract_active_ctx,
-            )?;
-            if has_unnamed {
-                client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-            }
-            if has_statements {
-                statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
-            }
-            if !named.is_empty() {
-                bindings::named_imports::wamn::postgres::client::add_to_linker::<_, SharedCtx>(
-                    linker,
-                    &component,
-                    |name| {
-                        named.get(name).cloned().ok_or_else(|| {
-                            wash_runtime::wasmtime::Error::msg(format!(
-                                "unknown named wamn:postgres import {name:?}"
-                            ))
-                        })
-                    },
-                    extract_active_ctx,
-                )?;
-            }
-        }
-        Ok(())
+        // The wash host path: one workload, one bind, both halves in order.
+        self.register_workload_scope(item.id(), &item.local_resources().config, &interfaces)?;
+        let component = item.component().clone();
+        self.add_linker_entries(item.linker(), &component, &interfaces)
     }
 
     /// R31: on workload teardown, reap the per-component claim registries

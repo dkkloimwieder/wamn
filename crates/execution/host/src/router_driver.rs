@@ -5,6 +5,7 @@ use std::fmt;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -46,12 +47,12 @@ use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::InstancePolicy;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx, extract_active_ctx};
-use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
+use wash_runtime::engine::workload::WorkloadComponent;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
-use wash_runtime::wit::WitWorld;
+use wash_runtime::wit::{WitInterface, WitWorld};
 use wash_runtime::wasmtime::Store;
-use wash_runtime::wasmtime::component::{Component, Instance, Linker, TypedFunc};
+use wash_runtime::wasmtime::component::{Component, Instance, InstancePre, Linker, TypedFunc};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -525,6 +526,10 @@ pub struct RouterDriver {
     /// ~376 ms per request against a 0.43 ms SQL statement (wamn-10yt perf,
     /// docs/perf/2026.09/cold-v-hot.md).
     compiled: Arc<std::sync::Mutex<BTreeMap<String, Component>>>,
+    /// Each compiled component's linker, sealed into an `InstancePre`, held by
+    /// the same digest. See [`PreparedComponent`] for what one carries and why
+    /// a hit is still compared before it is trusted.
+    prepared: Arc<PreparedCache>,
     _doorbell: WiringDoorbellListener,
     started: Instant,
 }
@@ -590,6 +595,7 @@ impl RouterDriver {
             cache,
             base_linker,
             compiled: Arc::new(std::sync::Mutex::new(BTreeMap::new())),
+            prepared: Arc::default(),
             _doorbell: doorbell,
             started: Instant::now(),
         })
@@ -745,6 +751,7 @@ impl RouterDriver {
                 Arc::clone(&self.allowed_hosts),
                 Arc::clone(&self.release),
                 compiled_components,
+                Arc::clone(&self.prepared),
                 Arc::clone(&components),
                 &self.config,
                 &manifest.release.tenant_id,
@@ -777,10 +784,21 @@ impl RouterDriver {
                 .compiled
                 .lock()
                 .map_err(|_| anyhow::anyhow!("compiled-component cache poisoned"))?;
+            let prepared = self
+                .prepared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("prepared-component cache poisoned"))?;
             for component in components.iter() {
                 anyhow::ensure!(
                     cached.contains_key(component.component_digest.as_str()),
                     "release-component-not-cached-at-readiness: {:?}",
+                    component.component_digest
+                );
+                // The preload instantiated each digest once, which is what
+                // fills this; a ready host has its InstancePre, not a promise.
+                anyhow::ensure!(
+                    prepared.contains_key(component.component_digest.as_str()),
+                    "release-component-not-prepared-at-readiness: {:?}",
                     component.component_digest
                 );
             }
@@ -1444,6 +1462,7 @@ impl RouterDriver {
                 Arc::clone(&self.allowed_hosts),
                 Arc::clone(&self.release),
                 Arc::clone(&compiled_components),
+                Arc::clone(&self.prepared),
                 Arc::clone(&active.facts.components),
                 &self.config,
                 &request.tenant_id,
@@ -1465,6 +1484,7 @@ impl RouterDriver {
                 Arc::clone(&self.allowed_hosts),
                 Arc::clone(&self.release),
                 Arc::clone(&compiled_components),
+                Arc::clone(&self.prepared),
                 Arc::clone(&active.facts.components),
                 &self.config,
                 &request.tenant_id,
@@ -1605,6 +1625,7 @@ struct NestedOperationHost {
     allowed_hosts: Arc<[AllowedHost]>,
     release: Arc<ReleaseManifestWeld>,
     compiled_components: Arc<BTreeMap<String, Component>>,
+    prepared: Arc<PreparedCache>,
     config: RouterDriverConfig,
     tenant_id: Box<str>,
     components: Arc<[AdmittedComponent]>,
@@ -1811,6 +1832,7 @@ impl NestedOperationHost {
             Arc::clone(&self.allowed_hosts),
             Arc::clone(&self.release),
             Arc::clone(&self.compiled_components),
+            Arc::clone(&self.prepared),
             Arc::clone(&self.components),
             &self.config,
             &self.tenant_id,
@@ -1942,10 +1964,11 @@ impl HostPlugin for NestedOperationHost {
 /// -- and therefore the `InstancePre` built from it -- shareable by digest.
 fn add_nested_operation_links(
     linker: &mut Linker<SharedCtx>,
-    component: &AdmittedComponent,
+    links: &NestedOperationLinks,
 ) -> anyhow::Result<()> {
-    for (_, (dependency, owner_operations)) in nested_operation_links(component)? {
-        let owner_operations = Arc::new(owner_operations);
+    for (dependency, owner_operations) in links.values() {
+        let owner_operations = Arc::new(owner_operations.clone());
+        let dependency = dependency.clone();
         linker.instance(&dependency.operation)?.func_wrap_async(
             "run",
             move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
@@ -1968,10 +1991,11 @@ fn add_nested_operation_links(
     Ok(())
 }
 
-fn nested_operation_links(
-    component: &AdmittedComponent,
-) -> anyhow::Result<BTreeMap<String, (ComponentOperationDependency, BTreeSet<String>)>> {
-    let mut links = BTreeMap::<String, (ComponentOperationDependency, BTreeSet<String>)>::new();
+/// Dependency operation -> (its exact pin, the owner operations that import it).
+type NestedOperationLinks = BTreeMap<String, (ComponentOperationDependency, BTreeSet<String>)>;
+
+fn nested_operation_links(component: &AdmittedComponent) -> anyhow::Result<NestedOperationLinks> {
+    let mut links = NestedOperationLinks::new();
     for (owner_operation, operation) in &component.operations {
         for dependency in &operation.dependencies {
             if links
@@ -2104,6 +2128,40 @@ impl Drop for ActiveStatementScope<'_> {
     }
 }
 
+/// A component's linker sealed into an `InstancePre`, plus the two per-digest
+/// facts the per-request half still needs from it.
+///
+/// THE LINKER HOLDS DEFINITIONS, NOT REQUEST STATE (1b moved the WASI surface
+/// to a shared base, 1c moved the nested host into the store), so one of these
+/// serves every request to its digest and `instantiate_async` is all that is
+/// left per request. `links` is what the nested-operation binds were built
+/// from: they come from the ADMITTED FACTS, not from the bytes, so a digest
+/// readmitted under different dependency pins must not reuse them -- the
+/// cache compares the map on every hit and rebuilds on a mismatch.
+#[derive(Clone)]
+struct PreparedComponent {
+    pre: InstancePre<SharedCtx>,
+    /// The workload's import set, projected onto the driver's one project, as
+    /// [`WamnPostgres::register_workload_scope`] wants it.
+    imports: HashSet<WitInterface>,
+    links: NestedOperationLinks,
+}
+
+/// Prepared components by artifact digest, for the life of the process.
+type PreparedCache = std::sync::Mutex<BTreeMap<String, PreparedComponent>>;
+
+/// Per-request scope ids.
+///
+/// Every plugin keys its per-request registries by this string, so it only has
+/// to be unique within the process. wash minted a UUID per `WorkloadComponent`;
+/// the driver builds one of those per DIGEST now, not per request, and mints
+/// the request scope itself.
+static NEXT_SCOPE: AtomicU64 = AtomicU64::new(0);
+
+fn next_scope(component: &str) -> Box<str> {
+    format!("{component}#{}", NEXT_SCOPE.fetch_add(1, Ordering::Relaxed)).into()
+}
+
 struct NodeInstance {
     store: Store<SharedCtx>,
     node: Instance,
@@ -2144,6 +2202,7 @@ impl NodeInstance {
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<ReleaseManifestWeld>,
         compiled_components: Arc<BTreeMap<String, Component>>,
+        prepared: Arc<PreparedCache>,
         components: Arc<[AdmittedComponent]>,
         config: &RouterDriverConfig,
         tenant_id: &str,
@@ -2151,16 +2210,24 @@ impl NodeInstance {
     ) -> anyhow::Result<Self> {
         let component = tracing::info_span!("wamn.component.compile")
             .in_scope(|| Self::compile(engine, bytes))?;
-        Self::instantiate_compiled(
+        // CANDIDATE BYTES ARE NEVER CACHED. Nothing on this path verified that
+        // the digest names these bytes, so the prepared component is built for
+        // this request and dropped with it.
+        let prepared_component = tracing::info_span!("wamn.component.link").in_scope(|| {
+            let links = nested_operation_links(component_fact)?;
+            Self::prepare(base_linker, component, links, &postgres, &logging, config, component_fact)
+        })?;
+        Self::instantiate_prepared(
             engine,
             base_linker,
-            component,
+            prepared_component,
             postgres,
             credentials,
             logging,
             allowed_hosts,
             release,
             compiled_components,
+            prepared,
             components,
             config,
             tenant_id,
@@ -2183,198 +2250,295 @@ impl NodeInstance {
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<ReleaseManifestWeld>,
         compiled_components: Arc<BTreeMap<String, Component>>,
+        prepared: Arc<PreparedCache>,
         components: Arc<[AdmittedComponent]>,
         config: &RouterDriverConfig,
         tenant_id: &str,
         component_fact: &AdmittedComponent,
     ) -> anyhow::Result<Self> {
-        let (mut store, mut workload, connection_http, blobstore, nested, statement_scope) =
-            async {
-                // WASI's whole p2 host surface, added to a FRESH linker on every
-                // request. This is the span that decides whether 1b is worth its
-                // refactor: if the cost is here, a linker cached per component
-                // world removes it outright.
-                let mut linker: Linker<SharedCtx> = tracing::info_span!("wamn.linker.clone")
-                    .in_scope(|| base_linker.as_ref().clone());
-                let local = wash_runtime::types::LocalResources {
-                    allowed_hosts: Arc::clone(&allowed_hosts),
-                    ..Default::default()
-                };
-                // The three per-request host objects, the imports projection and
-                // WorkloadComponent::new are the 1.02 ms `linker_setup` residue
-                // that the 1b split left unnamed. Entered guards rather than
-                // in_scope closures: these sections declare bindings the rest of
-                // the block uses.
-                let hosts_span = tracing::info_span!("wamn.linker.hosts");
-                let hosts_entered = hosts_span.enter();
-                let connection_http = Arc::new(ConnectionHttp::new(
-                    Arc::clone(&postgres),
-                    Arc::clone(&credentials),
-                    tenant_id,
-                    config.project.as_str(),
-                    Arc::clone(&allowed_hosts),
-                    Some(Arc::clone(&release)),
-                ));
-                // The blobstore capability takes the SAME release weld as the
-                // HTTP one. Both resolve a released closure's effective
-                // release and environment from the one mounted manifest, so a
-                // guest cannot reach an object store under a release its HTTP
-                // calls would be refused against.
-                let blobstore = Arc::new(WamnBlobstore::new(
-                    Arc::clone(&postgres),
-                    Arc::clone(&credentials),
-                    tenant_id,
-                    config.project.as_str(),
-                    Some(Arc::clone(&release)),
-                ));
-                let nested = Arc::new(NestedOperationHost {
-                    engine: Arc::new(engine.clone()),
-                    base_linker: Arc::clone(base_linker),
-                    postgres: Arc::clone(&postgres),
-                    credentials: Arc::clone(&credentials),
-                    logging: Arc::clone(&logging),
-                    allowed_hosts: Arc::clone(&allowed_hosts),
-                    release: Arc::clone(&release),
-                    compiled_components,
-                    config: config.clone(),
-                    tenant_id: tenant_id.into(),
-                    components,
-                    invocation: std::sync::Mutex::new(None),
-                });
-                drop(hosts_entered);
-                tracing::info_span!("wamn.linker.nested")
-                    .in_scope(|| add_nested_operation_links(&mut linker, component_fact))?;
-                let loopback = Arc::new(std::sync::Mutex::new(
-                    wash_runtime::sockets::loopback::Network::default(),
-                ));
-                let workload_span = tracing::info_span!("wamn.linker.workload");
-                let workload_entered = workload_span.enter();
-                let mut workload = WorkloadComponent::new(
-                    "router-driver",
-                    "router-driver",
-                    "wamn",
-                    component_fact.component.as_str(),
-                    component,
-                    linker,
-                    Vec::new(),
-                    local,
-                    loopback,
-                    InstancePolicy::Ephemeral,
-                );
-                drop(workload_entered);
-                let imports_span = tracing::info_span!("wamn.linker.imports");
-                let imports_entered = imports_span.enter();
-                let imports = workload.world().imports;
-                // The driver has one credential-exact project. Route every named
-                // Postgres instance through that same trusted project rather than
-                // bypassing the plugin's `(implements ...)` binder with a raw linker.
-                let imports: HashSet<_> = imports
-                    .into_iter()
-                    .map(|mut interface| {
-                        if interface.namespace == "wamn"
-                            && interface.package == "postgres"
-                            && interface.name.is_some()
-                        {
-                            interface
-                                .config
-                                .insert("project".to_owned(), config.project.clone());
-                        }
-                        interface
-                    })
-                    .collect();
-                drop(imports_entered);
-                async {
-                    let mut item = WorkloadItem::Component(&mut workload);
-                    postgres
-                        .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
-                        .await?;
-                    logging
-                        .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
-                        .await?;
-                    if WitInterfaces::new(&imports).contains("wamn", "connection", &["http"]) {
-                        connection_http::add_to_linker(item.linker())?;
-                    }
-                    if WitInterfaces::new(&imports).contains(
-                        "wasmcloud",
-                        "blobstore",
-                        &["types", "container", "blobstore"],
-                    ) {
-                        wamn_blobstore_plugin::add_to_linker(item.linker())?;
-                    }
-                    Ok::<(), anyhow::Error>(())
+        // ONE INSTANCEPRE PER DIGEST. The span keeps its name so the journey
+        // trace still sees exactly one `link` per request; on a hit it now
+        // measures a map lookup and a clone, and its attribute says which.
+        let prepared_component = {
+            let span = tracing::info_span!(
+                "wamn.component.link",
+                wamn.prepared_hit = tracing::field::Empty
+            );
+            let _entered = span.enter();
+            let links = nested_operation_links(component_fact)?;
+            let digest = component_fact.component_digest.as_str();
+            let hit = prepared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("prepared-component cache poisoned"))?
+                .get(digest)
+                .filter(|entry| entry.links == links)
+                .cloned();
+            match hit {
+                Some(entry) => {
+                    span.record("wamn.prepared_hit", true);
+                    entry
                 }
-                .instrument(tracing::info_span!("wamn.linker.plugins"))
-                .await?;
-                let scope_span = tracing::info_span!("wamn.linker.scope");
-                let scope_entered = scope_span.enter();
-                let scope: Box<str> = workload.id().into();
-                // Linker setup is not an identity bind. In particular WamnLogging's
-                // plugin hook seeds even an empty claim. Clear every registry before
-                // component instantiation so start functions cannot exercise tenant
-                // authority; `bind_acquisition` is the sole identity and provenance
-                // installation point.
-                // FOUR MAP REVOKES AND A BUILDER SHOULD COST MICROSECONDS. The
-                // whole block measures 0.766 ms -- the second largest item in
-                // linker_setup, and nobody had named it. Split three ways before
-                // anything is changed: the revokes, the statement-scope bind, and
-                // the plugin map plus Ctx.
-                tracing::info_span!("wamn.linker.revokes").in_scope(|| {
-                    postgres.revoke_session_claims(&scope);
-                    logging.clear_claim(&scope);
-                    connection_http.revoke_invocation(&scope);
-                    blobstore.revoke_invocation(&scope);
-                    nested.revoke();
-                });
-                let pending_statement_scope = tracing::info_span!("wamn.linker.pending_scope")
-                    .in_scope(|| {
-                        PendingStatementScope::bind(
-                            Arc::clone(&postgres),
-                            scope.clone(),
-                            component_fact,
-                        )
-                    })?;
-                let ctx_span = tracing::info_span!("wamn.linker.ctx");
-                let ctx_entered = ctx_span.enter();
-                let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
-                    HashMap::new();
-                plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
-                plugins.insert(WAMN_LOGGING_ID, Arc::clone(&logging) as _);
-                plugins.insert(CONNECTION_HTTP_ID, Arc::clone(&connection_http) as _);
-                plugins.insert(WAMN_BLOBSTORE_ID, Arc::clone(&blobstore) as _);
-                // The nested host rides the store, not the linker; see its
-                // HostPlugin impl for why.
-                plugins.insert(NESTED_OPERATION_HOST_ID, Arc::clone(&nested) as _);
-                let ctx = Ctx::builder(scope.to_string(), scope.to_string())
-                    .with_plugins(plugins)
-                    .build();
-                drop(ctx_entered);
-                // NOT WRAPPED IN A SPAN. runtime_inventory pins this exact
-                // statement as the single production ExecutionHost store
-                // constructor, and 1b's instrumentation broke that guard for a
-                // phase that measured 0.093 ms -- 3% of linker_setup. The number
-                // is recorded in docs/perf/2026.09/1b-linker-clone.md; the guard
-                // is worth more than keeping the span.
-                drop(scope_entered);
-                let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
-                // Instantiation executes guest start code, so it needs the same bounded
-                // ceiling as a call. One tick is only 10 ms and interrupts valid
-                // virtualized std components before their instance is ready.
-                store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
-                Ok::<_, anyhow::Error>((
-                    store,
-                    workload,
-                    connection_http,
-                    blobstore,
-                    nested,
-                    (scope, pending_statement_scope),
-                ))
+                None => {
+                    span.record("wamn.prepared_hit", false);
+                    let built = Self::prepare(
+                        base_linker,
+                        component,
+                        links,
+                        &postgres,
+                        &logging,
+                        config,
+                        component_fact,
+                    )?;
+                    prepared
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("prepared-component cache poisoned"))?
+                        .insert(digest.to_owned(), built.clone());
+                    built
+                }
             }
-            .instrument(tracing::info_span!("wamn.component.linker_setup"))
-            .await?;
+        };
+        Self::instantiate_prepared(
+            engine,
+            base_linker,
+            prepared_component,
+            postgres,
+            credentials,
+            logging,
+            allowed_hosts,
+            release,
+            compiled_components,
+            prepared,
+            components,
+            config,
+            tenant_id,
+            component_fact,
+        )
+        .await
+    }
+
+    /// The per-DIGEST half: everything that goes on the linker.
+    ///
+    /// Runs once per digest under [`Self::instantiate_compiled`] and once per
+    /// request on the candidate path. The `WorkloadComponent` is the vehicle
+    /// for wash's import projection and stays here, per digest; nothing per
+    /// request touches it any more.
+    fn prepare(
+        base_linker: &Arc<Linker<SharedCtx>>,
+        component: Component,
+        links: NestedOperationLinks,
+        postgres: &WamnPostgres,
+        logging: &WamnLogging,
+        config: &RouterDriverConfig,
+        component_fact: &AdmittedComponent,
+    ) -> anyhow::Result<PreparedComponent> {
+        let mut linker: Linker<SharedCtx> =
+            tracing::info_span!("wamn.linker.clone").in_scope(|| base_linker.as_ref().clone());
+        tracing::info_span!("wamn.linker.nested")
+            .in_scope(|| add_nested_operation_links(&mut linker, &links))?;
+        let loopback = Arc::new(std::sync::Mutex::new(
+            wash_runtime::sockets::loopback::Network::default(),
+        ));
+        let workload_span = tracing::info_span!("wamn.linker.workload");
+        let workload_entered = workload_span.enter();
+        let mut workload = WorkloadComponent::new(
+            "router-driver",
+            "router-driver",
+            "wamn",
+            component_fact.component.as_str(),
+            component,
+            linker,
+            Vec::new(),
+            wash_runtime::types::LocalResources::default(),
+            loopback,
+            InstancePolicy::Ephemeral,
+        );
+        drop(workload_entered);
+        let imports_span = tracing::info_span!("wamn.linker.imports");
+        let imports_entered = imports_span.enter();
+        let imports = workload.world().imports;
+        // The driver has one credential-exact project. Route every named
+        // Postgres instance through that same trusted project rather than
+        // bypassing the plugin's `(implements ...)` binder with a raw linker.
+        let imports: HashSet<_> = imports
+            .into_iter()
+            .map(|mut interface| {
+                if interface.namespace == "wamn"
+                    && interface.package == "postgres"
+                    && interface.name.is_some()
+                {
+                    interface
+                        .config
+                        .insert("project".to_owned(), config.project.clone());
+                }
+                interface
+            })
+            .collect();
+        drop(imports_entered);
+        tracing::info_span!("wamn.linker.plugins").in_scope(|| {
+            let interfaces = WitInterfaces::new(&imports);
+            let component = workload.component().clone();
+            let linker = workload.linker();
+            postgres.add_linker_entries(linker, &component, &interfaces)?;
+            logging.add_linker_entries(linker, &interfaces)?;
+            if interfaces.contains("wamn", "connection", &["http"]) {
+                connection_http::add_to_linker(linker)?;
+            }
+            if interfaces.contains(
+                "wasmcloud",
+                "blobstore",
+                &["types", "container", "blobstore"],
+            ) {
+                wamn_blobstore_plugin::add_to_linker(linker)?;
+            }
+            Ok::<(), anyhow::Error>(())
+        })?;
+        let pre = tracing::info_span!("wamn.linker.pre").in_scope(|| workload.pre_instantiate())?;
+        Ok(PreparedComponent { pre, imports, links })
+    }
+
+    /// The per-REQUEST half: the store, its plugin map, and the instance.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "instance construction welds each independent host capability"
+    )]
+    async fn instantiate_prepared(
+        engine: &Engine,
+        base_linker: &Arc<Linker<SharedCtx>>,
+        prepared_component: PreparedComponent,
+        postgres: Arc<WamnPostgres>,
+        credentials: Arc<WamnCredentials>,
+        logging: Arc<WamnLogging>,
+        allowed_hosts: Arc<[AllowedHost]>,
+        release: Arc<ReleaseManifestWeld>,
+        compiled_components: Arc<BTreeMap<String, Component>>,
+        prepared: Arc<PreparedCache>,
+        components: Arc<[AdmittedComponent]>,
+        config: &RouterDriverConfig,
+        tenant_id: &str,
+        component_fact: &AdmittedComponent,
+    ) -> anyhow::Result<Self> {
+        let PreparedComponent {
+            pre,
+            imports,
+            links: _,
+        } = prepared_component;
+        let (mut store, connection_http, blobstore, nested, statement_scope) = async {
+            // The three per-request host objects. They ride the store's plugin
+            // map, never the linker.
+            let hosts_span = tracing::info_span!("wamn.linker.hosts");
+            let hosts_entered = hosts_span.enter();
+            let connection_http = Arc::new(ConnectionHttp::new(
+                Arc::clone(&postgres),
+                Arc::clone(&credentials),
+                tenant_id,
+                config.project.as_str(),
+                Arc::clone(&allowed_hosts),
+                Some(Arc::clone(&release)),
+            ));
+            // The blobstore capability takes the SAME release weld as the
+            // HTTP one. Both resolve a released closure's effective
+            // release and environment from the one mounted manifest, so a
+            // guest cannot reach an object store under a release its HTTP
+            // calls would be refused against.
+            let blobstore = Arc::new(WamnBlobstore::new(
+                Arc::clone(&postgres),
+                Arc::clone(&credentials),
+                tenant_id,
+                config.project.as_str(),
+                Some(Arc::clone(&release)),
+            ));
+            let nested = Arc::new(NestedOperationHost {
+                engine: Arc::new(engine.clone()),
+                base_linker: Arc::clone(base_linker),
+                postgres: Arc::clone(&postgres),
+                credentials: Arc::clone(&credentials),
+                logging: Arc::clone(&logging),
+                allowed_hosts: Arc::clone(&allowed_hosts),
+                release: Arc::clone(&release),
+                compiled_components,
+                prepared,
+                config: config.clone(),
+                tenant_id: tenant_id.into(),
+                components,
+                invocation: std::sync::Mutex::new(None),
+            });
+            drop(hosts_entered);
+            let scope = next_scope(component_fact.component.as_str());
+            // THE PER-REQUEST HALF OF THE PLUGIN BIND, once per request, after
+            // the linker half ran once per digest. The driver carries no
+            // workload config: identity is installed by `bind_acquisition`, so
+            // this registers the scope and nothing else, exactly as the fused
+            // hook did with the same empty config.
+            tracing::info_span!("wamn.linker.register").in_scope(|| {
+                let interfaces = WitInterfaces::new(&imports);
+                let workload_config = HashMap::new();
+                postgres.register_workload_scope(&scope, &workload_config, &interfaces)?;
+                logging.register_workload_scope(&scope, &workload_config, &interfaces);
+                Ok::<(), anyhow::Error>(())
+            })?;
+            let scope_span = tracing::info_span!("wamn.linker.scope");
+            let scope_entered = scope_span.enter();
+            // Linker setup is not an identity bind. In particular WamnLogging's
+            // registration seeds even an empty claim. Clear every registry before
+            // component instantiation so start functions cannot exercise tenant
+            // authority; `bind_acquisition` is the sole identity and provenance
+            // installation point.
+            tracing::info_span!("wamn.linker.revokes").in_scope(|| {
+                postgres.revoke_session_claims(&scope);
+                logging.clear_claim(&scope);
+                connection_http.revoke_invocation(&scope);
+                blobstore.revoke_invocation(&scope);
+                nested.revoke();
+            });
+            // 0.605 ms of the 0.889 ms scope block, measured before anything
+            // was touched (docs/perf/2026.09/1c-residue-and-scope.md). Still
+            // per request, still the next thing to name.
+            let pending_statement_scope = tracing::info_span!("wamn.linker.pending_scope")
+                .in_scope(|| {
+                    PendingStatementScope::bind(
+                        Arc::clone(&postgres),
+                        scope.clone(),
+                        component_fact,
+                    )
+                })?;
+            let ctx_span = tracing::info_span!("wamn.linker.ctx");
+            let ctx_entered = ctx_span.enter();
+            let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
+                HashMap::new();
+            plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
+            plugins.insert(WAMN_LOGGING_ID, Arc::clone(&logging) as _);
+            plugins.insert(CONNECTION_HTTP_ID, Arc::clone(&connection_http) as _);
+            plugins.insert(WAMN_BLOBSTORE_ID, Arc::clone(&blobstore) as _);
+            // The nested host rides the store, not the linker; see its
+            // HostPlugin impl for why.
+            plugins.insert(NESTED_OPERATION_HOST_ID, Arc::clone(&nested) as _);
+            let ctx = Ctx::builder(scope.to_string(), scope.to_string())
+                .with_plugins(plugins)
+                .build();
+            drop(ctx_entered);
+            // NOT WRAPPED IN A SPAN. runtime_inventory pins this exact
+            // statement as the single production ExecutionHost store
+            // constructor, and 1b's instrumentation broke that guard for a
+            // phase that measured 0.093 ms -- 3% of linker_setup. The number
+            // is recorded in docs/perf/2026.09/1b-linker-clone.md; the guard
+            // is worth more than keeping the span.
+            drop(scope_entered);
+            let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
+            // Instantiation executes guest start code, so it needs the same bounded
+            // ceiling as a call. One tick is only 10 ms and interrupts valid
+            // virtualized std components before their instance is ready.
+            store.set_epoch_deadline(deadline_ticks(bounded_node_deadline_ms(None)));
+            Ok::<_, anyhow::Error>((
+                store,
+                connection_http,
+                blobstore,
+                nested,
+                (scope, pending_statement_scope),
+            ))
+        }
+        .instrument(tracing::info_span!("wamn.component.linker_setup"))
+        .await?;
         let (scope, pending_statement_scope) = statement_scope;
-        let compiled = workload.component().clone();
-        let pre = tracing::info_span!("wamn.component.link")
-            .in_scope(|| workload.linker().instantiate_pre(&compiled))?;
         let node = pre
             .instantiate_async(&mut store)
             .instrument(tracing::info_span!("wamn.component.instantiate"))
@@ -2629,6 +2793,7 @@ mod tests {
         InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
     };
     use tracing_subscriber::layer::SubscriberExt as _;
+    use wamn_runtime::plugins::wamn_logging::WamnLoggingConfig;
     use wamn_catalog::{
         AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope,
         EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
@@ -3315,6 +3480,131 @@ mod tests {
             component.parent_span_id,
             opentelemetry::trace::SpanId::INVALID
         );
+    }
+
+    /// The un-fused plugin bind, driven through the production instantiation
+    /// path: ORDER AND COUNT, per the ruling on wamn-0h0g.17.15.
+    ///
+    /// Linker entries land once per digest, before that digest's first
+    /// registration; registration lands once per request. A skipped
+    /// registration fails loud (a tenant-less scope has its postgres calls
+    /// refused); entries re-added on every request under the cache would fail
+    /// silently and only erode the win. This is the assertion that hears it.
+    #[tokio::test]
+    async fn plugin_bind_registers_per_request_and_links_per_digest() {
+        let harness = TraceHarness::install();
+        let engine = Engine::builder().build().expect("engine");
+        let bytes = wat::parse_str(
+            r#"(component
+              (import "wamn:postgres/client@0.1.0" (instance))
+              (import "wasi:logging/logging" (instance))
+            )"#,
+        )
+        .expect("encode the importing fixture");
+        let compiled = NodeInstance::compile(&engine, &bytes).expect("compile the fixture");
+        let base_linker = {
+            let mut linker: Linker<SharedCtx> = Linker::new(engine.inner());
+            wasmtime_wasi::p2::add_to_linker_async(&mut linker).expect("WASI p2 surface");
+            Arc::new(linker)
+        };
+        let postgres = statement_plugin();
+        let logging =
+            Arc::new(WamnLogging::new(WamnLoggingConfig::default()).expect("logging plugin"));
+        let credentials = Arc::new(WamnCredentials::from_projects(HashMap::new()));
+        let allowed_hosts: Arc<[AllowedHost]> = Arc::from(Vec::new());
+        let manifest = ServingManifest {
+            format_version: SERVING_MANIFEST_FORMAT_VERSION,
+            release: ServingRelease {
+                tenant_id: "tenant-a".to_owned(),
+                effective_release_id: EffectiveReleaseId::new(7).unwrap(),
+                environment: "prod".to_owned(),
+                packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
+            },
+            components: BTreeSet::new(),
+            wirings: BTreeSet::new(),
+            attachments: BTreeMap::new(),
+            registrations: BTreeMap::new(),
+        };
+        let release = Arc::new(
+            ReleaseManifestWeld::load_canonical_bytes(
+                &manifest.canonical_bytes(),
+                "bind-order fixture",
+            )
+            .expect("weld the fixture manifest"),
+        );
+        let fact_a = component_with_operations(BTreeMap::new());
+        let mut fact_b = fact_a.clone();
+        fact_b.component_digest =
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_owned();
+        let compiled_components = Arc::new(BTreeMap::from([
+            (fact_a.component_digest.clone(), compiled.clone()),
+            (fact_b.component_digest.clone(), compiled.clone()),
+        ]));
+        let prepared: Arc<PreparedCache> = Arc::default();
+        let components: Arc<[AdmittedComponent]> = Arc::from(Vec::new());
+        let config = RouterDriverConfig {
+            owner_prefix: "router".to_owned(),
+            project: "orders".to_owned(),
+            schema: None,
+            cache_capacity: WiringCacheCapacity::default(),
+        };
+        let counts = || {
+            (
+                postgres.linker_entry_binds(),
+                postgres.scope_registrations(),
+                logging.linker_entry_binds(),
+                logging.scope_registrations(),
+            )
+        };
+
+        // COUNT: (postgres entries, postgres registrations, logging entries,
+        // logging registrations). Two requests to digest a, then one to b.
+        for (fact, expected) in [
+            (&fact_a, (1, 1, 1, 1)),
+            (&fact_a, (1, 2, 1, 2)),
+            (&fact_b, (2, 3, 2, 3)),
+        ] {
+            NodeInstance::instantiate_compiled(
+                &engine,
+                &base_linker,
+                compiled.clone(),
+                Arc::clone(&postgres),
+                Arc::clone(&credentials),
+                Arc::clone(&logging),
+                Arc::clone(&allowed_hosts),
+                Arc::clone(&release),
+                Arc::clone(&compiled_components),
+                Arc::clone(&prepared),
+                Arc::clone(&components),
+                &config,
+                "tenant-a",
+                fact,
+            )
+            .await
+            .expect("the fixture instantiates");
+            assert_eq!(counts(), expected, "after a request to {:?}", fact.component_digest);
+        }
+
+        // ORDER: a digest's linker entries end before its first registration
+        // starts, and the hit ran no per-digest half at all.
+        let spans = harness.spans();
+        let named = |name: &str| {
+            let mut found: Vec<&SpanData> = spans.iter().filter(|span| span.name == name).collect();
+            found.sort_by_key(|span| span.start_time);
+            found
+        };
+        let links = named("wamn.component.link");
+        let hits: Vec<_> = links
+            .iter()
+            .map(|span| attribute(span, "wamn.prepared_hit"))
+            .collect();
+        assert_eq!(hits, [Some("false".to_owned()), Some("true".to_owned()), Some("false".to_owned())]);
+        let entries = named("wamn.linker.plugins");
+        let registers = named("wamn.linker.register");
+        assert_eq!((entries.len(), registers.len()), (2, 3));
+        assert!(entries[0].end_time <= registers[0].start_time, "digest a: entries before registration");
+        assert!(entries[1].end_time <= registers[2].start_time, "digest b: entries before registration");
+        assert!(registers[1].start_time >= entries[0].end_time, "the hit registers after the fill");
     }
 
     #[test]

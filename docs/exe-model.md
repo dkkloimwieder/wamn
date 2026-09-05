@@ -42,6 +42,15 @@ This document wins every design conflict.
   its 512-slot limit is hard-coded. Fresh instances remain the rule; memory reuse
   waits for explicit affinity/windowed-state semantics. Pool sizing becomes a
   measured deployment value.
+- **A `Linker<T>` holds definitions only and is shared per digest; all
+  per-request state lives in `Store<T>`'s data and is read through
+  `StoreContextMut`.** Ratified 2026-09-04. No per-digest object may hold
+  per-request state; a plugin that cannot be written that way stays per request
+  and the smaller win is taken. A plugin's bind is therefore two calls, not one
+  hook: scope-keyed registration once per request, linker entries once per
+  digest. That split is what lets the driver seal one `InstancePre` per digest
+  and instantiate from it on every request (`wamn-0h0g.17.15`,
+  `perf/2026.09/1c-instance-pre.md`).
 - Keep WAC composition only as a demand-gated fusion optimization for measured
   hot, pure pipelines; the default preserves shared pools and router-edge taps.
 

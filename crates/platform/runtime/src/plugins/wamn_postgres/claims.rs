@@ -102,6 +102,8 @@ pub struct WamnPostgres {
     pub(super) statement_scopes: std::sync::RwLock<StatementScopes>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     pub(super) destroyed: Arc<AtomicU64>,
+    /// How many times each half of the un-fused workload bind has run.
+    pub(super) bind_counters: super::BindCounters,
 }
 
 /// The release a pod carries — the `(effective release id, manifest digest)` pair
@@ -700,6 +702,7 @@ impl WamnPostgres {
             current_run: std::sync::RwLock::new(HashMap::new()),
             statement_scopes: std::sync::RwLock::new(StatementScopes::default()),
             destroyed: Arc::new(AtomicU64::new(0)),
+            bind_counters: super::BindCounters::default(),
         }
     }
 
