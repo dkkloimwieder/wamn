@@ -1,0 +1,1 @@
+verdict=pass phase=restart-first http_total_ms=240.946 auth_ms=121.039 resolve_ms=0.150 pull_ms=0.000 compile_ms=0.000 linker_setup_ms=3.710 link_ms=0.137 instantiate_ms=2.285 executor_platform_acquire_ms=0.000 callable_http_acquire_ms=110.839 guest_sql_acquire_ms=87.463 sql_ms=3.226 guest_db_call_ms=92.957
