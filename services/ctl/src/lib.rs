@@ -10,6 +10,7 @@
 
 pub mod apply_package;
 pub mod author_wiring;
+pub mod bind_connection;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
 #[cfg(feature = "ops")]

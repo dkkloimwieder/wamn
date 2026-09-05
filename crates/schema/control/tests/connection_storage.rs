@@ -1,8 +1,8 @@
 use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_schema_control::connections::{
     ComponentConnectionRequirement, ConnectionGenerationDefinition,
-    exact_component_connection_requirement_sql, insert_component_connection_binding_sql,
-    insert_component_connection_requirement_sql,
+    activate_connection_generation_sql, exact_component_connection_requirement_sql,
+    insert_component_connection_binding_sql, insert_component_connection_requirement_sql,
 };
 
 fn requirement() -> ComponentConnectionRequirement {
@@ -52,4 +52,18 @@ fn component_storage_sql_uses_component_and_effective_release_grains() {
     let binding = insert_component_connection_binding_sql();
     assert!(binding.contains("effective_release_id"));
     assert!(!binding.contains("catalog_"));
+}
+
+/// The instance-update guard refuses any update that does not advance
+/// `revision`. Activation is the one update the product issues, so its builder
+/// must carry the advance; the live round trip in wamn-ctl's
+/// bind_connection_live proves the trigger accepts it, and this pins the
+/// property offline so a builder that stops advancing fails here first.
+#[test]
+fn activation_advances_the_instance_revision() {
+    let sql = activate_connection_generation_sql();
+    assert!(sql.contains("UPDATE catalog.connection_instances"));
+    assert!(sql.contains("SET active_generation = $4"));
+    assert!(sql.contains("revision = revision + 1"));
+    assert!(sql.contains("WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3"));
 }

@@ -4,7 +4,7 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    apply_package, author_wiring, enable_cdc_project_env, print_release_env, promote, provision,
+    apply_package, author_wiring, bind_connection, enable_cdc_project_env, print_release_env, promote, provision,
     provision_org, provision_project_env, publish_release, push_component, push_release_manifest,
     reconcile_package_data_access, reconcile_replica_identity, reconcile_run_plane,
     terminalize_effect_uncertain,
@@ -39,6 +39,9 @@ enum Command {
     PushComponent(push_component::PushComponentArgs),
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
     AuthorWiring(author_wiring::AuthorWiringArgs),
+    /// Bind one admitted component's declared connection alias to an
+    /// environment-owned instance carrying a host-held credential handle.
+    BindConnection(bind_connection::BindConnectionArgs),
     /// Mint one immutable format-3 effective release from exact package-owned facts.
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
@@ -79,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
         Command::ApplyPackage(args) => apply_package::run(args).await,
+        Command::BindConnection(args) => bind_connection::run(args).await,
         Command::ReconcilePackageDataAccess(args) => reconcile_package_data_access::run(args).await,
         Command::PushComponent(args) => push_component::run(args).await,
         Command::AuthorWiring(args) => author_wiring::run(args).await,

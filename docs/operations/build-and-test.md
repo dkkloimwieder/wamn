@@ -1440,6 +1440,37 @@ registry services unchanged and stopped. Cleanup removes only this Compose
 project, its volumes, and its validated scratch path. Never substitute shared
 infrastructure or the frozen cluster.
 
+### `[BIND-CONNECTION-LIVE]` — the connection-admin verb, proven by the round trip
+
+`wamn-ctl bind-connection` writes the three rows a bound connection is made
+of — an environment-owned instance, its first generation carrying a
+credential HANDLE, and the release-scoped binding of one admitted component's
+declared alias — through the control library's own SQL builders and the
+runtime's own definition hasher. The proof is not that the rows exist: it is
+that the postgres plugin's `connection_effect_snapshot` loads them and
+`wamn_blobstore::binding::resolve` returns exactly what was bound. Before the
+verb the same snapshot is refused as unbound; a definition missing a
+coordinate, a blobstore instance bound to an alias declared as HTTP, and an
+alias the component never declared are each refused by name and write
+nothing.
+
+Two disposable databases on one PostgreSQL 18 server. The test `expect`s both
+variables and never self-skips; it is ignored by default because it needs the
+server.
+
+```bash
+docker run -d --name wamn-bind-connection-pg18 -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5441:5432 postgres:18
+until psql postgres://postgres:probe@127.0.0.1:5441/postgres -Atqc 'select 1'; do sleep 1; done
+psql postgres://postgres:probe@127.0.0.1:5441/postgres -Atqc 'CREATE DATABASE bind_project' \
+  -c 'CREATE DATABASE bind_control'
+WAMN_BIND_CONNECTION_PROJECT_PG_URL=postgres://postgres:probe@127.0.0.1:5441/bind_project \
+WAMN_BIND_CONNECTION_CONTROL_PG_URL=postgres://postgres:probe@127.0.0.1:5441/bind_control \
+  cargo test -p wamn-ctl --locked --test bind_connection_live \
+  -- --ignored --exact bind_connection_round_trips_through_the_plugins_own_resolution --nocapture
+docker rm -f wamn-bind-connection-pg18 # BY EXPLICIT NAME. Never prune.
+```
+
 ### `[WMS-CLUSTER-JOURNEY]` — the WMS release minted from the shell, on its own cluster
 
 The second application's journey, and the first minted through the product's
