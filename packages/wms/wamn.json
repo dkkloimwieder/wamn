@@ -218,6 +218,21 @@
       "schema": "wms",
       "table": "inventory_move_command",
       "cdc": "excluded"
+    },
+    "inventory_adjust_command": {
+      "schema": "wms",
+      "table": "inventory_adjust_command",
+      "cdc": "excluded"
+    },
+    "inventory_merge_command": {
+      "schema": "wms",
+      "table": "inventory_merge_command",
+      "cdc": "excluded"
+    },
+    "inventory_split_command": {
+      "schema": "wms",
+      "table": "inventory_split_command",
+      "cdc": "excluded"
     }
   },
   "custom_operations": {
