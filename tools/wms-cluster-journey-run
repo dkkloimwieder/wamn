@@ -263,6 +263,12 @@ host_image_owned=false
 run_complete=false
 
 cleanup() {
+  # FIRST, because $? is the journey's exit status only until the next
+  # command runs: wamn-362o.42 put the gate kill ahead of this line and every
+  # failure after the gate started read as status 0, so the failure capture
+  # below never fired (run 5, wamn-362o.44).
+  local status=$? cleanup_failed=false failure_capture_errors
+  trap - EXIT HUP INT TERM
   # The authoring gate is a LOCAL process this journey spawned; on any exit
   # after it started -- a gate refusal exits inside the wiring loop -- it must
   # die here or it outlives the run, still bound to its port, and the next
@@ -272,8 +278,6 @@ cleanup() {
     kill "$gate_pid" 2>/dev/null || true
     wait "$gate_pid" 2>/dev/null || true
   fi
-  local status=$? cleanup_failed=false failure_capture_errors
-  trap - EXIT HUP INT TERM
   # Opt-in hold BEFORE teardown, so an observer can keep watching cluster state
   # past the point where this run gives up. Unset by default, so no run changes
   # behaviour unless it is asked for. It exists because the question "does the
@@ -315,6 +319,21 @@ cleanup() {
     kubectl --kubeconfig "$kubeconfig" --context "$context" \
       -n "$namespace" get pods -o json \
       >"$evidence_dir/failure-pods.json" 2>>"$failure_capture_errors"
+    # The host's own log is the only witness to an execution failure the route
+    # reports as 503 execution-failed; capture every host pod, current and
+    # previous container.
+    local host_pod
+    for host_pod in $(kubectl --kubeconfig "$kubeconfig" --context "$context" \
+        -n "$namespace" get pods -l wasmcloud.com/name=hostgroup -o name 2>>"$failure_capture_errors"); do
+      record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
+        -n "$namespace" logs --timestamps -c host "$host_pod"
+      kubectl --kubeconfig "$kubeconfig" --context "$context" \
+        -n "$namespace" logs --timestamps -c host "$host_pod" \
+        >"$evidence_dir/failure-${host_pod#pod/}.log" 2>>"$failure_capture_errors" || true
+      kubectl --kubeconfig "$kubeconfig" --context "$context" \
+        -n "$namespace" logs --previous --timestamps -c host "$host_pod" \
+        >"$evidence_dir/failure-${host_pod#pod/}.previous.log" 2>>"$failure_capture_errors" || true
+    done
     record_command kubectl --kubeconfig "$kubeconfig" --context "$context" \
       -n "$namespace" get service,endpointslice flow-http-nodeport -o json
     kubectl --kubeconfig "$kubeconfig" --context "$context" \
