@@ -45,10 +45,11 @@ use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::InstancePolicy;
-use wash_runtime::engine::ctx::{Ctx, SharedCtx};
+use wash_runtime::engine::ctx::{Ctx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+use wash_runtime::wit::WitWorld;
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, Instance, Linker, TypedFunc};
 
@@ -1904,18 +1905,54 @@ fn resolve_nested_target<'a>(
     })
 }
 
+/// The id the nested host is registered and fetched under.
+pub(crate) const NESTED_OPERATION_HOST_ID: &str = "wamn:nested-operation-host";
+
+/// A `HostPlugin` only so the STORE can carry it.
+///
+/// THE LINKER MUST HOLD DEFINITIONS, NOT REQUEST STATE. This host owns
+/// `invocation`, which is per-request, and the nested-operation closures used to
+/// capture it -- which made the whole linker per-request and put an `InstancePre`
+/// out of reach. Registering it in the plugin map moves it into `Store` data,
+/// where per-request state belongs, and the closures fetch it through
+/// `Ctx::get_plugin`. Nothing about the isolation boundary moves: the object is
+/// still built per request and still reachable only from the store that owns it.
+///
+/// It exports and imports nothing. The nested links are made directly on the
+/// linker by [`add_nested_operation_links`], which is why `world` is empty --
+/// this implementation exists for `get_plugin`, not for binding.
+impl HostPlugin for NestedOperationHost {
+    fn id(&self) -> &'static str {
+        NESTED_OPERATION_HOST_ID
+    }
+
+    fn world(&self) -> WitWorld {
+        WitWorld {
+            imports: HashSet::new(),
+            exports: HashSet::new(),
+        }
+    }
+}
+
+/// Bind the nested-operation imports this component declares.
+///
+/// CAPTURES NOTHING PER-REQUEST. `dependency` and `owner_operations` come from
+/// the admitted component, so they are per-digest and may be captured; the host
+/// itself is fetched from the store on each call. That is what makes the linker
+/// -- and therefore the `InstancePre` built from it -- shareable by digest.
 fn add_nested_operation_links(
     linker: &mut Linker<SharedCtx>,
-    host: Arc<NestedOperationHost>,
     component: &AdmittedComponent,
 ) -> anyhow::Result<()> {
     for (_, (dependency, owner_operations)) in nested_operation_links(component)? {
         let owner_operations = Arc::new(owner_operations);
-        let nested = Arc::clone(&host);
         linker.instance(&dependency.operation)?.func_wrap_async(
             "run",
-            move |_store, (context, input): (node_types::NodeContext, String)| {
-                let nested = Arc::clone(&nested);
+            move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
+                  (context, input): (node_types::NodeContext, String)| {
+                let nested = extract_active_ctx(store.data_mut())
+                    .ctx
+                    .get_plugin::<NestedOperationHost>(NESTED_OPERATION_HOST_ID);
                 let owner_operations = Arc::clone(&owner_operations);
                 let dependency = dependency.clone();
                 Box::new(async move {
@@ -2206,7 +2243,7 @@ impl NodeInstance {
                 });
                 drop(hosts_entered);
                 tracing::info_span!("wamn.linker.nested")
-                    .in_scope(|| add_nested_operation_links(&mut linker, Arc::clone(&nested), component_fact))?;
+                    .in_scope(|| add_nested_operation_links(&mut linker, component_fact))?;
                 let loopback = Arc::new(std::sync::Mutex::new(
                     wash_runtime::sockets::loopback::Network::default(),
                 ));
@@ -2276,25 +2313,41 @@ impl NodeInstance {
                 // component instantiation so start functions cannot exercise tenant
                 // authority; `bind_acquisition` is the sole identity and provenance
                 // installation point.
-                postgres.revoke_session_claims(&scope);
-                logging.clear_claim(&scope);
-                connection_http.revoke_invocation(&scope);
-                blobstore.revoke_invocation(&scope);
-                nested.revoke();
-                let pending_statement_scope = PendingStatementScope::bind(
-                    Arc::clone(&postgres),
-                    scope.clone(),
-                    component_fact,
-                )?;
+                // FOUR MAP REVOKES AND A BUILDER SHOULD COST MICROSECONDS. The
+                // whole block measures 0.766 ms -- the second largest item in
+                // linker_setup, and nobody had named it. Split three ways before
+                // anything is changed: the revokes, the statement-scope bind, and
+                // the plugin map plus Ctx.
+                tracing::info_span!("wamn.linker.revokes").in_scope(|| {
+                    postgres.revoke_session_claims(&scope);
+                    logging.clear_claim(&scope);
+                    connection_http.revoke_invocation(&scope);
+                    blobstore.revoke_invocation(&scope);
+                    nested.revoke();
+                });
+                let pending_statement_scope = tracing::info_span!("wamn.linker.pending_scope")
+                    .in_scope(|| {
+                        PendingStatementScope::bind(
+                            Arc::clone(&postgres),
+                            scope.clone(),
+                            component_fact,
+                        )
+                    })?;
+                let ctx_span = tracing::info_span!("wamn.linker.ctx");
+                let ctx_entered = ctx_span.enter();
                 let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> =
                     HashMap::new();
                 plugins.insert(WAMN_POSTGRES_ID, Arc::clone(&postgres) as _);
                 plugins.insert(WAMN_LOGGING_ID, Arc::clone(&logging) as _);
                 plugins.insert(CONNECTION_HTTP_ID, Arc::clone(&connection_http) as _);
                 plugins.insert(WAMN_BLOBSTORE_ID, Arc::clone(&blobstore) as _);
+                // The nested host rides the store, not the linker; see its
+                // HostPlugin impl for why.
+                plugins.insert(NESTED_OPERATION_HOST_ID, Arc::clone(&nested) as _);
                 let ctx = Ctx::builder(scope.to_string(), scope.to_string())
                     .with_plugins(plugins)
                     .build();
+                drop(ctx_entered);
                 // NOT WRAPPED IN A SPAN. runtime_inventory pins this exact
                 // statement as the single production ExecutionHost store
                 // constructor, and 1b's instrumentation broke that guard for a
