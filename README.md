@@ -126,10 +126,11 @@ cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
 (cd components/no-std && cargo build --release --target wasm32-wasip2)
 ```
 
-To run the twelve-stage `wamn dev` loop against a disposable environment,
-follow `[WAMN-DEV-ENVIRONMENT]` in `docs/operations/build-and-test.md`: one
-command stands the environment up and holds the authoring Gate, and prints the
-`wamn dev --tui` line to run against it.
+The product binary stands up its own disposable environment. `wamn dev up`
+provisions it. It then spawns `wamn-scenario-worker serve` as the authoring Gate
+on a fixed port, holds that Gate open, and prints the `wamn dev --tui` line to
+run in a second terminal. For the disposable services it needs and the exact
+flags, read `[WAMN-DEV-ENVIRONMENT]` in `docs/operations/build-and-test.md`.
 
 ## Test
 

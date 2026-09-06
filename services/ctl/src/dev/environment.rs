@@ -5,14 +5,22 @@
 //! configuration needs — five credential URLs, the verification database, the
 //! Gate and its bearer token — only existed inside the live proof. This module
 //! is the argument-building layer over the platform verbs that mint them, so
-//! `[WAMN-DEV-LIVE]` and the `wamn-dev-env` operator command stand up one
-//! environment by one path (wamn-10yt.10.30).
+//! `[WAMN-DEV-LIVE]`, `[RECEIVING-ROUTE-JOURNEY]` and the `wamn dev up`
+//! operator command stand up one environment by one path (wamn-10yt.10.32).
+//!
+//! It lives in the product crate rather than in the proof crate because it
+//! imports nothing test-only, and because a product command that starts its own
+//! environment cannot reach into a test crate to build its configuration. Three
+//! of its five `wamn` imports were already this crate's, so the move removed
+//! dependency edges rather than adding any (wamn-10yt.10.32).
 //!
 //! The verbs underneath are the shared truth. Nothing here reimplements
 //! provisioning; it only names the arguments and the order.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use reqwest::Url;
@@ -22,14 +30,14 @@ use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
     management_admitter_generation_role, sql as provision_sql,
 };
-use wamn_ctl::dev::activation::DevActivationIdentity;
-use wamn_ctl::provision_org::{self, ProvisionOrgArgs, TemplateArg};
-use wamn_ctl::provision_project_env::{
+
+use crate::dev::activation::DevActivationIdentity;
+use crate::provision_org::{self, ProvisionOrgArgs, TemplateArg};
+use crate::provision_project_env::{
     self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
     WorkloadGenerationArgs,
 };
-use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
-use wamn_scenario_worker::management::{self, ManagementServeArgs};
+use crate::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 
 /// The deployment-owned inputs a standing development environment needs.
 ///
@@ -398,11 +406,11 @@ pub async fn provision_journey_control(system_url: &str, admin: &Client) -> anyh
 
 pub async fn install_journey_platform_floor(project: &Client) -> anyhow::Result<()> {
     project
-        .batch_execute(include_str!("../../../deploy/sql/catalog-schema.sql"))
+        .batch_execute(include_str!("../../../../deploy/sql/catalog-schema.sql"))
         .await
         .context("install the catalog schema")?;
     project
-        .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))
+        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
         .await
         .context("install the application authorization schema")
 }
@@ -516,36 +524,135 @@ pub async fn prepare_journey_credentials(
     })
 }
 
-pub async fn start_journey_management_gate(
+/// How often readiness retries a connection to the spawned Gate.
+const GATE_READINESS_INTERVAL: Duration = Duration::from_millis(250);
+
+/// How many times readiness retries before it refuses and names the port.
+///
+/// The Gate settles three separate database connections before it listens, so
+/// the bound is generous; what matters is that it is bounded.
+const GATE_READINESS_ATTEMPTS: u32 = 120;
+
+/// One `wamn-scenario-worker serve` child and the authority it listens on.
+///
+/// The Gate is a real process, not a task in this one (wamn-10yt.10.32): the
+/// environment it serves outlives the command that stood it up, and a proof
+/// that links the Gate in-process proves something the operator never runs.
+#[derive(Debug)]
+pub struct JourneyManagementGate {
+    child: tokio::process::Child,
+    bind: String,
+}
+
+impl JourneyManagementGate {
+    /// The `host:port` authority the Gate was asked to listen on.
+    ///
+    /// It is what the operator named, not what the kernel picked: a fixed port
+    /// is the whole reason the written configuration keeps working.
+    #[must_use]
+    pub fn bind(&self) -> &str {
+        &self.bind
+    }
+
+    /// Wait for the Gate to exit on its own.
+    pub async fn wait(&mut self) -> anyhow::Result<std::process::ExitStatus> {
+        self.child
+            .wait()
+            .await
+            .context("wait for the spawned management Gate")
+    }
+
+    /// Stop the Gate and reap it.
+    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+        self.child
+            .kill()
+            .await
+            .context("stop the spawned management Gate")
+    }
+}
+
+/// Settle the address the Gate will listen on, before anything is provisioned.
+///
+/// A fixed nameable port is not a preference. The in-process launch could hand
+/// the ephemeral port the kernel picked back to its caller; a spawned child
+/// cannot, and the configuration written from that port outlives the process
+/// that writes it. Port 0 is therefore a refusal, and it names the input.
+pub fn gate_listen_address(bind: &str) -> anyhow::Result<SocketAddr> {
+    let address: SocketAddr = bind
+        .parse()
+        .with_context(|| format!("the management Gate address {bind} is not host:port"))?;
+    anyhow::ensure!(
+        address.port() != 0,
+        "the management Gate needs a fixed nameable port, and {bind} asks the kernel \
+         for an ephemeral one: the configuration written from it outlives the process \
+         that writes it"
+    );
+    Ok(address)
+}
+
+/// Spawn `wamn-scenario-worker serve` and wait until it accepts a connection.
+///
+/// Readiness is a bounded TCP connect against the port the caller named. The
+/// management surface answers `POST /authoring` and 404s everything else, and
+/// an unauthenticated health route added to a production service for a
+/// development readiness poll would be a new attack surface bought with a
+/// convenience — so the poll observes the listener itself (wamn-10yt.10.32).
+///
+/// Every credential-carrying input crosses as an environment variable, never as
+/// an argument: `/proc/<pid>/cmdline` is world-readable and these values carry
+/// passwords, while `/proc/<pid>/environ` is not.
+pub async fn spawn_journey_management_gate(
+    scenario_worker_binary: &Path,
     credentials: &JourneyCredentials,
     management_admission_database_url: &str,
     bind: &str,
-) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)> {
-    let (readiness_tx, readiness_rx) = tokio::sync::oneshot::channel();
-    let mut server = tokio::spawn(management::serve_with_readiness(
-        ManagementServeArgs {
-            bind: bind.to_owned(),
-            system_url: credentials.identity_reader.clone(),
-            control_authoring_database_url: credentials.control_author.clone(),
-            management_admission_database_url: management_admission_database_url.to_owned(),
-            org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
-            environment: ENVIRONMENT.to_owned(),
-            tenant: TENANT.to_owned(),
-            source_schema: "wamn_run".to_owned(),
-        },
-        readiness_tx,
-    ));
-    let bind = tokio::select! {
-        ready = readiness_rx => ready
-            .context("the production management Gate dropped readiness")?
-            .to_string(),
-        stopped = &mut server => {
-            stopped.context("join the production management Gate")??;
-            anyhow::bail!("the production management Gate stopped before listening");
+) -> anyhow::Result<JourneyManagementGate> {
+    let address = gate_listen_address(bind)?;
+
+    let mut child = tokio::process::Command::new(scenario_worker_binary)
+        .arg("serve")
+        .env("WAMN_MANAGEMENT_BIND", bind)
+        .env("WAMN_SYSTEM_URL", &credentials.identity_reader)
+        .env("WAMN_CONTROL_AUTHORING_PG_URL", &credentials.control_author)
+        .env(
+            "WAMN_MANAGEMENT_ADMISSION_PG_URL",
+            management_admission_database_url,
+        )
+        .env("WAMN_MANAGEMENT_ORG", ORG)
+        .env("WAMN_MANAGEMENT_PROJECT", PROJECT)
+        .env("WAMN_MANAGEMENT_ENVIRONMENT", ENVIRONMENT)
+        .env("WAMN_MANAGEMENT_TENANT", TENANT)
+        // A panicking caller must not leave a Gate holding the port.
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| {
+            format!(
+                "spawn the management Gate from {}",
+                scenario_worker_binary.display()
+            )
+        })?;
+
+    for _ in 0..GATE_READINESS_ATTEMPTS {
+        if let Some(status) = child
+            .try_wait()
+            .context("check whether the spawned management Gate is still running")?
+        {
+            anyhow::bail!("the management Gate stopped before listening on {bind}: {status}");
         }
-    };
-    Ok((bind, server))
+        if tokio::net::TcpStream::connect(address).await.is_ok() {
+            return Ok(JourneyManagementGate {
+                child,
+                bind: bind.to_owned(),
+            });
+        }
+        tokio::time::sleep(GATE_READINESS_INTERVAL).await;
+    }
+
+    let _ = child.kill().await;
+    anyhow::bail!(
+        "the management Gate never accepted a connection on {bind} within {} seconds",
+        (GATE_READINESS_INTERVAL * GATE_READINESS_ATTEMPTS).as_secs()
+    )
 }
 
 #[expect(
@@ -642,7 +749,7 @@ pub async fn prepare_dev_verification_gate(
     drop(verification);
     verification_task.abort();
 
-    wamn_ctl::dev::verification_world::bootstrap(&verification_url, identity)
+    crate::dev::verification_world::bootstrap(&verification_url, identity)
         .await
         .context("bootstrap the Gate's initial disposable verification world")?;
 
