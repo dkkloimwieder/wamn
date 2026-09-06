@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# A driver that reproduces each exit reason without spending an agent.
+#
+# The runner's timeouts and teardown are the parts most likely to be wrong, and
+# they are the parts a real run cannot exercise cheaply: a run cap is ninety
+# minutes of somebody's tokens. This stub buys each of the four reasons for a
+# few seconds, so the tooling tests can assert them.
+set -euo pipefail
+
+MODE=completed
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --stub-mode) MODE="${2:-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+emit() { printf '%s\n' "$1"; }
+
+emit '{"type":"system","subtype":"init","session_id":"stub-session","model":"stub-model"}'
+emit '{"type":"assistant","message":{"content":[{"type":"text","text":"stub driver"}]}}'
+
+case "$MODE" in
+  completed)
+    emit '{"type":"result","subtype":"success","is_error":false}'
+    ;;
+  idle|step|cap)
+    # Print nothing more and touch nothing. The runner's watcher decides which
+    # deadline fires first from its own budgets, and stops this process.
+    while true; do sleep 60; done
+    ;;
+  *)
+    printf 'agent-pilot-stub-driver: unknown --stub-mode %s\n' "$MODE" >&2
+    exit 2
+    ;;
+esac
