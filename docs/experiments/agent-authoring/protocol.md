@@ -217,12 +217,48 @@ H3 measures.
 | authored SQL statements | per-package hand-written native verifier + `cargo sqlx prepare --check`; no generic verifier in the loop (work spec F21) | gap: proven at runtime |
 | behavior | flow tests / test-set | model only, no runner (`.8.5.4`) |
 | replay, changed-body, contention, not-found | by hand under `--hold` | gap until B4 case types |
-| exclusion constraint for the overlap invariant (`EXCLUDE USING gist`, needs `btree_gist`) | whether the migration validator and the guest role admit it | **probe at the pinned commit before run 1**; record the answer here. If refused, an agent choosing it hits a `generator` stall that is the platform's fault and must be pre-priced |
+| exclusion constraint for the overlap invariant (`EXCLUDE USING gist`, needs `btree_gist`) | whether the migration validator and the guest role admit it | **probed 2026-09-06, answer below**: admitted inside `CREATE TABLE`, refused through `ALTER TABLE ADD CONSTRAINT` |
 | redelivery | none | gap (B4 `redeliver`) |
 
 The two gaps are expected stall sources in category `generator` (statements) and
 `verb-missing` (behavior). They are findings the baseline arm is meant to price,
 not surprises.
+
+#### The `EXCLUDE` probe, answered
+
+Run at the pinned commit against a live pilot environment. The answer is not a
+yes or a no. It depends on which statement writes the constraint, and the two
+statements do not get the same answer.
+
+The validator half, settled in
+`crates/schema/introspection/src/migration_policy.rs`:
+
+- Inside `CREATE TABLE`, a named `EXCLUDE USING gist` constraint is **admitted**.
+  `validate_constraint_names` polices four kinds for an unquoted name: primary
+  key, unique, check and foreign key. `EXCLUDE` is not one of them, so the
+  constraint passes with only the 63-byte name check applied.
+- Through `ALTER TABLE … ADD CONSTRAINT`, it is **refused**.
+  `validate_add_constraint` requires the token after the constraint name to be
+  `check` followed by an open parenthesis, and refuses everything else with
+  "ADD CONSTRAINT admits only the demanded named CHECK form".
+- `CREATE EXTENSION btree_gist` passes the statement allowlist, because
+  `extension` is one of the admitted object kinds.
+
+The database half, measured on the environment's own target database as the
+role the loop uses: `btree_gist` 1.8 is available and the role creates it. A
+table created with `constraint … exclude using gist (dock_id with =, during
+with &&)` accepts the first booking and refuses an overlapping second with
+`conflicting key value violates exclusion constraint`. Both probes ran inside a
+transaction and rolled back, and the environment holds no residue from them.
+
+What this means for a run. An agent that reaches for the strongest rung and
+writes the constraint in the table it is already creating gets it, end to end,
+and H-3 scores it at the top. An agent that creates the table first and adds
+the constraint second is refused by a message that names CHECK and never names
+`EXCLUDE`, which reads as "exclusion constraints are not supported" when the
+truth is "not through this statement". That second path is a pre-priced stall
+in category `generator`, it is the platform's fault, and an agent that hits it
+is not marked down under H-3.
 
 ## 5. Grading
 

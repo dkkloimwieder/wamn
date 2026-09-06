@@ -4,11 +4,13 @@
     "org": "acme",
     "project": "receiving",
     "env": "dev",
-    "schema": "acme_receiving_dev",
+    "schema": "receiving",
     "tenant": "receiving-route-auth",
     "route_host": "receiving.localhost"
   },
-  "package_sources": ["packages/receiving"],
+  "package_sources": [
+    "packages/receiving"
+  ],
   "overlay_root": "packages/dock",
   "allowed_paths": [
     "packages/dock/**",
@@ -18,7 +20,15 @@
   ],
   "grade": {
     "steps": "steps.json",
-    "checks": ["claim-replay", "row_version", "naming"],
-    "fence_reports": ["capability-surface", "additive-migration", "no-environment-data"]
+    "checks": [
+      "claim-replay",
+      "row_version",
+      "naming"
+    ],
+    "fence_reports": [
+      "capability-surface",
+      "additive-migration",
+      "no-environment-data"
+    ]
   }
 }

@@ -10,6 +10,7 @@ use anyhow::Context as _;
 use clap::Args;
 use serde::Deserialize;
 use tokio::process::Command;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 
 use super::config::{DevConfig, parse_config, preflight_config, resolve_dev_packages};
@@ -319,7 +320,7 @@ impl DevSession {
                     observer.served(receipt, snapshot.runtime_endpoint());
                 }
                 if result.is_ok() {
-                    wait_for_shutdown(&mut self.shutdown).await;
+                    wait_for_hold_release(&mut self.shutdown).await;
                 }
             }
             result
@@ -398,6 +399,31 @@ async fn run_watch_command(
         .await
         .context("own the disposable verification database")??;
     Ok(())
+}
+
+/// Hold until a cooperative stop, an interrupt, or a termination signal.
+///
+/// The cooperative channel alone is not enough on this path. The interactive
+/// client sets it when the operator quits, but a plain held session is stopped
+/// by a signal, and the default disposition kills the process outright: the
+/// cleanup that stops the spawned host never runs, and the host goes on holding
+/// the port the session has just printed. Watch mode already selects over the
+/// interrupt for the same reason. A machine that cannot install the termination
+/// handler still honours the other two.
+async fn wait_for_hold_release(receiver: &mut watch::Receiver<bool>) {
+    let mut terminate = signal(SignalKind::terminate()).ok();
+    tokio::select! {
+        () = wait_for_shutdown(receiver) => {}
+        _ = tokio::signal::ctrl_c() => {}
+        () = async {
+            match terminate.as_mut() {
+                Some(stream) => {
+                    stream.recv().await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        } => {}
+    }
 }
 
 async fn wait_for_shutdown(receiver: &mut watch::Receiver<bool>) {

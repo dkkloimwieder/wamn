@@ -196,8 +196,19 @@ preflight() {
     || die "the components workspace manifest does not resolve" "$EX_ENV"
 }
 
+# The per-commit target directory. Every verb needs it, and only `up` knows the
+# commit from a flag, so the others read it back out of run.json.
+resolve_target() {
+  local commit="${1:-}"
+  if [[ -z "$commit" && -s "$DIR/run.json" ]]; then
+    commit="$(jq -r '.commit' "$DIR/run.json")"
+  fi
+  [[ -n "$commit" ]] || die "cannot resolve the build commit for this run" "$EX_ENV"
+  TARGET="$PILOT_HOME/target-$(git -C "$TREE" rev-parse --short "$commit")"
+}
+
 build_binaries() {
-  TARGET="$PILOT_HOME/target-$(git -C "$TREE" rev-parse --short "$COMMIT")"
+  resolve_target "$COMMIT"
   mkdir -p "$TARGET"
   local built=1 started; started="$(date +%s)"
   local artifact
@@ -454,6 +465,8 @@ verb_launch() {
   read_manifest
   [[ -s "$DIR/env/dev.json" ]] || die "no environment; run up first" "$EX_ENV"
   AGENT="$(jq -r .agent "$DIR/run.json")"
+  [[ -n "${TARGET:-}" ]] || resolve_target
+  [[ -x "$TARGET/debug/wamn" ]] || die "no built wamn at $TARGET/debug/wamn" "$EX_ENV"
 
   local system_path; system_path="$(strip_bd_from_path)"
   local -a driver
