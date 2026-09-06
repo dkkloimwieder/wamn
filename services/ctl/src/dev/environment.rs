@@ -399,6 +399,13 @@ pub async fn provision_journey_control(system_url: &str, admin: &Client) -> anyh
         pool: "route-auth-pg18".to_owned(),
         system_database_url: Some(system_url.to_owned()),
         emit_clusters: None,
+        // The journey org is POOLED, so `provision_org::run` never reaches the
+        // dedicated-org arm that reads these. They carry the same `cfg` as the
+        // fields themselves, which are `ops`-only (wamn-0h0g.10.20).
+        #[cfg(feature = "ops")]
+        emit_object_store: None,
+        #[cfg(feature = "ops")]
+        emit_scheduled_backup: None,
     })
     .await
     .context("stamp the journey org and environment policies through provision-org")
