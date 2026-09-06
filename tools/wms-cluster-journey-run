@@ -1567,6 +1567,11 @@ jq -e --arg uid "$replicaset_uid" '
   [.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid))] |
   if length == 1 then .[0] else error("positive Workload missing or ambiguous") end
 ' "$work_dir/workloads.json" >"$evidence_dir/flow-http-workload.json"
+# SAME ASSERTION, DIFFERENT SUBJECT. This body is byte-identical to the
+# materializer's copy below and to the flow-http copy in
+# tools/receiving-cluster-journey-run. Each proves placement for its OWN
+# WorkloadDeployment; deleting one leaves that workload unproven, and four
+# copies of five lines beat a new harness (wamn-362o.11, ruled 2026-09-06).
 jq -e --arg namespace "$namespace" \
   --arg host_id "$(jq -r '.status.hostId' "$evidence_dir/flow-http-workload.json")" \
   --slurpfile hosts "$evidence_dir/hosts.json" '
@@ -2196,6 +2201,11 @@ jq -e --arg uid "$materializer_replicaset_uid" '
   [.items[] | select(any(.metadata.ownerReferences[]?; .uid == $uid))] |
   if length == 1 then .[0] else error("materializer Workload missing or ambiguous") end
 ' "$work_dir/materializer-workloads.json" >"$evidence_dir/materializer-workload.json"
+# SAME ASSERTION, DIFFERENT SUBJECT. This body is byte-identical to the
+# flow-http copy above and to the materializer copy in
+# tools/receiving-cluster-journey-run. WMS declares no events, but the
+# materializer is still deployed and its placement is still its own arm;
+# deleting this leaves it unproven (wamn-362o.11, ruled 2026-09-06).
 jq -e --arg namespace "$namespace" \
   --arg host_id "$(jq -r '.status.hostId' "$evidence_dir/materializer-workload.json")" \
   --slurpfile hosts "$evidence_dir/hosts.json" '
