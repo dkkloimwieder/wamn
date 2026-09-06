@@ -6,6 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+mod grammar;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RelationAccess {
     pub(crate) select_fields: BTreeSet<String>,
@@ -749,7 +752,148 @@ const fn identifier_continue(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::ProptestConfig;
+    use proptest::{prop_assert, prop_assert_eq, proptest};
+
+    use super::grammar::{Forbidden, Piece, Statement, Style, catalog, render};
     use super::*;
+
+    /// Derive the access of one rendered piece list against the grammar catalog.
+    fn access(
+        pieces: &[Piece],
+        style: &Style,
+    ) -> Result<BTreeMap<String, RelationAccess>, &'static str> {
+        relation_access(render(pieces, style).as_bytes(), &catalog())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        /// LEX-1: a derived privilege names only a declared relation and only
+        /// that relation's declared fields. This is the permission property:
+        /// the parser may under-report, but it may never invent authority.
+        #[test]
+        fn derived_access_names_only_declared_relations_and_fields(
+            statement: Statement,
+            style: Style,
+        ) {
+            let declared = catalog();
+            let Ok(derived) = access(&statement.pieces(), &style) else {
+                return Ok(());
+            };
+            for (relation, privileges) in &derived {
+                let Some(fields) = declared.get(relation) else {
+                    return Err(proptest::test_runner::TestCaseError::fail(format!(
+                        "undeclared relation {relation}"
+                    )));
+                };
+                for named in privileges
+                    .select_fields
+                    .iter()
+                    .chain(&privileges.insert_fields)
+                    .chain(&privileges.update_fields)
+                {
+                    prop_assert!(fields.contains(named), "{relation}.{named} is undeclared");
+                }
+            }
+        }
+
+        /// LEX-2: the parser recovers exactly the access the statement was
+        /// built from -- no more, and no less.
+        #[test]
+        fn the_parser_recovers_the_authored_access(statement: Statement) {
+            let expected = statement.expected();
+            let derived = access(&statement.pieces(), &Style::canonical());
+            prop_assert!(
+                derived.is_ok(),
+                "admitted statement refused: {derived:?} for {}",
+                render(&statement.pieces(), &Style::canonical())
+            );
+            let derived = derived.expect("the assertion above returned on refusal");
+            prop_assert_eq!(
+                derived.keys().map(String::as_str).collect::<Vec<_>>(),
+                vec![expected.relation]
+            );
+            let observed = &derived[expected.relation];
+            prop_assert_eq!(&observed.select_fields, &expected.select_fields);
+            prop_assert_eq!(&observed.insert_fields, &expected.insert_fields);
+            prop_assert_eq!(&observed.update_fields, &expected.update_fields);
+            prop_assert_eq!(observed.lock, expected.lock);
+        }
+
+        /// LEX-3: comments, string bodies, dollar-quoted bodies, keyword case
+        /// and identifier quoting are not code. None of them may move the
+        /// derived authority, however hostile the inert text reads.
+        #[test]
+        fn inert_text_and_rendering_style_never_change_authority(
+            statement: Statement,
+            style: Style,
+        ) {
+            let pieces = statement.pieces();
+            prop_assert_eq!(access(&pieces, &Style::canonical()), access(&pieces, &style));
+        }
+
+        /// LEX-4: a refusal is a property of the tokens, so no rendering of a
+        /// known-bad statement is ever admitted.
+        #[test]
+        fn known_bad_statements_are_refused_under_every_rendering(
+            forbidden: Forbidden,
+            style: Style,
+        ) {
+            let pieces = forbidden.pieces();
+            prop_assert!(
+                access(&pieces, &style).is_err(),
+                "admitted {forbidden:?}: {}",
+                render(&pieces, &style)
+            );
+        }
+
+        /// LEX-5: a schema name that appears only inside inert text is not a
+        /// schema-qualified reference. No generated statement names `sched`,
+        /// and every inert body does.
+        #[test]
+        fn schema_qualification_ignores_inert_text(statement: Statement, style: Style) {
+            let sql = render(&statement.pieces(), &style);
+            prop_assert!(!contains_schema_qualified_reference(sql.as_bytes(), "sched"), "{sql}");
+        }
+    }
+
+    /// The refusal paths as committed cases, so the set is enumerated rather
+    /// than sampled.
+    #[test]
+    fn every_known_bad_shape_is_refused() {
+        for forbidden in Forbidden::all() {
+            let sql = render(&forbidden.pieces(), &Style::canonical());
+            assert!(
+                relation_access(sql.as_bytes(), &catalog()).is_err(),
+                "admitted {forbidden:?}: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_qualification_reads_tokens_not_text() {
+        assert!(contains_schema_qualified_reference(
+            b"SELECT sched.item.id FROM sched.item",
+            "sched"
+        ));
+        assert!(!contains_schema_qualified_reference(
+            b"-- sched.item\nSELECT id FROM item",
+            "sched"
+        ));
+        assert!(!contains_schema_qualified_reference(
+            b"/* sched.item */ SELECT id FROM item",
+            "sched"
+        ));
+        assert!(!contains_schema_qualified_reference(
+            b"SELECT id FROM item WHERE status = 'sched.item'",
+            "sched"
+        ));
+        assert!(!contains_schema_qualified_reference(
+            b"SELECT id FROM item WHERE status = $q$ sched.item $q$",
+            "sched"
+        ));
+    }
 
     fn relations() -> BTreeMap<String, BTreeSet<String>> {
         BTreeMap::from([(
