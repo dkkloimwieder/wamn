@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 16e9ce50f9d9b28e4689efa7010acd093548ed80e32df8110d974cd7613ccf70 # shrinks to scenario = Scenario { nodes: [NodeSpec { max_attempts: 1, base_ms: 0 }], edges: [EdgeSpec { from: 0, port: 0, to: 0, ordinal: 0 }, EdgeSpec { from: 0, port: 1, to: 0, ordinal: 0 }, EdgeSpec { from: 0, port: 0, to: 0, ordinal: 0 }], hop_limit: 9, script: [Success(0), Success(0), Success(0), Success(0), Success(0), Success(0), Success(0), Success(0), Terminal] }
