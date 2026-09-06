@@ -616,6 +616,19 @@ pub async fn spawn_journey_management_gate(
 ) -> anyhow::Result<JourneyManagementGate> {
     let address = gate_listen_address(bind)?;
 
+    // REFUSE A PORT SOMEONE ELSE HOLDS, BEFORE SPAWNING. Readiness below is a
+    // bounded TCP connect, and a connect cannot tell this Gate from a stranger:
+    // with the port held, the child dies on `Address already in use` while the
+    // first poll still connects to the other listener and reports ready. The
+    // run then continues past a dead Gate and fails later, somewhere else
+    // (wamn-10yt.10.35).
+    match std::net::TcpListener::bind(address) {
+        Ok(probe) => drop(probe),
+        Err(source) => {
+            anyhow::bail!("the management Gate cannot take {bind}: {source}");
+        }
+    }
+
     let mut child = tokio::process::Command::new(scenario_worker_binary)
         .arg("serve")
         .env("WAMN_MANAGEMENT_BIND", bind)
@@ -647,6 +660,14 @@ pub async fn spawn_journey_management_gate(
             anyhow::bail!("the management Gate stopped before listening on {bind}: {status}");
         }
         if tokio::net::TcpStream::connect(address).await.is_ok() {
+            // A connect proves SOMETHING listens. Re-check the child so a Gate
+            // that died between the two reads is never reported ready.
+            if let Some(status) = child
+                .try_wait()
+                .context("check whether the spawned management Gate is still running")?
+            {
+                anyhow::bail!("the management Gate stopped before listening on {bind}: {status}");
+            }
             return Ok(JourneyManagementGate {
                 child,
                 bind: bind.to_owned(),
