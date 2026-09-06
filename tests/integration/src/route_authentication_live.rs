@@ -77,11 +77,11 @@ use wasmtime_wasi_http::p2::WasiHttpView as _;
 use wasmtime_wasi_http::p2::bindings::Proxy;
 use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
 
-use crate::dev_environment::{
+use wamn_ctl::dev::environment::{
     DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT,
     clean_dev_verification_gate_roles, connect, generation_args, install_journey_platform_floor,
     prepare_journey_credentials, provision_journey_control, provision_route, read_json,
-    reconcile_journey_run_plane, reset_control_store, secret_value, start_journey_management_gate,
+    reconcile_journey_run_plane, reset_control_store, secret_value, spawn_journey_management_gate,
     write_dev_config,
 };
 
@@ -1224,6 +1224,37 @@ fn required_journey(key: &str) -> anyhow::Result<String> {
 
 fn required_journey_path(key: &str) -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(required_journey(key)?))
+}
+
+/// The built `wamn-scenario-worker` both live gates spawn as their Gate.
+///
+/// It rides as an environment variable rather than a journey-document field
+/// because it is a process setting, not journey data: it names a binary this
+/// machine's recipe just built, exactly like `WAMN_RECEIVING_DEV_HOST_BIN`.
+const SCENARIO_WORKER_BIN_ENV: &str = "WAMN_JOURNEY_SCENARIO_WORKER_BIN";
+
+/// Fixed nameable port for `[WAMN-DEV-LIVE]`'s spawned Gate.
+///
+/// A spawned child cannot hand an ephemeral port back the way the in-process
+/// launch did, and the configuration written from it outlives the process that
+/// writes it, so the port is named here (wamn-10yt.10.32).
+const DEV_LIVE_GATE_BIND: &str = "127.0.0.1:18088";
+
+/// Fixed nameable port for `[RECEIVING-ROUTE-JOURNEY]`'s spawned Gate.
+///
+/// Distinct from [`DEV_LIVE_GATE_BIND`] so that a Gate left behind by one
+/// recipe fails the other loudly on bind rather than answering for it.
+const ROUTE_JOURNEY_GATE_BIND: &str = "127.0.0.1:18089";
+
+/// Resolve the scenario-worker binary the live gates spawn, refusing by name.
+fn journey_scenario_worker_binary() -> anyhow::Result<PathBuf> {
+    let binary = required_journey_path(SCENARIO_WORKER_BIN_ENV)?;
+    anyhow::ensure!(
+        binary.is_file(),
+        "{SCENARIO_WORKER_BIN_ENV} does not name a built wamn-scenario-worker binary: {}",
+        binary.display()
+    );
+    Ok(binary)
 }
 
 fn journey_publication_root(package: JourneyPackage) -> PathBuf {
@@ -2859,7 +2890,9 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
     let (admin, admin_task) = connect(&system_url).await?;
-    let environment = crate::dev_environment::provision(&system_url, admin.as_ref(), root).await?;
+    let gate_binary = journey_scenario_worker_binary()?;
+    let environment =
+        wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root).await?;
     let publisher_subject = environment
         .route
         .management_principal_subject
@@ -2872,10 +2905,13 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
         .id()
         .to_string();
     let (project, project_task) = connect(&environment.route.database_url).await?;
-    let (gate_bind, gate_server) = start_journey_management_gate(
+    // The Gate the loop publishes through is the same real process an operator
+    // starts with `wamn dev up`; nothing here links it in (wamn-10yt.10.32).
+    let mut gate_server = spawn_journey_management_gate(
+        &gate_binary,
         &environment.credentials,
         &environment.verification.credential_url,
-        "127.0.0.1:0",
+        DEV_LIVE_GATE_BIND,
     )
     .await?;
     let system_acl_before = current_database_acl(admin.as_ref()).await?;
@@ -2886,7 +2922,7 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
         &environment.route,
         &environment.credentials,
         &environment.verification,
-        &gate_bind,
+        gate_server.bind(),
         &inputs.environment,
         &environment.identity,
     )?;
@@ -2921,8 +2957,7 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
     }
     .await;
 
-    gate_server.abort();
-    let _ = gate_server.await;
+    let gate_stop = gate_server.shutdown().await;
     let verification_cleanup =
         verify_dev_verification_database_absent(admin.as_ref(), &environment.verification.database)
             .await;
@@ -2940,6 +2975,7 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
     admin_task.abort();
 
     command_result?;
+    gate_stop?;
     verification_cleanup?;
     fixture_database_cleanup?;
     role_cleanup?;
@@ -3016,14 +3052,19 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
     let admitted_component_digests =
         verify_journey_components_are_effectful(project.as_ref()).await?;
 
-    let (management_bind, management_server) = start_journey_management_gate(
+    // One gate-launch path for both live gates: the Gate is a spawned
+    // `wamn-scenario-worker serve`, never a task in this process
+    // (wamn-10yt.10.32). The in-process exemption this proof used to hold died
+    // with that ruling.
+    let mut management_server = spawn_journey_management_gate(
+        &journey_scenario_worker_binary()?,
         &credentials,
         &credentials.management_admitter,
-        "127.0.0.1:0",
+        ROUTE_JOURNEY_GATE_BIND,
     )
     .await?;
     let gate_reports = gate_journey_wirings(
-        &management_bind,
+        management_server.bind(),
         route
             .management_token
             .as_deref()
@@ -3574,11 +3615,11 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
     verify_journey_operation_grants(project.as_ref()).await?;
     seed_materializer_trigger_rows(project.as_ref()).await?;
 
-    management_server.abort();
+    let gate_stop = management_server.shutdown().await;
     identity_task.abort();
     project_task.abort();
     admin_task.abort();
-    Ok(())
+    gate_stop
 }
 
 #[tokio::test]

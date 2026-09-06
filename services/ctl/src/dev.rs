@@ -10,11 +10,13 @@ pub mod command;
 pub mod config;
 #[cfg(target_os = "linux")]
 pub mod coordinator;
+pub mod environment;
 #[cfg(target_os = "linux")]
 pub mod observations;
 pub mod read;
 #[cfg(target_os = "linux")]
 pub mod tui;
+pub mod up;
 pub mod verification_database;
 pub mod verification_world;
 #[cfg(target_os = "linux")]

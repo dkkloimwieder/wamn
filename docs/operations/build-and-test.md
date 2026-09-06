@@ -1053,6 +1053,15 @@ the command to remove its verification database and stop its native host. Run
 it only from a clean worktree. Never point it at shared infrastructure or the
 frozen cluster.
 
+**The Gate is a spawned `wamn-scenario-worker serve` child, not a task inside
+the proof** (`wamn-10yt.10.32`). The proof takes the built binary as
+`WAMN_JOURNEY_SCENARIO_WORKER_BIN` and spawns it on the fixed loopback port
+`127.0.0.1:18088`; readiness is a bounded TCP connect against that port, and it
+refuses by naming it. A spawned child cannot hand an ephemeral port back the
+way the old in-process launch did, so the port is fixed and must be free. This
+is the same launch path `wamn dev up` uses, and there is no longer a second,
+in-process one.
+
 The installed upstream `wash` binary publishes the shipped flow-http workload;
 `wamn dev` remains the sole stage runner. Registry credentials live only in the
 mode-0700 scratch directory and are never printed.
@@ -1097,14 +1106,21 @@ RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
   cargo build -p wamn-host --locked --offline
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
+  cargo build -p wamn-scenario-worker --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
   cargo build --manifest-path "$WAMN_DEV_LIVE_ROOT/components/Cargo.toml" \
     -p http-route --target wasm32-wasip2 --locked --offline
 WAMN_DEV_LIVE_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn"
 WAMN_DEV_LIVE_HOST_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn-host"
+WAMN_DEV_LIVE_GATE_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn-scenario-worker"
 WAMN_DEV_LIVE_FLOW_HTTP="$WAMN_DEV_LIVE_TARGET/wasm32-wasip2/debug/http_route.wasm"
 test -x "$WAMN_DEV_LIVE_BIN"
 test -x "$WAMN_DEV_LIVE_HOST_BIN"
+test -x "$WAMN_DEV_LIVE_GATE_BIN"
 test -s "$WAMN_DEV_LIVE_FLOW_HTTP"
+# The spawned Gate binds this exact port; a stray listener is a hard failure,
+# not a fallback to an ephemeral one.
+test -z "$(ss -Hltn 'sport = :18088')"
 
 printf '%s\n' "$WAMN_DEV_LIVE_PASSWORD" \
   | docker run --rm -i --entrypoint htpasswd httpd:2-alpine \
@@ -1157,6 +1173,7 @@ RUSTC_WRAPPER= \
 WAMN_ROUTE_PG18_URL="postgresql://postgres:probe@127.0.0.1:${WAMN_DEV_LIVE_PG_PORT}/postgres" \
 WAMN_RECEIVING_DEV_BIN="$WAMN_DEV_LIVE_BIN" \
 WAMN_RECEIVING_DEV_HOST_BIN="$WAMN_DEV_LIVE_HOST_BIN" \
+WAMN_JOURNEY_SCENARIO_WORKER_BIN="$WAMN_DEV_LIVE_GATE_BIN" \
 WAMN_RECEIVING_DEV_NATS_URL="nats://127.0.0.1:${WAMN_DEV_LIVE_NATS_PORT}" \
 WAMN_RECEIVING_DEV_TEMPO_QUERY_URL="http://127.0.0.1:${WAMN_DEV_LIVE_TEMPO_PORT}" \
 WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:${WAMN_DEV_LIVE_OTLP_PORT}" \
@@ -1377,6 +1394,17 @@ registry are disposable and loopback-only. The Docker auth document must carry
 explicit non-empty `username` and `password` fields for the exact registry
 authority; credentials exist only in the scratch directory and are not printed.
 
+**The Gate is a spawned `wamn-scenario-worker serve` child** (`wamn-10yt.10.32`).
+This gate used to launch it in-process through `serve_with_readiness`. That was
+the second gate-launch path. The owner ruled it dead in the same change that
+gave `wamn dev up` a spawned Gate. The proof takes the built binary as
+`WAMN_JOURNEY_SCENARIO_WORKER_BIN`. That is a process setting, so it rides as
+an environment variable and not as a journey-document field. The proof spawns
+it on the fixed loopback port `127.0.0.1:18089`. Readiness is a bounded TCP
+connect against that port, and it refuses by naming it. The port is fixed
+because a spawned child cannot report an ephemeral one back. It must be free
+before the run.
+
 The focused real-boundary guard keeps nested authorization on the same refusal
 grammar as a direct invocation:
 
@@ -1428,6 +1456,15 @@ RECEIVING_ROUTE_FLOW_HTTP="$RECEIVING_ROUTE_SCRATCH/target/wasm32-wasip2/debug/h
 test -s "$RECEIVING_ROUTE_COMPONENTS/receiving.wasm"
 test -s "$RECEIVING_ROUTE_COMPONENTS/client_acme_receiving.wasm"
 test -s "$RECEIVING_ROUTE_FLOW_HTTP"
+
+# The Gate the proof spawns. Built into the default target directory, the one
+# the test build below also uses.
+cargo build -p wamn-scenario-worker --locked --offline
+RECEIVING_ROUTE_GATE_BIN="$RECEIVING_ROUTE_ROOT/target/debug/wamn-scenario-worker"
+test -x "$RECEIVING_ROUTE_GATE_BIN"
+# The spawned Gate binds this exact port. A stray listener is a hard failure,
+# not a fallback to an ephemeral one.
+test -z "$(ss -Hltn 'sport = :18089')"
 
 printf '%s\n' "$RECEIVING_ROUTE_PASSWORD" \
   | docker run --rm -i --entrypoint htpasswd httpd:2-alpine \
@@ -1486,6 +1523,7 @@ declare -A journey_spec=(
 write_journey_document journey_spec \
   tests/integration/schema/wamn-journey.schema.json "$RECEIVING_ROUTE_JOURNEY_DOCUMENT"
 WAMN_JOURNEY_DOCUMENT="$RECEIVING_ROUTE_JOURNEY_DOCUMENT" \
+WAMN_JOURNEY_SCENARIO_WORKER_BIN="$RECEIVING_ROUTE_GATE_BIN" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes \
   -- --ignored --exact --nocapture --test-threads=1
