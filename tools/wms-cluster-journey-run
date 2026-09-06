@@ -12,24 +12,24 @@ Without --apply, print the immutable plan and exit.
   --apply              Build and run the journey, then tear down owned resources
   --measure-startup    Cold, restart-first and steady pallet.get requests with trace breakdowns
   --demo               Hold the environment afterwards and serve the route at
-                       http://localhost:8080/ -- see THE DEMO below
+                       http://127.0.0.1:8080/ -- see THE DEMO below
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-wms-journey. Every Kubernetes and Helm
 command carries its private kubeconfig and context. The frozen kind-wamn cluster
 is never a target.
 
-THE DEMO. --demo changes four things and nothing else. The cluster keeps ONE
-host port mapping, hostPort 8080 to nodePort 30950; the route's NodePort Service
-is pinned to 30950 instead of taking whatever Kubernetes allocates; that Service
-outlives the run instead of being deleted; and the release's route host is
-localhost:8080 rather than wms.localhost. The route matches the authority
-VERBATIM, and a browser sends the port in Host, so the port has to be part of
-the route host or nothing a browser sends will match. The port is 8080 over
-IPv4 because the FROZEN kind-wamn cluster holds 0.0.0.0:80, and it is localhost
-rather than a .localhost name because those resolve to ::1 here and docker does
-not forward an IPv6 publish on the kind network. Set WAMN_JOURNEY_HOLD_SECONDS
-to choose how long it is held; --demo defaults it to 3600.
+THE DEMO. --demo changes three things and nothing else. The route's NodePort
+Service is pinned to 30950 instead of taking whatever Kubernetes allocates; that
+Service outlives the run instead of being deleted; and one nginx container is
+published on 127.0.0.1:8080, rewriting Host to the route host the release names.
+THE RELEASE, THE CLUSTER AND THE JOURNEY ARE UNTOUCHED. The proxy exists because
+a browser cannot reach the route otherwise: the route matches its host verbatim
+and a browser sends the port it dialled, port 80 is held by the frozen cluster,
+.localhost names resolve to ::1 here and docker does not forward an IPv6 publish
+on the kind network, and the runtime refuses a route host that carries a port as
+not a valid RFC 1123 hostname. Set WAMN_JOURNEY_HOLD_SECONDS to choose how long
+it is held; --demo defaults it to 3600.
 EOF
 }
 
@@ -39,14 +39,21 @@ demo=false
 evidence_dir=
 demo_node_port=30950
 demo_host_port=8080
-# The DEMO route host carries its port, because the released route matches the
-# authority verbatim and a browser sends the port in Host. It is `localhost` and
-# not `wms.localhost` because *.localhost resolves to ::1 on this machine and
-# docker does not forward an IPv6 publish on the `kind` network -- measured, the
-# same publish answers on the default bridge. `localhost` resolves to 127.0.0.1
-# as well, and IPv4 port 8080 is free while the frozen cluster holds 80.
-demo_route_host=localhost:$demo_host_port
-demo_route_url=http://$demo_route_host/
+# THE DEMO'S BROWSER PROBLEM, and why a proxy answers it. The released route
+# matches its host VERBATIM, and a browser sends the port in `Host`, so a
+# browser can only match on port 80. The FROZEN kind-wamn cluster holds
+# 0.0.0.0:80, `*.localhost` resolves to ::1 here, and docker does not forward an
+# IPv6 publish on the `kind` network (measured: the same publish answers on the
+# default bridge and nothing on kind). Putting the port INTO the route host does
+# not work either: the runtime refuses it with `primary host "localhost:8080" is
+# not a valid RFC 1123 hostname`, so the release cannot carry a port.
+#
+# So one nginx container sits on the kind network, published on 127.0.0.1:8080,
+# and rewrites `Host` to the route host the release actually names. The release,
+# the cluster and the journey are untouched; the proxy exists only so a browser
+# can reach them.
+demo_proxy_container=wamn-wms-demo-proxy
+demo_route_url=http://127.0.0.1:$demo_host_port/
 while (($#)); do
   case "$1" in
     --apply) apply=true; shift ;;
@@ -174,9 +181,6 @@ app_package_dir=$repo_root/packages/$app_project
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 chart_version=2.8.0
 route_host=wms.localhost
-if [[ "$demo" == true ]]; then
-  route_host=$demo_route_host
-fi
 run_id=$$
 host_tag=wms-${short_head}-${run_id}-debug
 host_image=wamn-host:${host_tag}
@@ -320,9 +324,10 @@ demo_block() {
       $demo_route_url
 
   A browser there answers {"error":{"code":"route-not-found"}}, the exact typed
-  shape: the composed route is live at a stable name. Every WMS operation is a
-  POST, so the operations are the commands below. The route-caller token this
-  run minted:
+  shape: the composed route is live and answering. One nginx container in front
+  rewrites Host to $route_host, which the release names and a browser cannot
+  send. Every WMS operation is a POST, so the operations are the commands below.
+  The route-caller token this run minted:
 
       T=\$(jq -r .stringData.token $route_caller_secret)
 
@@ -471,6 +476,10 @@ DEMO
   fi
   if [[ "$postgres_owned" == true ]] &&
      docker container inspect "$postgres_container" >/dev/null 2>&1; then
+    if docker container inspect "$demo_proxy_container" >/dev/null 2>&1; then
+      record_command docker rm --force "$demo_proxy_container"
+      docker rm --force "$demo_proxy_container" >/dev/null 2>&1 || cleanup_failed=true
+    fi
     record_command docker rm --force --volumes "$postgres_container"
     docker rm --force --volumes "$postgres_container" >/dev/null 2>&1 || cleanup_failed=true
   fi
@@ -571,35 +580,13 @@ if docker image inspect "$host_image" >/dev/null 2>&1; then
   exit 2
 fi
 
-# The shared config maps hostPort 80 for the FROZEN cluster, which still holds
-# it. A second cluster claiming the same address would refuse to start, so the
-# mapping is stripped -- except under --demo, which rewrites it to a free port.
-awk -v demo="$demo" -v node_port="$demo_node_port" -v host_port="$demo_host_port" '
-  /^    extraPortMappings:/ {
-    skipping = 1
-    if (demo == "true") {
-      print "    extraPortMappings:"
-      print "      - containerPort: " node_port
-      print "        hostPort: " host_port
-      print "        protocol: TCP"
-    }
-    next
-  }
+awk '
+  /^    extraPortMappings:/ { skipping = 1; next }
   skipping && /^      / { next }
   { skipping = 0; print }
 ' "$repo_root/deploy/infra/kind-config.yaml" >"$kind_config"
-if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]]; then
-  echo "rendered kind config did not retain exactly three nodes" >&2
-  exit 2
-fi
-if [[ "$demo" == true ]]; then
-  if [[ $(grep -c 'hostPort:' "$kind_config") -ne 1 ]] ||
-     ! grep -q "hostPort: $demo_host_port" "$kind_config" ||
-     ! grep -q "containerPort: $demo_node_port" "$kind_config"; then
-    echo "demo kind config did not retain exactly one host port $demo_host_port to $demo_node_port" >&2
-    exit 2
-  fi
-elif grep -q 'extraPortMappings\|hostPort:' "$kind_config"; then
+if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]] ||
+   grep -q 'extraPortMappings\|hostPort:' "$kind_config"; then
   echo "rendered kind config did not retain exactly three nodes without host ports" >&2
   exit 2
 fi
@@ -2166,6 +2153,39 @@ done
   echo "the NodePort at $runtime_node_ip:$runtime_node_port answered no HTTP status in 60s (last: '$runtime_probe_status')" >&2
   exit 1
 }
+if [[ "$demo" == true ]]; then
+  # One container, on the kind network, published on the IPv4 loopback. It
+  # rewrites Host to the route host the release names, which is the whole reason
+  # it exists: a browser cannot send a Host without the port it dialled.
+  docker rm --force "$demo_proxy_container" >/dev/null 2>&1 || true
+  demo_proxy_conf=$work_dir/demo-proxy.conf
+  cat >"$demo_proxy_conf" <<PROXY
+server {
+  listen 80;
+  location / {
+    proxy_pass http://$runtime_node_ip:$runtime_node_port;
+    proxy_set_header Host $route_host;
+    proxy_http_version 1.1;
+  }
+}
+PROXY
+  run docker run --detach --name "$demo_proxy_container" --network kind \
+    --publish "127.0.0.1:$demo_host_port:80" \
+    --volume "$demo_proxy_conf:/etc/nginx/conf.d/default.conf:ro" \
+    nginx:1.27-alpine
+  demo_proxy_status=
+  for _ in $(seq 1 30); do
+    demo_proxy_status=$(curl --silent --output /dev/null --max-time 2 \
+      --write-out '%{http_code}' "$demo_route_url" || true)
+    [[ $demo_proxy_status =~ ^[1-5][0-9][0-9]$ ]] && break
+    sleep 1
+  done
+  [[ $demo_proxy_status =~ ^[1-5][0-9][0-9]$ ]] || {
+    echo "the demo proxy at $demo_route_url answered no HTTP status in 30s (last: '$demo_proxy_status')" >&2
+    exit 1
+  }
+fi
+
 amend_journey_document "$journey_schema" "$journey_document" runtime \
   "$(jq -n --arg endpoint "http://$runtime_node_ip:$runtime_node_port" \
       --arg pallet "$app_fixture_pallet_id" --arg to "$app_fixture_location_b_id" \
