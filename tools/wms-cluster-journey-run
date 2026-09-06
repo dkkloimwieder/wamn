@@ -350,10 +350,12 @@ demo_block() {
      no second movement exists: the id came from the claim, not from the work.
      Change only the idempotency key and it refuses on the row version instead.
 
-  4. The labels in the store, one per movement, named for the movement:
+  4. The labels in the store, one per movement, each named for its movement.
+     The bucket is `labels` and the prefix is `wms/`, exactly as the move's own
+     answer reports under `stored`:
 
       docker exec $minio_container sh -c 'mc alias set d http://127.0.0.1:9000 \\
-        "\$MINIO_ROOT_USER" "\$MINIO_ROOT_PASSWORD" >/dev/null && mc ls --recursive d/wms'
+        "\$MINIO_ROOT_USER" "\$MINIO_ROOT_PASSWORD" >/dev/null && mc ls --recursive d/labels'
 
   5. What this run already proved, in its own receipts:
 
