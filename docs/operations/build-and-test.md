@@ -21,9 +21,9 @@ kind load docker-image wamn-gates:dev --name wamn
 ```
 
 Load **both** when host code changes: the `gates` stage is `FROM host`
-(`Dockerfile:238`), so the suite runs against the same host lib code it
+(`Dockerfile:260`), so the suite runs against the same host lib code it
 verifies. Host-built binaries cannot be `COPY`d into the image — the build
-stages are `rust:1.97-trixie` and the runtime stages `debian:trixie-slim`, and
+stages are `rust:1.98-trixie` and the runtime stages `debian:trixie-slim`, and
 a host toolchain's glibc does not match.
 
 **Local Cargo success never substitutes for a named in-cluster gate of
