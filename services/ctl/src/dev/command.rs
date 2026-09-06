@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io::{self, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context as _;
@@ -13,7 +14,7 @@ use tokio::sync::watch;
 
 use super::config::{DevConfig, parse_config, preflight_config, resolve_dev_packages};
 use super::coordinator::{ProductionDevStageError, ProductionDevStageRunner};
-use super::read::DevReadHandle;
+use super::read::{DevReadHandle, DevRuntimeEndpoint};
 use super::watch::{FilesystemInvalidationSource, GitSource};
 use super::{
     DevInvalidation, DevInvalidationSource, DevRunReceipt, DevStage, DevWatchObserver,
@@ -38,6 +39,15 @@ pub struct DevCommandArgs {
     #[arg(long)]
     watch: bool,
 
+    /// Keep the activated release reachable until this process is interrupted.
+    ///
+    /// Session mode and renderer are independent axes. This is the session
+    /// mode the interactive client already uses, offered to the plain
+    /// renderer: redundant under --tui, and a no-op under --watch, which
+    /// holds by its own nature.
+    #[arg(long)]
+    hold: bool,
+
     /// Render the development session in the interactive terminal client.
     #[arg(long)]
     tui: bool,
@@ -50,8 +60,16 @@ impl DevCommandArgs {
             config,
             overlay_root,
             watch,
+            hold: false,
             tui: false,
         }
+    }
+
+    /// Hold the activated release open after a successful one-shot run.
+    #[must_use]
+    pub const fn with_hold(mut self, hold: bool) -> Self {
+        self.hold = hold;
+        self
     }
 
     /// Select the interactive terminal client.
@@ -59,6 +77,10 @@ impl DevCommandArgs {
     pub const fn with_tui(mut self, tui: bool) -> Self {
         self.tui = tui;
         self
+    }
+
+    const fn hold(&self) -> bool {
+        self.hold
     }
 
     const fn tui(&self) -> bool {
@@ -147,6 +169,22 @@ impl DevWatchObserver for CommandObserver {
             Ok(receipt) => print_receipt("watch", &receipt),
             Err(error) => eprintln!("{error}"),
         }
+    }
+
+    /// Print the three held-session lines, in order, before the hold begins.
+    ///
+    /// A caller reading this stream learns the run finished, where to send a
+    /// request, and that the process will now sit there. Stdout is line
+    /// buffered, so each line has already left; the explicit flush is for the
+    /// reader that is a pipe rather than a terminal, which is every caller
+    /// that scripts this.
+    fn served(&mut self, receipt: &DevRunReceipt, endpoint: Option<&DevRuntimeEndpoint>) {
+        print_receipt("run", receipt);
+        if let Some(endpoint) = endpoint {
+            print_served(endpoint);
+        }
+        println!("run holding");
+        let _ = io::stdout().flush();
     }
 }
 
@@ -271,8 +309,18 @@ impl DevSession {
             let result = run_once_command(&self.config, &mut self.runner, &mut self.git)
                 .await
                 .map(Some);
-            if hold_after_one_shot && result.is_ok() {
-                wait_for_shutdown(&mut self.shutdown).await;
+            if hold_after_one_shot {
+                // Report before holding, not after: the whole point of the
+                // hold is that another process acts on these lines while this
+                // one sits still. Printing after the hold ends tells nobody
+                // anything.
+                if let Ok(Some(receipt)) = &result {
+                    let snapshot = self.read_handle().snapshot();
+                    observer.served(receipt, snapshot.runtime_endpoint());
+                }
+                if result.is_ok() {
+                    wait_for_shutdown(&mut self.shutdown).await;
+                }
             }
             result
         };
@@ -288,10 +336,13 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
         // one-shot caller does not carry it on the stack.
         return Box::pin(super::tui::run(args)).await;
     }
+    let hold = args.hold();
     let mut session = DevSession::prepare(args).await?;
     let mut observer = CommandObserver;
-    let receipt = session.run_with_observer(&mut observer, false).await?;
-    if let Some(receipt) = receipt {
+    let receipt = session.run_with_observer(&mut observer, hold).await?;
+    // Under --hold the observer already printed, before the hold. Printing
+    // here as well would repeat all of it once the interrupt arrives.
+    if !hold && let Some(receipt) = receipt {
         print_receipt("run", &receipt);
         print_serving(&session);
     }
@@ -427,12 +478,16 @@ fn finish_with_cleanup<T>(
 /// this prints, while --tui holds it and shows the same fact live.
 fn print_serving(session: &DevSession) {
     if let Some(endpoint) = session.read_handle().snapshot().runtime_endpoint() {
-        println!(
-            "run served: {} host={}",
-            endpoint.base_url(),
-            endpoint.route_host()
-        );
+        print_served(endpoint);
     }
+}
+
+fn print_served(endpoint: &DevRuntimeEndpoint) {
+    println!(
+        "run served: {} host={}",
+        endpoint.base_url(),
+        endpoint.route_host()
+    );
 }
 
 pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
@@ -491,6 +546,7 @@ mod tests {
         );
         assert!(parsed.args.watch);
         assert!(!parsed.args.tui);
+        assert!(!parsed.args.hold);
 
         let one_shot = TestCli::try_parse_from([
             "wamn-dev",
@@ -502,6 +558,7 @@ mod tests {
         .expect("parse the default one-shot command");
         assert!(!one_shot.args.watch);
         assert!(!one_shot.args.tui);
+        assert!(!one_shot.args.hold);
 
         let tui = TestCli::try_parse_from([
             "wamn-dev",
@@ -520,6 +577,45 @@ mod tests {
             missing.kind(),
             clap::error::ErrorKind::MissingRequiredArgument
         );
+    }
+
+    #[test]
+    fn hold_is_a_session_mode_that_neither_renderer_flag_conflicts_with() {
+        #[derive(Debug, clap::Parser)]
+        struct TestCli {
+            #[command(flatten)]
+            args: DevCommandArgs,
+        }
+
+        use clap::Parser as _;
+        let parse = |extra: &[&str]| {
+            let mut argv = vec![
+                "wamn-dev",
+                "--config",
+                "dev.json",
+                "--overlay-root",
+                "packages/client_acme_receiving",
+            ];
+            argv.extend_from_slice(extra);
+            TestCli::try_parse_from(argv).map(|parsed| parsed.args)
+        };
+
+        let hold = parse(&["--hold"]).expect("parse the held one-shot session");
+        assert!(hold.hold);
+        assert!(!hold.watch);
+        assert!(!hold.tui);
+
+        // Session mode and renderer are independent axes, so clap must accept
+        // both pairings rather than declare a conflict. --hold is redundant
+        // under --tui, which already holds, and inert under --watch, which
+        // never reaches the one-shot hold at all.
+        let with_tui = parse(&["--hold", "--tui"]).expect("parse hold beside the terminal client");
+        assert!(with_tui.hold);
+        assert!(with_tui.tui);
+
+        let with_watch = parse(&["--hold", "--watch"]).expect("parse hold beside watch");
+        assert!(with_watch.hold);
+        assert!(with_watch.watch);
     }
 
     #[tokio::test]

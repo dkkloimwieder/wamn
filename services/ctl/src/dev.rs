@@ -26,6 +26,7 @@ use std::error::Error;
 use std::fmt;
 
 use config::DevConfig;
+use read::DevRuntimeEndpoint;
 use verification_database::VerificationDatabaseError;
 
 /// Stable refusal code for a dirty worktree reaching committed-source work.
@@ -383,6 +384,16 @@ impl DevWatchOutcome {
 pub trait DevWatchObserver {
     /// Report one success or failure before the engine accepts another run.
     fn completed(&mut self, outcome: DevWatchOutcome);
+
+    /// Report the activated release before a one-shot session holds it open.
+    ///
+    /// The default is a no-op because only the plain renderer prints: the
+    /// interactive client reads the same endpoint live off the read handle,
+    /// and a silent session has nowhere to print it. The endpoint is optional
+    /// for the same reason [`crate::dev::command`] treats it as optional when
+    /// the run tore down, and the receipt travels with it so the caller can
+    /// emit the completion line first without reaching back into the session.
+    fn served(&mut self, _receipt: &DevRunReceipt, _endpoint: Option<&DevRuntimeEndpoint>) {}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
