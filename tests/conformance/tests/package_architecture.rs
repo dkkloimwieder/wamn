@@ -12,7 +12,7 @@ const COMPONENT_WORKSPACES: [(&str, &str, usize); 2] = [
     ("components", "components/Cargo.toml", 20),
     ("components-no-std", "components/no-std/Cargo.toml", 4),
 ];
-const ROOT_MEMBER_COUNT: usize = 35;
+const ROOT_MEMBER_COUNT: usize = 36;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
