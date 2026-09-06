@@ -1796,7 +1796,11 @@ spec:
             - |
               headers=/tmp/headers
               body=/tmp/body
+              # --retry-connrefused because the Service can be Ready before
+              # kube-proxy has programmed it, and a refused connection returns
+              # INSTANTLY, so --connect-timeout never applies (wamn-0h0g.15.137.14).
               status=\$(curl --silent --show-error --connect-timeout 5 --max-time 15 \\
+                --retry 15 --retry-delay 1 --retry-connrefused \\
                 --dump-header "\$headers" --output "\$body" --write-out '%{http_code}' \\
                 --header 'Host: $route_host' \\
                 'http://flow-http.$namespace.svc.cluster.local/no-such-route')
