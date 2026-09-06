@@ -1199,7 +1199,7 @@ volumes, and the validated scratch path.
 `[WAMN-DEV-LIVE]` proves the twelve-stage loop but mints its whole environment
 inside the proof and throws it away with the scratch directory, so the loop was
 provable and not startable (`wamn-10yt.10.30`). `wamn-dev-env` runs the same
-standup module the gate runs — `tests/integration/src/dev_environment.rs`, whose
+standup module the gate runs — `services/ctl/src/dev/environment.rs`, whose
 only job is to build the arguments the platform verbs take — writes the strict
 `dev.json`, and then holds the authoring Gate open on a nameable port for as
 long as it runs. It is not a gate: it emits no receipt, and its evidence is that
@@ -1251,12 +1251,18 @@ RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
   cargo build -p wamn-proof-integration --bin wamn-dev-env --locked --offline
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
+  cargo build -p wamn-scenario-worker --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
   cargo build --manifest-path "$WAMN_DEV_ENV_TREE/components/Cargo.toml" \
     -p http-route --target wasm32-wasip2 --locked --offline
 WAMN_DEV_ENV_FLOW_HTTP="$WAMN_DEV_ENV_TARGET/wasm32-wasip2/debug/http_route.wasm"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-host"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-dev-env"
+test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-scenario-worker"
+# The spawned Gate binds a FIXED port, so the recipe refuses rather than
+# colliding: `wamn dev up` defaults to 127.0.0.1:8088.
+test -z "$(ss -Hltn 'sport = :8088')"
 test -s "$WAMN_DEV_ENV_FLOW_HTTP"
 
 printf '%s\n' "$WAMN_DEV_ENV_PASSWORD" \
@@ -1309,6 +1315,7 @@ unset WAMN_DEV_ENV_PASSWORD
   --route-host receiving.localhost \
   --flow-http-workload-image "$WAMN_DEV_ENV_FLOW_HTTP_IMAGE" \
   --host-binary "$WAMN_DEV_ENV_TARGET/debug/wamn-host" \
+  --scenario-worker-binary "$WAMN_DEV_ENV_TARGET/debug/wamn-scenario-worker" \
   --package "$WAMN_DEV_ENV_TREE/packages/receiving" \
   --overlay-root "$WAMN_DEV_ENV_TREE/packages/client_acme_receiving"
 ```
