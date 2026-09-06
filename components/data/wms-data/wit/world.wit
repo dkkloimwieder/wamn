@@ -3,5 +3,11 @@ package wamn:wms-component@0.1.0;
 world wms {
   import wamn:postgres/types@0.1.0;
   import wamn:postgres/statements@0.1.0;
+  export wamn-wms:inventory/adjust@1.0.0;
+  export wamn-wms:inventory/aggregate@1.0.0;
+  export wamn-wms:inventory/merge@1.0.0;
   export wamn-wms:inventory/move@1.0.0;
+  export wamn-wms:inventory/split@1.0.0;
+  export wamn-wms:pallet/get@1.0.0;
+  export wamn-wms:pallet/query@1.0.0;
 }

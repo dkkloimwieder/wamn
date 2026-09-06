@@ -1,9 +1,10 @@
-//! The refusals `inventory.move` declares, and the one translation into them.
+//! The refusals the WMS operations declare, and the one translation into them.
 //!
-//! Deliberately narrower than Receiving's: this crate implements ONE command,
-//! so it carries the literals that command's contract names and no others. A
-//! wider taxonomy copied across would let a caller observe a class the
-//! contract never promised.
+//! Every literal here is one some operation's contract names, and no operation
+//! produces one its own contract does not: each module lists what it can
+//! refuse with, and the test below holds every list to that operation's
+//! generated errors contract. A caller therefore never observes a class the
+//! contract it read did not promise.
 
 use std::error::Error;
 use std::fmt;
@@ -15,10 +16,16 @@ use wamn_postgres_statements::{StatementError, StatementErrorKind};
 pub enum AccessErrorKind {
     /// The body was not what the input contract admits.
     InvalidInput,
-    /// The named pallet does not exist.
+    /// A model read named a row that does not exist.
+    NotFound,
+    /// The named pallet does not exist, or is consumed and so not live stock.
     PalletNotFound,
     /// The destination location does not exist.
     LocationNotFound,
+    /// The pallet holds no quantity row for that product and status.
+    QuantityNotFound,
+    /// The quantity row cannot spare what was asked and still hold stock.
+    InsufficientQuantity,
     /// The caller wrote against a revision the row no longer carries.
     ConcurrencyConflict,
     /// A second delivery under one key carried a DIFFERENT command body.
@@ -39,8 +46,11 @@ impl AccessErrorKind {
     pub const fn literal(self) -> &'static str {
         match self {
             Self::InvalidInput => "invalid_input",
+            Self::NotFound => "not_found",
             Self::PalletNotFound => "pallet_not_found",
             Self::LocationNotFound => "location_not_found",
+            Self::QuantityNotFound => "quantity_not_found",
+            Self::InsufficientQuantity => "insufficient_quantity",
             Self::ConcurrencyConflict => "concurrency_conflict",
             Self::IdempotencyConflict => "idempotency_conflict",
             Self::Retry => "retry",
@@ -71,6 +81,20 @@ impl AccessError {
         Self::new(kind, serde_json::json!({ "field": field }))
     }
 
+    /// An out-of-range refusal, carrying the bounds and what was sent.
+    #[must_use]
+    pub fn range(field: &str, minimum: i64, maximum: i64, observed: i64) -> Self {
+        Self::new(
+            AccessErrorKind::InvalidInput,
+            serde_json::json!({
+                "field": field,
+                "minimum": minimum,
+                "maximum": maximum,
+                "observed": observed,
+            }),
+        )
+    }
+
     /// A not-found refusal, which names the field AND the id looked for.
     #[must_use]
     pub fn missing(kind: AccessErrorKind, field: &str, id: &str) -> Self {
@@ -87,6 +111,16 @@ impl AccessError {
                 "expected_row_version": expected,
                 "observed_row_version": observed,
             }),
+        )
+    }
+
+    /// A split asking for more than the row can spare, carrying what it holds
+    /// so the caller can ask again for less rather than guess.
+    #[must_use]
+    pub fn insufficient(field: &str, observed: &str) -> Self {
+        Self::new(
+            AccessErrorKind::InsufficientQuantity,
+            serde_json::json!({ "field": field, "observed": observed }),
         )
     }
 
@@ -114,7 +148,7 @@ impl Error for AccessError {}
 /// The ONE translation of a statement failure into the contract vocabulary.
 ///
 /// Every unmapped kind lands on `internal_error` rather than leaking a class
-/// the contract never named — an unknown statement or a contract mismatch is a
+/// the contract never named -- an unknown statement or a contract mismatch is a
 /// deployment fault, not something a caller can act on.
 #[must_use]
 pub fn from_statement(error: &StatementError) -> AccessError {
@@ -133,7 +167,7 @@ pub fn from_statement(error: &StatementError) -> AccessError {
 mod tests {
     use super::*;
 
-    /// A conflict carries both revisions — the assertion the whole
+    /// A conflict carries both revisions -- the assertion the whole
     /// optimistic-concurrency contract rests on.
     #[test]
     fn a_conflict_carries_both_revisions() {
@@ -143,40 +177,45 @@ mod tests {
         assert_eq!(error.detail()["observed_row_version"], 7);
     }
 
-    /// Every literal this crate can produce is one `inventory.move` declares.
+    /// Every literal an operation can produce is one ITS contract declares.
+    /// The lists are the modules' own; a refusal added to a module without
+    /// being added to the manifest fails here, before a caller sees it.
     #[test]
-    fn every_literal_is_declared_by_the_operation_contract() {
-        let contract: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../packages/wms/generated/contracts/inventory/move.errors.json"),
+    fn every_operation_refuses_only_what_its_contract_declares() {
+        let contracts: [(&str, &[AccessErrorKind]); 7] = [
+            ("inventory/move", crate::inventory_move::REFUSALS),
+            ("inventory/adjust", crate::inventory_adjust::REFUSALS),
+            ("inventory/merge", crate::inventory_merge::REFUSALS),
+            ("inventory/split", crate::inventory_split::REFUSALS),
+            ("inventory/aggregate", crate::inventory_aggregate::REFUSALS),
+            ("pallet/get", crate::pallet::GET_REFUSALS),
+            ("pallet/query", crate::pallet::QUERY_REFUSALS),
+        ];
+        for (operation, refusals) in contracts {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../packages/wms/generated/contracts")
+                .join(format!("{operation}.errors.json"));
+            let contract: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
             )
-            .expect("the move errors contract is generated"),
-        )
-        .expect("parses");
-        let declared: Vec<&str> = contract["cases"]
-            .as_array()
-            .expect("cases")
-            .iter()
-            .map(|case| case["literal"].as_str().expect("literal"))
-            .collect();
-
-        for kind in [
-            AccessErrorKind::InvalidInput,
-            AccessErrorKind::PalletNotFound,
-            AccessErrorKind::LocationNotFound,
-            AccessErrorKind::ConcurrencyConflict,
-            AccessErrorKind::IdempotencyConflict,
-            AccessErrorKind::Retry,
-            AccessErrorKind::Timeout,
-            AccessErrorKind::PermissionDenied,
-            AccessErrorKind::InternalError,
-        ] {
+            .expect("parses");
+            let declared: Vec<&str> = contract["cases"]
+                .as_array()
+                .expect("cases")
+                .iter()
+                .map(|case| case["literal"].as_str().expect("literal"))
+                .collect();
             assert!(
-                declared.contains(&kind.literal()),
-                "{} is not declared by the contract: {declared:?}",
-                kind.literal()
+                !refusals.is_empty(),
+                "{operation} lists what it refuses with"
             );
+            for kind in refusals {
+                assert!(
+                    declared.contains(&kind.literal()),
+                    "{operation}: {} is not declared by the contract: {declared:?}",
+                    kind.literal()
+                );
+            }
         }
     }
 }

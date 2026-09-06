@@ -6,6 +6,7 @@ description = "Typed WMS data-access kernel over wamn:postgres"
 license = "Apache-2.0"
 
 [dependencies]
+base64.workspace = true
 chrono = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

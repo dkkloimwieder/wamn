@@ -10,7 +10,7 @@ usage: wms-cluster-journey-run [--apply] --evidence-dir DIR
 Without --apply, print the immutable plan and exit.
 
   --apply              Build and run the journey, then tear down owned resources
-  --measure-startup    REFUSED until wamn-362o.10 lands pallet.get (see below)
+  --measure-startup    Cold, restart-first and steady pallet.get requests with trace breakdowns
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-wms-journey. Every Kubernetes and Helm
@@ -31,18 +31,10 @@ while (($#)); do
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
-# RULED wamn-362o.25 (D): the WMS journey ships WITHOUT the measure-startup
-# arm until wamn-362o.10 lands pallet.get. The only route the guest serves is
-# inventory.move, so the only possible probe is a MOVE with a fixed
-# idempotency key -- cold performs it (8 statements) and every later phase
-# REPLAYS it (1 statement, find_replay returns the claim). That is a good
-# probe of the identity law and a bad one for trace_is_complete, whose single
-# statement count cannot hold across phases. The probe IS declared below, so
-# the arm turns on by deleting this refusal once a read route exists.
-if [[ "$measure_startup" == true ]]; then
-  echo "wms-cluster-journey-run: --measure-startup is refused until wamn-362o.10 lands pallet.get" >&2
-  exit 2
-fi
+# The measure-startup arm probes pallet.get (wamn-362o.10): one statement in
+# every phase, so trace_is_complete holds one fixed count across cold, restart
+# and steady. Until that read route existed the only probe was a move, which
+# performs 8 statements cold and REPLAYS with 1 ever after (wamn-362o.25, D).
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
@@ -103,8 +95,8 @@ app_catalog=default
 # guest, so this is a REPLAY probe: a fixed idempotency key, the fixture
 # pallet, the second fixture location. The first call moves; every later call
 # returns the same movement_id by construction (command-identity-from-claim).
-# The value check is that a movement id came back at all -- the route answered
-# through the guest, not from a placeholder.
+# The value check is that the fixture pallet came back by its own id -- the
+# route answered through the guest, not from a placeholder.
 # THE FIXTURE, declared once. The seed writes these rows, the probe moves this
 # pallet, and the runtime assertions (wamn-362o.27) receive the same ids
 # through the journey document -- one declaration, three readers, no copy.
@@ -112,13 +104,12 @@ app_fixture_product_id=00000000-0000-0000-0000-000000000101
 app_fixture_location_a_id=00000000-0000-0000-0000-000000000201
 app_fixture_location_b_id=00000000-0000-0000-0000-000000000202
 app_fixture_pallet_id=00000000-0000-0000-0000-000000000301
-app_probe_route=/inventory/move
-app_probe_body='{"value":{"idempotency_key":"startup-probe-move","pallet_id":"'"$app_fixture_pallet_id"'","to_location_id":"'"$app_fixture_location_b_id"'","expected_row_version":1,"occurred_at":"2026-09-05T00:00:00.000000Z"}}'
-app_probe_value_check='.movement_id | test("^[0-9a-f-]{36}$")'
-# inventory.move's happy path: find_replay, claim, lock, validate, select,
-# insert, move, finalize -- measured in components/data/wms-data/src/
-# inventory_move.rs. A replay is 1. See the measure-startup refusal above.
-app_probe_statement_spans=8
+app_probe_route=/pallet/get
+app_probe_body='{"id":"'"$app_fixture_pallet_id"'"}'
+app_probe_value_check='.id == "'"$app_fixture_pallet_id"'"'
+# pallet.get is one generated statement on the connection, no transaction --
+# components/data/wms-data/src/pallet.rs -- in every phase alike.
+app_probe_statement_spans=1
 # The JetStream stream the platform creates for this application's events.
 # WMS declares none (packages/wms/wamn.json), so nothing flows on it; it is
 # derived, not spelled, for the same reason as everywhere else.

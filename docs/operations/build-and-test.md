@@ -1508,11 +1508,14 @@ that version, then replays the winner's body and gets the same
 with `mc` and asserts exactly one label object under `wms/`, named by it.
 The test asserts and never provisions; no environment variable carries data.
 
-What it deliberately does not do, named in the tool: `--measure-startup` is
-refused until `wamn-362o.10` lands `pallet.get` (the only possible probe today
-is a replay move, which no fixed statement count survives), and nothing flows
-through the materializer, which is deployed and asserted idle because the
-overlay mounts its family.
+`--measure-startup` probes `pallet.get` on the fixture pallet: one generated
+statement in every phase (cold, restart-first, steady), the fixed count
+`trace_is_complete` holds. Before `wamn-362o.10` landed the read route, the
+only possible probe was a move, which performs eight statements cold and
+replays with one ever after, so the arm was refused rather than measured.
+What the journey deliberately does not do: nothing flows through the
+materializer, which is deployed and asserted idle because the overlay mounts
+its family.
 
 ### `[RECEIVING-MATERIALIZER-JOURNEY]` — router-era causation and materialization
 

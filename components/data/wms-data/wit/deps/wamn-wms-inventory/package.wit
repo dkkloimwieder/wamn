@@ -1,6 +1,30 @@
 package wamn-wms:inventory@1.0.0;
 
+interface adjust {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface aggregate {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface merge {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
 interface move {
+  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+}
+
+interface split {
   use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
 
   run: func(ctx: node-context, input: json) -> result<emission, node-error>;

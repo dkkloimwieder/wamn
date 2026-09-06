@@ -28,6 +28,19 @@ use wamn_postgres_statements::{Connection, TimestampTz, Transaction, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_move as sql;
+use crate::scalar;
+
+pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+    AccessErrorKind::InvalidInput,
+    AccessErrorKind::PalletNotFound,
+    AccessErrorKind::LocationNotFound,
+    AccessErrorKind::ConcurrencyConflict,
+    AccessErrorKind::IdempotencyConflict,
+    AccessErrorKind::Retry,
+    AccessErrorKind::Timeout,
+    AccessErrorKind::PermissionDenied,
+    AccessErrorKind::InternalError,
+];
 
 /// One envelope item's command body.
 #[derive(Debug, Deserialize)]
@@ -61,26 +74,6 @@ impl MoveResult {
     }
 }
 
-/// Parse and RE-SPELL, not merely validate. The canonicalization contract
-/// fixes uuids as lowercase-hyphenated, so a caller sending uppercase must
-/// reach the database — and the command bytes — in one spelling, or two
-/// deliveries of the same move would canonicalize differently and the
-/// idempotency key would stop working.
-fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
-    value
-        .parse::<uuid::Uuid>()
-        .map(|parsed| Uuid(parsed.hyphenated().to_string()))
-        .map_err(|_| AccessError::field(AccessErrorKind::InvalidInput, field))
-}
-
-/// Likewise for timestamps: UTC, RFC 3339, six fractional digits, whatever
-/// offset the caller wrote it in.
-fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessError> {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .map(|parsed| TimestampTz(parsed.to_utc().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()))
-        .map_err(|_| AccessError::field(AccessErrorKind::InvalidInput, field))
-}
-
 /// Run one command item in exactly one transaction.
 ///
 /// # Errors
@@ -88,9 +81,9 @@ fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessError> {
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
 pub(crate) async fn execute(command: &MoveCommand) -> Result<MoveResult, AccessError> {
-    let pallet_id = uuid("value.pallet_id", &command.pallet_id)?;
-    let to_location_id = uuid("value.to_location_id", &command.to_location_id)?;
-    let occurred_at = timestamp("value.occurred_at", &command.occurred_at)?;
+    let pallet_id = scalar::uuid("value.pallet_id", &command.pallet_id)?;
+    let to_location_id = scalar::uuid("value.to_location_id", &command.to_location_id)?;
+    let occurred_at = scalar::timestamp("value.occurred_at", &command.occurred_at)?;
     let canonical = canonical_command(command);
 
     let mut connection = Connection::new();
