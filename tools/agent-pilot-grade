@@ -111,11 +111,25 @@ resolve_attachments() {
   [[ -n "$ATTACHMENTS" ]] || note "no attachments.json under $OVERLAY_ROOT; route steps will refuse"
 }
 
+# attachments.json is an OBJECT keyed by attachment id. An entry carries a
+# wiring-id and a definition; it does NOT carry an operation field. So the
+# operation a step names is matched against the wiring id, which is the
+# operation with its dot replaced by an underscore, and failing that against a
+# route path whose last two segments are the domain and the action. Both are
+# conventions the agent follows or does not, and either way the answer is
+# recorded rather than the step failed for a naming choice.
 route_path_for() {
   local operation="$1"
   [[ -n "$ATTACHMENTS" ]] || { echo ""; return; }
-  jq -r --arg op "$operation" '
-    [.. | objects | select((.operation // "") == $op) | (.route.path // .path // empty)] | first // ""
+  local wiring="${operation//./_}" domain="${operation%%.*}" action="${operation#*.}"
+  jq -r --arg w "$wiring" --arg op "$operation" --arg tail "/$domain/$action" '
+    [ .. | objects
+      | select(((.["wiring-id"] // "") == $w) or ((.operation // "") == $op))
+      | (.definition.route.path // .route.path // .path // empty) ] as $byname
+    | if ($byname | length) > 0 then $byname[0]
+      else
+        [ .. | objects | (.route.path // empty) | select(endswith($tail)) ][0] // ""
+      end
   ' "$ATTACHMENTS"
 }
 
@@ -371,13 +385,19 @@ run_checks() {
 # ---- 5. stop the held loop and prove the database went with it -------------
 verify_teardown() {
   cleanup; HELD_PID=""
-  local admin; admin="$(jq -r '.system_database_url // empty' "$DIR/env/dev.json")"
-  if [[ -n "$admin" ]]; then
-    local leftovers
-    leftovers="$(psql "$admin" -Atqc \
-      "select datname from pg_database where datname like 'wamn_verify%'" 2>/dev/null | tr '\n' ' ' || true)"
-    if [[ -z "${leftovers// }" ]]; then VERIFICATION_DB_REMOVED=true
-    else VERIFICATION_DB_REMOVED=false; note "verification databases remain: $leftovers"; fi
+  # The database to look for is the one the configuration NAMES, not a guessed
+  # pattern. The standup creates it and the loop drops and recreates it per run,
+  # so a leftover after the interrupt means the loop's cleanup did not run.
+  local admin verification
+  admin="$(jq -r '.system_database_url // empty' "$DIR/env/dev.json")"
+  verification="$(jq -r '.verification_database_url // empty' "$DIR/env/dev.json" \
+    | sed 's|.*/||; s|?.*||')"
+  if [[ -n "$admin" && -n "$verification" ]]; then
+    local remaining
+    remaining="$(psql "$admin" -Atqc \
+      "select count(*) from pg_database where datname = '$verification'" 2>/dev/null || echo 1)"
+    if [[ "$remaining" == "0" ]]; then VERIFICATION_DB_REMOVED=true
+    else VERIFICATION_DB_REMOVED=false; note "the verification database $verification remains"; fi
   else
     VERIFICATION_DB_REMOVED=false
   fi
