@@ -650,9 +650,7 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
 /// `deploy/platform/http-route-workload.example.yaml` is held equal to this
 /// by a test in this module, so the template gaining or losing a claim fails
 /// here rather than in a cluster.
-pub fn flow_http_identity_claims(
-    identity: &DevActivationIdentity,
-) -> [(&'static str, &str); 5] {
+pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static str, &str); 5] {
     [
         ("wamn.tenant", identity.tenant.as_str()),
         ("wamn.catalog", identity.catalog.as_str()),
