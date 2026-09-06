@@ -225,8 +225,11 @@ pub async fn install_effect_writer(
         .query_one("SELECT current_database()::text", &[])
         .await?
         .get(0);
+    // The host validates the credential against `TENANT`, and the scoped
+    // generation role hashes that tenant, so minting under any other string
+    // mints a role the credential contract refuses.
     let scope = EffectWriterCredentialScope {
-        tenant: "claim-live-tenant".to_string(),
+        tenant: TENANT.to_string(),
         org: "claim-live-org".to_string(),
         project: "claim-live-project".to_string(),
         environment: "claim-live-env".to_string(),
