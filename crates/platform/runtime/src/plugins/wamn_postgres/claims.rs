@@ -2169,7 +2169,7 @@ impl WamnPostgres {
         // 0.45-0.89 ms plus a wakeup, against a 0.6 ms statement
         // (docs/perf/2026.09/3a-instrument.md). Recovering it safely means
         // knowing whether this connection has already parsed this statement,
-        // which deadpool's cache does not expose.
+        // which deadpool's cache does not expose (wamn-0h0g.17.33).
         if let Err(error) = self
             .begin_with_claims(
                 connection.connection(),
