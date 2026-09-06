@@ -74,6 +74,22 @@ impl MoveResult {
     }
 }
 
+/// The command's scalars in their one wire spelling.
+#[derive(Debug)]
+struct Parsed {
+    pallet_id: Uuid,
+    to_location_id: Uuid,
+    occurred_at: TimestampTz,
+}
+
+fn parse(command: &MoveCommand) -> Result<Parsed, AccessError> {
+    Ok(Parsed {
+        pallet_id: scalar::uuid("value.pallet_id", &command.pallet_id)?,
+        to_location_id: scalar::uuid("value.to_location_id", &command.to_location_id)?,
+        occurred_at: scalar::timestamp("value.occurred_at", &command.occurred_at)?,
+    })
+}
+
 /// Run one command item in exactly one transaction.
 ///
 /// # Errors
@@ -81,25 +97,15 @@ impl MoveResult {
 /// [`AccessError`] carrying the literal and detail the operation contract
 /// declares for that refusal.
 pub(crate) async fn execute(command: &MoveCommand) -> Result<MoveResult, AccessError> {
-    let pallet_id = scalar::uuid("value.pallet_id", &command.pallet_id)?;
-    let to_location_id = scalar::uuid("value.to_location_id", &command.to_location_id)?;
-    let occurred_at = scalar::timestamp("value.occurred_at", &command.occurred_at)?;
-    let canonical = canonical_command(command);
+    let parsed = parse(command)?;
+    let canonical = canonical_command(command, &parsed);
 
     let mut connection = Connection::new();
     let mut transaction = connection
         .begin()
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let result = run(
-        &mut transaction,
-        command,
-        &canonical,
-        pallet_id.clone(),
-        to_location_id,
-        occurred_at,
-    )
-    .await;
+    let result = run(&mut transaction, command, &canonical, &parsed).await;
     match result {
         Ok(value) => {
             transaction
@@ -117,18 +123,20 @@ pub(crate) async fn execute(command: &MoveCommand) -> Result<MoveResult, AccessE
     }
 }
 
-/// The bytes the idempotency key keys.
+/// The bytes the idempotency key keys: the RE-SPELLED command, so two
+/// deliveries of one move canonicalize alike whatever case or offset each was
+/// written in.
 ///
 /// The key itself and `request_id` are EXCLUDED: two deliveries of one
 /// operator action differ in neither the pallet moved nor its destination,
 /// only in the envelope that carried them. Canonical JSON gives sorted keys,
 /// so the same command produces the same bytes whatever order it arrived in.
-fn canonical_command(command: &MoveCommand) -> Vec<u8> {
+fn canonical_command(command: &MoveCommand, parsed: &Parsed) -> Vec<u8> {
     wamn_execution_contract::canonical_json_bytes(&serde_json::json!({
-        "pallet_id": command.pallet_id,
-        "to_location_id": command.to_location_id,
+        "pallet_id": parsed.pallet_id.0,
+        "to_location_id": parsed.to_location_id.0,
         "expected_row_version": command.expected_row_version,
-        "occurred_at": command.occurred_at,
+        "occurred_at": parsed.occurred_at.0,
     }))
 }
 
@@ -136,9 +144,7 @@ async fn run(
     transaction: &mut Transaction,
     command: &MoveCommand,
     canonical: &[u8],
-    pallet_id: Uuid,
-    to_location_id: Uuid,
-    occurred_at: TimestampTz,
+    parsed: &Parsed,
 ) -> Result<MoveResult, AccessError> {
     // A REPLAY RETURNS THE ORIGINAL RESULT, unchanged. Not a fresh execution
     // that happens to agree — the claim row holds what the first attempt
@@ -178,14 +184,14 @@ async fn run(
         transaction,
         command.idempotency_key.clone(),
         canonical.to_vec(),
-        pallet_id.clone(),
+        parsed.pallet_id.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?
     .ok_or_else(|| AccessError::new(AccessErrorKind::Retry, serde_json::json!({})))?;
 
     // THE SERIALIZATION POINT.
-    let locked = sql::lock_pallet(transaction, pallet_id.clone())
+    let locked = sql::lock_pallet(transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
@@ -203,7 +209,7 @@ async fn run(
         ));
     }
 
-    sql::validate_location(transaction, to_location_id.clone())
+    sql::validate_location(transaction, parsed.to_location_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
@@ -216,27 +222,31 @@ async fn run(
 
     // ONE MOVEMENT PER QUANTITY ROW. The history says WHAT moved, not merely
     // that something did — which is the multi-row half of this command.
-    let quantities = sql::select_pallet_quantity(transaction, pallet_id.clone())
+    let quantities = sql::select_pallet_quantity(transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
     for quantity in &quantities {
         sql::insert_movement(
             transaction,
             command.idempotency_key.clone(),
-            pallet_id.clone(),
+            parsed.pallet_id.clone(),
             quantity.product_id.clone(),
             locked.location_id.clone(),
-            to_location_id.clone(),
+            parsed.to_location_id.clone(),
             quantity.quantity.clone(),
-            occurred_at.clone(),
+            parsed.occurred_at.clone(),
         )
         .await
         .map_err(|e| error::from_statement(&e))?;
     }
 
-    let moved = sql::move_pallet(transaction, pallet_id, to_location_id)
-        .await
-        .map_err(|e| error::from_statement(&e))?;
+    let moved = sql::move_pallet(
+        transaction,
+        parsed.pallet_id.clone(),
+        parsed.to_location_id.clone(),
+    )
+    .await
+    .map_err(|e| error::from_statement(&e))?;
 
     let finalized = sql::finalize_command(
         transaction,
@@ -265,4 +275,80 @@ async fn run(
         pallet_status: moved.status,
         row_version: moved.row_version,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(pallet_id: &str, occurred_at: &str) -> MoveCommand {
+        MoveCommand {
+            idempotency_key: "k".to_owned(),
+            pallet_id: pallet_id.to_owned(),
+            to_location_id: "00000000-0000-0000-0000-000000000201".to_owned(),
+            expected_row_version: 1,
+            occurred_at: occurred_at.to_owned(),
+        }
+    }
+
+    /// Two spellings of one move are ONE command under the key: the canonical
+    /// bytes come from the respelled scalars, not the caller's. The uuid half
+    /// is already refused at the input port, whose released pattern pins a
+    /// lowercase-hyphenated uuid; the OFFSET half reaches this code, because
+    /// the port only asks `occurred_at` for `format: date-time`.
+    #[test]
+    fn the_canonical_command_is_spelling_independent_and_excludes_the_key() {
+        let upper = command(
+            "00000000-0000-0000-0000-00000000030A",
+            "2026-09-05T02:00:00+02:00",
+        );
+        let lower = command(
+            "00000000-0000-0000-0000-00000000030a",
+            "2026-09-05T00:00:00.000000Z",
+        );
+        let mut other_key = command(
+            "00000000-0000-0000-0000-00000000030a",
+            "2026-09-05T00:00:00Z",
+        );
+        other_key.idempotency_key = "different".to_owned();
+        let bytes = |command: &MoveCommand| canonical_command(command, &parse(command).unwrap());
+        assert_eq!(bytes(&upper), bytes(&lower));
+        assert_eq!(bytes(&lower), bytes(&other_key));
+        assert!(
+            !String::from_utf8(bytes(&lower))
+                .unwrap()
+                .contains("idempotency_key")
+        );
+    }
+
+    /// A move that differs in what it MOVES is a different command, so the
+    /// bytes must still separate one from another.
+    #[test]
+    fn a_different_destination_is_a_different_command() {
+        let here = command(
+            "00000000-0000-0000-0000-00000000030a",
+            "2026-09-05T00:00:00Z",
+        );
+        let mut there = command(
+            "00000000-0000-0000-0000-00000000030a",
+            "2026-09-05T00:00:00Z",
+        );
+        there.to_location_id = "00000000-0000-0000-0000-000000000202".to_owned();
+        let bytes = |command: &MoveCommand| canonical_command(command, &parse(command).unwrap());
+        assert_ne!(bytes(&here), bytes(&there));
+    }
+
+    #[test]
+    fn an_unspellable_scalar_is_refused_before_any_statement() {
+        let mut pallet = command("not-a-uuid", "2026-09-05T00:00:00Z");
+        assert_eq!(
+            parse(&pallet).unwrap_err().detail()["field"],
+            "value.pallet_id"
+        );
+        pallet = command("00000000-0000-0000-0000-00000000030a", "yesterday");
+        assert_eq!(
+            parse(&pallet).unwrap_err().detail()["field"],
+            "value.occurred_at"
+        );
+    }
 }
