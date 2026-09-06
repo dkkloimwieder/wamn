@@ -1,0 +1,709 @@
+#!/usr/bin/env bash
+# Agent-authoring pilot runner. Spec: docs/poc/agent-authoring-tooling-spec.md
+# items A1, A2, A3 and A5. Protocol: docs/experiments/agent-authoring/protocol.md.
+#
+# The runner owns a run directory and nothing else. It knows no application: a
+# task is a directory that satisfies the A6 manifest interface, and the runner
+# reads only task.json from it.
+#
+# WHERE THINGS LIVE. The run directory is working state under the cache and any
+# tool may delete it. Evidence is promoted into the repository by
+# tools/agent-pilot-report, which writes docs/experiments/agent-authoring/. Do
+# not treat a run directory as an archive.
+#
+#   agent-pilot-run up     --run <nnn> --agent claude|codex|stub --task <dir>
+#                          [--standup dev-env|dev-up] [--commit <rev>]
+#   agent-pilot-run launch --run <nnn> [--stub-mode completed|idle|step|cap]
+#   agent-pilot-run grade  --run <nnn>
+#   agent-pilot-run down   --run <nnn> [--discard-worktree]
+#   agent-pilot-run all    --run <nnn> --agent … --task … [flags above]
+#
+# Exit codes: 0 ok · 2 usage · 10 environment · 20 driver · 30 grading ·
+# 40 teardown residue.
+set -euo pipefail
+umask 077
+
+readonly EX_USAGE=2 EX_ENV=10 EX_DRIVER=20 EX_GRADE=30 EX_RESIDUE=40
+
+readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
+readonly PG_PORT=54332
+readonly REGISTRY_PORT=5004
+readonly NATS_PORT=4224
+readonly TEMPO_PORT=3201
+readonly OTLP_PORT=4319
+readonly GATE_PORT=8088
+readonly PORTS=("$PG_PORT" "$REGISTRY_PORT" "$NATS_PORT" "$TEMPO_PORT" "$OTLP_PORT" "$GATE_PORT")
+
+# Budgets from protocol section 3.
+readonly IDLE_SECONDS=300
+readonly STEP_SECONDS=1200
+readonly CAP_SECONDS=5400
+
+die() { printf 'agent-pilot-run: %s\n' "$*" >&2; exit "${2:-$EX_USAGE}"; }
+note() { printf '[pilot] %s\n' "$*" >&2; }
+
+VERB=""; RUN=""; AGENT=""; TASK=""; STANDUP="dev-env"; COMMIT=""
+DISCARD_WORKTREE=0; STUB_MODE="completed"
+
+parse_arguments() {
+  [[ $# -ge 1 ]] || die "no verb; expected up, launch, grade, down or all"
+  VERB="$1"; shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --run) RUN="${2:-}"; shift 2 ;;
+      --agent) AGENT="${2:-}"; shift 2 ;;
+      --task) TASK="${2:-}"; shift 2 ;;
+      --standup) STANDUP="${2:-}"; shift 2 ;;
+      --commit) COMMIT="${2:-}"; shift 2 ;;
+      --stub-mode) STUB_MODE="${2:-}"; shift 2 ;;
+      --discard-worktree) DISCARD_WORKTREE=1; shift ;;
+      *) die "unknown flag $1" ;;
+    esac
+  done
+  case "$VERB" in up|launch|grade|down|all) ;; *) die "unknown verb $VERB" ;; esac
+  [[ -n "$RUN" ]] || die "--run is required"
+  [[ "$RUN" =~ ^[0-9]{3}[a-z]?$ ]] || die "--run takes three digits and an optional rerun letter, like 001 or 001b"
+  case "$STANDUP" in dev-env|dev-up) ;; *) die "--standup takes dev-env or dev-up" ;; esac
+}
+
+resolve_tree() {
+  TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  [[ "$(git -C "$TREE" rev-parse --show-toplevel)" == "$TREE" ]] \
+    || die "$TREE is not the root of a git worktree" "$EX_ENV"
+}
+
+# The run directory name carries the agent and task, so `up` records them and
+# every later verb reads them back rather than taking them again.
+resolve_run_directory() {
+  if [[ -n "$AGENT" && -n "$TASK" ]]; then
+    local task_name; task_name="$(basename "$(cd "$TASK" && pwd -P)")"
+    RUN_ID="$RUN-$AGENT-$task_name"
+  else
+    local matches=("$PILOT_HOME"/runs/"$RUN"-*)
+    [[ -d "${matches[0]}" ]] || die "no run directory for --run $RUN; run up first" "$EX_ENV"
+    [[ ${#matches[@]} -eq 1 ]] || die "more than one run directory for --run $RUN" "$EX_ENV"
+    RUN_ID="$(basename "${matches[0]}")"
+  fi
+  DIR="$PILOT_HOME/runs/$RUN_ID"
+}
+
+read_manifest() {
+  MANIFEST="$DIR/task.json"
+  [[ -s "$MANIFEST" ]] || die "no task manifest at $MANIFEST" "$EX_ENV"
+  M_ROUTE_HOST="$(jq -r '.identity.route_host' "$MANIFEST")"
+  M_OVERLAY_ROOT="$(jq -r '.overlay_root' "$MANIFEST")"
+  M_BASELINE_ROOT="$(jq -r '.baseline.overlay_root // empty' "$MANIFEST")"
+  mapfile -t M_PACKAGE_SOURCES < <(jq -r '.package_sources[]? // empty' "$MANIFEST")
+}
+
+# ---------------------------------------------------------------- A6 validation
+
+validate_manifest() {
+  local manifest="$1" commit="$2" task_dir="$3"
+  jq -e . "$manifest" >/dev/null || die "task.json does not parse" "$EX_USAGE"
+
+  local field
+  for field in org project env schema tenant route_host; do
+    [[ -n "$(jq -r ".identity.$field // empty" "$manifest")" ]] \
+      || die "task.json identity.$field is empty" "$EX_USAGE"
+  done
+
+  local overlay_root; overlay_root="$(jq -r '.overlay_root // empty' "$manifest")"
+  [[ -n "$overlay_root" ]] || die "task.json overlay_root is empty" "$EX_USAGE"
+
+  local -a allowed; mapfile -t allowed < <(jq -r '.allowed_paths[]? // empty' "$manifest")
+  [[ ${#allowed[@]} -gt 0 ]] || die "task.json allowed_paths is empty" "$EX_USAGE"
+  # The agent must be able to create the package it was asked to author.
+  local covered=0 pattern
+  for pattern in "${allowed[@]}"; do
+    [[ "$overlay_root/x" == $pattern || "$overlay_root" == $pattern ]] && covered=1
+  done
+  [[ $covered -eq 1 ]] || die "allowed_paths does not cover overlay_root $overlay_root" "$EX_USAGE"
+
+  # `overlay_root` is what the agent creates, so it need not exist. Every base
+  # it builds on must, or the loop resolves nothing.
+  local source
+  while read -r source; do
+    [[ -n "$source" ]] || continue
+    git -C "$TREE" cat-file -e "$commit:$source" 2>/dev/null \
+      || die "package source $source is absent at $commit" "$EX_USAGE"
+  done < <(jq -r '.package_sources[]? // empty' "$manifest")
+
+  local steps; steps="$task_dir/$(jq -r '.grade.steps // "steps.json"' "$manifest")"
+  [[ -s "$steps" ]] || die "no steps file at $steps" "$EX_USAGE"
+  validate_steps "$steps"
+}
+
+# V3 traceability and predicate floor. The kill matrix and the determinism check
+# are the task author's work, recorded with the fixture; these two are the ones
+# a machine settles, so `up` refuses on them rather than discovering them later.
+validate_steps() {
+  local steps="$1"
+  jq -e 'type == "array" and length > 0' "$steps" >/dev/null \
+    || die "steps.json must be a non-empty array" "$EX_USAGE"
+  jq -e 'any(.[]; .must == true)' "$steps" >/dev/null \
+    || die "steps.json has no must step, so nothing decides PASS or FAIL" "$EX_USAGE"
+
+  local offenders
+  offenders="$(jq -r '[.[] | select(.must == true) | select((.invariant // "") == "") | .id] | join(", ")' "$steps")"
+  [[ -z "$offenders" ]] || die "must steps name no invariant: $offenders" "$EX_USAGE"
+
+  # Predicate floor. A must step asserts something about the CONTENT of the
+  # answer: a field is present, a field equals a literal, a field equals what an
+  # earlier step returned, a refusal carries a code, a list has a length, or a
+  # list is ordered. `item: value` is not enough on its own: every well-formed
+  # success has a value item, so asserting only that passes on any answer of the
+  # right shape and proves nothing about the invariant it names.
+  offenders="$(jq -r '
+    [ .[]
+      | select(.must == true)
+      | select(has("sql") | not)
+      | select(has("concurrent") | not)
+      | . as $step
+      | select(([ "present", "value", "equals", "error_code", "count", "sorted_by" ]
+                | map(. as $k | ($step.expect // {}) | has($k)) | any) | not)
+      | .id
+    ] | join(", ")' "$steps")"
+  [[ -z "$offenders" ]] || die "must steps assert nothing about the answer content: $offenders" "$EX_USAGE"
+
+  local duplicates
+  duplicates="$(jq -r '[.[].id] | group_by(.) | map(select(length > 1) | .[0]) | join(", ")' "$steps")"
+  [[ -z "$duplicates" ]] || die "duplicate step ids: $duplicates" "$EX_USAGE"
+}
+
+# ------------------------------------------------------------------------- up
+
+preflight() {
+  local tool
+  for tool in docker wash cargo jq psql curl git openssl flock ss tee; do
+    command -v "$tool" >/dev/null || die "$tool is not on PATH" "$EX_ENV"
+  done
+  # The shim's `wait` covers process substitutions only from 5.1. Without that
+  # a verbs row can be written before its log file is complete.
+  [[ "${BASH_VERSINFO[0]}${BASH_VERSINFO[1]}" -ge 51 ]] \
+    || die "bash 5.1 or newer is required; this is ${BASH_VERSION}" "$EX_ENV"
+
+  local port
+  for port in "${PORTS[@]}"; do
+    [[ -z "$(ss -Hltn "sport = :$port")" ]] || die "port $port is in use" "$EX_ENV"
+  done
+
+  [[ -z "$(git -C "$TREE" status --porcelain=v1 --untracked-files=all)" ]] \
+    || die "the source tree is not clean" "$EX_ENV"
+  cargo metadata --manifest-path "$TREE/Cargo.toml" --no-deps --offline >/dev/null \
+    || die "the root workspace manifest does not resolve" "$EX_ENV"
+  cargo metadata --manifest-path "$TREE/components/Cargo.toml" --no-deps --offline >/dev/null \
+    || die "the components workspace manifest does not resolve" "$EX_ENV"
+}
+
+build_binaries() {
+  TARGET="$PILOT_HOME/target-$(git -C "$TREE" rev-parse --short "$COMMIT")"
+  mkdir -p "$TARGET"
+  local built=1 started; started="$(date +%s)"
+  local artifact
+  for artifact in debug/wamn debug/wamn-host debug/wamn-scenario-worker \
+                  debug/wamn-dev-env wasm32-wasip2/debug/http_route.wasm; do
+    [[ -s "$TARGET/$artifact" ]] || built=0
+  done
+  if [[ $built -eq 0 ]]; then
+    note "building into $TARGET"
+    # One cargo command at a time: concurrent cargo in one target directory
+    # looks exactly like a spurious failure.
+    RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
+      cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-ctl --bin wamn --locked --offline
+    RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
+      cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-host --locked --offline
+    RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
+      cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-scenario-worker --locked --offline
+    RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
+      cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-proof-integration --bin wamn-dev-env --locked --offline
+    RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
+      cargo build --manifest-path "$TREE/components/Cargo.toml" -p http-route --target wasm32-wasip2 --locked --offline
+  fi
+  BUILD_CACHED=$([[ $built -eq 1 ]] && echo true || echo false)
+  BUILD_SECONDS=$(( $(date +%s) - started ))
+  for artifact in debug/wamn debug/wamn-host debug/wamn-scenario-worker debug/wamn-dev-env; do
+    [[ -x "$TARGET/$artifact" ]] || die "$TARGET/$artifact was not built" "$EX_ENV"
+  done
+  [[ -s "$TARGET/wasm32-wasip2/debug/http_route.wasm" ]] \
+    || die "the flow-http workload was not built" "$EX_ENV"
+}
+
+# The frozen skill inventory (F17). Both agents select skills by description, so
+# a skill appearing between runs changes the measurement silently.
+record_skills() {
+  local root
+  {
+    echo "["
+    local first=1
+    for root in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.codex/skills" \
+                "$DIR/worktree/.agents/skills" "$DIR/worktree/.claude/skills"; do
+      [[ -d "$root" ]] || continue
+      local skill
+      while IFS= read -r skill; do
+        [[ $first -eq 1 ]] || echo ","
+        first=0
+        printf '  {"name":%s,"path":%s,"sha256":%s}' \
+          "$(jq -Rn --arg v "$(basename "$(dirname "$skill")")" '$v')" \
+          "$(jq -Rn --arg v "${skill#"$DIR/worktree/"}" '$v')" \
+          "$(jq -Rn --arg v "$(sha256sum "$skill" | cut -d' ' -f1)" '$v')"
+      done < <(find "$root" -name SKILL.md -type f | sort)
+    done
+    echo
+    echo "]"
+  } > "$DIR/skills.json"
+  jq -e . "$DIR/skills.json" >/dev/null || die "the skill inventory is not valid JSON" "$EX_ENV"
+}
+
+# ------------------------------------------------------- disposable infrastructure
+
+compose_project() { echo "wamn-pilot-$RUN"; }
+
+start_infrastructure() {
+  local compose="$TREE/test-support/infrastructure/std-virtualization.compose.yaml"
+  REGISTRY_AUTHORITY="127.0.0.1:$REGISTRY_PORT"
+  REGISTRY_USERNAME="wamn-pilot"
+  FLOW_HTTP_IMAGE="$REGISTRY_AUTHORITY/wamn/flow-http:pilot"
+  local password; password="$(openssl rand -hex 32)"
+
+  printf '%s\n' "$password" \
+    | docker run --rm -i --entrypoint htpasswd httpd:2-alpine -Bni "$REGISTRY_USERNAME" \
+    > "$DIR/env/htpasswd"
+  jq -n --arg authority "$REGISTRY_AUTHORITY" --arg username "$REGISTRY_USERNAME" \
+        --arg password "$password" \
+        '{auths:{($authority):{username:$username,password:$password}}}' \
+    > "$DIR/env/dockerconfig.json"
+
+  WAMN_STD_VIRT_PG_PORT="$PG_PORT" \
+  WAMN_STD_VIRT_REGISTRY_PORT=5003 \
+  WAMN_ROUTE_REGISTRY_PORT="$REGISTRY_PORT" \
+  WAMN_ROUTE_REGISTRY_HTPASSWD="$DIR/env/htpasswd" \
+  WAMN_RECEIVING_DEV_NATS_PORT="$NATS_PORT" \
+  WAMN_RECEIVING_DEV_TEMPO_PORT="$TEMPO_PORT" \
+  WAMN_RECEIVING_DEV_OTLP_PORT="$OTLP_PORT" \
+    docker compose --profile receiving-route -p "$(compose_project)" -f "$compose" \
+      up --detach --wait --wait-timeout 60 \
+      receiving-route-postgres authenticated-registry receiving-dev-nats receiving-dev-tempo \
+      >> "$DIR/env.log" 2>&1 \
+    || die "the disposable services did not come up; see $DIR/env.log" "$EX_ENV"
+
+  # Probe each service the way the standup connects to it, not by port alone.
+  local waited=0
+  until curl --fail --silent "http://127.0.0.1:$TEMPO_PORT/ready" >/dev/null; do
+    waited=$((waited + 1)); [[ $waited -lt 60 ]] || die "Tempo never became ready" "$EX_ENV"
+    sleep 1
+  done
+  PGPASSWORD=probe psql "postgresql://postgres@127.0.0.1:$PG_PORT/postgres" -Atqc 'select 1' >/dev/null \
+    || die "the disposable PostgreSQL did not answer a query" "$EX_ENV"
+
+  WASH_REG_USER="$REGISTRY_USERNAME" WASH_REG_PASSWORD="$password" \
+    wash push "$FLOW_HTTP_IMAGE" "$TARGET/wasm32-wasip2/debug/http_route.wasm" --insecure \
+    >> "$DIR/env.log" 2>&1 \
+    || die "the flow-http workload did not publish; see $DIR/env.log" "$EX_ENV"
+  unset password
+}
+
+# Both providers take the same flags and write the same two files, so nothing
+# downstream knows which ran. They differ in ONE thing: which binary provisions.
+# dev-env is the test binary the documented sequence uses; dev-up is the product
+# subcommand that landed with wamn-10yt.10.32. Identity is the standup module's
+# constants in both, so a manifest naming a different org, project, environment
+# or tenant is refused here rather than silently ignored.
+run_standup() {
+  local pair field value named
+  for pair in "org:acme" "project:receiving" "env:dev" "tenant:receiving-route-auth"; do
+    field="${pair%%:*}"; value="${pair#*:}"
+    named="$(jq -r ".identity.$field" "$MANIFEST")"
+    [[ "$named" == "$value" ]] \
+      || die "the standup fixes identity.$field to $value and the manifest names $named" "$EX_ENV"
+  done
+
+  local -a provider
+  case "$STANDUP" in
+    dev-env) provider=("$TARGET/debug/wamn-dev-env") ;;
+    dev-up)  provider=("$TARGET/debug/wamn" dev up) ;;
+  esac
+
+  local -a package_flags=()
+  local source
+  for source in "${M_PACKAGE_SOURCES[@]}"; do
+    package_flags+=(--package "$DIR/worktree/$source")
+  done
+  [[ ${#package_flags[@]} -gt 0 ]] \
+    || die "the manifest names no package_sources; the standup requires at least one" "$EX_ENV"
+
+  setsid nohup "${provider[@]}" \
+    --system-database-url "postgresql://postgres:probe@127.0.0.1:$PG_PORT/postgres" \
+    --root "$DIR/env" \
+    --nats-url "nats://127.0.0.1:$NATS_PORT" \
+    --tempo-query-url "http://127.0.0.1:$TEMPO_PORT" \
+    --otel-exporter-otlp-endpoint "http://127.0.0.1:$OTLP_PORT" \
+    --component-artifact-base "$REGISTRY_AUTHORITY/wamn/components" \
+    --release-artifact-base "$REGISTRY_AUTHORITY/wamn/releases" \
+    --registry-auth-file "$DIR/env/dockerconfig.json" \
+    --route-host "$M_ROUTE_HOST" \
+    --flow-http-workload-image "$FLOW_HTTP_IMAGE" \
+    --host-binary "$TARGET/debug/wamn-host" \
+    --scenario-worker-binary "$TARGET/debug/wamn-scenario-worker" \
+    "${package_flags[@]}" \
+    >> "$DIR/env.log" 2>&1 < /dev/null &
+  echo $! > "$DIR/env/standup.pid"
+  disown
+
+  # The Gate is a spawned child on a fixed port, so readiness is a bounded TCP
+  # connect against that port and a refusal names it.
+  local waited=0
+  until [[ -s "$DIR/env/dev.json" && -s "$DIR/env/route-caller-pat.json" ]] \
+        && ss -Hltn "sport = :$GATE_PORT" | grep -q .; do
+    waited=$((waited + 1))
+    [[ $waited -lt 180 ]] || die "the $STANDUP standup did not hold a Gate on $GATE_PORT; see $DIR/env.log" "$EX_ENV"
+    kill -0 "$(cat "$DIR/env/standup.pid")" 2>/dev/null \
+      || die "the $STANDUP standup exited; see $DIR/env.log" "$EX_ENV"
+    sleep 1
+  done
+  chmod 700 "$DIR/env"
+}
+
+# ------------------------------------------------------------------ up, the verb
+
+verb_up() {
+  [[ -n "$AGENT" ]] || die "--agent is required for up"
+  [[ -n "$TASK" ]] || die "--task is required for up"
+  case "$AGENT" in claude|codex|stub) ;; *) die "--agent takes claude, codex or stub" ;; esac
+  local task_dir; task_dir="$(cd "$TASK" && pwd -P)" || die "--task $TASK is not a directory"
+  [[ ! -d "$DIR" ]] || die "run $RUN already exists at $DIR"
+
+  COMMIT="${COMMIT:-HEAD}"
+  local commit; commit="$(git -C "$TREE" rev-parse "$COMMIT")" || die "cannot resolve $COMMIT" "$EX_ENV"
+
+  preflight
+  validate_manifest "$task_dir/task.json" "$commit" "$task_dir"
+
+  mkdir -p "$DIR"/{env,fixture,bin,dev-logs,grade}
+  chmod 700 "$DIR/env"
+  cp -a "$task_dir/." "$DIR/fixture/"
+  cp "$task_dir/task.json" "$DIR/task.json"
+  read_manifest
+  : > "$DIR/verbs.jsonl"; : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
+  : > "$DIR/env.log"
+
+  build_binaries
+
+  # A2, the worktree contract: detached at the pinned commit, no remote, clean.
+  # No remote is not tidiness. It is what makes "do not push" true by
+  # construction rather than by asking the agent nicely.
+  git -C "$TREE" worktree add --detach "$DIR/worktree" "$commit" >> "$DIR/env.log" 2>&1 \
+    || die "could not create the run worktree" "$EX_ENV"
+  git -C "$DIR/worktree" remote remove origin >> "$DIR/env.log" 2>&1 || true
+  [[ -z "$(git -C "$DIR/worktree" status --porcelain=v1 --untracked-files=all)" ]] \
+    || die "the run worktree is not clean" "$EX_ENV"
+
+  record_skills
+  if [[ -s "$PILOT_HOME/runs/001-skills.json" ]]; then
+    diff <(jq -S . "$PILOT_HOME/runs/001-skills.json") <(jq -S . "$DIR/skills.json") >/dev/null \
+      || die "the skill inventory differs from run 001; arms would not compare" "$EX_ENV"
+  else
+    cp "$DIR/skills.json" "$PILOT_HOME/runs/001-skills.json"
+  fi
+
+  install -m 755 "$TREE/tools/agent-pilot-wamn-shim" "$DIR/bin/wamn"
+  ln -sf "$TARGET/debug/wamn-ctl" "$DIR/bin/wamn-ctl" 2>/dev/null || true
+
+  start_infrastructure
+  run_standup
+
+  BASELINE_STAGES=0
+  if [[ -n "$M_BASELINE_ROOT" ]]; then
+    note "baseline run against $M_BASELINE_ROOT"
+    ( cd "$DIR/worktree" && "$TARGET/debug/wamn" dev \
+        --config "$DIR/env/dev.json" --overlay-root "$DIR/worktree/$M_BASELINE_ROOT" ) \
+      > "$DIR/baseline.out" 2>&1 || true
+    BASELINE_STAGES="$(grep -c 'run completed:' "$DIR/baseline.out" || true)"
+    grep -q 'run completed:' "$DIR/baseline.out" \
+      || { verb_down; die "the baseline run did not complete; see $DIR/baseline.out" "$EX_ENV"; }
+    BASELINE_STAGES="$(sed -n 's/^run completed: //p' "$DIR/baseline.out" | tr ',' '\n' | grep -c .)"
+    [[ "$BASELINE_STAGES" -eq 12 ]] \
+      || { verb_down; die "the baseline run reported $BASELINE_STAGES stages, not twelve" "$EX_ENV"; }
+  fi
+
+  write_run_json "$commit"
+  note "up ok: $DIR"
+}
+
+write_run_json() {
+  local commit="$1"
+  jq -n \
+    --arg run "$RUN_ID" --arg commit "$commit" --arg task "$(jq -r .task "$MANIFEST")" \
+    --arg agent "$AGENT" --arg standup "$STANDUP" \
+    --arg load "$(cut -d' ' -f1-3 /proc/loadavg)" --argjson cores "$(nproc)" \
+    --argjson cached "$BUILD_CACHED" --argjson build_seconds "$BUILD_SECONDS" \
+    --argjson baseline_stages "${BASELINE_STAGES:-0}" \
+    '{run:$run, commit:$commit, task:$task, agent:$agent, standup:$standup,
+      machine:{load_at_launch:$load, cores:$cores},
+      build:{cached:$cached, seconds:$build_seconds},
+      up:{ok:true, baseline_stages:$baseline_stages},
+      launch:null, verbs:null, git:null, down:null}' \
+    > "$DIR/run.json"
+}
+
+# --------------------------------------------------------------- launch, the verb
+
+# A3. The driver's raw stream is stored verbatim: it is the only record of what
+# the agent did, and a summary written later cannot be re-derived from a summary.
+verb_launch() {
+  read_manifest
+  [[ -s "$DIR/env/dev.json" ]] || die "no environment; run up first" "$EX_ENV"
+  AGENT="$(jq -r .agent "$DIR/run.json")"
+
+  local system_path; system_path="$(strip_bd_from_path)"
+  local -a driver
+  case "$AGENT" in
+    claude) driver=(claude --print --output-format stream-json --verbose
+                    --permission-mode bypassPermissions "$(cat "$DIR/fixture/BRIEF.md")") ;;
+    codex)  driver=(codex exec --dangerously-bypass-approvals-and-sandbox --json
+                    "$(cat "$DIR/fixture/BRIEF.md")") ;;
+    stub)   driver=("$TREE/tools/agent-pilot-stub-driver" "--stub-mode" "$STUB_MODE") ;;
+  esac
+  command -v "${driver[0]}" >/dev/null || [[ -x "${driver[0]}" ]] \
+    || die "the ${AGENT} driver is not on PATH" "$EX_ENV"
+
+  local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  : > "$DIR/transcript.jsonl"
+
+  # `bd` off PATH (F17): the hooks no-op and the pilot cannot write the task
+  # system. Recorded as a known deviation from an ordinary session.
+  (
+    cd "$DIR/worktree"
+    PATH="$DIR/bin:$TARGET/debug:$system_path" \
+    WAMN_PILOT_REAL_WAMN="$TARGET/debug/wamn" \
+    WAMN_DEV_CONFIG="$DIR/env/dev.json" \
+    WAMN_ROUTE_HOST="$M_ROUTE_HOST" \
+    WAMN_ROUTE_CALLER_PAT_FILE="$DIR/env/route-caller-pat.json" \
+    WAMN_PILOT_RUN_DIR="$DIR" \
+    WAMN_PILOT_TASK_DIR="$DIR/fixture" \
+    CARGO_TARGET_DIR= \
+      "${driver[@]}" >> "$DIR/transcript.jsonl" 2>> "$DIR/env.log"
+  ) &
+  local driver_pid=$!
+  local reason; reason="$(watch_driver "$driver_pid")"
+  wait "$driver_pid" 2>/dev/null; local exit_code=$?
+
+  local ended; ended="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local model_id session_id
+  model_id="$(jq -rs '[.[] | .. | objects | (.model // empty)] | first // ""' "$DIR/transcript.jsonl" 2>/dev/null || echo "")"
+  session_id="$(jq -rs '[.[] | .. | objects | (.session_id // empty)] | first // ""' "$DIR/transcript.jsonl" 2>/dev/null || echo "")"
+
+  jq -n --arg agent "$AGENT" --arg binary "${driver[0]}" \
+        --arg started "$started" --arg ended "$ended" \
+        --argjson exit "$exit_code" --arg reason "$reason" \
+        --arg model_id "$model_id" --arg session_id "$session_id" \
+        '{agent:$agent, binary:$binary, started:$started, ended:$ended,
+          exit:$exit, reason:$reason, model_id:$model_id, session_id:$session_id}' \
+    > "$DIR/driver.json"
+
+  summarize_verbs "$started"
+  note "launch ended: $reason"
+  [[ "$reason" == "completed" ]] || return "$EX_DRIVER"
+}
+
+strip_bd_from_path() {
+  local out="" part
+  IFS=: read -ra parts <<< "$PATH"
+  for part in "${parts[@]}"; do
+    [[ -x "$part/bd" ]] && continue
+    out="${out:+$out:}$part"
+  done
+  printf '%s' "$out"
+}
+
+# Timeouts in order: idle, then step, then the run cap. Idle needs both signals,
+# because an agent that is thinking without printing is not the same as one that
+# is editing without printing.
+watch_driver() {
+  local pid="$1" start last_line last_change now
+  start="$(date +%s)"
+  last_line="$start"; last_change="$start"
+  local last_size; last_size="$(stat -c %s "$DIR/transcript.jsonl")"
+  local last_tree; last_tree="$(worktree_fingerprint)"
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 5
+    now="$(date +%s)"
+    local size; size="$(stat -c %s "$DIR/transcript.jsonl")"
+    [[ "$size" != "$last_size" ]] && { last_size="$size"; last_line="$now"; }
+    local tree; tree="$(worktree_fingerprint)"
+    [[ "$tree" != "$last_tree" ]] && { last_tree="$tree"; last_change="$now"; }
+    if (( now - start > CAP_SECONDS )); then stop_tree "$pid"; echo run-cap; return; fi
+    if (( now - last_line > STEP_SECONDS )); then stop_tree "$pid"; echo step-timeout; return; fi
+    if (( now - last_line > IDLE_SECONDS && now - last_change > IDLE_SECONDS )); then
+      stop_tree "$pid"; echo idle-timeout; return
+    fi
+  done
+  echo completed
+}
+
+worktree_fingerprint() {
+  find "$DIR/worktree" -newermt '-1 year' -printf '%T@ %s %p\n' 2>/dev/null \
+    | sha256sum | cut -d' ' -f1
+}
+
+stop_tree() {
+  local pid="$1"
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null && (( waited < 15 )); do sleep 1; waited=$((waited + 1)); done
+  kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+}
+
+summarize_verbs() {
+  local started="$1"
+  local runs failed hold first_green
+  runs="$(jq -s '[.[] | select(.argv[0] == "dev")] | length' "$DIR/verbs.jsonl")"
+  failed="$(jq -s '[.[] | select(.argv[0] == "dev" and .exit != 0)] | length' "$DIR/verbs.jsonl")"
+  hold="$(jq -s '[.[] | select(.argv[0] == "dev" and (.argv | index("--hold")))] | length' "$DIR/verbs.jsonl")"
+  first_green="$(first_green_minutes "$started")"
+  local tmp; tmp="$(mktemp "$DIR/run.json.XXXXXX")"
+  jq --argjson runs "$runs" --argjson failed "$failed" --argjson hold "$hold" \
+     --argjson first_green "$first_green" --slurpfile driver "$DIR/driver.json" \
+     '.launch = $driver[0]
+      | .verbs = {wamn_dev_runs:$runs, wamn_dev_failed:$failed,
+                  wamn_dev_hold_runs:$hold, first_green_minutes:$first_green}' \
+     "$DIR/run.json" > "$tmp" && mv "$tmp" "$DIR/run.json"
+}
+
+# The first green is the first invocation whose own stdout carried a completed
+# receipt with twelve stages. Reading the log rather than the exit code is
+# deliberate: a zero exit from a partial run is not a green loop.
+first_green_minutes() {
+  local started="$1" row n log stages
+  while read -r row; do
+    n="$(jq -r .n <<< "$row")"
+    for log in "$DIR/dev-logs/$n-"*.out; do
+      [[ -s "$log" ]] || continue
+      stages="$(sed -n 's/^run completed: //p' "$log" | tr ',' '\n' | grep -c . || true)"
+      if [[ "${stages:-0}" -eq 12 ]]; then
+        local at; at="$(jq -r .ts <<< "$row")"
+        echo $(( ( $(date -d "$at" +%s) - $(date -d "$started" +%s) ) / 60 ))
+        return
+      fi
+    done
+  done < <(jq -c '.' "$DIR/verbs.jsonl")
+  echo 0
+}
+
+# ----------------------------------------------------------------- down, the verb
+
+verb_down() {
+  local residue=()
+  [[ -d "$DIR" ]] || { note "no run directory for $RUN; nothing to tear down"; return 0; }
+
+  if [[ -s "$DIR/env/standup.pid" ]]; then
+    local pid; pid="$(cat "$DIR/env/standup.pid")"
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -INT "$pid" 2>/dev/null || true
+      local waited=0
+      while kill -0 "$pid" 2>/dev/null && (( waited < 30 )); do sleep 1; waited=$((waited + 1)); done
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  fi
+
+  # A host or a held loop left behind is residue, not a leak to ignore: it holds
+  # the ports the next run preflights.
+  local stray
+  # pgrep matches its own invoking shell, so collect first and exclude this one.
+  while read -r stray; do
+    [[ -n "$stray" && "$stray" != "$$" ]] || continue
+    residue+=("process $stray")
+    kill -TERM "$stray" 2>/dev/null || true
+  done < <(pgrep -f "$DIR/worktree|$DIR/env" 2>/dev/null | grep -v "^$$\$" || true)
+
+  local compose="$TREE/test-support/infrastructure/std-virtualization.compose.yaml"
+  docker compose --profile receiving-route -p "$(compose_project)" -f "$compose" \
+    down --volumes --remove-orphans >> "$DIR/env.log" 2>&1 || true
+
+  git -C "$TREE" worktree prune >> "$DIR/env.log" 2>&1 || true
+  if [[ $DISCARD_WORKTREE -eq 1 && -d "$DIR/worktree" ]]; then
+    git -C "$TREE" worktree remove --force "$DIR/worktree" >> "$DIR/env.log" 2>&1 || true
+  fi
+
+  local labelled
+  labelled="$(docker ps -aq --filter "label=com.docker.compose.project=$(compose_project)" || true)"
+  [[ -z "$labelled" ]] || residue+=("containers $labelled")
+  local port
+  for port in "${PORTS[@]}"; do
+    [[ -z "$(ss -Hltn "sport = :$port")" ]] || residue+=("listener on $port")
+  done
+
+  if [[ -s "$DIR/run.json" ]]; then
+    local tmp; tmp="$(mktemp "$DIR/run.json.XXXXXX")"
+    jq --argjson residue "$(printf '%s\n' "${residue[@]:-}" | jq -Rs 'split("\n") | map(select(length > 0))')" \
+       '.down = {ok: ($residue | length == 0), residue: $residue}' \
+       "$DIR/run.json" > "$tmp" && mv "$tmp" "$DIR/run.json"
+  fi
+
+  if [[ ${#residue[@]} -gt 0 ]]; then
+    printf 'agent-pilot-run: teardown residue: %s\n' "${residue[*]}" >&2
+    return "$EX_RESIDUE"
+  fi
+  note "down ok"
+}
+
+# ---------------------------------------------------------------- grade and all
+
+verb_grade() {
+  "$TREE/tools/agent-pilot-grade" --run "$RUN" || return "$EX_GRADE"
+}
+
+record_final_git() {
+  [[ -d "$DIR/worktree" ]] || return 0
+  local commit; commit="$(jq -r .commit "$DIR/run.json")"
+  git -C "$DIR/worktree" diff "$commit" > "$DIR/final.diff" 2>/dev/null || true
+  git -C "$DIR/worktree" status --porcelain=v1 --untracked-files=all > "$DIR/final.status" 2>/dev/null || true
+  git -C "$DIR/worktree" log --oneline "$commit"..HEAD > "$DIR/commits.log" 2>/dev/null || true
+
+  local -a changed=()
+  mapfile -t changed < <(
+    { git -C "$DIR/worktree" diff --name-only "$commit" 2>/dev/null || true
+      cut -c4- "$DIR/final.status" 2>/dev/null || true; } | sort -u | grep -v '^$' || true)
+
+  local -a allowed outside=()
+  mapfile -t allowed < <(jq -r '.allowed_paths[]' "$MANIFEST")
+  local file pattern ok
+  for file in "${changed[@]}"; do
+    ok=0
+    for pattern in "${allowed[@]}"; do
+      [[ "$file" == $pattern ]] && ok=1
+    done
+    [[ $ok -eq 1 ]] || outside+=("$file")
+  done
+
+  local tmp; tmp="$(mktemp "$DIR/run.json.XXXXXX")"
+  jq --argjson commits "$(wc -l < "$DIR/commits.log")" \
+     --argjson files "${#changed[@]}" \
+     --argjson outside "$(printf '%s\n' "${outside[@]:-}" | jq -Rs 'split("\n") | map(select(length > 0))')" \
+     '.git = {commits:$commits, files_changed:$files, outside_allowed_paths:$outside}' \
+     "$DIR/run.json" > "$tmp" && mv "$tmp" "$DIR/run.json"
+}
+
+main() {
+  parse_arguments "$@"
+  resolve_tree
+  mkdir -p "$PILOT_HOME/runs"
+  resolve_run_directory
+  case "$VERB" in
+    up)     verb_up ;;
+    launch) read_manifest; verb_launch ;;
+    grade)  read_manifest; record_final_git; verb_grade ;;
+    down)   [[ -s "$DIR/task.json" ]] && read_manifest; verb_down ;;
+    all)
+      verb_up
+      local status=0
+      verb_launch || status=$?
+      record_final_git
+      if [[ $status -eq 0 ]]; then verb_grade || status=$?; fi
+      verb_down || status=$?
+      return "$status"
+      ;;
+  esac
+}
+
+main "$@"

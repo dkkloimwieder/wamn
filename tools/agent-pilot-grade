@@ -1,0 +1,434 @@
+#!/usr/bin/env bash
+# Agent-authoring pilot grader. Spec item A7.
+#
+# The grader is generic: it knows the manifest interface and nothing about any
+# application. It is also NOT A SECOND POLICY. Where the loop already fences a
+# rule, the grader reports the loop's verdict and runs nothing of its own. It
+# runs only the checks the loop has no fence for.
+#
+#   agent-pilot-grade --run <nnn>
+#   agent-pilot-grade --replay <dir>
+#
+# Exit codes: 0 ok · 2 usage · 10 environment · 30 a grading failure.
+set -euo pipefail
+umask 077
+
+readonly EX_USAGE=2 EX_ENV=10 EX_GRADE=30
+readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
+
+die() { printf 'agent-pilot-grade: %s\n' "$*" >&2; exit "${2:-$EX_USAGE}"; }
+note() { printf '[grade] %s\n' "$*" >&2; }
+
+RUN=""; REPLAY=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run) RUN="${2:-}"; shift 2 ;;
+    --replay) REPLAY="${2:-}"; shift 2 ;;
+    *) die "unknown flag $1" ;;
+  esac
+done
+
+TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+if [[ -n "$REPLAY" ]]; then
+  DIR="$(cd "$REPLAY" && pwd -P)" || die "--replay $REPLAY is not a directory"
+else
+  [[ -n "$RUN" ]] || die "--run or --replay is required"
+  matches=("$PILOT_HOME"/runs/"$RUN"-*)
+  [[ -d "${matches[0]}" ]] || die "no run directory for $RUN" "$EX_ENV"
+  DIR="${matches[0]}"
+fi
+
+MANIFEST="$DIR/task.json"
+[[ -s "$MANIFEST" ]] || die "no task manifest at $MANIFEST" "$EX_ENV"
+mkdir -p "$DIR/grade"
+
+ROUTE_HOST="$(jq -r '.identity.route_host' "$MANIFEST")"
+OVERLAY_ROOT="$(jq -r '.overlay_root' "$MANIFEST")"
+STEPS="$DIR/fixture/$(jq -r '.grade.steps // "steps.json"' "$MANIFEST")"
+COMMIT="$(jq -r '.commit' "$DIR/run.json")"
+
+HELD_PID=""
+cleanup() {
+  if [[ -n "$HELD_PID" ]] && kill -0 "$HELD_PID" 2>/dev/null; then
+    kill -INT "$HELD_PID" 2>/dev/null || true
+    local waited=0
+    while kill -0 "$HELD_PID" 2>/dev/null && (( waited < 30 )); do sleep 1; waited=$((waited + 1)); done
+    kill -KILL "$HELD_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+# ---- 1. the loop -----------------------------------------------------------
+# Twelve stages and a served endpoint, from the agent's own committed worktree.
+# The grader runs the loop itself rather than trusting the agent's last run,
+# because a report that reproduces is the whole point of H-5.
+grade_loop() {
+  if [[ -n "$REPLAY" ]]; then
+    LOOP_PASS="$(jq -r '.loop.pass // false' "$DIR/grade/checklist-input.json" 2>/dev/null || echo false)"
+    BASE_URL="$(jq -r '.base_url // ""' "$DIR/grade/checklist-input.json" 2>/dev/null || echo "")"
+    return 0
+  fi
+  local target; target="$(ls -d "$PILOT_HOME"/target-* 2>/dev/null | head -1)"
+  [[ -x "$target/debug/wamn" ]] || die "no built wamn under $PILOT_HOME" "$EX_ENV"
+
+  ( cd "$DIR/worktree" && "$target/debug/wamn" dev \
+      --config "$DIR/env/dev.json" --overlay-root "$DIR/worktree/$OVERLAY_ROOT" --hold ) \
+    > "$DIR/grade/dev.out" 2>&1 &
+  HELD_PID=$!
+
+  local waited=0
+  until grep -q '^run holding$' "$DIR/grade/dev.out" 2>/dev/null; do
+    kill -0 "$HELD_PID" 2>/dev/null || break
+    waited=$((waited + 1)); (( waited < 900 )) || break
+    sleep 1
+  done
+
+  local stages
+  stages="$(sed -n 's/^run completed: //p' "$DIR/grade/dev.out" | tr ',' '\n' | grep -c . || true)"
+  BASE_URL="$(sed -n 's/^run served: \([^ ]*\) host=.*/\1/p' "$DIR/grade/dev.out" | head -1)"
+  if [[ "${stages:-0}" -eq 12 && -n "$BASE_URL" ]]; then LOOP_PASS=true; else LOOP_PASS=false; fi
+  LOOP_STAGES="${stages:-0}"
+}
+
+# ---- 2. paths --------------------------------------------------------------
+grade_paths() {
+  OUTSIDE="$(jq -c '.git.outside_allowed_paths // []' "$DIR/run.json")"
+  local tracker_touched=""
+  if [[ -z "$REPLAY" ]]; then
+    tracker_touched="$(git -C "$DIR/worktree" diff --name-only "$COMMIT"..HEAD -- .beads .claude .codex 2>/dev/null || true)"
+  fi
+  if [[ "$OUTSIDE" == "[]" && -z "$tracker_touched" ]]; then PATHS_PASS=true; else PATHS_PASS=false; fi
+  TRACKER_TOUCHED="$tracker_touched"
+}
+
+# ---- 3. steps --------------------------------------------------------------
+# Steps only drive routes. The agent's own naming choice is RECORDED, not
+# failed: a step names an operation and the grader resolves the path from the
+# package's published attachments.
+resolve_attachments() {
+  ATTACHMENTS="$(find "$DIR/worktree/$OVERLAY_ROOT" -path '*publication/attachments.json' -type f 2>/dev/null | head -1)"
+  [[ -n "$ATTACHMENTS" ]] || note "no attachments.json under $OVERLAY_ROOT; route steps will refuse"
+}
+
+route_path_for() {
+  local operation="$1"
+  [[ -n "$ATTACHMENTS" ]] || { echo ""; return; }
+  jq -r --arg op "$operation" '
+    [.. | objects | select((.operation // "") == $op) | (.route.path // .path // empty)] | first // ""
+  ' "$ATTACHMENTS"
+}
+
+bearer_token() {
+  jq -r '.stringData.token' "$DIR/env/route-caller-pat.json"
+}
+
+# A reuse clause pulls a value a previous step returned, so a create can feed
+# the check-in that follows it without the fixture knowing any id in advance.
+resolve_body() {
+  local step="$1" body
+  body="$(jq -c '.body // {}' <<< "$step")"
+  local field source value
+  while read -r field; do
+    [[ -n "$field" ]] || continue
+    source="$(jq -r --arg f "$field" '.reuse[$f]' <<< "$step")"
+    local from_step="${source%%.*}" path="${source#*.}"
+    value="$(jq -r --arg id "$from_step" --arg p "$path" '
+      [.[] | select(.id == $id)] | first | getpath($p | split("."))
+    ' "$DIR/grade/results.json")"
+    body="$(jq -c --arg f "$field" --arg v "$value" '.[$f] = $v' <<< "$body")"
+  done < <(jq -r '.reuse // {} | keys[]' <<< "$step")
+  printf '%s' "$body"
+}
+
+fire_step() {
+  local step="$1" path="$2" body="$3" request_id="$4"
+  local envelope; envelope="$(jq -cn --arg rid "$request_id" --argjson body "$body" \
+    '[{request_id:$rid} + $body]')"
+  curl --silent --show-error --max-time 60 \
+    --header "Host: $ROUTE_HOST" \
+    --header "Authorization: Bearer $(bearer_token)" \
+    --header 'content-type: application/json' \
+    --data "$envelope" \
+    --write-out '\n%{http_code}' \
+    "$BASE_URL$path" 2>>"$DIR/grade/http.err"
+}
+
+grade_steps() {
+  : > "$DIR/grade/http.jsonl"
+  : > "$DIR/grade/http.err"
+  echo '[]' > "$DIR/grade/results.json"
+  STEP_RESULTS='[]'
+  resolve_attachments
+
+  local step id must invariant operation path body response status payload verdict evidence
+  while read -r step; do
+    id="$(jq -r .id <<< "$step")"
+    must="$(jq -r '.must // false' <<< "$step")"
+    invariant="$(jq -r '.invariant // ""' <<< "$step")"
+    verdict=false; evidence=""
+
+    if jq -e 'has("sql")' <<< "$step" >/dev/null; then
+      # A read-only assertion against the durable database. Nothing seeds it;
+      # the rows under test were written by the steps above through routes.
+      local sql expect_rows rows
+      sql="$(jq -r .sql <<< "$step")"
+      expect_rows="$(jq -r '.expect.rows // empty' <<< "$step")"
+      rows="$(psql "$(jq -r '.target_database_url // .project_database_url // empty' "$DIR/env/dev.json")" \
+                -Atqc "$sql" 2>>"$DIR/grade/http.err" | grep -c . || true)"
+      [[ "$rows" == "$expect_rows" ]] && verdict=true
+      evidence="sql rows=$rows expected=$expect_rows"
+
+    elif jq -e 'has("concurrent")' <<< "$step" >/dev/null; then
+      # Contention. Fired in parallel on purpose: exactly one must refuse, and
+      # a sequential pair would pass whether or not the invariant holds.
+      local code refusals=0 target
+      local -a pids=()
+      while read -r target; do
+        ( fire_step "$step" "$(route_path_for "$(jq -r --arg t "$target" '
+              [.[] | select(.id == $t)] | first | .route.operation' "$STEPS")")" \
+            "$(resolve_body "$(jq -c --arg t "$target" '[.[] | select(.id == $t)] | first' "$STEPS")")" \
+            "$id-$target" > "$DIR/grade/$id-$target.out" 2>&1 ) &
+        pids+=($!)
+      done < <(jq -r '.concurrent[]' <<< "$step")
+      wait "${pids[@]}" 2>/dev/null || true
+      code="$(jq -r '.expect.exactly_one.error_code' <<< "$step")"
+      while read -r target; do
+        grep -q "\"$code\"" "$DIR/grade/$id-$target.out" 2>/dev/null && refusals=$((refusals + 1))
+      done < <(jq -r '.concurrent[]' <<< "$step")
+      [[ "$refusals" -eq 1 ]] && verdict=true
+      evidence="concurrent refusals=$refusals expected=1 code=$code"
+
+    else
+      operation="$(jq -r '.route.operation' <<< "$step")"
+      path="$(route_path_for "$operation")"
+      if [[ -z "$path" ]]; then
+        evidence="no attachment publishes operation $operation"
+      else
+        body="$(resolve_body "$step")"
+        response="$(fire_step "$step" "$path" "$body" "$id")"
+        status="$(tail -1 <<< "$response")"
+        payload="$(sed '$d' <<< "$response")"
+        jq -cn --arg id "$id" --arg path "$path" --argjson body "$body" \
+               --arg status "$status" --arg payload "$payload" \
+               '{id:$id, path:$path, request:$body, status:$status, response:$payload}' \
+          >> "$DIR/grade/http.jsonl"
+        verdict_for_step "$step" "$status" "$payload"
+      fi
+    fi
+
+    STEP_RESULTS="$(jq -c --arg id "$id" --argjson must "$must" --arg inv "$invariant" \
+      --argjson pass "$verdict" --arg ev "$evidence" \
+      '. + [{id:$id, must:$must, invariant:$inv, pass:$pass, evidence:$ev}]' <<< "$STEP_RESULTS")"
+    jq -c --arg id "$id" --arg payload "${payload:-}" \
+      '. + [{id:$id, value:(($payload | fromjson? // {}) | if type == "array" then .[0].value // {} else . end)}]' \
+      "$DIR/grade/results.json" > "$DIR/grade/results.tmp" && mv "$DIR/grade/results.tmp" "$DIR/grade/results.json"
+  done < <(jq -c '.[]' "$STEPS")
+}
+
+verdict_for_step() {
+  local step="$1" status="$2" payload="$3"
+  local want_status item want_code
+  want_status="$(jq -r '.expect.status // 200' <<< "$step")"
+  item="$(jq -r '.expect.item // "value"' <<< "$step")"
+  want_code="$(jq -r '.expect.error_code // ""' <<< "$step")"
+
+  verdict=false
+  evidence="status=$status"
+  [[ "$status" == "$want_status" ]] || return 0
+
+  local first; first="$(jq -c 'if type == "array" then .[0] else . end' <<< "$payload" 2>/dev/null || echo '{}')"
+  if [[ "$item" == "error" ]]; then
+    local got; got="$(jq -r '.error.code // ""' <<< "$first")"
+    evidence="$evidence error_code=$got"
+    [[ "$got" == "$want_code" ]] && verdict=true
+    return 0
+  fi
+
+  jq -e 'has("value")' <<< "$first" >/dev/null || { evidence="$evidence no value item"; return 0; }
+  local value; value="$(jq -c '.value' <<< "$first")"
+  verdict=true
+
+  # present: the path exists and is not empty. This is what a create asserts:
+  # the identity it minted is addressable, which is the only thing about a
+  # create that a later step can build on.
+  local path
+  while read -r path; do
+    [[ -n "$path" ]] || continue
+    local got; got="$(jq -r --arg p "$path" 'getpath($p | split(".")) // "" | tostring' <<< "$value")"
+    evidence="$evidence present:$path=${got:-<empty>}"
+    [[ -n "$got" && "$got" != "null" ]] || verdict=false
+  done < <(jq -r '.expect.present // [] | .[]' <<< "$step")
+
+  # value: the path equals a literal the fixture pinned.
+  while read -r path; do
+    [[ -n "$path" ]] || continue
+    local want mine
+    want="$(jq -r --arg p "$path" '.expect.value[$p] | tostring' <<< "$step")"
+    mine="$(jq -r --arg p "$path" 'getpath($p | split(".")) | tostring' <<< "$value")"
+    evidence="$evidence $path=$mine want=$want"
+    [[ "$mine" == "$want" ]] || verdict=false
+  done < <(jq -r '.expect.value // {} | keys[]' <<< "$step")
+
+  # equals: the path equals a value an earlier step returned. This is how the
+  # claim law is checked without the grader knowing any id in advance.
+  local other
+  while read -r path; do
+    [[ -n "$path" ]] || continue
+    other="$(jq -r --arg p "$path" '.expect.equals[$p]' <<< "$step")"
+    local mine theirs
+    mine="$(jq -r --arg p "$path" 'getpath($p | split(".")) | tostring' <<< "$value")"
+    theirs="$(jq -r --arg id "${other%%.*}" --arg p "${other#*.}" \
+      '[.[] | select(.id == $id)] | first | getpath($p | split(".")) | tostring' "$DIR/grade/results.json")"
+    evidence="$evidence $path=$mine vs $theirs"
+    [[ "$mine" == "$theirs" && -n "$mine" && "$mine" != "null" ]] || verdict=false
+  done < <(jq -r '.expect.equals // {} | keys[]' <<< "$step")
+
+  # count: the array at the path has exactly this many entries.
+  if jq -e '.expect | has("count")' <<< "$step" >/dev/null; then
+    local cpath want got
+    cpath="$(jq -r '.expect.count.path' <<< "$step")"
+    want="$(jq -r '.expect.count.is' <<< "$step")"
+    got="$(jq -r --arg p "$cpath" 'getpath($p | split(".")) | length' <<< "$value")"
+    evidence="$evidence count:$cpath=$got want=$want"
+    [[ "$got" == "$want" ]] || verdict=false
+  fi
+
+  # sorted_by: the array at the path is ordered by the named field. An order
+  # assertion cannot name the ids, because the agent minted them.
+  if jq -e '.expect | has("sorted_by")' <<< "$step" >/dev/null; then
+    local spath field direction ordered
+    spath="$(jq -r '.expect.sorted_by.path' <<< "$step")"
+    field="$(jq -r '.expect.sorted_by.field' <<< "$step")"
+    direction="$(jq -r '.expect.sorted_by.direction // "asc"' <<< "$step")"
+    ordered="$(jq -r --arg p "$spath" --arg f "$field" --arg d "$direction" '
+      (getpath($p | split(".")) // []) as $rows
+      | ($rows | map(.[$f])) as $keys
+      | if ($keys | length) < 1 then "empty"
+        elif $d == "asc" then ($keys == ($keys | sort) | tostring)
+        else ($keys == ($keys | sort | reverse) | tostring) end' <<< "$value")"
+    evidence="$evidence sorted_by:$spath.$field=$ordered"
+    [[ "$ordered" == "true" ]] || verdict=false
+  fi
+}
+
+# ---- 4. checks and fence reports -------------------------------------------
+# The loop already fences three rules. The grader REPORTS its verdicts and runs
+# nothing of its own for them: a second policy that disagrees with the loop
+# would be a second policy, and the loop is the one that ships.
+report_fences() {
+  local out; out="$DIR/grade/dev.out"
+  local migrate admit
+  migrate="$(sed -n 's/^\(.*\) at Migrate: \(.*\)$/\1: \2/p' "$out" | head -1)"
+  admit="$(sed -n 's/^\(.*\) at Admit: \(.*\)$/\1: \2/p' "$out" | head -1)"
+
+  FENCES="$(jq -n \
+    --arg capability "$( [[ -z "$admit" ]] && echo "Admit passed" || echo "$admit" )" \
+    --arg migration "$( [[ -z "$migrate" ]] && echo "Migrate passed" || echo "$migrate" )" \
+    '{ "capability-surface": {source:"Admit", verdict:$capability},
+       "additive-migration": {source:"Migrate", verdict:$migration},
+       "no-environment-data": {source:"Admit", verdict:"unfenced"} }')"
+}
+
+# The checks below have NO fence in the loop, which is the only reason they are
+# here. `naming` is removed the day Gate fences it.
+run_checks() {
+  local replay changed naming row_version
+
+  # claim-replay: proven through the steps, not re-implemented. A fixture that
+  # names no replay step leaves this unproven and says so.
+  replay="$(jq -r '
+    [.[] | select(.invariant | test("replay|idempot"; "i"))] as $r
+    | if ($r | length) == 0 then "no replay step in the fixture"
+      elif ($r | all(.pass)) then "pass" else "fail" end' <<< "$STEP_RESULTS")"
+
+  # row_version: the concurrency column is spelled exactly so, everywhere the
+  # agent declared one.
+  row_version="pass"
+  if [[ -d "$DIR/worktree/$OVERLAY_ROOT" ]]; then
+    local wrong
+    wrong="$(grep -rlE 'rowversion|row_ver\b|version_row|rowVersion' \
+      "$DIR/worktree/$OVERLAY_ROOT" 2>/dev/null | head -5 | tr '\n' ' ' || true)"
+    [[ -z "$wrong" ]] || row_version="fail: $wrong"
+  fi
+
+  # naming: singular snake_case wire identifiers and no version suffixes.
+  naming="pass"
+  if [[ -f "$DIR/worktree/$OVERLAY_ROOT/wamn.json" ]]; then
+    local offenders
+    offenders="$(jq -r '
+      [ .. | objects | (.name? // empty) ]
+      | map(select(type == "string"))
+      | map(select(test("^[a-z][a-z0-9_]*$") | not) // select(test("_v[0-9]+$")))
+      | unique | join(", ")' "$DIR/worktree/$OVERLAY_ROOT/wamn.json" 2>/dev/null || echo "")"
+    [[ -z "$offenders" ]] || naming="fail: $offenders"
+  fi
+
+  CHECKS="$(jq -n --arg replay "$replay" --arg row_version "$row_version" --arg naming "$naming" \
+    '{"claim-replay":$replay, "row_version":$row_version, "naming":$naming}')"
+}
+
+# ---- 5. stop the held loop and prove the database went with it -------------
+verify_teardown() {
+  cleanup; HELD_PID=""
+  local admin; admin="$(jq -r '.system_database_url // empty' "$DIR/env/dev.json")"
+  if [[ -n "$admin" ]]; then
+    local leftovers
+    leftovers="$(psql "$admin" -Atqc \
+      "select datname from pg_database where datname like 'wamn_verify%'" 2>/dev/null | tr '\n' ' ' || true)"
+    if [[ -z "${leftovers// }" ]]; then VERIFICATION_DB_REMOVED=true
+    else VERIFICATION_DB_REMOVED=false; note "verification databases remain: $leftovers"; fi
+  else
+    VERIFICATION_DB_REMOVED=false
+  fi
+}
+
+# ---- 6. the checklist ------------------------------------------------------
+write_checklist() {
+  jq -n \
+    --argjson loop "$(jq -n --argjson pass "$LOOP_PASS" --argjson stages "${LOOP_STAGES:-0}" \
+                       --arg base_url "${BASE_URL:-}" '{pass:$pass, stages:$stages, base_url:$base_url}')" \
+    --argjson paths "$(jq -n --argjson pass "$PATHS_PASS" --argjson outside "$OUTSIDE" \
+                        --arg tracker "$TRACKER_TOUCHED" '{pass:$pass, outside:$outside, tracker:$tracker}')" \
+    --argjson steps "$STEP_RESULTS" \
+    --argjson checks "$CHECKS" \
+    --argjson fences "$FENCES" \
+    --argjson teardown "$VERIFICATION_DB_REMOVED" \
+    '{loop:$loop, paths:$paths, steps:$steps, checks:$checks, fences:$fences,
+      teardown:{verification_database_removed:$teardown},
+      human:{Q3:null, Q7:null, Q8:null, Q9:null, "Q10.activated":null, Q11:null,
+             E1:null, E2:null, E3:null, E4:null, E5:null, E6:null, E7:null,
+             "H-1":null, "H-2":null, "H-3":null, "H-4":null, "H-5":null, "H-6":null,
+             "S-1":null, "S-2":null, "S-3":null}}' \
+    > "$DIR/checklist.json"
+}
+
+# Any miss on the loop, the allow-list, or a must step is a run FAIL. Other
+# steps are recorded and decide nothing.
+decide_outcome() {
+  local failures=()
+  [[ "$LOOP_PASS" == true ]] || failures+=("loop")
+  [[ "$PATHS_PASS" == true ]] || failures+=("paths")
+  local missed
+  missed="$(jq -r '[.[] | select(.must == true and .pass == false) | .id] | join(",")' <<< "$STEP_RESULTS")"
+  [[ -z "$missed" ]] || failures+=("steps: $missed")
+
+  if [[ ${#failures[@]} -eq 0 ]]; then
+    OUTCOME="PASS"
+  else
+    OUTCOME="FAIL (items: ${failures[*]})"
+  fi
+  jq --arg outcome "$OUTCOME" '.outcome = $outcome' "$DIR/checklist.json" \
+    > "$DIR/checklist.tmp" && mv "$DIR/checklist.tmp" "$DIR/checklist.json"
+  note "$OUTCOME"
+}
+
+grade_loop
+grade_paths
+grade_steps
+report_fences
+run_checks
+verify_teardown
+write_checklist
+decide_outcome
+[[ "$OUTCOME" == "PASS" ]] || exit "$EX_GRADE"

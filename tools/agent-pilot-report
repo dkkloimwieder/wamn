@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Agent-authoring pilot report. Spec item A8.
+#
+# Fills protocol section 10 from the raw directory and nothing else, so every
+# number regenerates from the data beside it. Human fields come from
+# $RUN/human.json; a null there is a refusal, not a blank, because a rubric
+# score nobody gave is not a score.
+#
+# This is also where evidence LEAVES the cache. The run directory is working
+# state any tool may delete; the report and its raw directory land in the
+# repository, minus the environment and the worktree.
+#
+#   agent-pilot-report --run <nnn>
+#
+# Exit codes: 0 ok · 2 usage · 30 an unfilled human field.
+set -euo pipefail
+umask 077
+
+readonly EX_USAGE=2 EX_GRADE=30
+readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
+
+die() { printf 'agent-pilot-report: %s\n' "$*" >&2; exit "${2:-$EX_USAGE}"; }
+
+RUN=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --run) RUN="${2:-}"; shift 2 ;;
+    *) die "unknown flag $1" ;;
+  esac
+done
+[[ -n "$RUN" ]] || die "--run is required"
+
+TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+matches=("$PILOT_HOME"/runs/"$RUN"-*)
+[[ -d "${matches[0]}" ]] || die "no run directory for $RUN"
+DIR="${matches[0]}"
+RUN_ID="$(basename "$DIR")"
+
+for required in run.json driver.json checklist.json skills.json human.json; do
+  [[ -s "$DIR/$required" ]] || die "$DIR/$required is missing"
+done
+
+unfilled="$(jq -r '[to_entries[] | select(.value == null) | .key] | join(", ")' "$DIR/human.json")"
+[[ -z "$unfilled" ]] || die "human.json leaves these unfilled: $unfilled" "$EX_GRADE"
+
+OUT="$TREE/docs/experiments/agent-authoring"
+mkdir -p "$OUT/$RUN_ID"
+
+# The raw directory travels, minus the two things that must not: env holds
+# minted credentials, and worktree is a git worktree of this repository.
+rsync -a --delete --exclude env/ --exclude worktree/ --exclude 'run.json.*' \
+  "$DIR/" "$OUT/$RUN_ID/"
+
+jq -r --slurpfile checklist "$DIR/checklist.json" \
+      --slurpfile human "$DIR/human.json" \
+      --arg run_id "$RUN_ID" '
+  . as $run
+  | $checklist[0] as $c
+  | $human[0] as $h
+  | [
+    "# " + $run_id,
+    "",
+    ($run.commit + " · " + ($run.launch.model_id // "unknown model") +
+     " · load " + $run.machine.load_at_launch +
+     " · standup " + $run.standup +
+     " · run cap hit: " + (if $run.launch.reason == "run-cap" then "yes" else "no" end) +
+     " · skills present: " + (($h["Q10.present"] // "see skills.json") | tostring)),
+    "",
+    "Outcome: " + ($c.outcome // "unknown"),
+    "",
+    "Q1 first green: " + ($run.verbs.first_green_minutes | tostring) + " min",
+    "Q2 wamn dev runs: " + ($run.verbs.wamn_dev_runs | tostring) +
+      " · failed: " + ($run.verbs.wamn_dev_failed | tostring) +
+      " · held: " + ($run.verbs.wamn_dev_hold_runs | tostring),
+    "Q3 reads before first edit: " + ($h.Q3 | tostring),
+    "Q4 verification: " + ($h.Q4 // "see Q11" | tostring) +
+      " · Q5 outside allowed paths: " + (($run.git.outside_allowed_paths | length) | tostring) +
+      " · Q6 " + ($h.Q6 // "tokens not recorded" | tostring),
+    "Q7 stalls: " + ($h.Q7 | tostring),
+    "Q8 law violations: " + ($h.Q8 | tostring) + " · Q9 over-claims: " + ($h.Q9 | tostring),
+    "Q10 skills activated: " + ($h["Q10.activated"] | tostring),
+    "Q11 verification coverage: " + ($h.Q11 | tostring),
+    "",
+    "## Machine checks",
+    "",
+    "- loop: " + (if $c.loop.pass then "pass" else "FAIL" end) +
+      " (" + ($c.loop.stages | tostring) + " stages)",
+    "- paths: " + (if $c.paths.pass then "pass" else "FAIL, outside: " + ($c.paths.outside | join(", ")) end),
+    "- teardown: verification database removed: " +
+      ($c.teardown.verification_database_removed | tostring),
+    ""
+  ]
+  + ["### Steps", ""]
+  + [ $c.steps[]
+      | "- " + .id + " (" + (if .must then "must" else "recorded" end) + ", " + .invariant + "): " +
+        (if .pass then "pass" else "FAIL" end) + (if .evidence == "" then "" else " — " + .evidence end) ]
+  + ["", "### Checks with no fence in the loop", ""]
+  + [ $c.checks | to_entries[] | "- " + .key + ": " + (.value | tostring) ]
+  + ["", "### Fence verdicts, reported not re-decided", ""]
+  + [ $c.fences | to_entries[] | "- " + .key + " (" + .value.source + "): " + .value.verdict ]
+  + ["", "## Rubric", ""]
+  + [ "E1", "E2", "E3", "E4", "E5", "E6", "E7"
+      | . as $k | "- " + $k + ": " + ($h[$k] | tostring) ]
+  + ["", "Raw: `" + $run_id + "/`", ""]
+  | .[]' "$DIR/run.json" > "$OUT/$RUN_ID.md"
+
+printf 'agent-pilot-report: wrote %s\n' "$OUT/$RUN_ID.md"

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Recording wrapper for `wamn`, copied to $RUN/bin/wamn by `agent-pilot-run up`.
+#
+# The pilot measures how an agent drives the loop, so every invocation is a
+# datum: its argv, its exit code, its duration, and its whole output. The agent
+# sees an ordinary `wamn` on PATH and never learns it is being watched.
+#
+# bash >= 5.1 is required: `wait` covers process substitutions there, which is
+# what makes the log files complete at the moment the row is written. The
+# runner's preflight checks the version.
+set -u
+
+real="$WAMN_PILOT_REAL_WAMN"
+dir="$WAMN_PILOT_RUN_DIR"
+
+# The sequence number is allocated under the lock at START, so a backgrounded
+# `--hold` and a concurrent `wamn dev` never share a number or a log file.
+n=$(flock "$dir/verbs.lock" bash -c \
+     'c=$(( $(cat "$1/verbs.counter" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$1/verbs.counter"; printf "%03d" "$c"' _ "$dir")
+
+# `date` here is uutils coreutils, which IGNORES the %3N width modifier and
+# prints nine digits, so %s%3N yields seconds glued to nanoseconds and every
+# duration comes out in hours. Take nanoseconds once and do the arithmetic in
+# the shell, which needs no coreutils feature at all.
+t0=$(date -u +%s%N)
+ts="$(date -u -d "@$(( t0 / 1000000000 ))" +%Y-%m-%dT%H:%M:%S).$(printf '%03d' $(( (t0 / 1000000) % 1000 )))Z"
+out="$dir/dev-logs/$n-$$.out"
+err="${out%.out}.err"
+
+"$real" "$@" > >(tee -a "$out") 2> >(tee -a "$err" >&2)
+rc=$?
+wait                                   # both tee substitutions have flushed
+ms=$(( ( $(date -u +%s%N) - t0 ) / 1000000 ))
+
+flock "$dir/verbs.lock" jq -cn --arg ts "$ts" --arg n "$n" \
+   --argjson exit "$rc" --argjson ms "$ms" \
+   --args '{ts:$ts,n:$n,argv:$ARGS.positional,exit:$exit,ms:$ms}' -- "$@" \
+   >> "$dir/verbs.jsonl"
+
+exit "$rc"
