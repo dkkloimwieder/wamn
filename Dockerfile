@@ -45,7 +45,7 @@ COPY .cargo/config.toml ./.cargo/config.toml
 COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
 # The root workspace `exclude`s `components/` and then takes four path
 # dependencies into it: wamn-event-reg, wamn-event-wire, wamn-execution-contract
-# and wamn-materializer. `cargo chef prepare` records manifests for workspace
+# and wamn-materializer. The planner records manifests for workspace
 # MEMBERS only, so the recipe carries none of the four and every cook stage
 # fails at `failed to read /build/components/<crate>/Cargo.toml` before it
 # compiles anything (wamn-0h0g.10.19; broken since a0c95163 moved the execution
