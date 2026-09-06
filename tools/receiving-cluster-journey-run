@@ -1331,12 +1331,12 @@ if [[ "$measure_startup" == true ]]; then
       "job/$job" --timeout=240s
     "${kube[@]}" -n "$namespace" logs "job/$job" \
       >"$evidence_dir/first-request-$phase.log"
-    if [[ $(grep -Fc 'RECEIVING_STARTUP_REQUEST ' \
+    if [[ $(grep -Fc 'JOURNEY_STARTUP_REQUEST ' \
         "$evidence_dir/first-request-$phase.log") -ne 1 ]]; then
       echo "$phase request emitted no unique timing receipt" >&2
       exit 1
     fi
-    sed -n 's/^RECEIVING_STARTUP_BODY //p' \
+    sed -n 's/^JOURNEY_STARTUP_BODY //p' \
       "$evidence_dir/first-request-$phase.log" \
       >"$evidence_dir/first-request-$phase-response.json"
     jq -e --arg request_id "$request_id" "
@@ -1346,7 +1346,7 @@ if [[ "$measure_startup" == true ]]; then
       (.[0].value | $app_probe_value_check)
     " >/dev/null "$evidence_dir/first-request-$phase-response.json"
     awk -v phase="$phase" -v ceiling="$recovery_ceiling_seconds" '
-      /^RECEIVING_STARTUP_REQUEST / {
+      /^JOURNEY_STARTUP_REQUEST / {
         for (field = 1; field <= NF; field++) {
           split($field, pair, "=")
           if (pair[1] == "status") status = pair[2]

@@ -36,8 +36,11 @@ build_spec() {
 echo "1. bytes"
 build_spec rcv /purchase_order/get '{"id":"00000000-0000-0000-0000-000000000301"}'
 render_probe_job rcv "$work/rcv.yaml"; check "the Receiving probe renders" $?
-[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == cbc5b03d84cf466752e845350dca68163f7abf819f18a0c84dc05cf7cc49e2cc ]]
-check "bytes unchanged since the pre-declaration block" $?
+# Re-baselined once, by wamn-362o.32: the JOURNEY_STARTUP_* rename is three
+# marker strings inside the rendered script, and the diff against the previous
+# digest's render was those three lines and nothing else.
+[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == a511f2f4c53f8e674b7e7812087a48ea1c739013d59f545e0833119e0284046e ]]
+check "bytes unchanged since the marker rename" $?
 # The merge must not reorder: request_id first is what the hardcoded literal
 # emitted, and the digest above is the only thing that would have caught it.
 grep -qF -- '--data '"'"'[{"request_id":"startup-cold","id":"00000000-0000-0000-0000-000000000301"}]'"'" "$work/rcv.yaml"
@@ -88,21 +91,21 @@ run_probe() { # <dir> <yaml>
 mkdir -p "$work/ok"; stub_curl ok 200
 run_probe ok "$work/rcv.yaml" >"$work/ok.log" 2>&1
 check "the rendered probe exits 0 when the route answers 200" $?
-[[ $(grep -c '^RECEIVING_STARTUP_ATTEMPT ' "$work/ok.log") -eq 1 ]]
+[[ $(grep -c '^JOURNEY_STARTUP_ATTEMPT ' "$work/ok.log") -eq 1 ]]
 check "it reports exactly one attempt" $?
-[[ $(grep -c '^RECEIVING_STARTUP_REQUEST ' "$work/ok.log") -eq 1 ]]
+[[ $(grep -c '^JOURNEY_STARTUP_REQUEST ' "$work/ok.log") -eq 1 ]]
 check "it emits exactly one canonical receipt" $?
-grep -q '^RECEIVING_STARTUP_ATTEMPT phase=cold attempt=1 status=200 ' "$work/ok.log"
+grep -q '^JOURNEY_STARTUP_ATTEMPT phase=cold attempt=1 status=200 ' "$work/ok.log"
 check "the attempt line carries the declared phase" $?
-grep -q '^RECEIVING_STARTUP_BODY stub-body-200$' "$work/ok.log"
+grep -q '^JOURNEY_STARTUP_BODY stub-body-200$' "$work/ok.log"
 check "the response body is reported" $?
 
 mkdir -p "$work/recover"; stub_curl recover 404 404 200
 run_probe recover "$work/rcv.yaml" >"$work/recover.log" 2>&1
 check "a route that 404s twice and then answers still exits 0" $?
-[[ $(grep -c '^RECEIVING_STARTUP_ATTEMPT ' "$work/recover.log") -eq 3 ]]
+[[ $(grep -c '^JOURNEY_STARTUP_ATTEMPT ' "$work/recover.log") -eq 3 ]]
 check "every attempt is reported, not only the last" $?
-[[ $(grep -c '^RECEIVING_STARTUP_REQUEST ' "$work/recover.log") -eq 1 ]]
+[[ $(grep -c '^JOURNEY_STARTUP_REQUEST ' "$work/recover.log") -eq 1 ]]
 check "the canonical receipt is still emitted exactly once" $?
 # The whole point of the retry: the window is readable from the log.
 grep -q 'since_restart_seconds=[0-9]' "$work/recover.log"
@@ -120,9 +123,9 @@ rm -f /tmp/stub-n
 ! ( cd "$work/never" && PATH="$work/never:$PATH" sh -ec "$(cat "$work/never.sh")" ) \
   >"$work/never.log" 2>&1
 check "a route that never answers exits NON-zero" $?
-grep -q '^RECEIVING_STARTUP_REQUEST phase=cold status=404 ' "$work/never.log"
+grep -q '^JOURNEY_STARTUP_REQUEST phase=cold status=404 ' "$work/never.log"
 check "and still reports before asserting, so the failure is diagnosable" $?
-[[ $(grep -c '^RECEIVING_STARTUP_ATTEMPT ' "$work/never.log") -ge 2 ]]
+[[ $(grep -c '^JOURNEY_STARTUP_ATTEMPT ' "$work/never.log") -ge 2 ]]
 check "it kept trying to the window rather than giving up on the first 404" $?
 
 # And the real numbers, asserted where they are cheap: the contract claims the
