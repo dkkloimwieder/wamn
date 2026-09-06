@@ -2739,7 +2739,10 @@ invocation and an entire target directory from the loop.
 
 **Conditions.** 8 cores, `jobs = 4` from `.cargo/config.toml`, `sccache`
 already warm from concurrent lanes, and **five other lanes compiling
-throughout**: 1-minute load average ran 8.8 → 34 across the run. Absolute
+throughout**: 1-minute load average ran 8.8 → 34 across the run. On the
+measurement date `.cargo/config.toml` set `rustc-wrapper = "sccache"`. It no
+longer does (wamn-362o.22). To reproduce these numbers, first run
+`export RUSTC_WRAPPER=sccache` in your own shell. Absolute
 seconds here are inflated and are not a clean-machine baseline. Every A/B pair
 below was measured back to back under the same load and run in both orders;
 read the paired deltas, not the absolutes. Debug profile, `wasm32-wasip2`,
