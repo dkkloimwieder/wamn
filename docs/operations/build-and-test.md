@@ -1496,7 +1496,7 @@ tools/wms-cluster-journey-run --apply \
   --evidence-dir /tmp/wamn-wms-cluster-evidence
 ```
 
-The two runtime assertions structure cannot make ride inside it: the journey
+The runtime assertions structure cannot make ride inside it: the journey
 exposes the released route on a temporary NodePort, amends the document's
 `runtime` phase with that endpoint and the fixture ids it seeded, and runs
 `wms_runtime_live::contention_and_replay_through_the_composed_route`, which
@@ -1506,7 +1506,13 @@ and `row_version` 2) and exactly one `concurrency_conflict` that observed
 that version, then replays the winner's body and gets the same
 `movement_id`. The test prints the winner's id; the journey lists the store
 with `mc` and asserts exactly one label object under `wms/`, named by it.
-The test asserts and never provisions; no environment variable carries data.
+Then `wms_runtime_live::the_remaining_operations_serve_their_released_routes`
+(`wamn-362o.52`) hits the other five routes on the same fixture: get and
+aggregate to learn where it stands, adjust, a split whose replay returns the
+same new pallet id, a split refused for what the row holds, a merge that
+consumes the new pallet, the aggregate excluding it, and a paged query.
+An operation counts as shipped when its route has been hit. The tests assert
+and never provision; no environment variable carries data.
 
 `--measure-startup` probes `pallet.get` on the fixture pallet: one generated
 statement in every phase (cold, restart-first, steady), the fixed count

@@ -2063,10 +2063,30 @@ mapfile -t contention_lines < <(grep -oE 'WMS_CONTENTION_PASS movement_id=[0-9a-
   exit 1
 }
 winning_movement_id=${contention_lines[0]#WMS_CONTENTION_PASS movement_id=}
+# THREE (wamn-362o.52): the other five operations, on the same fixture, after
+# the contention test has moved it. An operation counts as shipped when its
+# route has been hit; before this, admission, gate and release proved only
+# that the five were declared.
+record_command cargo test wms_runtime_live::the_remaining_operations_serve_their_released_routes \
+  '<journey document with the runtime phase redacted>'
+WAMN_JOURNEY_DOCUMENT="$journey_document" \
+CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+  cargo test -p wamn-proof-integration --lib --locked --offline \
+  wms_runtime_live::the_remaining_operations_serve_their_released_routes \
+  -- --ignored --exact --nocapture --test-threads=1 \
+  2>&1 | tee "$evidence_dir/wms-operations.log"
+assert_one_test_ran "$evidence_dir/wms-operations.log" \
+  the_remaining_operations_serve_their_released_routes
+mapfile -t operations_lines < <(grep -oE 'WMS_OPERATIONS_PASS split_pallet_id=[0-9a-f-]{36}' "$evidence_dir/wms-operations.log")
+[[ ${#operations_lines[@]} -eq 1 ]] || {
+  echo "the operations assertions emitted ${#operations_lines[@]} pass receipts, want 1" >&2
+  exit 1
+}
+split_pallet_id=${operations_lines[0]#WMS_OPERATIONS_PASS split_pallet_id=}
 # ONE LABEL, NAMED BY THE WINNER. The store's own client lists the prefix the
-# composed wiring writes under; the loser produced no movement and the
-# startup probe is refused, so exactly one object may exist, and it is the
-# winner's.
+# composed wiring writes under; the loser produced no movement, the plain
+# arm never sends the startup probe, and none of the five operations reaches
+# the composed wiring, so exactly one object may exist, and it is the winner's.
 docker run --rm --network kind --entrypoint sh minio/mc -c \
   "mc alias set journey '$minio_endpoint' '$minio_access_key' '$minio_secret_key' >/dev/null && mc ls --json journey/labels/wms/" \
   >"$evidence_dir/labels-objects.json"
@@ -2076,7 +2096,8 @@ label_key=$(jq -rs '.[0].key // empty' "$evidence_dir/labels-objects.json")
   echo "expected exactly one label object named $winning_movement_id under wms/, found $label_count: $label_key" >&2
   exit 1
 }
-printf 'verdict=pass movement_id=%s labels=%s\n' "$winning_movement_id" "$label_count" \
+printf 'verdict=pass movement_id=%s labels=%s operations=pass split_pallet_id=%s\n' \
+  "$winning_movement_id" "$label_count" "$split_pallet_id" \
   >"$evidence_dir/wms-runtime.receipt"
 run "${kube[@]}" -n "$namespace" delete service flow-http-nodeport
 run "${kube[@]}" -n "$namespace" delete endpointslice flow-http-nodeport
