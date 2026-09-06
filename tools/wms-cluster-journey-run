@@ -11,26 +11,55 @@ Without --apply, print the immutable plan and exit.
 
   --apply              Build and run the journey, then tear down owned resources
   --measure-startup    Cold, restart-first and steady pallet.get requests with trace breakdowns
+  --demo               Hold the environment afterwards and serve the route at
+                       http://wms.localhost/ -- see THE DEMO below
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-wms-journey. Every Kubernetes and Helm
 command carries its private kubeconfig and context. The frozen kind-wamn cluster
 is never a target.
+
+THE DEMO. --demo changes three things and nothing else. The cluster keeps ONE
+host port mapping, hostPort 80 on listenAddress ::1 to nodePort 30950; the
+route's NodePort Service is pinned to 30950 instead of taking whatever
+Kubernetes allocates; and that Service outlives the run instead of being
+deleted, so the route still answers while the environment is held. The address
+is the IPv6 loopback because the FROZEN kind-wamn cluster publishes 0.0.0.0:80,
+which is IPv4, and wms.localhost already resolves to ::1, so the two do not
+collide and no hosts file is edited. The browser then sends exactly
+`Host: wms.localhost`, which is what the released route matches; a port in the
+authority would not match, because normalize_authority lowercases and nothing
+else. Set WAMN_JOURNEY_HOLD_SECONDS to choose how long it is held; --demo
+defaults it to 3600.
 EOF
 }
 
 apply=false
 measure_startup=false
+demo=false
 evidence_dir=
+demo_node_port=30950
+demo_route_url=http://wms.localhost/
 while (($#)); do
   case "$1" in
     --apply) apply=true; shift ;;
     --measure-startup) measure_startup=true; shift ;;
+    --demo) demo=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+if [[ "$demo" == true ]]; then
+  if [[ "$apply" != true ]]; then
+    echo "--demo needs --apply: it holds a real environment" >&2
+    exit 2
+  fi
+  # The hold is what makes it a demo. An explicit setting still wins, including
+  # a longer one.
+  WAMN_JOURNEY_HOLD_SECONDS=${WAMN_JOURNEY_HOLD_SECONDS:-3600}
+  export WAMN_JOURNEY_HOLD_SECONDS
+fi
 # The measure-startup arm probes pallet.get (wamn-362o.10): one statement in
 # every phase, so trace_is_complete holds one fixed count across cold, restart
 # and steady. Until that read route existed the only probe was a move, which
@@ -269,11 +298,67 @@ cleanup() {
     kill "$gate_pid" 2>/dev/null || true
     wait "$gate_pid" 2>/dev/null || true
   fi
+# THE DEMO BLOCK. Printed once, after a passing run and before the hold, with
+# the ids this run actually seeded. It prints WHERE the route-caller token is,
+# never the token: a credential does not belong in a log.
+demo_block() {
+  cat >&2 <<DEMO
+
+  ================= WMS DEMO =================
+  The environment is held and the released route answers at
+
+      $demo_route_url
+
+  A browser there answers {"error":{"code":"route-not-found"}}, the exact typed
+  shape: the composed route is live at a stable name. Every WMS operation is a
+  POST, so the operations are the commands below. The route-caller token this
+  run minted:
+
+      T=\$(jq -r .stringData.token $route_caller_secret)
+
+  1. Where the journey's move left the pallet. The answer carries its
+     row_version; step 2 needs that number:
+
+      curl -sS -X POST ${demo_route_url}pallet/get -H "Authorization: Bearer \$T" \\
+        -H 'content-type: application/json' \\
+        -d '[{"request_id":"demo-get","id":"$app_fixture_pallet_id"}]'
+
+  2. Move it back, through the composed wiring: three nodes, one label written
+     by the object store's own client. Put step 1's row_version in
+     expected_row_version, and pick any idempotency key you like:
+
+      curl -sS -X POST ${demo_route_url}inventory/move -H "Authorization: Bearer \$T" \\
+        -H 'content-type: application/json' \\
+        -d '[{"request_id":"demo-move","value":{"idempotency_key":"demo-1","pallet_id":"$app_fixture_pallet_id","to_location_id":"$app_fixture_location_a_id","expected_row_version":<row_version from step 1>,"occurred_at":"2026-09-06T12:00:00Z"}}]'
+
+  3. Run step 2 again, byte for byte. The same movement identity comes back and
+     no second movement exists: the id came from the claim, not from the work.
+     Change only the idempotency key and it refuses on the row version instead.
+
+  4. The labels in the store, one per movement, named for the movement:
+
+      docker exec $minio_container sh -c 'mc alias set d http://127.0.0.1:9000 \\
+        "\$MINIO_ROOT_USER" "\$MINIO_ROOT_PASSWORD" >/dev/null && mc ls --recursive d/wms'
+
+  5. What this run already proved, in its own receipts:
+
+      cat $evidence_dir/wms-runtime.receipt
+      cat $evidence_dir/journey.receipt
+
+  The movement this run settled on: $winning_movement_id
+  ============================================
+
+DEMO
+}
+
   # Opt-in hold BEFORE teardown, so an observer can keep watching cluster state
   # past the point where this run gives up. Unset by default, so no run changes
   # behaviour unless it is asked for. It exists because the question "does the
   # route ever come back after the restart arm fails" is unanswerable once the
   # cluster is deleted (wamn-0h0g.17.20).
+  if [[ "$demo" == true && "$status" -eq 0 ]]; then
+    demo_block "$status"
+  fi
   if [[ -n "${WAMN_JOURNEY_HOLD_SECONDS:-}" ]]; then
     echo "journey holding ${WAMN_JOURNEY_HOLD_SECONDS}s before teardown (status=$status)" >&2
     sleep "$WAMN_JOURNEY_HOLD_SECONDS" || true
@@ -476,13 +561,37 @@ if docker image inspect "$host_image" >/dev/null 2>&1; then
   exit 2
 fi
 
-awk '
-  /^    extraPortMappings:/ { skipping = 1; next }
+# The shared config maps hostPort 80 for the FROZEN cluster, which still holds
+# it. A second cluster claiming the same address would refuse to start, so the
+# mapping is stripped -- except under --demo, which rewrites it to the IPv6
+# loopback the frozen cluster does not hold.
+awk -v demo="$demo" -v node_port="$demo_node_port" '
+  /^    extraPortMappings:/ {
+    skipping = 1
+    if (demo == "true") {
+      print "    extraPortMappings:"
+      print "      - containerPort: " node_port
+      print "        hostPort: 80"
+      print "        listenAddress: \"::1\""
+      print "        protocol: TCP"
+    }
+    next
+  }
   skipping && /^      / { next }
   { skipping = 0; print }
 ' "$repo_root/deploy/infra/kind-config.yaml" >"$kind_config"
-if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]] ||
-   grep -q 'extraPortMappings\|hostPort:' "$kind_config"; then
+if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]]; then
+  echo "rendered kind config did not retain exactly three nodes" >&2
+  exit 2
+fi
+if [[ "$demo" == true ]]; then
+  if [[ $(grep -c 'hostPort:' "$kind_config") -ne 1 ]] ||
+     ! grep -q 'listenAddress: "::1"' "$kind_config" ||
+     ! grep -q "containerPort: $demo_node_port" "$kind_config"; then
+    echo "demo kind config did not retain exactly one ::1 host port to $demo_node_port" >&2
+    exit 2
+  fi
+elif grep -q 'extraPortMappings\|hostPort:' "$kind_config"; then
   echo "rendered kind config did not retain exactly three nodes without host ports" >&2
   exit 2
 fi
@@ -2005,12 +2114,17 @@ jq -e --arg host "$route_host" '
 # (wamn-362o.43). So the NodePort is selector-less too, with its own
 # EndpointSlice mirroring flow-http's addresses and port.
 runtime_nodeport_service=$work_dir/flow-http-nodeport.yaml
+# --demo pins the nodePort, because the cluster's one host port mapping names it
+# and Kubernetes would otherwise allocate a different one every run.
 "${kube[@]}" -n "$namespace" get endpointslices -l kubernetes.io/service-name=flow-http -o json \
-  | jq --arg ns "$namespace" '
+  | jq --arg ns "$namespace" \
+       --argjson pinned "$([[ "$demo" == true ]] && echo "$demo_node_port" || echo null)" '
       {apiVersion: "v1", kind: "List", items: [
         {apiVersion: "v1", kind: "Service",
          metadata: {name: "flow-http-nodeport", namespace: $ns},
-         spec: {type: "NodePort", ports: [{name: "http", port: 80, targetPort: 80, protocol: "TCP"}]}},
+         spec: {type: "NodePort", ports: [
+           ({name: "http", port: 80, targetPort: 80, protocol: "TCP"}
+            + (if $pinned == null then {} else {nodePort: $pinned} end))]}},
         {apiVersion: "discovery.k8s.io/v1", kind: "EndpointSlice",
          metadata: {name: "flow-http-nodeport", namespace: $ns,
                     labels: {"kubernetes.io/service-name": "flow-http-nodeport"}},
@@ -2104,8 +2218,12 @@ label_key=$(jq -rs '.[0].key // empty' "$evidence_dir/labels-objects.json")
 printf 'verdict=pass movement_id=%s labels=%s operations=pass split_pallet_id=%s\n' \
   "$winning_movement_id" "$label_count" "$split_pallet_id" \
   >"$evidence_dir/wms-runtime.receipt"
-run "${kube[@]}" -n "$namespace" delete service flow-http-nodeport
-run "${kube[@]}" -n "$namespace" delete endpointslice flow-http-nodeport
+# --demo keeps the route reachable while the environment is held. Teardown still
+# deletes the whole cluster, so nothing outlives the run either way.
+if [[ "$demo" != true ]]; then
+  run "${kube[@]}" -n "$namespace" delete service flow-http-nodeport
+  run "${kube[@]}" -n "$namespace" delete endpointslice flow-http-nodeport
+fi
 # =======================================================================
 
 materializer_manifest=$work_dir/materializer.yaml
