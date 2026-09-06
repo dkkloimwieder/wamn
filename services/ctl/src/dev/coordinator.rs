@@ -686,11 +686,11 @@ impl ProductionDevStageRunner {
             }
             project_admitted_component_for_verification(
                 &admission,
-                self.config.verification_database_url(),
+                self.config.target_database_url(),
             )
             .await
             .map_err(|source| {
-                ProductionDevStageError::owner("project admission into verification", source)
+                ProductionDevStageError::owner("project admission into the environment", source)
             })?;
             self.admissions.push(admission);
         }
@@ -806,7 +806,7 @@ impl ProductionDevStageRunner {
                     artifact_base: self.config.component_artifact_base().to_owned(),
                     registry_auth_file: self.config.registry_auth_file().to_owned(),
                     insecure_registry: self.config.insecure_registry(),
-                    project_database_url: self.config.verification_database_url().to_owned(),
+                    project_database_url: self.config.target_database_url().to_owned(),
                     control_database_url: self.config.system_database_url().to_owned(),
                 },
             )
@@ -972,7 +972,7 @@ impl ProductionDevStageRunner {
             .commit
             .clone();
         crate::publish_release::run(PublishReleaseArgs {
-            database_url: self.config.verification_database_url().to_owned(),
+            database_url: self.config.target_database_url().to_owned(),
             control_database_url: self.config.system_database_url().to_owned(),
             org: identity.org.clone(),
             project: identity.project.clone(),
@@ -994,7 +994,7 @@ impl ProductionDevStageRunner {
 
         crate::push_release_manifest::run_with_source_commit(
             PushReleaseManifestArgs {
-                database_url: self.config.verification_database_url().to_owned(),
+                database_url: self.config.target_database_url().to_owned(),
                 org: identity.org.clone(),
                 project: identity.project.clone(),
                 tenant: identity.tenant.clone(),
@@ -1012,7 +1012,7 @@ impl ProductionDevStageRunner {
         })?;
 
         let release = lookup_release_snapshot(
-            self.config.verification_database_url(),
+            self.config.target_database_url(),
             &identity.tenant,
             self.config.effective_release_id(),
             self.config.release_artifact_base(),
