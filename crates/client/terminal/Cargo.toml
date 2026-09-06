@@ -1,0 +1,15 @@
+[package]
+name = "wamn-client-terminal"
+description = "The terminal driver: raw mode, the alternate screen, an event stream, and restoration on drop or panic."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The BACKEND half of the ratatui 0.30 split, which is what a driver is: the
+# widget half lives in wamn-client-tui and never enters a terminal.
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+
+[lints]
+workspace = true

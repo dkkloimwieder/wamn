@@ -3,11 +3,11 @@
 //! Two layers meet here and stay separable. [`DevTui`], [`DevTuiState`] and
 //! [`apply_key`] are pure: they turn one immutable [`DevSnapshot`] and one key
 //! press into a Ratatui buffer and new navigation state, with no terminal and
-//! no development-loop effects. The private [`terminal`] module underneath is
-//! the repository's only terminal driver — raw mode, the alternate screen, an
-//! event stream and restoration on panic — and names nothing about this loop,
-//! so the second caller can move it out rather than rewrite it
-//! (wamn-10yt.5.9).
+//! no development-loop effects. Underneath is `wamn-client-terminal` — raw
+//! mode, the alternate screen, an event stream and restoration on panic. It
+//! was a private module here, naming nothing about this loop, until the
+//! `wamn-receiving` operator binary became the second caller and moved it out
+//! unchanged (wamn-10yt.5.9).
 //!
 //! [`run`] joins the two: it holds the activated environment open until the
 //! developer quits, and quitting leaves through the session's own native
@@ -23,6 +23,9 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Widget;
+// The terminal driver, aliased so the call sites below still read as the
+// terminal rather than as a client crate.
+use wamn_client_terminal as terminal;
 
 use super::command::{DevCommandArgs, DevSession, DevSessionControl, print_receipt};
 use super::read::{DevGateVerdict, DevSnapshot, DevStageState};
@@ -521,85 +524,6 @@ fn fail_driver(failure: &mut Option<io::Error>, error: io::Error, control: &DevS
         *failure = Some(error);
     }
     control.request_shutdown();
-}
-
-/// The terminal itself: raw mode, the alternate screen, events, restoration.
-///
-/// Nothing here knows about the development loop. It is the repository's first
-/// terminal driver and deliberately its own module so that the second one —
-/// giving `wamn-receiving-tui` a binary — moves this out instead of writing a
-/// second copy (wamn-10yt.5.9).
-mod terminal {
-    use std::io::{self, Stdout, Write as _};
-    use std::panic;
-    use std::sync::Once;
-
-    use crossterm::ExecutableCommand as _;
-    use crossterm::cursor::{Hide, Show};
-    use crossterm::event::EventStream;
-    use crossterm::terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    };
-    use ratatui::Terminal;
-    use ratatui::backend::CrosstermBackend;
-    use ratatui::widgets::Widget;
-
-    /// Guards the one process-wide panic hook this driver installs.
-    static PANIC_RESTORE: Once = Once::new();
-
-    /// Keyboard, mouse and resize events from the entered terminal.
-    pub(super) fn events() -> EventStream {
-        EventStream::new()
-    }
-
-    /// An entered terminal, restored when it is dropped or the process panics.
-    pub(super) struct TerminalSession {
-        terminal: Terminal<CrosstermBackend<Stdout>>,
-    }
-
-    impl TerminalSession {
-        /// Enter raw mode and the alternate screen.
-        pub(super) fn enter() -> io::Result<Self> {
-            PANIC_RESTORE.call_once(|| {
-                let previous = panic::take_hook();
-                panic::set_hook(Box::new(move |info| {
-                    // A panic under raw mode otherwise leaves the developer
-                    // with an unusable terminal and no visible message.
-                    drop(restore());
-                    previous(info);
-                }));
-            });
-            enable_raw_mode()?;
-            let mut output = io::stdout();
-            output.execute(EnterAlternateScreen)?;
-            output.execute(Hide)?;
-            Ok(Self {
-                terminal: Terminal::new(CrosstermBackend::new(output))?,
-            })
-        }
-
-        /// Paint one widget over the whole terminal.
-        pub(super) fn draw(&mut self, widget: impl Widget) -> io::Result<()> {
-            self.terminal
-                .draw(|frame| frame.render_widget(widget, frame.area()))?;
-            Ok(())
-        }
-    }
-
-    impl Drop for TerminalSession {
-        fn drop(&mut self) {
-            drop(restore());
-        }
-    }
-
-    /// Leave the alternate screen and raw mode, in the reverse of entry order.
-    fn restore() -> io::Result<()> {
-        let mut output = io::stdout();
-        output.execute(Show)?;
-        output.execute(LeaveAlternateScreen)?;
-        disable_raw_mode()?;
-        output.flush()
-    }
 }
 
 #[cfg(test)]

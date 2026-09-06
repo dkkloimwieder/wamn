@@ -5318,6 +5318,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-client-terminal"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "ratatui",
+]
+
+[[package]]
 name = "wamn-client-tui"
 version = "0.1.0"
 dependencies = [
@@ -5390,6 +5398,7 @@ dependencies = [
  "url",
  "wamn-authoring-model",
  "wamn-catalog",
+ "wamn-client-terminal",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-reg",
@@ -5682,11 +5691,17 @@ dependencies = [
 name = "wamn-receiving-tui"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
+ "chrono",
+ "crossterm",
+ "futures-util",
  "ratatui",
+ "reqwest",
  "serde_json",
  "tokio",
  "wamn-client",
+ "wamn-client-terminal",
  "wamn-client-tui",
 ]
 

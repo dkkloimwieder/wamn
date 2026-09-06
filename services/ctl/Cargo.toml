@@ -55,6 +55,8 @@ ratatui = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
 rustix = { workspace = true }
 wamn-authoring-model = { workspace = true }
+# The shared terminal driver behind `wamn dev --tui` (wamn-10yt.5.9).
+wamn-client-terminal = { workspace = true }
 wamn-event-wire = { workspace = true, optional = true }
 wamn-event-reg = { workspace = true }
 # Release authoring parses and validates immutable execution graphs.

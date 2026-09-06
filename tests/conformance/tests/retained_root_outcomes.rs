@@ -12,6 +12,7 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-authoring-model", "crates/authoring/model/src/lib.rs"),
     ("wamn-catalog", "crates/catalog/model/src/lib.rs"),
     ("wamn-client", "crates/client/core/src/lib.rs"),
+    ("wamn-client-terminal", "crates/client/terminal/src/lib.rs"),
     ("wamn-client-tui", "crates/client/tui/src/lib.rs"),
     ("wamn-receiving-tui", "crates/client/receiving/src/lib.rs"),
     ("wamn-cdc-reader", "services/cdc-reader/src/lib.rs"),
