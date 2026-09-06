@@ -109,8 +109,8 @@ async fn classify_statements(
     }
     let mut verdicts = std::collections::BTreeMap::new();
     for (path, bytes) in corpus {
-        let sql = std::str::from_utf8(bytes)
-            .with_context(|| format!("statement {path} is not UTF-8"))?;
+        let sql =
+            std::str::from_utf8(bytes).with_context(|| format!("statement {path} is not UTF-8"))?;
         // simple_query, NOT query_one: the statement carries $1..$n, and the
         // extended protocol would treat those as parameters OF THE EXPLAIN and
         // refuse with "expected N parameters but got 0". GENERIC_PLAN exists
@@ -158,7 +158,12 @@ pub fn materialize_package_from_catalog(
     catalog: &CatalogIr,
     package_root: &Path,
 ) -> Result<()> {
-    materialize_package_classified(mode, catalog, package_root, &StatementTransactionality::default())
+    materialize_package_classified(
+        mode,
+        catalog,
+        package_root,
+        &StatementTransactionality::default(),
+    )
 }
 
 /// Materialize with PostgreSQL's verdict on which statements need a transaction.
@@ -246,7 +251,23 @@ pub async fn materialize_package_verified(
     package_root: &Path,
 ) -> Result<()> {
     let catalog = introspect_package(database_url, package_root).await?;
-    let corpus = statement_corpus(package_root, &catalog)?;
+    materialize_package_verified_with_catalog(mode, &catalog, database_url, package_root).await
+}
+
+/// Materialize a catalog the caller already holds, asking the server which
+/// statements need a transaction.
+///
+/// A caller that shares one database across several packages must supply its
+/// own catalog, narrowed to what this package owns. Re-introspecting here would
+/// hand the package every relation and field its neighbours installed, and the
+/// generated artifacts would claim them.
+pub async fn materialize_package_verified_with_catalog(
+    mode: MaterializeMode,
+    catalog: &CatalogIr,
+    database_url: &str,
+    package_root: &Path,
+) -> Result<()> {
+    let corpus = statement_corpus(package_root, catalog)?;
 
     let (client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
@@ -262,7 +283,7 @@ pub async fn materialize_package_verified(
         .context("drive PostgreSQL connection")?;
     let verdicts = verdicts?;
 
-    materialize_package_classified(mode, &catalog, package_root, &verdicts)
+    materialize_package_classified(mode, catalog, package_root, &verdicts)
 }
 
 fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {

@@ -37,9 +37,8 @@ pub use data_access::{
 };
 pub use error::{GenerateError, GenerateErrorKind};
 pub use generate::{
-    StatementTransactionality,
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, GenerationProvenance,
-    PackageWeld, corpus_sha256, generate,
+    PackageWeld, StatementTransactionality, corpus_sha256, generate,
 };
 pub use manifest::{
     AccessOperationErrorLiteral, AuthoredSqlDeclaration, AuthoredSqlVariant,
@@ -59,8 +58,8 @@ pub use manifest::{
     validate_operation_vocabulary,
 };
 pub use materialize::{
-    materialize_package_verified,
     MaterializeMode, introspect_package, materialize_package, materialize_package_from_catalog,
+    materialize_package_verified, materialize_package_verified_with_catalog,
 };
 pub use parity::{ParityError, ParityErrorKind, validate_parity_json};
 pub use wamn_schema_introspection::ir::CatalogIr;
