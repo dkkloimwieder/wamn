@@ -51,6 +51,9 @@ pub mod tenant_scope;
 // The attempt-ledger adapter remains unmounted in production. See the module doc.
 #[cfg(feature = "native")]
 mod effect_writer;
+/// RUN-* as plain `fn check(state)` functions, for the pure decision tests to
+/// call after every step.
+pub mod invariants;
 /// Versioned identity shared by persisted admission and trusted effect calls.
 pub mod invocation_context;
 /// Operator resolution of an effect-uncertain run.
