@@ -9,10 +9,16 @@
 //! document is the retired language, and the asserts that counted the engine's
 //! synthetic `event` entry node are down by one where that node is gone. The
 //! per-case notes below record every changed literal.
+//!
+//! The last section is the D1 walk simulator (`wamn-54b0.1`): the same builders
+//! and the same fake clock, driven from a `proptest` seed instead of a hand-written
+//! fixture, checking WALK-1..6 after every `apply`.
 
 use std::cell::Cell;
 
+use proptest::prelude::*;
 use serde_json::{Value, json};
+use wamn_router::invariants::{self, WalkState, WalkTrace};
 use wamn_router::{
     Delivery, ErrorDetail, FailureKind, NodeCall, NodeError, NodeOutcome, RateLimitDetail,
     RetryPolicy, Step, ThrottleKey, Walk, WalkStatus, Wiring, WiringEdge, WiringErrorKind,
@@ -828,4 +834,232 @@ fn route_drives_a_wiring_to_a_terminal_outcome() {
     assert_eq!(outcome.result, json!({ "at": "b" }));
     assert_eq!(outcome.hops, 2);
     assert!(outcome.failure.is_none());
+}
+
+// ---- D1: the seeded walk simulator (wamn-54b0.1) ---------------------------
+//
+// A random wiring and a random outcome script from one `proptest` seed, driven
+// through the same `next`/`apply` loop the cases above use, with the same fake
+// clock: it moves only when this harness moves it, on a `Wait`, and never on its
+// own. WALK-1..6 (`wamn_router::invariants`) are checked after every `apply`.
+// A failure shrinks to the smallest wiring and script that still breaks an
+// invariant, and `proptest` prints the seed to replay it.
+
+/// The ports a generated node may emit on: the default, the reserved error path,
+/// and one ordinary branch. Three is enough to produce branches, merges and
+/// error routes; more only widens the search without reaching new walk decisions.
+const SIM_PORTS: [&str; 3] = ["main", "error", "alt"];
+
+/// One generated node — the retry policy is the only config the walk reads.
+#[derive(Debug, Clone)]
+struct NodeSpec {
+    max_attempts: u32,
+    base_ms: u64,
+}
+
+/// One generated edge, as indices into the generated node list.
+#[derive(Debug, Clone)]
+struct EdgeSpec {
+    from: usize,
+    port: usize,
+    to: usize,
+    ordinal: u32,
+}
+
+/// One drawn invocation outcome — the seven variants of `outcome.rs`, weighted.
+#[derive(Debug, Clone)]
+enum OutcomeSpec {
+    Success(usize),
+    Retryable,
+    RateLimited(Option<u64>),
+    Terminal,
+    InvalidInput,
+    Cancelled,
+}
+
+/// One generated walk: a wiring, a hop limit, and the script its invocations
+/// draw from.
+#[derive(Debug, Clone)]
+struct Scenario {
+    nodes: Vec<NodeSpec>,
+    edges: Vec<EdgeSpec>,
+    hop_limit: u64,
+    script: Vec<OutcomeSpec>,
+}
+
+fn node_spec() -> impl Strategy<Value = NodeSpec> {
+    // A zero base keeps some cases free of `Wait` steps entirely; the others
+    // exercise the backoff curve and the clock the harness moves.
+    (1u32..=3, prop::sample::select(vec![0u64, 10, 100]))
+        .prop_map(|(max_attempts, base_ms)| NodeSpec {
+            max_attempts,
+            base_ms,
+        })
+}
+
+fn edge_spec(node_count: usize) -> impl Strategy<Value = EdgeSpec> {
+    // `to` is unconstrained, so cycles and self-edges are drawn like any other
+    // shape: a loop is a wiring feature the hop limit bounds, not an error.
+    (0..node_count, 0..SIM_PORTS.len(), 0..node_count, 0u32..3).prop_map(
+        |(from, port, to, ordinal)| EdgeSpec {
+            from,
+            port,
+            to,
+            ordinal,
+        },
+    )
+}
+
+fn outcome_spec() -> impl Strategy<Value = OutcomeSpec> {
+    prop_oneof![
+        6 => (0..SIM_PORTS.len()).prop_map(OutcomeSpec::Success),
+        2 => Just(OutcomeSpec::Retryable),
+        1 => proptest::option::of(0u64..500).prop_map(OutcomeSpec::RateLimited),
+        2 => Just(OutcomeSpec::Terminal),
+        1 => Just(OutcomeSpec::InvalidInput),
+        1 => Just(OutcomeSpec::Cancelled),
+    ]
+}
+
+fn scenario() -> impl Strategy<Value = Scenario> {
+    // Node count is drawn first so edges can index into it directly; shrinking
+    // walks it back down, which is what puts a counterexample under five nodes.
+    prop::collection::vec(node_spec(), 1..=6).prop_flat_map(|nodes| {
+        let count = nodes.len();
+        (
+            Just(nodes),
+            prop::collection::vec(edge_spec(count), 0..=8),
+            4u64..=32,
+            prop::collection::vec(outcome_spec(), 1..=12),
+        )
+            .prop_map(|(nodes, edges, hop_limit, script)| Scenario {
+                nodes,
+                edges,
+                hop_limit,
+                script,
+            })
+    })
+}
+
+/// Compile a scenario through the same builders the hand-written cases use.
+fn sim_wiring(scenario: &Scenario) -> Wiring {
+    let nodes = scenario
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, spec)| {
+            node_cfg(
+                &format!("n{i}"),
+                "sim",
+                json!({"retry": {"max-attempts": spec.max_attempts, "base-ms": spec.base_ms}}),
+            )
+        })
+        .collect();
+    let edges = scenario
+        .edges
+        .iter()
+        .map(|spec| WiringEdge {
+            ordinal: Some(spec.ordinal),
+            ..edge_on(
+                &format!("n{}", spec.from),
+                SIM_PORTS[spec.port],
+                &format!("n{}", spec.to),
+            )
+        })
+        .collect();
+    let mut compiled = wiring("n0", nodes, edges);
+    compiled.set_hop_limit(scenario.hop_limit);
+    compiled
+}
+
+fn sim_outcome(spec: &OutcomeSpec) -> NodeOutcome {
+    match spec {
+        OutcomeSpec::Success(port) => {
+            NodeOutcome::ok_on(json!({ "port": SIM_PORTS[*port] }), SIM_PORTS[*port])
+        }
+        OutcomeSpec::Retryable => NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("sim"))),
+        OutcomeSpec::RateLimited(retry_after_ms) => {
+            NodeOutcome::Error(NodeError::RateLimited(RateLimitDetail {
+                detail: ErrorDetail::msg("sim"),
+                retry_after_ms: *retry_after_ms,
+                target_host: None,
+            }))
+        }
+        OutcomeSpec::Terminal => NodeOutcome::Error(NodeError::Terminal(ErrorDetail::msg("sim"))),
+        OutcomeSpec::InvalidInput => {
+            NodeOutcome::Error(NodeError::InvalidInput(ErrorDetail::msg("sim")))
+        }
+        OutcomeSpec::Cancelled => NodeOutcome::Cancelled,
+    }
+}
+
+/// Walk one scenario to a terminal status, checking WALK-1..6 after every
+/// `apply`. The clock starts at 0 and advances only to a `Wait` deadline.
+fn simulate(scenario: &Scenario) -> Result<(), TestCaseError> {
+    let w = sim_wiring(scenario);
+    let mut walk = w.start(delivery(json!({ "sim": true })));
+    let mut trace = WalkTrace::new(&w);
+    let mut clock = 0u64;
+    let mut drawn = 0usize;
+    // Each invocation spends one hop and can be preceded by one `Wait`, so a walk
+    // still running past this ceiling has outlived its hop limit — WALK-1, caught
+    // here rather than by hanging the test binary.
+    let ceiling = usize::try_from(scenario.hop_limit).unwrap_or(usize::MAX) * 2 + 4;
+    for _ in 0..ceiling {
+        let status_before = walk.status();
+        let step = w.next(&mut walk, clock);
+        trace.stepped(status_before, &step, clock);
+        match step {
+            Step::Done(_) => {
+                return check_invariants(&w, &walk, &trace);
+            }
+            Step::Wait { until_ms, .. } => clock = until_ms, // virtual sleep
+            Step::Invoke(call) => {
+                let outcome = sim_outcome(&scenario.script[drawn % scenario.script.len()]);
+                drawn += 1;
+                // No generated node declares a `Terminal`, so the only refusals
+                // left describe a driver feeding back an outcome the walk never
+                // handed out. This loop cannot do that, so one is a real defect.
+                w.apply(&mut walk, &call, outcome.clone(), clock)
+                    .map_err(|refused| TestCaseError::fail(refused.to_string()))?;
+                trace.applied(&w, &call, &outcome);
+                check_invariants(&w, &walk, &trace)?;
+            }
+        }
+    }
+    Err(TestCaseError::fail(
+        "WALK-1 violated: the walk did not end within twice its hop limit",
+    ))
+}
+
+fn check_invariants(w: &Wiring, walk: &Walk, trace: &WalkTrace) -> Result<(), TestCaseError> {
+    invariants::check(&WalkState {
+        wiring: w,
+        walk,
+        trace,
+    })
+    .map_err(|violation| TestCaseError::fail(violation.to_string()))
+}
+
+proptest! {
+    // `SourceParallel` (the default) looks for a `lib.rs`/`main.rs` beside the
+    // test and finds neither here, so it prints no seed at all. `Direct` names
+    // the regression file outright, which is what makes a failure replayable:
+    // the run prints the `cc <seed>` line to paste into it.
+    #![proptest_config(ProptestConfig {
+        cases: 10_000,
+        failure_persistence: Some(Box::new(
+            proptest::test_runner::FileFailurePersistence::Direct(
+                "tests/walk.proptest-regressions",
+            ),
+        )),
+        ..ProptestConfig::default()
+    })]
+
+    /// WALK-1..6 hold after every `apply`, over a random wiring (fan-out, merges,
+    /// permitted cycles, error edges) and a random weighted outcome script.
+    #[test]
+    fn the_walk_holds_walk_1_through_6(scenario in scenario()) {
+        simulate(&scenario)?;
+    }
 }

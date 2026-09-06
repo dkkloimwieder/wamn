@@ -23,5 +23,10 @@ opentelemetry = { workspace = true, features = ["metrics"] }
 # IS here (wamn-0h0g.16.5) — the compiled graph it holds is this crate's type —
 # but it never reads the store itself.
 
+[dev-dependencies]
+# The walk simulator (D1): random wirings and outcome scripts drawn from a seed,
+# with shrinking. Tests only — the walk itself stays dependency-free.
+proptest = { workspace = true }
+
 [lints]
 workspace = true
