@@ -138,7 +138,7 @@
 # sets either key yet; when ruling 4's mount lands it goes on the host-tier
 # file's host group, since this release has no host group to hang it on.
 #
-# Pinned: runtime rev 2eadd937, whose chart is upstream 5c4ec4a3 = chart 2.8.0.
+# Pinned: runtime rev 735b5798, whose chart is upstream 5c4ec4a3 = chart 2.8.0.
 # The two fork patches at that rev (wamn-2w3x.2, wamn-2w3x.3) touch
 # crates/wash-runtime only and no chart template, so the seam verified at
 # 5c4ec4a3 holds unchanged at 2eadd937. Both expressions were re-verified present and unrenamed at this pin;

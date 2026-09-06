@@ -28,10 +28,11 @@ fn dry_run_names_the_ledgered_patch_identity_and_every_gate_leg() {
         "expected-branch: wamn/2.8.0",
         "expected-tag: v2.8.0",
         "expected-tag-revision: 5c4ec4a3d008b3f401d9e763515f434deebc9936",
-        "expected-revision: 2eadd9371cd154cbe78abb1c8608940e1a37802f",
-        // The ledger says two patches; the gate says so too, so an un-ledgered
+        "expected-revision: 735b57982545358409a7d965a22549b08487ca09",
+        // The ledger says three commits over the tag (two deviations, one completed
+        // by a second commit); the gate says so too, so an un-ledgered
         // patch fails rather than riding along.
-        "expected-patch-count: 2",
+        "expected-patch-count: 3",
         "git-config-global: /dev/null",
         "git-config-nosystem: 1",
         "format:",

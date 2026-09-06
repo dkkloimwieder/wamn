@@ -31,7 +31,7 @@ const EXECUTOR: &str = "deploy/platform/executor.yaml";
 const SOCKPROBE: &str = "components/fixtures/sockprobe/src/main.rs";
 const EXPECTED_CHART_VERSION: &str = "2.8.0";
 static RENDER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-const EXPECTED_RUNTIME_REVISION: &str = "2eadd937";
+const EXPECTED_RUNTIME_REVISION: &str = "735b5798";
 
 /// The component workloads the operator schedules onto the host tier — the only
 /// two in scope for operator management (ruling wamn-0h0g.13.46).

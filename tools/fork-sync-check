@@ -6,11 +6,13 @@ readonly WAMN_EXPECTED_BRANCH='wamn/2.8.0'
 readonly WAMN_EXPECTED_TAG='v2.8.0'
 # The upstream tag the branch is cut from, and the branch tip itself. They are
 # no longer the same commit: the branch carries ledgered patches. The COUNT is
-# asserted as well as the tip, so an un-ledgered patch fails this gate rather
+# of COMMITS over the tag (two deviations today, one of them completed by a
+# second commit -- patch count is a ledger fact, commit count is history); it is
+# asserted as well as the tip, so an un-ledgered commit fails this gate rather
 # than riding along -- the ledger's process law, made executable.
 readonly WAMN_EXPECTED_TAG_REVISION='5c4ec4a3d008b3f401d9e763515f434deebc9936'
-readonly WAMN_EXPECTED_REVISION='2eadd9371cd154cbe78abb1c8608940e1a37802f'
-readonly WAMN_EXPECTED_PATCH_COUNT=2
+readonly WAMN_EXPECTED_REVISION='735b57982545358409a7d965a22549b08487ca09'
+readonly WAMN_EXPECTED_PATCH_COUNT=3
 
 wamn_fail() {
   local -r exit_code="$1"
