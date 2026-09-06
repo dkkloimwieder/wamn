@@ -151,7 +151,19 @@ impl RouterReadinessProbe {
         let mut state = self.state.lock().expect("router readiness lock poisoned");
         match prepared {
             Ok(prepared) => state.finish(generation, Ok(prepared)),
-            Err(_error) => state.finish(generation, Err(RELEASE_READINESS_CHECK_FAILED)),
+            Err(error) => {
+                // The refusal string stays redacted for the probe TRANSPORT,
+                // which must not leak internals to a caller. The host's own log
+                // is not a caller: without this line the one process that knows
+                // why the release did not load reports `NotReady` and nothing
+                // else (wamn-10yt.10.34).
+                tracing::warn!(
+                    target: "wamn::host",
+                    error = %error,
+                    "release readiness evaluation failed"
+                );
+                state.finish(generation, Err(RELEASE_READINESS_CHECK_FAILED))
+            }
         }
         state.snapshot.clone()
     }

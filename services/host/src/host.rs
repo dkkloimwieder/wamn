@@ -650,8 +650,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let readiness = wamn_execution_host::RouterReadinessProbe::new(Arc::clone(driver));
         let snapshot = readiness.refresh().await;
         anyhow::ensure!(
-            matches!(snapshot.status, wamn_execution_host::RouterReadinessStatus::Ready),
-            "release preload did not reach ready: {:?}", snapshot.status
+            matches!(
+                snapshot.status,
+                wamn_execution_host::RouterReadinessStatus::Ready
+            ),
+            "release preload did not reach ready: {:?} ({})",
+            snapshot.status,
+            snapshot.refusal.unwrap_or("no refusal recorded")
         );
         tracing::info!(
             target: "wamn::host",
@@ -672,19 +677,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let flow_http =
         FlowHttpRouting::from_env(release.clone()).context("wamn:flow-http-routing plugin init")?;
     let flow_http = match (&route_auth_scope, &identity_reader) {
-        (Some((org, subject)), Some(identity_reader)) => {
-            flow_http.with_authentication(Arc::new(
-                RouteAuthentication::new(
-                    Arc::clone(identity_reader),
-                    Arc::clone(&postgres),
-                    org.clone(),
-                    args.project.clone(),
-                    subject.clone(),
-                )
-                .await
-                .context("prepare the route authentication identity reads")?,
-            ))
-        }
+        (Some((org, subject)), Some(identity_reader)) => flow_http.with_authentication(Arc::new(
+            RouteAuthentication::new(
+                Arc::clone(identity_reader),
+                Arc::clone(&postgres),
+                org.clone(),
+                args.project.clone(),
+                subject.clone(),
+            )
+            .await
+            .context("prepare the route authentication identity reads")?,
+        )),
         (None, None) => flow_http,
         _ => unreachable!("route authentication inputs are constructed together"),
     };
