@@ -39,7 +39,7 @@ readonly IDLE_SECONDS=300
 readonly STEP_SECONDS=1200
 readonly CAP_SECONDS=5400
 
-die() { printf 'agent-pilot-run: %s\n' "$*" >&2; exit "${2:-$EX_USAGE}"; }
+die() { printf 'agent-pilot-run: %s\n' "$1" >&2; exit "${2:-$EX_USAGE}"; }
 note() { printf '[pilot] %s\n' "$*" >&2; }
 
 VERB=""; RUN=""; AGENT=""; TASK=""; STANDUP="dev-env"; COMMIT=""
@@ -190,9 +190,9 @@ preflight() {
 
   [[ -z "$(git -C "$TREE" status --porcelain=v1 --untracked-files=all)" ]] \
     || die "the source tree is not clean" "$EX_ENV"
-  cargo metadata --manifest-path "$TREE/Cargo.toml" --no-deps --offline >/dev/null \
+  cargo metadata --manifest-path "$TREE/Cargo.toml" --no-deps --offline --format-version 1 >/dev/null \
     || die "the root workspace manifest does not resolve" "$EX_ENV"
-  cargo metadata --manifest-path "$TREE/components/Cargo.toml" --no-deps --offline >/dev/null \
+  cargo metadata --manifest-path "$TREE/components/Cargo.toml" --no-deps --offline --format-version 1 >/dev/null \
     || die "the components workspace manifest does not resolve" "$EX_ENV"
 }
 
