@@ -157,9 +157,13 @@ impl RouterReadinessProbe {
                 // is not a caller: without this line the one process that knows
                 // why the release did not load reports `NotReady` and nothing
                 // else (wamn-10yt.10.34).
+                // `{:#}` renders the whole context chain. Plain Display
+                // prints only the outermost message, which names the wiring
+                // that failed and not one word about why.
+                let rendered = format!("{error:#}");
                 tracing::warn!(
                     target: "wamn::host",
-                    error = %error,
+                    error = %rendered,
                     "release readiness evaluation failed"
                 );
                 state.finish(generation, Err(RELEASE_READINESS_CHECK_FAILED))
