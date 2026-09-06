@@ -1066,10 +1066,10 @@ fn run_state_live() {
     let select_exhausted = select_exhausted_production_sql();
     let terminalize_exhausted = terminalize_exhausted_production_sql();
     let reap_script = format!(
-        "{} PREPARE reap_select (bigint,text,text) AS {}; \
+        "{} PREPARE reap_select (bigint,text[],text) AS {}; \
          PREPARE reap_terminal (text,text,text) AS {}; \
-         CREATE TEMP TABLE reap_candidate AS EXECUTE reap_select(0,'cat','prod'); \
-         CREATE TEMP TABLE reap_other_scope AS EXECUTE reap_select(0,'cat','dev'); \
+         CREATE TEMP TABLE reap_candidate AS EXECUTE reap_select(0,'{{cat}}','prod'); \
+         CREATE TEMP TABLE reap_other_scope AS EXECUTE reap_select(0,'{{cat}}','dev'); \
          CREATE TEMP TABLE reaped AS EXECUTE reap_terminal('reap-exhausted', \
            '{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}','sha256:reaped'); \
          DO $$ BEGIN \

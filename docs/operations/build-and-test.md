@@ -1827,16 +1827,38 @@ These have no section tag; the file's own doc comment is the recipe of record.
 
 **The rows from `cdc.rs` down were added by `wamn-0h0g.15.137.2`, which means
 those gates had never entered an arming set.** Each was armed once, alone, on
-its own fresh `postgres:18` container. The surviving measured reds are:
+its own fresh `postgres:18` container.
 
-| gate | measured | first failing test and reason |
+**RE-MEASURED 2026-09-06 at `1446936a` (`wamn-0h0g.15.137.6`).** Each surviving
+binary was armed ALONE against its own fresh `postgres:18` container, with
+`--include-ignored --no-fail-fast` and cargo unpiped so its exit code stands.
+Three of that bead's nine NO LONGER EXIST:
+`crates/schema/compiler/tests/rls.rs`, `crates/schema/compiler/tests/seed.rs`
+and `crates/schema/control/tests/migrate.rs` went with the whole
+`crates/schema/compiler` crate at `15d6a6b7`, and the adjacent finding about
+`migrate.rs` hiding failures in an unwrapped `write_all` died with the file.
+**Compare FAILING TEST NAMES, never totals** — one row below went green by
+RENAME, and reading its totals alone would have called it a repair.
+
+| gate | 2026-09-06 at `1446936a` | failing test and reason |
 | --- | --- | --- |
-| `run-state/tests/store.rs` | 7 passed / 1 failed | `run_state_schema_applies_and_isolates_on_postgres` — `ERROR: role "wamn_effect_writer" does not exist`; the bootstrap mints only `wamn_app`, and `run-state.sql` GRANTs to three roles |
-| `project-state/tests/authority.rs` | 0 passed / 3 failed | all three, e.g. `a_project_still_owns_its_own_configuration` — `ERROR: new row violates row-level security policy for table "configurations"` |
-| `project-state/tests/schema.rs` | 4 passed / 1 failed | `app_schema_applies_and_enforces_isolation_and_claims_on_postgres` — `ERROR: t1 sees its 2 users, not t2's` |
-| `runtime/tests/production_claim_live.rs` | 1 passed / 1 failed | `production_claim_live` — `effect-writer credential role does not match its scoped generation` |
-| `runtime/tests/production_claim_durable_live.rs` | 0 passed / 1 failed | `production_claim_durable_live` — same credential refusal |
-| `runtime .../wamn_postgres/claims.rs` | 0 passed / 1 failed | `live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving` — `platform headroom remains available while guest is saturated: PgError::ConnectionUnavailable` |
+| `run-state/tests/store.rs` | **GREEN** — 7 passed / 0 failed, 0.82s | was `run_state_schema_applies_and_isolates_on_postgres` on `ERROR: role "wamn_effect_writer" does not exist`. `e5e78da3` gave the bootstrap `provision_sql::ensure_effect_writer_acl_role_sql()` and the `wamn_scenario_author` mint. Unarmed the same command reports `ok` in 0.01s with a `skipping …` line: the duration is the arming proof |
+| `project-state/tests/authority.rs` | **GREEN** — 3 passed / 0 failed, 1.26s | was all three on `new row violates row-level security policy`. `e5e78da3` retired every `app.tenant` site here and drives tenancy through `SET LOCAL ROLE` plus an `ASSERT` on `current_user` |
+| `project-state/tests/schema.rs` | **GREEN** — 5 passed / 0 failed, 0.66s | **green by rename, not by repair.** The red test `app_schema_applies_and_enforces_isolation_and_claims_on_postgres` no longer exists; `e5e78da3` renamed it `app_schema_applies_and_enforces_isolation_on_postgres` and added `tenant_floor_derives_from_the_connected_role`. The file's four remaining `app.tenant` sites are all negative probes asserting the retired claim is ignored |
+| `runtime/tests/production_claim_live.rs` | **RED** — 1 passed / 1 failed | `production_claim_live`. The scoped-generation refusal is FIXED here: `install_effect_writer` minted the credential under `claim-live-tenant` while the host validates it against `TENANT`, and the generation role hashes the tenant. Under it the ExecutorPlatform pool checkout is refused — the fixture creates no `wamn_executor_platform` ACL role, so `credential_exactness_hook`'s membership expectation cannot hold. Measured with that ACL role pre-created by hand: the claim then dies on `function require_executor_platform_authority() does not exist`, because this fixture's hand-rolled schema never installs the run-plane fence |
+| `runtime/tests/production_claim_durable_live.rs` | **RED** — 0 passed / 1 failed | `production_claim_durable_live`, same credential fix, and under it the **wamn-0h0g.10.15 accepted red reached from a second binary**. `EffectWriterClient::begin_attempt` opens with `serialize_effect_intent_sql()`, whose first act is `require_executor_platform_authority()`; the fixture's effect-writer generation login is a member of `wamn_effect_writer` and nothing else. Measured directly on the live server: with that fence function installed, the login is refused `42501 executor-platform-authority-required`. Granting it the platform family in the fixture would fabricate authority and is refused |
+| `runtime .../wamn_postgres/claims.rs` | **RED** — 0 passed / 1 failed | `live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving` — `platform headroom remains available while guest is saturated: PgError::ConnectionUnavailable`. `live_guest_url` mints a `wamn_app`-family login and grants it `wamn_app` only, then hands that one URL to every class; the platform checkout's exactness hook wants membership in `wamn_executor_platform`, which the server does not have. Separable guest/platform headroom cannot be observed without a platform-class checkout, so **this fixture does not prove it with the credential it legitimately holds**. Minting a platform-family generation login here would fabricate authority (the wamn-0h0g.10.15 precedent) and is refused, so the red stands with its reason rather than being rewritten green |
+
+One gate that was GREEN in the `wamn-0h0g.15.137.2` sweep is RED at `1446936a`
+and was swept by `wamn-0h0g.15.137.6`:
+`crates/execution/run-state/tests/run_state_live.rs` died on
+`ERROR: malformed array literal: "cat"`. `15d6a6b7` widened
+`select_exhausted_production_sql` to take `$2::text[]` and left this file's
+`PREPARE reap_select (bigint,text,text)` — written at `4ef5658f` — naming a
+scalar, so PostgreSQL cast the text `cat` to `text[]`. The guard now declares
+`text[]` and passes `'{cat}'`; measured 1 passed in 6.70s, and breaking the
+package set to `'{other}'` reds the exact assertion
+(`the janitor locked no crash-budget-exhausted candidate`).
 
 The surviving green gates, armed and measured: `cdc` 2 passed 0.78s (**start the
 container with `-c wal_level=logical`** or it false-reds), `control_storage` 11
