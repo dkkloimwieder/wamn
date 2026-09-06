@@ -121,7 +121,7 @@ spec:
                 set -- \$metrics
                 probe_elapsed=\$(( \$(date +%s) - probe_start ))
                 printf '%s\\n' \\
-                  "RECEIVING_STARTUP_ATTEMPT phase=${_rpj_spec[phase]} attempt=\$attempt status=\$1 since_restart_seconds=\$probe_elapsed time_total_seconds=\$3"
+                  "JOURNEY_STARTUP_ATTEMPT phase=${_rpj_spec[phase]} attempt=\$attempt status=\$1 since_restart_seconds=\$probe_elapsed time_total_seconds=\$3"
                 [ "\$1" = 200 ] && break
                 [ "\$probe_elapsed" -ge 150 ] && break
                 sleep 1
@@ -138,8 +138,8 @@ spec:
               # machine and substituted its empty output, deleting the
               # sentence from every manifest the journey wrote.
               printf '%s\n' \\
-                "RECEIVING_STARTUP_REQUEST phase=${_rpj_spec[phase]} status=\$1 time_starttransfer_seconds=\$2 time_total_seconds=\$3 recovery_seconds=\$probe_elapsed"
-              printf 'RECEIVING_STARTUP_BODY '
+                "JOURNEY_STARTUP_REQUEST phase=${_rpj_spec[phase]} status=\$1 time_starttransfer_seconds=\$2 time_total_seconds=\$3 recovery_seconds=\$probe_elapsed"
+              printf 'JOURNEY_STARTUP_BODY '
               tr -d '\n' </tmp/body
               printf '\n'
               test "\$1" = 200
