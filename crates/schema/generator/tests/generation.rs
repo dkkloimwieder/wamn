@@ -2293,14 +2293,32 @@ fn generic_custom_operation_path_preserves_shipped_receiving_bytes() {
         // file under test would compare the file with itself.
         &StatementTransactionality::from_paths(BTreeMap::from([
             ("command/record_receipt/claim_command.sql".to_owned(), true),
-            ("command/record_receipt/finalize_command.sql".to_owned(), true),
+            (
+                "command/record_receipt/finalize_command.sql".to_owned(),
+                true,
+            ),
             ("command/record_receipt/find_replay.sql".to_owned(), false),
-            ("command/record_receipt/finish_purchase_order.sql".to_owned(), true),
+            (
+                "command/record_receipt/finish_purchase_order.sql".to_owned(),
+                true,
+            ),
             ("command/record_receipt/insert_receipt.sql".to_owned(), true),
-            ("command/record_receipt/insert_receipt_line.sql".to_owned(), true),
-            ("command/record_receipt/lock_purchase_order.sql".to_owned(), true),
-            ("command/record_receipt/update_purchase_order_line.sql".to_owned(), true),
-            ("command/record_receipt/validate_receipt_line.sql".to_owned(), true),
+            (
+                "command/record_receipt/insert_receipt_line.sql".to_owned(),
+                true,
+            ),
+            (
+                "command/record_receipt/lock_purchase_order.sql".to_owned(),
+                true,
+            ),
+            (
+                "command/record_receipt/update_purchase_order_line.sql".to_owned(),
+                true,
+            ),
+            (
+                "command/record_receipt/validate_receipt_line.sql".to_owned(),
+                true,
+            ),
         ])),
     ))
     .unwrap();
@@ -2953,6 +2971,650 @@ fn the_two_line_members_are_declared_together() {
             refusal.kind(),
             GenerateErrorKind::InvalidOperation,
             "{member}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generated create: command-identity-from-claim.
+//
+// The law, ratified 2026-09-03: any identity a command creates comes from the
+// CLAIM, not from the work. A create that let PostgreSQL default its row id
+// would mint a SECOND id on replay -- a duplicate IDENTITY, which is real stock
+// on a row nothing points at, not merely a duplicate row.
+//
+// These tests are the generator's proof. No package declares a create today, so
+// the emitted statements have no in-cluster consumer yet; the executing proof
+// is due on the first one.
+// ---------------------------------------------------------------------------
+
+const CLAIM_TABLE: &str = "purchase_order_command";
+
+/// One labelled way to break the create's closed error vocabulary.
+type ErrorVocabularyMutant = (&'static str, Box<dyn Fn(&mut Value)>);
+
+fn claim_columns() -> Vec<Column> {
+    vec![
+        Column::new("canonical_command", ColumnType::Bytes, false, None, None),
+        Column::new("idempotency_key", ColumnType::Text, false, None, None),
+        Column::new(
+            "purchase_order_id",
+            ColumnType::Uuid,
+            false,
+            Some(ColumnDefault::GenRandomUuid),
+            None,
+        ),
+    ]
+}
+
+fn claim_constraints() -> Vec<Constraint> {
+    vec![
+        Constraint::primary_key(
+            "purchase_order_command_idempotency_key_pkey",
+            ["idempotency_key"],
+        )
+        .unwrap(),
+        Constraint::unique(
+            "purchase_order_command_purchase_order_id_key",
+            ["purchase_order_id"],
+        )
+        .unwrap(),
+    ]
+}
+
+fn claim_catalog_with(model: Table, claim: Table) -> CatalogIr {
+    CatalogIr::new(vec![model, claim])
+}
+
+fn claim_catalog() -> CatalogIr {
+    let model = table(&catalog(false), "purchase_order").clone();
+    claim_catalog_with(
+        model,
+        Table::new(
+            "receiving",
+            CLAIM_TABLE,
+            claim_columns(),
+            claim_constraints(),
+            Vec::new(),
+        ),
+    )
+}
+
+fn claim_manifest() -> Value {
+    let mut manifest = manifest();
+    manifest["models"]["purchase_order"]["operations"]["create"] = json!({
+        "permission": "purchase_order.create",
+        "error_details": {
+            "invalid_input": {"required": ["field"]},
+            "idempotency_conflict": {"required": ["field"]},
+            "unique_violation": {"required": ["constraint"]},
+            "check_violation": {"required": ["constraint"]},
+            "retry": {},
+            "timeout": {},
+            "permission_denied": {"required": ["operation"]},
+            "internal_error": {}
+        },
+        "writable_fields": ["supplier_id"],
+        "claim": {
+            "table": CLAIM_TABLE,
+            "identities": {"id": "purchase_order_id"}
+        },
+        "result": "one"
+    });
+    manifest["internal_relations"] = json!({
+        CLAIM_TABLE: {"schema": "receiving", "table": CLAIM_TABLE, "cdc": "excluded"}
+    });
+    manifest
+}
+
+fn generated_create_sql(package: &GeneratedPackage, statement: &str) -> String {
+    String::from_utf8(
+        package
+            .file(&format!("generated/sql/purchase_order/{statement}.sql"))
+            .unwrap_or_else(|| panic!("{statement} was emitted"))
+            .bytes()
+            .to_vec(),
+    )
+    .unwrap()
+}
+
+/// EXIT GATE: every identity the create hands out is written once, under the
+/// claim's primary key, and bound into the insert rather than defaulted.
+///
+/// Read the three statements together. `create_claim` mints the ids under
+/// `idempotency_key PRIMARY KEY`, so a second call with that key mints nothing.
+/// `create` BINDS them (`$1::uuid`), so it cannot invent a different one.
+/// `create_replay` reads the durable original back through the claim. That is
+/// why a replay returns the same id BY CONSTRUCTION and not by an early return.
+#[test]
+fn generated_create_takes_every_identity_from_the_claim() {
+    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
+
+    assert_eq!(
+        generated_create_sql(&package, "create_claim"),
+        "INSERT INTO purchase_order_command (idempotency_key, canonical_command)\n\
+         VALUES ($1::text, $2::bytea)\n\
+         ON CONFLICT ON CONSTRAINT purchase_order_command_idempotency_key_pkey DO NOTHING\n\
+         RETURNING\n    purchase_order_id;\n",
+    );
+    assert_eq!(
+        generated_create_sql(&package, "create"),
+        "INSERT INTO purchase_order (id, supplier_id)\n\
+         VALUES ($1::uuid, $2::uuid)\n\
+         RETURNING\n    \
+         created_at,\n    id,\n    purchase_order_number,\n    row_version,\n    status,\n    supplier_id;\n",
+    );
+    assert_eq!(
+        generated_create_sql(&package, "create_replay"),
+        "SELECT\n    claim.canonical_command,\n    \
+         model.created_at,\n    model.id,\n    model.purchase_order_number,\n    \
+         model.row_version,\n    model.status,\n    model.supplier_id\n\
+         FROM purchase_order_command AS claim\n\
+         JOIN purchase_order AS model\n    ON model.id = claim.purchase_order_id\n\
+         WHERE claim.idempotency_key = $1::text;\n",
+    );
+}
+
+/// EXIT GATE: the replay path performs ZERO writes.
+///
+/// A replay that re-ran the insert would be the duplicate the key exists to
+/// prevent, so this reads the emitted text rather than trusting the caller.
+#[test]
+fn generated_create_replay_writes_nothing() {
+    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
+    let replay = generated_create_sql(&package, "create_replay");
+
+    assert!(replay.starts_with("SELECT\n"), "{replay}");
+    for write in [
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "MERGE",
+        "FOR UPDATE",
+        "nextval",
+    ] {
+        assert!(!replay.contains(write), "replay must not {write}: {replay}");
+    }
+    // The insert never defaults an identity: every id is a bind.
+    let create = generated_create_sql(&package, "create");
+    assert!(!create.contains("gen_random_uuid"), "{create}");
+    assert!(!create.contains("DEFAULT"), "{create}");
+}
+
+/// EXIT GATE: the create's contracts carry the claim, the replay rule and the
+/// typed refusal for a key rebound to a different request.
+#[test]
+fn generated_create_contracts_publish_the_claim_and_its_refusal() {
+    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
+
+    let operation = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/create.operation.json",
+    );
+    assert_eq!(
+        operation["idempotency"],
+        json!({
+            "key": "idempotency_key",
+            "canonical_command": "canonical_command",
+            "claim": {
+                "schema": "receiving",
+                "table": CLAIM_TABLE,
+                "constraint": "purchase_order_command_idempotency_key_pkey",
+                "identities": {"id": "purchase_order_id"},
+            },
+            "statements": {
+                "claim": "create_claim",
+                "replay": "create_replay",
+                "insert": "create",
+            },
+            "replay": {"writes": "none", "identity_source": "claim"},
+            "conflict": {
+                "on": "changed_canonical_command",
+                "refusal": "idempotency_conflict",
+            },
+            "atomicity": "claim_and_insert_commit_together",
+        })
+    );
+    let statements = operation["statements"].as_array().unwrap();
+    assert_eq!(
+        statements
+            .iter()
+            .map(|statement| statement["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["create_claim", "create_replay", "create"]
+    );
+    // The claim statement returns the minted identity, not the model row.
+    assert_eq!(
+        statements[0]["columns"],
+        json!([{"name": "purchase_order_id", "type": "uuid", "nullable": false}])
+    );
+    assert_eq!(
+        statements[0]["binds"],
+        json!([
+            {"name": "idempotency_key", "type": "text", "nullable": false},
+            {"name": "canonical_command", "type": "bytes", "nullable": false},
+        ])
+    );
+    // The insert binds the claim-minted id ahead of the writable fields.
+    assert_eq!(
+        statements[2]["binds"],
+        json!([
+            {"name": "id", "type": "uuid", "nullable": false},
+            {"name": "supplier_id", "type": "uuid", "nullable": false},
+        ])
+    );
+
+    let errors = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/create.errors.json",
+    );
+    let conflict = errors["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["literal"] == "idempotency_conflict")
+        .expect("a changed request for a live key is typed-refused");
+    assert_eq!(conflict["from"], json!("changed_canonical_command"));
+    assert_eq!(conflict["detail"]["required"], json!(["field"]));
+
+    let input = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/create.input.json",
+    );
+    assert_eq!(
+        input["idempotency_key"],
+        json!({"type": "text", "required": true})
+    );
+    assert_eq!(
+        input["canonical_command"],
+        json!({
+            "over": "writable_fields",
+            "payload": "canonical_compact_json",
+            "changed": "idempotency_conflict",
+        })
+    );
+}
+
+/// EXIT GATE: the claim's shape reaches the required-schema contract and the
+/// data-access overlay, so nothing the emitted SQL names is left unpinned.
+#[test]
+fn generated_create_pins_and_grants_its_claim_relation() {
+    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
+
+    let weld = artifact_json(&package, "generated/package-weld.json");
+    let claim = object_named(
+        weld["required_schema_contract"]["tables"]
+            .as_array()
+            .unwrap(),
+        "table",
+        CLAIM_TABLE,
+    );
+    assert_eq!(
+        claim["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|field| field["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["canonical_command", "idempotency_key", "purchase_order_id"]
+    );
+    assert_eq!(
+        claim["constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|constraint| constraint["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "purchase_order_command_idempotency_key_pkey",
+            "purchase_order_command_purchase_order_id_key",
+        ]
+    );
+
+    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
+    let relations = overlay["relations"].as_array().unwrap();
+    let granted = object_named(relations, "table", CLAIM_TABLE);
+    assert_eq!(
+        granted["select_fields"],
+        json!(["canonical_command", "idempotency_key", "purchase_order_id"])
+    );
+    assert_eq!(
+        granted["insert_fields"],
+        json!(["canonical_command", "idempotency_key"])
+    );
+    // A claim is written once: nothing may update it.
+    assert_eq!(granted["update_fields"], json!([]));
+    assert_eq!(granted["lock"], json!(false));
+    // The model insert writes the claim-minted id, so the grant must allow it.
+    let model = object_named(relations, "table", "purchase_order");
+    assert_eq!(model["insert_fields"], json!(["id", "supplier_id"]));
+}
+
+/// EXIT GATE: every way the claim could stop being the identity source refuses.
+///
+/// The unmutated manifest and catalog run FIRST as the negative control: if
+/// they did not generate, a refusal below would prove nothing.
+#[test]
+fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
+    run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES)
+        .expect("the unmutated claim generates");
+
+    let model = || table(&catalog(false), "purchase_order").clone();
+    let claim_table = |columns, constraints| {
+        Table::new("receiving", CLAIM_TABLE, columns, constraints, Vec::new())
+    };
+    let without = |name: &str| {
+        claim_columns()
+            .into_iter()
+            .filter(|column| column.name() != name)
+            .collect::<Vec<_>>()
+    };
+    let replacing = |replacement: Column| {
+        claim_columns()
+            .into_iter()
+            .map(|column| {
+                if column.name() == replacement.name() {
+                    replacement.clone()
+                } else {
+                    column
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let cases: Vec<(&str, CatalogIr, Value, GenerateErrorKind)> = vec![
+        (
+            "no claim declared at all",
+            claim_catalog(),
+            {
+                let mut manifest = claim_manifest();
+                manifest["models"]["purchase_order"]["operations"]["create"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("claim");
+                manifest
+            },
+            GenerateErrorKind::InvalidOperation,
+        ),
+        (
+            "the claim relation does not exist",
+            claim_catalog(),
+            {
+                let mut manifest = claim_manifest();
+                manifest["models"]["purchase_order"]["operations"]["create"]["claim"]["table"] =
+                    json!("absent_command");
+                manifest["internal_relations"] = json!({
+                    "absent_command": {
+                        "schema": "receiving", "table": "absent_command", "cdc": "excluded"
+                    }
+                });
+                manifest
+            },
+            GenerateErrorKind::UnknownRelation,
+        ),
+        (
+            "the claim is not CDC-excluded, so mechanism state would ship as events",
+            claim_catalog(),
+            {
+                let mut manifest = claim_manifest();
+                manifest["internal_relations"] = json!({});
+                manifest
+            },
+            GenerateErrorKind::InvalidOperation,
+        ),
+        (
+            "the identity column carries no gen_random_uuid default",
+            claim_catalog_with(
+                model(),
+                claim_table(
+                    replacing(Column::new(
+                        "purchase_order_id",
+                        ColumnType::Uuid,
+                        false,
+                        None,
+                        None,
+                    )),
+                    claim_constraints(),
+                ),
+            ),
+            claim_manifest(),
+            GenerateErrorKind::InvalidOperation,
+        ),
+        (
+            "the identity column is nullable, so the claim may mint nothing",
+            claim_catalog_with(
+                model(),
+                claim_table(
+                    replacing(Column::new(
+                        "purchase_order_id",
+                        ColumnType::Uuid,
+                        true,
+                        Some(ColumnDefault::GenRandomUuid),
+                        None,
+                    )),
+                    claim_constraints(),
+                ),
+            ),
+            claim_manifest(),
+            GenerateErrorKind::InvalidOperation,
+        ),
+        (
+            "the identity column is not UNIQUE, so two claims could mint one id",
+            claim_catalog_with(
+                model(),
+                claim_table(
+                    claim_columns(),
+                    vec![
+                        Constraint::primary_key(
+                            "purchase_order_command_idempotency_key_pkey",
+                            ["idempotency_key"],
+                        )
+                        .unwrap(),
+                    ],
+                ),
+            ),
+            claim_manifest(),
+            GenerateErrorKind::InvalidOperation,
+        ),
+        (
+            "the key is not a primary key, so a second call could claim it again",
+            claim_catalog_with(
+                model(),
+                claim_table(
+                    claim_columns(),
+                    vec![
+                        Constraint::unique(
+                            "purchase_order_command_purchase_order_id_key",
+                            ["purchase_order_id"],
+                        )
+                        .unwrap(),
+                    ],
+                ),
+            ),
+            claim_manifest(),
+            GenerateErrorKind::InvalidOperation,
+        ),
+        (
+            "the claim carries no canonical command to compare a replay against",
+            claim_catalog_with(
+                model(),
+                claim_table(without("canonical_command"), claim_constraints()),
+            ),
+            claim_manifest(),
+            GenerateErrorKind::InvalidOperation,
+        ),
+        (
+            "a claim column has no value the generated claim insert can supply",
+            claim_catalog_with(
+                model(),
+                claim_table(
+                    claim_columns()
+                        .into_iter()
+                        .chain([Column::new("actor_id", ColumnType::Uuid, false, None, None)])
+                        .collect(),
+                    claim_constraints(),
+                ),
+            ),
+            claim_manifest(),
+            GenerateErrorKind::InvalidOperation,
+        ),
+        (
+            "the declared identity is not a column of the claim",
+            claim_catalog(),
+            {
+                let mut manifest = claim_manifest();
+                manifest["models"]["purchase_order"]["operations"]["create"]["claim"]["identities"] =
+                    json!({"id": "absent_id"});
+                manifest
+            },
+            GenerateErrorKind::UnknownColumn,
+        ),
+        (
+            "only a create may carry a claim",
+            claim_catalog(),
+            {
+                let mut manifest = claim_manifest();
+                manifest["models"]["purchase_order"]["operations"]["update"]["claim"] = json!({
+                    "table": CLAIM_TABLE,
+                    "identities": {"id": "purchase_order_id"}
+                });
+                manifest
+            },
+            GenerateErrorKind::InvalidOperation,
+        ),
+    ];
+
+    for (label, catalog, manifest, kind) in cases {
+        let refusal = run(&catalog, &manifest, &QUERY_SOURCES).expect_err(label);
+        assert_eq!(refusal.kind(), kind, "{label}");
+    }
+}
+
+/// EXIT GATE: a second identity added to the model breaks the build unless the
+/// claim pre-generates it too.
+///
+/// This is the enumeration the law demands, made mechanical: the generator
+/// derives the minted set from the catalog, so a new `gen_random_uuid()` column
+/// cannot slip through and be re-minted on replay.
+#[test]
+fn a_model_identity_the_claim_does_not_mint_refuses() {
+    let with_second_identity = rebuilt_table(
+        table(&catalog(false), "purchase_order"),
+        table(&catalog(false), "purchase_order")
+            .columns()
+            .to_vec()
+            .into_iter()
+            .chain([Column::new(
+                "external_id",
+                ColumnType::Uuid,
+                false,
+                Some(ColumnDefault::GenRandomUuid),
+                None,
+            )])
+            .collect(),
+        table(&catalog(false), "purchase_order")
+            .constraints()
+            .to_vec(),
+    );
+    let claim = Table::new(
+        "receiving",
+        CLAIM_TABLE,
+        claim_columns(),
+        claim_constraints(),
+        Vec::new(),
+    );
+    let unmapped = claim_catalog_with(with_second_identity.clone(), claim);
+    let mut manifest = claim_manifest();
+    manifest["models"]["purchase_order"]["server_owned_fields"] = json!([
+        "id",
+        "external_id",
+        "purchase_order_number",
+        "status",
+        "row_version",
+        "created_at"
+    ]);
+
+    let refusal =
+        run(&unmapped, &manifest, &QUERY_SOURCES).expect_err("an unminted identity refuses");
+    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidOperation);
+
+    // Mapping it to its own pre-generated claim column restores generation.
+    let mapped = claim_catalog_with(
+        with_second_identity,
+        Table::new(
+            "receiving",
+            CLAIM_TABLE,
+            claim_columns()
+                .into_iter()
+                .chain([Column::new(
+                    "external_id",
+                    ColumnType::Uuid,
+                    false,
+                    Some(ColumnDefault::GenRandomUuid),
+                    None,
+                )])
+                .collect(),
+            claim_constraints()
+                .into_iter()
+                .chain([Constraint::unique(
+                    "purchase_order_command_external_id_key",
+                    ["external_id"],
+                )
+                .unwrap()])
+                .collect(),
+            Vec::new(),
+        ),
+    );
+    manifest["models"]["purchase_order"]["operations"]["create"]["claim"]["identities"] =
+        json!({"external_id": "external_id", "id": "purchase_order_id"});
+    let package = run(&mapped, &manifest, &QUERY_SOURCES).expect("both identities are claimed");
+    assert_eq!(
+        generated_create_sql(&package, "create"),
+        "INSERT INTO purchase_order (external_id, id, supplier_id)\n\
+         VALUES ($1::uuid, $2::uuid, $3::uuid)\n\
+         RETURNING\n    \
+         created_at,\n    external_id,\n    id,\n    purchase_order_number,\n    \
+         row_version,\n    status,\n    supplier_id;\n",
+    );
+}
+
+/// EXIT GATE: `idempotency_conflict` is a required, exactly-shaped member of
+/// the create's closed error vocabulary, and belongs to no other action.
+#[test]
+fn idempotency_conflict_is_closed_to_the_create() {
+    let cases: [ErrorVocabularyMutant; 3] = [
+        (
+            "a create that does not declare the refusal",
+            Box::new(|manifest: &mut Value| {
+                manifest["models"]["purchase_order"]["operations"]["create"]["error_details"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("idempotency_conflict");
+            }),
+        ),
+        (
+            "a create whose refusal carries the wrong structured detail",
+            Box::new(|manifest: &mut Value| {
+                manifest["models"]["purchase_order"]["operations"]["create"]["error_details"]["idempotency_conflict"] =
+                    json!({"required": ["constraint"]});
+            }),
+        ),
+        (
+            "an update that claims the refusal",
+            Box::new(|manifest: &mut Value| {
+                manifest["models"]["purchase_order"]["operations"]["update"]["error_details"]["idempotency_conflict"] =
+                    json!({"required": ["field"]});
+            }),
+        ),
+    ];
+    for (label, mutate) in cases {
+        let mut manifest = claim_manifest();
+        mutate(&mut manifest);
+        let refusal = run(&claim_catalog(), &manifest, &QUERY_SOURCES).expect_err(label);
+        assert_eq!(
+            refusal.kind(),
+            GenerateErrorKind::InvalidOperation,
+            "{label}"
         );
     }
 }

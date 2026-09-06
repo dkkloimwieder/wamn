@@ -1,6 +1,28 @@
 use wamn_schema_introspection::ir::{Column, ColumnType, Table};
 
+use crate::generate::{CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN};
 use crate::{CursorDirection, OperationDeclaration};
+
+/// One create's resolved claim, as the emitters need it.
+pub(crate) struct Claim<'a> {
+    pub(crate) table: &'a Table,
+    /// Constraint name of the claim's `idempotency_key` primary key.
+    pub(crate) primary_key: &'a str,
+    /// Model field paired with the claim column that pre-generated it, in
+    /// model-field order.
+    pub(crate) identities: Vec<(&'a str, &'a str)>,
+}
+
+impl Claim<'_> {
+    /// The claim column that mints the created row's `id`.
+    fn id_column(&self) -> &str {
+        self.identities
+            .iter()
+            .find(|(field, _)| *field == "id")
+            .map(|(_, claim_column)| *claim_column)
+            .expect("claim validation requires an id identity")
+    }
+}
 
 pub(crate) fn get(table: &Table) -> String {
     format!(
@@ -10,10 +32,54 @@ pub(crate) fn get(table: &Table) -> String {
     )
 }
 
-pub(crate) fn create(table: &Table, operation: &OperationDeclaration) -> String {
-    let columns = operation.writable_fields.join(", ");
-    let binds = operation
-        .writable_fields
+/// Mint the claim, or yield nothing because this key already has one.
+///
+/// The claim row pre-generates every identity the create hands out, so the
+/// replay path reads back the ids the FIRST call minted instead of minting a
+/// second set. Yielding nothing is not a failure: it is the signal that the
+/// caller must read the durable original through [`create_replay`].
+pub(crate) fn create_claim(claim: &Claim<'_>) -> String {
+    format!(
+        "INSERT INTO {} ({CLAIM_KEY_COLUMN}, {CLAIM_COMMAND_COLUMN})\nVALUES ($1::text, $2::bytea)\nON CONFLICT ON CONSTRAINT {} DO NOTHING\nRETURNING\n    {};\n",
+        claim.table.name(),
+        claim.primary_key,
+        claim
+            .identities
+            .iter()
+            .map(|(_, claim_column)| *claim_column)
+            .collect::<Vec<_>>()
+            .join(",\n    "),
+    )
+}
+
+/// Read the immutable original for one key, writing nothing.
+///
+/// The canonical command comes back beside the row so the caller can refuse a
+/// key rebound to a different request. The join is inner because the claim and
+/// its row are inserted in one transaction: a visible claim always has its row.
+pub(crate) fn create_replay(table: &Table, claim: &Claim<'_>) -> String {
+    format!(
+        "SELECT\n    claim.{CLAIM_COMMAND_COLUMN},\n    {}\nFROM {} AS claim\nJOIN {} AS model\n    ON model.id = claim.{}\nWHERE claim.{CLAIM_KEY_COLUMN} = $1::text;\n",
+        select_columns(table),
+        claim.table.name(),
+        table.name(),
+        claim.id_column(),
+    )
+}
+
+/// Insert the row under the identities the claim already minted.
+///
+/// Every identity is bound, never defaulted: a `DEFAULT gen_random_uuid()` here
+/// would mint a fresh id on every attempt, which is exactly the duplicate
+/// identity the claim exists to prevent.
+pub(crate) fn create(table: &Table, claim: &Claim<'_>, operation: &OperationDeclaration) -> String {
+    let fields = claim
+        .identities
+        .iter()
+        .map(|(field, _)| *field)
+        .chain(operation.writable_fields.iter().map(String::as_str))
+        .collect::<Vec<_>>();
+    let binds = fields
         .iter()
         .enumerate()
         .map(|(index, field)| {
@@ -23,8 +89,9 @@ pub(crate) fn create(table: &Table, operation: &OperationDeclaration) -> String 
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "INSERT INTO {} ({columns})\nVALUES ({binds})\nRETURNING\n    {};\n",
+        "INSERT INTO {} ({})\nVALUES ({binds})\nRETURNING\n    {};\n",
         table.name(),
+        fields.join(", "),
         returning_columns(table)
     )
 }
