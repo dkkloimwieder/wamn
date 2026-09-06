@@ -633,11 +633,15 @@ mod tests {
         let snapshot = handle.snapshot();
 
         assert_eq!(
-            snapshot.stages()[DevStage::Publish.position()].state(),
+            snapshot.stages()[DevStage::Virtualize.position()].state(),
             &DevStageState::Passed
         );
         assert_eq!(
             snapshot.stages()[DevStage::Apply.position()].state(),
+            &DevStageState::Awaiting
+        );
+        assert_eq!(
+            snapshot.stages()[DevStage::Publish.position()].state(),
             &DevStageState::Awaiting
         );
         assert!(snapshot.release().is_none());

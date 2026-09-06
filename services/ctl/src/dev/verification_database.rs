@@ -658,9 +658,19 @@ mod tests {
             Event::RevokePublicConnect("wamn-verification".into()),
             Event::Run(EXACT_URL.into()),
         ];
-        expected.extend(DEV_STAGE_ORDER[3..].iter().copied().map(Event::Stage));
+        expected.extend(
+            DEV_STAGE_ORDER[DevStage::Build.position()..]
+                .iter()
+                .copied()
+                .map(Event::Stage),
+        );
         expected.push(Event::Outcome(DevStage::Build));
-        expected.extend(DEV_STAGE_ORDER[6..].iter().copied().map(Event::Stage));
+        expected.extend(
+            DEV_STAGE_ORDER[DevStage::Gate.position()..]
+                .iter()
+                .copied()
+                .map(Event::Stage),
+        );
         expected.extend([
             Event::Outcome(DevStage::Gate),
             Event::Drop("wamn-verification".into()),

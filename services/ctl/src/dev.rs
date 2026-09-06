@@ -41,11 +41,16 @@ pub const DEV_STAGE_ORDER: [DevStage; 12] = [
     DevStage::Generate,
     DevStage::Build,
     DevStage::Virtualize,
+    // Apply and Acl carry the package to the project-environment database
+    // BEFORE Admit, because component projection refuses with
+    // source-package-not-applied against a database that does not hold the
+    // package yet. The authoring chain writes to that same database (owner
+    // ruling 2026-09-06, wamn-10yt.10.34), so the package must land first.
+    DevStage::Apply,
+    DevStage::Acl,
     DevStage::Admit,
     DevStage::Gate,
     DevStage::Publish,
-    DevStage::Apply,
-    DevStage::Acl,
     DevStage::Release,
     DevStage::Activate,
 ];
@@ -96,16 +101,23 @@ impl DevStage {
     /// Source-integrity boundary this stage requires.
     pub const fn boundary(self) -> DevStageBoundary {
         match self {
+            // Gate validates and returns a receipt; it writes nothing, so it
+            // still runs from saved bytes. Admit does not: since the authoring
+            // chain moved to the project-environment database it projects the
+            // admitted component there, which is durable work
+            // (wamn-10yt.10.34).
             Self::Migrate
             | Self::Introspect
             | Self::Generate
             | Self::Build
             | Self::Virtualize
-            | Self::Admit
             | Self::Gate => DevStageBoundary::SavedBytes,
-            Self::Publish | Self::Apply | Self::Acl | Self::Release | Self::Activate => {
-                DevStageBoundary::CommittedSource
-            }
+            Self::Admit
+            | Self::Publish
+            | Self::Apply
+            | Self::Acl
+            | Self::Release
+            | Self::Activate => DevStageBoundary::CommittedSource,
         }
     }
 }
@@ -956,7 +968,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dirty_source_reaches_gate_then_refuses_before_publish() {
+    async fn dirty_source_runs_the_disposable_stages_then_refuses_before_the_first_durable_one() {
         let mut runner = RecordingRunner::default();
 
         let error = run_once_stages(DevSourceState::Dirty, &mut runner)
@@ -964,11 +976,11 @@ mod tests {
             .expect_err("dirty source must not reach durable provenance stages");
 
         assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Publish);
+        assert_eq!(error.stage(), DevStage::Apply);
         assert_eq!(error.remedy(), Some(COMMIT_WORKTREE_REMEDY));
         assert_eq!(
             error.to_string(),
-            "dev-worktree-dirty at publish: commit the worktree"
+            "dev-worktree-dirty at apply: commit the worktree"
         );
         assert_eq!(
             runner.invoked,
@@ -978,14 +990,12 @@ mod tests {
                 DevStage::Generate,
                 DevStage::Build,
                 DevStage::Virtualize,
-                DevStage::Admit,
-                DevStage::Gate,
             ]
         );
     }
 
     #[tokio::test]
-    async fn source_state_is_re_read_after_generate_before_publish() {
+    async fn source_state_is_re_read_after_generate_before_the_first_durable_stage() {
         let source_state = SharedSourceState(Arc::new(Mutex::new(DevSourceState::Clean)));
         let mut runner = SourceDirtyingRunner {
             invoked: Vec::new(),
@@ -999,8 +1009,11 @@ mod tests {
                 .expect_err("generated dirty bytes must refuse before publication");
 
         assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Publish);
-        assert_eq!(runner.invoked, DEV_STAGE_ORDER[..7]);
+        assert_eq!(error.stage(), DevStage::Apply);
+        assert_eq!(
+            runner.invoked,
+            DEV_STAGE_ORDER[..DevStage::Apply.position()]
+        );
     }
 
     #[tokio::test]
@@ -1018,8 +1031,8 @@ mod tests {
                 .expect_err("a later dirty boundary must refuse before its stage");
 
         assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Acl);
-        assert_eq!(runner.invoked, [DevStage::Publish, DevStage::Apply]);
+        assert_eq!(error.stage(), DevStage::Activate);
+        assert_eq!(runner.invoked, [DevStage::Publish, DevStage::Release]);
         assert!(provider.0.is_empty());
     }
 
@@ -1124,11 +1137,17 @@ mod tests {
         let expected = [
             DevStage::Build,
             DevStage::Virtualize,
+            DevStage::Apply,
+            DevStage::Acl,
             DevStage::Admit,
             DevStage::Gate,
         ]
         .into_iter()
-        .chain(DEV_STAGE_ORDER[4..].iter().copied())
+        .chain(
+            DEV_STAGE_ORDER[DevStage::Virtualize.position()..]
+                .iter()
+                .copied(),
+        )
         .collect::<Vec<_>>();
         assert_eq!(runner.invoked, expected);
         assert_eq!(observer.outcomes.len(), 2);
