@@ -466,7 +466,7 @@ run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked --release -p wamn-host
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo build --locked -p wamn-ctl -p wamn-cdc-reader
+  cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker
 
 # Release, matching tools/build-components and the Dockerfile's component
 # stage. These two were the last debug guests the journey pushed.
@@ -702,7 +702,9 @@ route_caller_secret=$work_dir/route-caller-pat.json
 # the same schema, so a key this side invents or omits is refused HERE, naming
 # it, rather than by the Rust side after the build. The only environment
 # variables the test invocation still carries are process settings: where the
-# target directory is, that no wrapper wraps rustc, and where this file is.
+# target directory is, that no wrapper wraps rustc, where this file is, and
+# which binary the journey spawns as its Gate. The last one names a binary this
+# machine just built, so it is a process setting and not journey data.
 journey_schema=$repo_root/tests/integration/schema/wamn-journey.schema.json
 journey_document=$work_dir/journey.json
 declare -A journey_spec=(
@@ -722,6 +724,7 @@ write_journey_document journey_spec "$journey_schema" "$journey_document"
 record_command cargo test production_two_package_release_serves_all_thirteen_pat_routes \
   '<journey document with disposable PostgreSQL and OCI inputs redacted>'
 WAMN_JOURNEY_DOCUMENT="$journey_document" \
+WAMN_JOURNEY_SCENARIO_WORKER_BIN="$cargo_target_dir/debug/wamn-scenario-worker" \
 CARGO_TARGET_DIR="$cargo_target_dir" \
 RUSTC_WRAPPER= \
   cargo test -p wamn-proof-integration --lib --locked --offline \
