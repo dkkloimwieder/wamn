@@ -1634,6 +1634,37 @@ What the journey deliberately does not do: nothing flows through the
 materializer, which is deployed and asserted idle because the overlay mounts
 its family.
 
+#### `--demo` — the WMS demo, the command and the URL
+
+`--demo` holds the environment after a passing run and makes the released route
+reachable from a browser. Run it, then read the block it prints:
+
+```bash
+tools/wms-cluster-journey-run --apply --demo \
+  --evidence-dir /tmp/wamn-wms-demo
+```
+
+Open `http://127.0.0.1:8080/`. The route answers
+`{"error":{"code":"route-not-found"}}` with the exact typed shape, which proves
+it is live. Every WMS operation is a POST, so the printed block carries the four
+commands: read the pallet, move it through the composed wiring, run the same
+move again and get the same `movement_id` back, and list the labels the object
+store's own client wrote.
+
+The block prints the path of the route-caller token, never the token. Both that
+path and the MinIO container name change per run, because both die with the
+environment.
+
+**The demo changes three things and leaves the release alone.** It pins the
+route's NodePort, keeps that Service past the runtime phase, and runs one nginx
+container on `127.0.0.1:8080` that rewrites `Host` to the route host the release
+names. The proxy is there because a browser cannot reach the route otherwise:
+the route matches its host exactly, a browser sends the port it dialled, port 80
+belongs to the frozen cluster, `.localhost` names resolve to `::1` on this
+machine, docker does not forward an IPv6 publish on the `kind` network, and the
+runtime refuses a route host that carries a port as not a valid RFC 1123
+hostname.
+
 ### `[RECEIVING-MATERIALIZER-JOURNEY]` — router-era causation and materialization
 
 This is the D19 primary gate and the production-fed source for
