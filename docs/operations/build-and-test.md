@@ -1692,6 +1692,48 @@ cluster, port-forward, and the uniquely tagged release host image are exact-owne
 scratch resources. Cleanup absence and a SHA-256 evidence inventory are part of
 the passing verdict.
 
+**Measured 2026-09-04 at `82796110`, the fifth `--measure-startup` run**
+(evidence `journey-evidence-fifth`, `wamn-362o.18`). The first honest cost
+figure for a host restart under a released closure; nothing else in the tree
+carries one, and a later claim about startup cost should cite this rather than
+an impression. **A restarted host does NOT resume where it left off.**
+
+| phase | http_total | resolve | pull | compile | exec_plat | http_acq | sql_acq |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| restart-first | 3495.9 ms | 121.5 ms | 2244.4 ms | 862.4 ms | 97.0 ms | 104.2 ms | 103.8 ms |
+| steady | 2943.3 ms | 0.1 ms | 2126.4 ms | 771.8 ms | 0.0 ms | 0.2 ms | 0.2 ms |
+| cold | 45432.8 ms | — | — | — | — | — | — |
+
+Runtime startup itself: **896 ms after restart against 320 ms cold**, with the
+wasmtime cache holding 2 entries.
+
+**What it means.** The restarted host re-pays resolve and all three effect
+acquires — ExecutorPlatform, CallableHttp, GuestSql — that the steady host has
+already paid and holds. **Compile and pull are paid in BOTH phases at roughly
+the same cost**, which is the surprising half: the wasmtime cache is warm and
+the artifact is local, yet compile still costs about 800 ms and pull about
+2.1 s on every first request into a process. The restart-first-to-steady gap is
+therefore about **550 ms of re-acquisition**, not the multi-second penalty this
+arm was built to look for.
+
+**The cold figure is not comparable and must not be quoted as a number.**
+45.4 s here against 27.9 s on the run at `59315f36`: it tracks machine load,
+not any property of the platform. Cite its order of magnitude — tens of
+seconds — and nothing finer.
+
+**Provenance.** `wamn-362o.18` is filed under the WMS epic, but this run was
+`tools/receiving-cluster-journey-run --apply --measure-startup`, the
+`wamn-10yt.8` arm documented directly above — not the WMS journey.
+`tools/wms-cluster-journey-run` did not exist in the tree at `82796110`
+(`git ls-tree --name-only 82796110 tools/` lists `receiving-cluster-journey-run`
+alone); it landed later under `wamn-362o.25`, and its own `--measure-startup`
+arm probes `pallet.get`, a different and far cheaper request that came on only
+with `wamn-362o.10`. Those WMS numbers are not these numbers.
+
+These figures describe the tree at `82796110` and nothing after it. Any commit
+that changes resolution, artifact pull, or compilation invalidates them, and
+the arm above is what re-measures.
+
 ### `[RECEIVING-THROUGHPUT-BENCH]` — concurrency 1 to 64 across three layers, the knee
 
 `wamn-0h0g.17.27`. Every number in `docs/perf/2026.09` is one request at a
