@@ -38,11 +38,13 @@ stall list are both results. A fail attributed to the environment is a wasted ru
   whatever global skills the machine has — inventoried and frozen). Later arms
   change exactly one tooling item (skills; receipts; invoke; flow tests) and rerun
   the same task, so every item is justified by a measured delta.
-- **Agents.** Claude Code; Codex. Three runs each per task. Fresh worktree and
-  environment per run.
+- **Agents.** Claude Code, three runs per task. Ruled by the owner on
+  2026-09-06: the baseline arm is one agent, not two. Codex stays an arm the
+  design supports and this wave does not run, so no cross-agent comparison is
+  claimed from it. Fresh worktree and environment per run.
 - **Task ladder.** T0 calibration: one run per agent extending an existing
   package, to separate "cannot drive the loop" from "cannot author"; not scored
-  against H1. T1 greenfield: the scored task (§4), six runs. T2 continuation: a
+  against H1. T1 greenfield: the scored task (§4), three runs. T2 continuation: a
   second wiring consuming an event the first emits; opens after T1's stall table.
   T3 intake: from a two-line ask to a ratified application brief (§4.5) using
   S0; measured on question quality and false capability assumptions, never on
@@ -116,10 +118,11 @@ loop documented nowhere the agent will look (work spec F4, F5); without them the
 task is impossible from a script, which would measure the platform, not the agent.
 Everything else the agent must find.
 
-### 4.2 T1 — proposed: dock appointments (ruling pending)
+### 4.2 T1 — dock appointments (ratified 2026-09-06)
 
 Off-portfolio by intent: no template in the tree, no planned application anchored
-on an experiment artifact.
+on an experiment artifact. That is why it was chosen, not a side effect: a task
+with a template in the tree measures copying, not authoring.
 
 `SCENARIO.md`:
 
@@ -142,9 +145,11 @@ Exercises: the claim law, a multi-row invariant under contention, a status
 transition, a bounded query with sort/filter, generated CRUD plus custom commands,
 one component, wirings, attachments, permissions. Nothing to seed.
 
-Alternatives for ruling: a portfolio app core (Quality is nearest; it is planned
-app 4 and needs per-user RLS, a platform item), or a different off-portfolio
-domain of the same size.
+Considered and not taken: a portfolio app core (Quality is nearest, and it is
+planned app 4 and needs per-user RLS, which is a platform item), and a different
+off-portfolio domain of the same size. The first makes the experiment a
+dependency of the product plan. The second buys nothing this one does not
+already exercise.
 
 ### 4.3 T0 — calibration
 
@@ -266,8 +271,8 @@ Human items, scored from the worktree and the transcript:
    `design-doc | code | skill | generated | other`.
 4. `tools/agent-pilot-report --run <nnn>`. Numbers regenerate from the raw
    directory.
-5. After six valid T1 runs: the stall table (§8). Do not change the brief and the
-   task in the same day.
+5. After three valid T1 runs: the stall table (§8). Do not change the brief and
+   the task in the same day.
 
 ## 7. Measurements
 
@@ -299,11 +304,18 @@ registration, workspace membership) · `thrash` (same failing action ≥3 times)
 
 ### 7.4 Success and failure of the experiment
 
-SUCCEEDS when six valid T1 runs exist and every stall carries a category and a
-pointer. INCONCLUSIVE if fewer than four runs are valid or `env` exceeds half of
-all stalls in more than two runs; fix the runner, rerun, rank nothing from it. A
-6/6 PASS with an empty stall table means the baseline needs no tooling for this
+Restated for n = 3, the run count the owner ruled on 2026-09-06. The thresholds
+keep their original proportions: two thirds of the runs must be valid, and `env`
+may dominate at most a third of them.
+
+SUCCEEDS when three valid T1 runs exist and every stall carries a category and a
+pointer. INCONCLUSIVE if fewer than two runs are valid, or if `env` exceeds half
+of all stalls in more than one run; fix the runner, rerun, rank nothing from it.
+A 3/3 PASS with an empty stall table means the baseline needs no tooling for this
 task and T2 opens.
+
+Three runs buy a stall inventory, not a rate. Read the resulting table the way §2
+already reads H4: it is recorded, not tested.
 
 ## 8. Decision rule
 
@@ -320,7 +332,11 @@ Rank stall categories by minutes lost across valid runs.
 | `generator` where the message is a statement first failing at Activate or under `--hold` | the statement-verifier finding (work spec F21) on `wamn-10yt.10` / `wamn-0h0g.22` |
 | `thrash` | attributed to what it repeated |
 
-Nothing opens on fewer than two runs showing the category.
+Nothing opens on fewer than two runs showing the category. At n = 3 that floor
+does not move, and it is the whole protection: a category seen once is a story,
+and two of three runs is the smallest evidence that separates a defect from an
+accident. A category that appears in exactly one run is recorded with its pointer
+and opens nothing.
 
 ## 9. Qualitative rubric
 
@@ -368,6 +384,9 @@ Raw: <nnn>-<agent>-<task>/
 - One task per ladder rung; T1 exercises the common path, not continuation.
 - Model drift: record ids; never compare across model versions.
 - Machine load: record it; compare categories, not minutes, on a loaded machine.
+  The baseline runs deliberately share the machine with build lanes, so every
+  minute in this arm is a loaded-machine minute, and no run is compared to
+  another by duration.
 - Grader bias: machine checks decide; rubric explains; grade one run blind if a
   second grader exists.
 - Prompt leakage: the brief names `--hold` and the commit rule and nothing else,
