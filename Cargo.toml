@@ -151,6 +151,10 @@ oci-client = { version = "0.17", default-features = false, features = ["rustls-t
 # (one TLS stack, smallest footprint) is what selects 0.14.1.
 # `default-features = false` keeps every other backend (gcp, azure, http) out.
 object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
+# Phase 0 of docs/poc/deterministic-testing-spec.md. Property tests and
+# shrinking on the stable pin, in the normal sweep. `std` only; the
+# `fork`/`timeout` features pull `rusty-fork` and are not used.
+proptest = { version = "1.11", default-features = false, features = ["std", "bit-set"] }
 rand_core = "0.10"
 reqwest = { version = "0.13", default-features = false }
 ring = "0.17"
