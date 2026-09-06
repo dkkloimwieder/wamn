@@ -16,7 +16,7 @@ umask 077
 readonly EX_USAGE=2 EX_ENV=10 EX_GRADE=30
 readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
 
-die() { printf 'agent-pilot-grade: %s\n' "$*" >&2; exit "${2:-$EX_USAGE}"; }
+die() { printf 'agent-pilot-grade: %s\n' "$1" >&2; exit "${2:-$EX_USAGE}"; }
 note() { printf '[grade] %s\n' "$*" >&2; }
 
 RUN=""; REPLAY=""
