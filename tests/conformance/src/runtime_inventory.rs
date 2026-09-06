@@ -527,6 +527,33 @@ fn workload_manifests(root: &Path) -> BTreeSet<String> {
         .collect()
 }
 
+/// wamn-0h0g.12.10: the retained WorkloadDeployment inventory is a set
+/// equality, so both directions of drift must fail closed and must be
+/// distinguishable — an unrecorded manifest on disk and a recorded manifest
+/// that is gone are different defects with different repairs.
+fn check_workload_manifests(
+    observed: &BTreeSet<String>,
+    recorded: &BTreeSet<String>,
+) -> Result<(), String> {
+    let unrecorded: Vec<_> = observed.difference(recorded).cloned().collect();
+    if !unrecorded.is_empty() {
+        return Err(format!(
+            "deploy/platform carries WorkloadDeployment manifests runtime-inventory.json \
+             does not record: {}",
+            unrecorded.join(", ")
+        ));
+    }
+    let vanished: Vec<_> = recorded.difference(observed).cloned().collect();
+    if !vanished.is_empty() {
+        return Err(format!(
+            "runtime-inventory.json records WorkloadDeployment manifests deploy/platform \
+             no longer carries: {}",
+            vanished.join(", ")
+        ));
+    }
+    Ok(())
+}
+
 fn yaml_i32(source: &str, key: &str) -> Vec<i32> {
     source
         .lines()
@@ -966,15 +993,13 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
         "the shipped host and executor must enable named component-model imports"
     );
 
-    let recorded_workloads = inventory
+    let recorded_workloads: BTreeSet<String> = inventory
         .workload_manifests
         .iter()
         .map(|workload| workload.path.clone())
         .collect();
-    assert_eq!(
-        workload_manifests(&root),
-        recorded_workloads,
-        "generated WorkloadDeployment manifest inventory drifted"
+    check_workload_manifests(&workload_manifests(&root), &recorded_workloads).unwrap_or_else(
+        |error| panic!("generated WorkloadDeployment manifest inventory drifted: {error}"),
     );
     assert_eq!(
         inventory.workload_manifests.len(),
@@ -1032,6 +1057,62 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
             ),
         }
     }
+}
+
+fn recorded_workload_manifests() -> BTreeSet<String> {
+    inventory()
+        .workload_manifests
+        .into_iter()
+        .map(|workload| workload.path)
+        .collect()
+}
+
+#[test]
+fn the_retained_workload_manifest_set_is_accepted() {
+    let observed = workload_manifests(&repository_root());
+    check_workload_manifests(&observed, &recorded_workload_manifests())
+        .expect("deploy/platform and runtime-inventory.json must record the same set");
+}
+
+#[test]
+fn unrecorded_workload_manifest_mutation_is_rejected() {
+    let observed = workload_manifests(&repository_root());
+    let mut mutant = recorded_workload_manifests();
+    let dropped = mutant
+        .pop_first()
+        .expect("the inventory must record at least one workload manifest");
+    let error = check_workload_manifests(&observed, &mutant)
+        .expect_err("a manifest on disk that the inventory omits must fail closed");
+    assert!(
+        error.contains("does not record") && error.contains(&dropped),
+        "an unrecorded manifest must be named as unrecorded: {error}"
+    );
+    assert!(
+        !error.contains("no longer carries"),
+        "the unrecorded-manifest control must not also report the vanished case: {error}"
+    );
+}
+
+#[test]
+fn vanished_workload_manifest_mutation_is_rejected() {
+    let observed = workload_manifests(&repository_root());
+    let mut mutant = recorded_workload_manifests();
+    let phantom = "deploy/platform/phantom-workload.example.yaml".to_string();
+    assert!(
+        !observed.contains(&phantom),
+        "the synthetic manifest must not exist on disk"
+    );
+    mutant.insert(phantom.clone());
+    let error = check_workload_manifests(&observed, &mutant)
+        .expect_err("a recorded manifest that is gone from disk must fail closed");
+    assert!(
+        error.contains("no longer carries") && error.contains(&phantom),
+        "a vanished manifest must be named as vanished: {error}"
+    );
+    assert!(
+        !error.contains("does not record"),
+        "the vanished-manifest control must not also report the unrecorded case: {error}"
+    );
 }
 
 #[test]

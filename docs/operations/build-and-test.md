@@ -451,8 +451,9 @@ trap - EXIT
 
 The `deploy/platform` bill of materials (`wamn-0h0g.10.5`) is a static
 structural proof of the same kind, but it lives in `wamn-proof-system` — it
-belongs beside the conformance guards and was kept out of that package only so
-it would not collide with `wamn-0h0g.12.10`'s retained-manifest reconcile.
+belongs beside the conformance guards. It was kept out of that package only so
+it would not collide with `wamn-0h0g.12.10`'s retained-manifest reconcile; that
+reconcile has landed, so the relocation is unblocked and needs its own bead.
 Measured 6 passed / 0 failed on the `w65-deploy` branch, base `2179f9c7`:
 
 ```bash
