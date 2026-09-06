@@ -4,20 +4,26 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
 [build]
 jobs = 4
-# sccache caches DEPENDENCY compilations across target dirs. That is the win
-# here: every lane worktree keeps its own `target/` (sharing one is forbidden --
-# CARGO_MANIFEST_DIR validation and fingerprint thrash), so without this each
-# lane rebuilds the whole dependency graph from scratch.
+# There is deliberately NO `rustc-wrapper` here. A build context must never
+# inherit a wrapper the image does not install. This file is COPYed into the
+# root Dockerfile's `root-recipe`, `root-source` and `component-toolchain`
+# stages and into the debug image `tools/rc-gate-run` generates, and none of
+# them installs sccache; a checked-in `rustc-wrapper = "sccache"` fails every
+# one of those stages at `sccache rustc -vV`, before compiling anything.
 #
-# Incremental compilation is deliberately LEFT ON. Cargo only passes
-# `-C incremental` for workspace members, and sccache treats those as
-# non-cacheable -- so workspace crates keep incremental rebuilds while
-# dependencies still come from the cache. Disabling it would trade the local
-# edit-compile loop for nothing.
-rustc-wrapper = "sccache"
-
-[env]
-# 10 GiB (the sccache default) is too small for this tree: native + wasm32-wasip2
-# targets across three workspaces and several feature sets. Takes effect only
-# after `sccache --stop-server`, because the running server caches its config.
-SCCACHE_CACHE_SIZE = "50G"
+# sccache is a per-developer setting instead. To turn it on for yourself:
+#
+#     export RUSTC_WRAPPER=sccache SCCACHE_CACHE_SIZE=50G
+#
+# or put the same two settings in your personal ~/.cargo/config.toml. 50G
+# rather than the 10 GiB default because this tree spans native and
+# wasm32-wasip2 across three workspaces and several feature sets; the size
+# takes effect only after `sccache --stop-server`, because the running server
+# caches its config.
+#
+# What it buys, if you want it: sccache caches DEPENDENCY compilations across
+# target dirs, and every lane worktree keeps its own `target/` (sharing one is
+# forbidden -- CARGO_MANIFEST_DIR validation and fingerprint thrash). Leave
+# incremental compilation on: cargo only passes `-C incremental` for workspace
+# members, which sccache treats as non-cacheable, so workspace crates keep
+# incremental rebuilds while dependencies still come from the cache.

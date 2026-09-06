@@ -34,6 +34,11 @@ COPY tests ./tests
 RUN cargo chef prepare --recipe-path root-recipe.json
 
 FROM chef AS root-recipe
+# The copied .cargo/config.toml carries the clang/mold linker settings the chef
+# stage installs above, and NO rustc-wrapper: this stage, root-source and
+# component-toolchain all inherit this file, and a wrapper naming a binary none
+# of them installs fails the build at `<wrapper> rustc -vV`. Keep sccache a
+# per-developer RUSTC_WRAPPER setting -- see .cargo/config.toml.
 COPY .cargo/config.toml ./.cargo/config.toml
 COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
 
