@@ -952,8 +952,7 @@ struct MaterializerPhase {
 impl JourneyDocument {
     pub(crate) fn required() -> anyhow::Result<Self> {
         let path = required_journey_path(JOURNEY_DOCUMENT_ENV)?;
-        let bytes =
-            std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
         parse_journey_document(&bytes)
             .with_context(|| format!("{} is not a valid journey document", path.display()))
     }
@@ -1086,7 +1085,10 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
     // under a message about something else.
     let mut missing: serde_json::Value =
         serde_json::from_slice(&example_document()).expect("example is JSON");
-    missing.as_object_mut().expect("object").remove("route_host");
+    missing
+        .as_object_mut()
+        .expect("object")
+        .remove("route_host");
     let error = parse_journey_document(&serde_json::to_vec(&missing).expect("serialize"))
         .expect_err("a missing required field is refused");
     assert!(format!("{error:#}").contains("route_host"), "{error:#}");
@@ -1103,11 +1105,17 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
     empty["host_secret_namespace"] = serde_json::json!("");
     let error = parse_journey_document(&serde_json::to_vec(&empty).expect("serialize"))
         .expect_err("an empty value is refused, not passed through");
-    assert!(format!("{error:#}").contains("host_secret_namespace"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("host_secret_namespace"),
+        "{error:#}"
+    );
 
     let mut no_phase: serde_json::Value =
         serde_json::from_slice(&example_document()).expect("example is JSON");
-    no_phase.as_object_mut().expect("object").remove("materializer");
+    no_phase
+        .as_object_mut()
+        .expect("object")
+        .remove("materializer");
     let parsed = parse_journey_document(&serde_json::to_vec(&no_phase).expect("serialize"))
         .expect("the materializer phase is optional until the shell amends it in");
     assert!(parsed.materializer.is_none());
@@ -1120,10 +1128,17 @@ fn the_checked_in_example_document_parses_with_every_field() {
     let document = parse_journey_document(&example_document()).expect("example parses");
     assert_eq!(document.route_host, "example.localhost");
     assert_eq!(document.host_secret_namespace, "wamn-example-journey");
-    assert_eq!(document.registry_auth_file, Path::new("/tmp/example/docker/config.json"));
-    let phase = document.materializer.expect("the example carries the amended phase");
+    assert_eq!(
+        document.registry_auth_file,
+        Path::new("/tmp/example/docker/config.json")
+    );
+    let phase = document
+        .materializer
+        .expect("the example carries the amended phase");
     assert_eq!(phase.receipt_id, "00000000-0000-0000-0000-00000000c0de");
-    let runtime = document.runtime.expect("the example carries the runtime phase");
+    let runtime = document
+        .runtime
+        .expect("the example carries the runtime phase");
     assert_eq!(runtime.route_endpoint, "http://10.0.0.2:30999");
     assert_eq!(runtime.pallet_id, "00000000-0000-0000-0000-000000000301");
 }
@@ -1152,16 +1167,10 @@ impl DevJourneyInputs {
                 flow_http_workload_image: required_journey(
                     "WAMN_RECEIVING_DEV_FLOW_HTTP_WORKLOAD_IMAGE",
                 )?,
-                component_artifact_base: required_journey(
-                    "WAMN_ROUTE_COMPONENT_ARTIFACT_BASE",
-                )?,
-                release_artifact_base: required_journey(
-                    "WAMN_ROUTE_RELEASE_ARTIFACT_BASE",
-                )?,
+                component_artifact_base: required_journey("WAMN_ROUTE_COMPONENT_ARTIFACT_BASE")?,
+                release_artifact_base: required_journey("WAMN_ROUTE_RELEASE_ARTIFACT_BASE")?,
                 route_host: required_journey("WAMN_ROUTE_HOST")?,
-                registry_auth_file: required_journey_path(
-                    "WAMN_ROUTE_REGISTRY_AUTH_FILE",
-                )?,
+                registry_auth_file: required_journey_path("WAMN_ROUTE_REGISTRY_AUTH_FILE")?,
                 package_sources: vec![
                     package_root()
                         .canonicalize()
@@ -2910,7 +2919,7 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
     let mut gate_server = spawn_journey_management_gate(
         &gate_binary,
         &environment.credentials,
-        &environment.verification.credential_url,
+        &environment.credentials.management_admitter,
         DEV_LIVE_GATE_BIND,
     )
     .await?;

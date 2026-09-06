@@ -125,10 +125,14 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
 
     let (admin, admin_task) = connect(&args.system_database_url).await?;
     let environment = provision(&args.system_database_url, admin.as_ref(), &args.root).await?;
+    // The Gate admits into the DURABLE project-environment database, the one
+    // the host serves from. The verification database is a throwaway this
+    // command deletes, so a Gate pointed at it publishes wirings that vanish,
+    // and the host's release preload then finds none (wamn-10yt.10.34).
     let mut gate = spawn_journey_management_gate(
         &args.scenario_worker_binary,
         &environment.credentials,
-        &environment.verification.credential_url,
+        &environment.credentials.management_admitter,
         &args.gate_bind,
     )
     .await?;
