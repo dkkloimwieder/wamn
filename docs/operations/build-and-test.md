@@ -462,16 +462,20 @@ cargo test -p wamn-proof-system --test deploy_platform_inventory
 
 ### Known red
 
-**Measured at `c72194c7`: the lib is 62 passed / 1 failed, and all twenty
-test binaries are green.** This is a measurement at a named commit, not a
-standing promise.
+**RE-MEASURED 2026-09-06 at `b3197905`: the lib is 70 passed / 0 failed, and
+all twenty-five test binaries are green.** This is a measurement at a named
+commit, not a standing promise.
 
-| target | state |
-| --- | --- |
-| `version_identity::governed_wire_schema_and_artifact_versions_stay_at_mvp_identity` | **RED** — governed first-party occurrence-count drift in `crates/execution/run-state/src/admission.rs` and `crates/platform/runtime/src/plugins/connection_http.rs` |
-
-That is the **only** conformance red at this commit, and it is one of the two
-long-standing reds on this branch (the other, `connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap`, is a runtime plugin live test and not in this package).
+**The package has no red.** The one row this table used to carry,
+`version_identity::governed_wire_schema_and_artifact_versions_stay_at_mvp_identity`,
+was RED at `c72194c7` on governed first-party occurrence-count drift in
+`crates/execution/run-state/src/admission.rs` and
+`crates/platform/runtime/src/plugins/connection_http.rs`. It passes now, and
+no commit claimed the repair, so it went green under the table the way three
+live gates did under `wamn-0h0g.15.137.6`'s inventory. The remaining
+long-standing red on this branch,
+`connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap`, is a
+runtime plugin live test and not in this package.
 
 An earlier inventory recorded *seven* red conformance guards — `gate_registry`,
 `workspace_tiers`, `package_architecture`, `protected_relations`,
