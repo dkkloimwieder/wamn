@@ -42,6 +42,9 @@
 //! }
 //! ```
 
+/// WALK-1..6 as plain `fn check(state)` functions, for a driver to call after
+/// every `apply`.
+pub mod invariants;
 mod outcome;
 mod resolution;
 mod retry;

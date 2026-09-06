@@ -29,26 +29,56 @@
 
 use serde_json::json;
 use wamn_run_state::DurabilityClass;
+use wamn_run_state::invariants::{self, QueueState};
 use wamn_run_state::queue::{
-    ClaimState, JanitorVerdict, ProductionClaimClass, QueueEntry, advance_claim_attempts_sql,
-    claim_state, classify_production_claim, clear_pre_effect_state_sql, grant_production_claim_sql,
-    janitor_verdict_with_attempt, lease_deadline, lease_live, mint_evt_run_id, parked_due_sql,
-    plan_claim, production_claim_state, renew_production_lease_sql,
-    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
-    serialize_effect_intent_sql, should_renew, terminalize_effect_uncertain_claim_sql,
-    terminalize_exhausted_production_sql,
+    ClaimPlan, ClaimState, JanitorVerdict, Millis, ProductionClaimClass, QueueEntry,
+    advance_claim_attempts_sql, claim_state, classify_production_claim, clear_pre_effect_state_sql,
+    grant_production_claim_sql, janitor_verdict_with_attempt, lease_deadline, lease_live,
+    mint_evt_run_id, parked_due_sql, plan_claim, production_claim_state,
+    renew_production_lease_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
+    select_production_claim_sql, serialize_effect_intent_sql, should_renew,
+    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
 };
+
+// ---- D8a: the RUN-* invariant sweep (wamn-54b0.2) --------------------------
+//
+// `wamn_run_state::invariants::check` runs after every step that leaves a queue
+// state behind, so a decision that passes its own assertion while breaking
+// RUN-2, RUN-3, RUN-4 or RUN-7 still fails here. The SQL-literal cases hold no
+// rows and no clock, so there is no state for the sweep to read; the invariants
+// module doc records which RUN-* need D2's seeded scheduler instead.
+
+/// The janitor grace window every sweep in this file uses.
+const GRACE: Millis = 50;
+
+/// Assert the RUN-* invariants over the rows a step left behind. `plan` is the
+/// claim taken at that step, if any, with the batch limit it was taken with.
+fn run_invariants_hold(rows: &[QueueEntry], plan: Option<(&ClaimPlan, usize)>, now: Millis) {
+    let (plan, limit) = plan.map_or((None, 0), |(plan, limit)| (Some(plan), limit));
+    let state = QueueState {
+        rows,
+        plan,
+        limit,
+        grace: GRACE,
+        now,
+    };
+    if let Err(violation) = invariants::check(&state) {
+        panic!("{violation}");
+    }
+}
 
 #[test]
 fn claim_state_preserves_budget_and_effect_attempt_escape() {
     let ready = QueueEntry::ready("t1", "ready", 50, 2);
     assert_eq!(claim_state(&ready, 100), ClaimState::Ready);
+    run_invariants_hold(std::slice::from_ref(&ready), None, 100);
 
     let parked = QueueEntry {
         available_at: 101,
         ..ready.clone()
     };
     assert_eq!(claim_state(&parked, 100), ClaimState::Parked);
+    run_invariants_hold(std::slice::from_ref(&parked), None, 100);
 
     let leased = QueueEntry {
         lease_owner: Some("runner-a".into()),
@@ -56,6 +86,7 @@ fn claim_state_preserves_budget_and_effect_attempt_escape() {
         ..ready.clone()
     };
     assert_eq!(claim_state(&leased, 100), ClaimState::Leased);
+    run_invariants_hold(std::slice::from_ref(&leased), None, 100);
 
     let exhausted = QueueEntry {
         lease_expires_at: Some(90),
@@ -67,6 +98,7 @@ fn claim_state_preserves_budget_and_effect_attempt_escape() {
         production_claim_state(&exhausted, DurabilityClass::Durable, true, 100),
         ClaimState::Ready
     );
+    run_invariants_hold(std::slice::from_ref(&exhausted), None, 100);
 }
 
 #[test]
@@ -131,6 +163,7 @@ fn the_default_class_takes_plain_lock_then_lease() {
             "the default class diverged from the no-effect predicate on {}",
             entry.run_id
         );
+        run_invariants_hold(std::slice::from_ref(&entry), None, 100);
     }
 }
 
@@ -200,6 +233,7 @@ fn global_fifo_uses_available_stream_run_tie_break() {
             .collect::<Vec<_>>(),
         ["earliest", "run-a", "run-b", "run-z"]
     );
+    run_invariants_hold(&rows, Some((&plan, 10)), 10);
 
     let sql = select_production_claim_sql();
     assert!(sql.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
@@ -319,6 +353,7 @@ fn janitor_excludes_effect_attempts() {
         janitor_verdict_with_attempt(&exhausted, true, 200, 50),
         JanitorVerdict::EffectAttempt
     );
+    run_invariants_hold(std::slice::from_ref(&exhausted), None, 200);
     let select = select_exhausted_production_sql();
     assert!(select.contains("q.attempts >= q.max_attempts"));
     assert!(select.contains("FOR UPDATE OF selected_run, q SKIP LOCKED"));
@@ -368,6 +403,15 @@ fn lease_arithmetic_remains_stable() {
     assert!(lease_live(1_249, Some(1_250)));
     assert!(!lease_live(1_250, Some(1_250)));
     assert!(should_renew(1_200, 1_250, 100));
+    // The same deadline as a queue row, swept either side of expiry: RUN-7 is
+    // exactly the claim of a crashed owner's row waiting out its lease.
+    let held = QueueEntry {
+        lease_owner: Some("runner-a".into()),
+        lease_expires_at: Some(lease_deadline(1_000, 250)),
+        ..QueueEntry::ready("t1", "held", 1_000, 3)
+    };
+    run_invariants_hold(std::slice::from_ref(&held), None, 1_249);
+    run_invariants_hold(std::slice::from_ref(&held), None, 1_250);
     let renew = renew_production_lease_sql();
     assert!(renew.contains("lease_owner = $2"));
     assert!(renew.contains("lease_generation = $3"));
