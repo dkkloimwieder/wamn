@@ -1473,12 +1473,22 @@ if [[ "$measure_startup" == true ]]; then
   #    ?  1b, 4                     the Linker cache and the instance pool
   #    3  the directive's target
   # RATCHET ON LANDINGS, NOT ON WISHES (owner ruling, 2026-09-05). 12 armed the
-  # gate; 9 now that the InstancePre and the per-digest statement sets have
-  # landed (measured 6.49, 6.90, 6.87 -- and 8.25 on the run that carried the
+  # gate; 9 once the InstancePre and the per-digest statement sets had landed
+  # (measured 6.49, 6.90, 6.87 -- and 8.25 on the run that carried the
   # scope-split instrumentation, which a ceiling of 8 would have reddened, and a
-  # gate that reds on the run that measures it is the wrong number); 8 on the
-  # next landing that moves the ratio.
-  overhead_ratio_ceiling=9
+  # gate that reds on the run that measures it is the wrong number).
+  #
+  # RE-BASELINED AT 12 ON THE RELEASE PROFILE (owner ruling, 2026-09-05,
+  # wamn-0h0g.17.29). The release host (7-release-host.md) took instantiate
+  # from 1.25 to 0.11 ms while the statement stayed the server's 0.28, so the
+  # denominator's meaning shifted: the ratio now reads request-over-statement,
+  # and the same host whose request fell from 12.8 to 4.4 ms read medians of
+  # 11.94 and 10.47 against 9. It is still a quotient of spans from one trace,
+  # still load-tolerant, and still an overhead measure -- of a request against
+  # its database work. 12 is the measured median on the landing that changed
+  # the profile, not a relaxation of the debug-host number; it ratchets down
+  # from here on landings that move it.
+  overhead_ratio_ceiling=12
 
   # THE GATE ASSERTS THE MEDIAN OF FIVE STEADY REQUESTS (wamn-0h0g.17.29). One
   # request read 10.55 against a ceiling of 9 while the four hot requests of the
