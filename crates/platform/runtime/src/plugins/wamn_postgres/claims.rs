@@ -518,6 +518,16 @@ const GUEST_CLAIM_SQL: &str = "SELECT \
      set_config('app.role', $4, true), \
      set_config('app.user_id', $5, true)";
 
+/// The bound claim statement one authority class binds. ONE function, so the
+/// pipelined path's warm-up and the transaction that follows it cannot disagree
+/// about which cache entry they mean (wamn-0h0g.17.33).
+const fn claim_sql(class: AuthorityClass) -> &'static str {
+    match class {
+        AuthorityClass::GuestSql => GUEST_CLAIM_SQL,
+        _ => CLAIM_SQL,
+    }
+}
+
 /// Reject a malformed claim identity before it is bound (R16). Since R2 these
 /// validators are NO LONGER the injection boundary — every claim value binds as a
 /// parameter into [`CLAIM_SQL`], so a `'`/`;`/`--` value is inert data — but a
@@ -1929,8 +1939,15 @@ impl WamnPostgres {
         // out with, so a malformed one is a bug worth failing on.
         validate_claims(tenant, schema, runner, role, user_id)?;
         let guest = class == AuthorityClass::GuestSql;
+        // A CACHE HIT SENDS NOTHING AND DOES NOT YIELD (deadpool's cell is
+        // checked before the init future is ever awaited), so this call is the
+        // whole reason the flight below can be interleaved with a caller's own
+        // statement. A MISS is a Parse and a full round trip, and whatever is
+        // polled during that await reaches the server FIRST -- so a caller that
+        // pipelines must run [`WamnPostgres::warm_claim_statement`] before it
+        // starts the other half (wamn-0h0g.17.33).
         let stmt = conn
-            .prepare_cached(if guest { GUEST_CLAIM_SQL } else { CLAIM_SQL })
+            .prepare_cached(claim_sql(class))
             .await
             .map_err(|e| map_pg_error(&e))?;
         // statement_timeout binds as TEXT (a bare-integer string = ms).
@@ -1947,16 +1964,39 @@ impl WamnPostgres {
         } else {
             &platform_params
         };
-        // Pipeline BEGIN ahead of the bound claim statement: both requests are
-        // enqueued in `join!` poll order (BEGIN first) and travel in one flight;
-        // tokio-postgres processes them FIFO, so the txn is open before the
-        // transaction-LOCAL `set_config`s run.
+        // l5i9.12.2: stamp the run's causation onto this txn, IN THE BEGIN
+        // BATCH. The TRANSACTIONAL emit rides the commit; a rolled-back txn
+        // emits nothing and the reader (l5i9.12.1) stitches it onto the txn's
+        // row events regardless of frame order. It carries no bind params, so
+        // the already-escaped simple-query emit is unchanged by R2.
+        //
+        // RIDING BEGIN RATHER THAN FOLLOWING IT is what keeps the claim half of
+        // a run-owned request to ONE flight: as a separate `batch_execute` it
+        // could not be sent until BEGIN's own reply came back, and it would then
+        // be the only message this function still had outstanding when a
+        // pipelined caller's statement failed -- so an aborted transaction
+        // surfaced here as a claim error and misattributed the cause.
+        let begin_sql = match run {
+            Some(run) => format!("BEGIN;{}", causation_emit_sql(run)),
+            None => "BEGIN".to_string(),
+        };
+        // ONE FLIGHT. `batch_execute` and `execute` each enqueue their whole
+        // message batch synchronously on their FIRST poll, and `biased;` pins
+        // that poll order, so BEGIN is on the wire ahead of the bound claim
+        // statement and tokio-postgres's FIFO ordering does the rest: the txn is
+        // open before the transaction-LOCAL `set_config`s run. Nothing here
+        // awaits before those two sends, which is the property a pipelining
+        // caller depends on.
+        //
         // Claim binding is a full server round trip on every request. It sat
         // inside wamn.postgres with no span of its own, so it was
         // indistinguishable from pool checkout and statement time.
         async {
-            let (begin, claims) =
-                tokio::join!(conn.batch_execute("BEGIN"), conn.execute(&stmt, params));
+            let (begin, claims) = tokio::join!(
+                biased;
+                conn.batch_execute(&begin_sql),
+                conn.execute(&stmt, params),
+            );
             begin.map_err(|e| map_pg_error(&e))?;
             claims.map_err(|e| map_pg_error(&e))?;
             Ok::<(), PgError>(())
@@ -1965,18 +2005,27 @@ impl WamnPostgres {
             "wamn.postgres.bind_claims",
             wamn.authority_class = class.as_str(),
         ))
-        .await?;
-        if let Some(run) = run {
-            // l5i9.12.2: stamp the run's causation onto this txn. The
-            // TRANSACTIONAL emit rides the commit; a rolled-back txn emits
-            // nothing and the reader (l5i9.12.1) stitches it onto the txn's row
-            // events. It carries no bind params, so the already-escaped
-            // simple-query emit is unchanged by R2.
-            conn.batch_execute(&causation_emit_sql(run))
-                .await
-                .map_err(|e| map_pg_error(&e))?;
-        }
-        Ok(())
+        .await
+    }
+
+    /// Parse the bound claim statement on `conn` if this connection has not
+    /// parsed it yet, so that the [`begin_with_claims`] that follows reaches its
+    /// `BEGIN` inside its own first poll.
+    ///
+    /// This exists ONLY for the pipelined path (wamn-0h0g.17.33). A caller that
+    /// simply awaits `begin_with_claims` does not need it -- the `prepare_cached`
+    /// in there is the same call and the same cache entry.
+    ///
+    /// [`begin_with_claims`]: WamnPostgres::begin_with_claims
+    async fn warm_claim_statement(
+        &self,
+        conn: &Object,
+        class: AuthorityClass,
+    ) -> Result<(), PgError> {
+        conn.prepare_cached(claim_sql(class))
+            .await
+            .map(drop)
+            .map_err(|e| map_pg_error(&e))
     }
 
     pub(super) fn require_tenant(&self, component_id: &str) -> Result<String, PgError> {
@@ -2146,32 +2195,47 @@ impl WamnPostgres {
             return Ok(rows);
         }
 
-        // THE CLAIMS LAND BEFORE ANYTHING ELSE TOUCHES THE CONNECTION.
+        // THE CLAIMS LAND BEFORE ANYTHING ELSE TOUCHES THE CONNECTION, AND THEY
+        // STILL TRAVEL IN THE STATEMENT'S FLIGHT.
         //
-        // This was one flight: `join!` issued the claim transaction and the
-        // statement together, on the reasoning that tokio-postgres preserves
-        // FIFO order per connection. FIFO orders what is already SENT, and
-        // `run_verified_query` begins with `prepare_cached`. On a warm
-        // connection that is a cache hit and sends nothing, so the order held.
-        // On a NEWLY CREATED connection it sends a Parse, and that Parse can
-        // reach the server before BEGIN.
+        // The claim transaction and the statement are issued without an await
+        // between them, on the reasoning that tokio-postgres preserves FIFO
+        // order per connection. That reasoning was right about FIFO and wrong
+        // about what had been SENT: `begin_with_claims` OPENED by awaiting its
+        // own `prepare_cached`, and on a newly created connection that Parse is
+        // a full round trip. The statement half, polled during that await, sent
+        // its Parse first -- measured in the Receiving journey cluster with
+        // log_statement=all and reproducible by restarting the hosts
+        // (wamn-0h0g.15.137.15): the guest statement parsed before BEGIN and
+        // failed with `relation "purchase_order" does not exist`, carrying
+        // neither the `search_path` nor the `app.role` / `app.user_id` the
+        // claims install. Awaiting the claims outright fixed the order and cost
+        // the round trip the flight saved -- bind_claims at 0.45-0.89 ms plus a
+        // wakeup, against a 0.6 ms statement (docs/perf/2026.09/3a-instrument.md).
         //
-        // Measured in the Receiving journey cluster with log_statement=all,
-        // reproducible by restarting the hosts (wamn-0h0g.15.137.15): the guest
-        // statement parsed first and failed with `relation "purchase_order"
-        // does not exist`, and the BEGIN plus claims arrived one millisecond
-        // later, to be rolled back. Parse is where a relation name resolves, so
-        // it needs the `search_path` the claims install -- and a statement that
-        // runs before them carries no `app.tenant`, `app.role` or
-        // `app.user_id` either.
+        // Parsing the claim statement FIRST deletes the await that let it
+        // happen, and deletes it for a COLD connection too, which is why this
+        // needs no knowledge of what the statement cache holds.
+        // `begin_with_claims` then reaches its `BEGIN` inside its own first
+        // poll, so `BEGIN` and the bound claim statement are the first two
+        // messages this request enqueues whatever this connection has cached. A
+        // cold statement's Parse is enqueued behind them and the server, reading
+        // its socket in order, runs it INSIDE the transaction with the claims
+        // already applied. `biased;` pins that poll order instead of leaving it
+        // to `join!`'s rotation (wamn-0h0g.17.33).
         //
-        // The cost is the round trip the flight saved: bind_claims measured at
-        // 0.45-0.89 ms plus a wakeup, against a 0.6 ms statement
-        // (docs/perf/2026.09/3a-instrument.md). Recovering it safely means
-        // knowing whether this connection has already parsed this statement,
-        // which deadpool's cache does not expose (wamn-0h0g.17.33).
+        // Proven by `live_a_cold_connection_parses_inside_the_claim_transaction`,
+        // which fails against either the pre-fix shape or a swapped `join!`.
         if let Err(error) = self
-            .begin_with_claims(
+            .warm_claim_statement(connection.connection(), authority)
+            .await
+        {
+            // Nothing is open yet -- the guard destroys the connection.
+            return Err(StatementError::Postgres(error));
+        }
+        let (claims, result) = tokio::join!(
+            biased;
+            self.begin_with_claims(
                 connection.connection(),
                 authority,
                 &tenant,
@@ -2181,9 +2245,18 @@ impl WamnPostgres {
                 user_id.as_deref(),
                 run.as_ref(),
                 policy.statement_timeout_ms,
-            )
-            .await
-        {
+            ),
+            run_verified_query(
+                connection.connection(),
+                digest,
+                statement,
+                binds,
+                policy.row_limit,
+            ),
+        );
+        if let Err(error) = claims {
+            // The statement rode the same flight into a transaction that never
+            // opened, so its own error is a consequence, not the cause.
             if connection
                 .connection()
                 .batch_execute("ROLLBACK")
@@ -2194,14 +2267,6 @@ impl WamnPostgres {
             }
             return Err(StatementError::Postgres(error));
         }
-        let result = run_verified_query(
-            connection.connection(),
-            digest,
-            statement,
-            binds,
-            policy.row_limit,
-        )
-        .await;
         match result {
             // COMMIT is a SECOND full server round trip on every request, and it
             // sat inside wamn.postgres with no span: statement ended at 13.7 ms
@@ -2239,6 +2304,7 @@ pub(super) enum OneShotResult {
 
 #[cfg(test)]
 mod tests {
+    use super::super::statements::{StatementField, StatementValueType};
     use super::*;
 
     fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
@@ -4121,5 +4187,236 @@ mod tests {
             rendered.contains("standard_conforming_strings"),
             "the pool error must be the R18 fail-closed hook, got: {rendered}"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // wamn-0h0g.17.33 — the pipelined claim flight, and its proof obligation.
+    // ------------------------------------------------------------------
+
+    /// The fixture a cold-parse check needs: a schema the session's own
+    /// `search_path` does NOT contain, holding the only relation the statement
+    /// names, readable by the guest generation.
+    fn cold_parse_fixture_sql(schema: &str, role: &str) -> String {
+        format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE; \
+             CREATE SCHEMA {schema}; \
+             CREATE TABLE {schema}.cold_parse (id int NOT NULL); \
+             INSERT INTO {schema}.cold_parse VALUES (1), (2); \
+             GRANT USAGE ON SCHEMA {schema} TO \"{role}\"; \
+             GRANT SELECT ON {schema}.cold_parse TO \"{role}\";"
+        )
+    }
+
+    /// The statement a cold-parse check runs: it names `cold_parse`
+    /// UNQUALIFIED, so Parse resolves it only under the claimed `search_path`.
+    fn cold_parse_statement() -> VerifiedStatement {
+        VerifiedStatement {
+            exact_sql: "SELECT id FROM cold_parse ORDER BY id".into(),
+            binds: Box::new([]),
+            columns: Box::new([StatementField {
+                value_type: StatementValueType::Int32,
+                nullable: false,
+            }]),
+            // The claim path under test. A non-transactional statement with no
+            // per-caller claim takes the autocommit branch instead.
+            transactional: true,
+        }
+    }
+
+    /// *** A COLD CONNECTION STILL PARSES INSIDE THE CLAIM TRANSACTION. ***
+    ///
+    /// The regression guard for `wamn-0h0g.15.137.15` and the correctness half
+    /// of `wamn-0h0g.17.33`. The pool is brand new, so nothing on the physical
+    /// connection has been parsed; the statement names an unqualified relation
+    /// that exists ONLY in a schema outside the session's `search_path`. Parse
+    /// is where a relation name resolves, so this can succeed only if the
+    /// server ran the Parse after the transaction-LOCAL `search_path` the
+    /// claims install — that is, inside the claim transaction.
+    ///
+    /// IT IS NOT RACY. On the pre-fix shape `begin_with_claims` opens by
+    /// awaiting its OWN `prepare_cached`, which on a cold connection is a
+    /// guaranteed round trip, and the statement half — polled during that await
+    /// — always sends its Parse first. Reverting to that shape, or swapping the
+    /// two branches of the `join!`, fails this every run.
+    #[tokio::test]
+    async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
+        const TENANT: &str = "coldparse";
+        let Some(admin_url) = test_pg_url() else {
+            return;
+        };
+        let schema = format!("wamn_coldparse_{}", std::process::id());
+        let role = format!(
+            "wamn_app_{}_a",
+            wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        );
+        let guest_url = live_guest_url(&admin_url, TENANT).await;
+        let admin = connect_raw(&admin_url).await;
+        admin
+            .batch_execute(&cold_parse_fixture_sql(&schema, &role))
+            .await
+            .expect("seed the cold-parse fixture as the superuser owner");
+
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(guest_url)),
+            // ONE connection, and a pool built in this test, so the checkout
+            // below is guaranteed to be a NEW physical connection with an empty
+            // statement cache.
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .expect("the plugin builds from the guest generation's url");
+        let scope = "coldparse-instance-0";
+        pg.bind_session_claims(
+            scope,
+            &SessionClaims {
+                tenant: TENANT.to_string(),
+                schema: Some(schema.clone()),
+                ..SessionClaims::default()
+            },
+        )
+        .expect("the cold-parse scope binds");
+
+        let statement = cold_parse_statement();
+        let rows = pg
+            .one_shot_statement(scope, "sha256:cold-parse", &statement, &[])
+            .await
+            .expect(
+                "a COLD connection must parse the statement inside the claim transaction: a \
+                 `relation \"cold_parse\" does not exist` here is the statement reaching the \
+                 server ahead of the claims",
+            );
+        assert_eq!(
+            rows.rows.len(),
+            2,
+            "the claimed search_path resolved the relation"
+        );
+
+        // And the same connection, now WARM, still runs it: the flight that
+        // saves the round trip is the one this second call takes.
+        let again = pg
+            .one_shot_statement(scope, "sha256:cold-parse", &statement, &[])
+            .await
+            .expect("the warm connection runs the pipelined flight");
+        assert_eq!(again.rows.len(), 2);
+
+        admin
+            .batch_execute(&format!(
+                "DROP SCHEMA {schema} CASCADE; DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"
+            ))
+            .await
+            .expect("drop the fixture");
+    }
+
+    /// The wamn-0h0g.17.33 measurement, runnable on demand.
+    ///
+    /// OFF unless `WAMN_PG_PIPELINE_BENCH` is set, because it is a two-thousand
+    /// request loop, not an assertion. What it measures is ROUND TRIPS, and on a
+    /// loopback server one round trip is roughly 50 us -- under the noise of a
+    /// busy machine. Point `WAMN_PG_TEST_URL` at a server whose latency you can
+    /// see (a delaying TCP proxy in front of a container, or a real host) and
+    /// the count is legible: the claim transaction and the statement are ONE
+    /// flight, and `WAMN_PG_PIPELINE_BENCH_RUN` adds the run-owned causation
+    /// emit that rides the same BEGIN.
+    #[tokio::test]
+    async fn bench_pipelined_claim_flight() {
+        const TENANT: &str = "pipebench";
+        if std::env::var("WAMN_PG_PIPELINE_BENCH").is_err() {
+            return;
+        }
+        let Some(admin_url) = test_pg_url() else {
+            return;
+        };
+        let schema = format!("wamn_pipebench_{}", std::process::id());
+        let role = format!(
+            "wamn_app_{}_a",
+            wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        );
+        let guest_url = live_guest_url(&admin_url, TENANT).await;
+        let admin = connect_raw(&admin_url).await;
+        admin
+            .batch_execute(&format!(
+                "DROP SCHEMA IF EXISTS {schema} CASCADE; \
+                 CREATE SCHEMA {schema}; \
+                 CREATE TABLE {schema}.cold_parse (id int NOT NULL); \
+                 INSERT INTO {schema}.cold_parse VALUES (1), (2); \
+                 GRANT USAGE ON SCHEMA {schema} TO \"{role}\"; \
+                 GRANT SELECT ON {schema}.cold_parse TO \"{role}\";"
+            ))
+            .await
+            .unwrap();
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(guest_url)),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 5_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .unwrap();
+        let scope = "pipebench-instance-0";
+        let run = std::env::var("WAMN_PG_PIPELINE_BENCH_RUN").is_ok();
+        pg.bind_session_claims(
+            scope,
+            &SessionClaims {
+                tenant: TENANT.to_string(),
+                schema: Some(schema.clone()),
+                ..SessionClaims::default()
+            },
+        )
+        .unwrap();
+        if run {
+            pg.set_current_run(
+                scope,
+                Some(Causation {
+                    run: "bench-run".to_string(),
+                    root: "bench-run".to_string(),
+                    depth: 0,
+                }),
+            );
+        }
+        let statement = VerifiedStatement {
+            exact_sql: "SELECT id FROM cold_parse ORDER BY id".into(),
+            binds: Box::new([]),
+            columns: Box::new([StatementField {
+                value_type: StatementValueType::Int32,
+                nullable: false,
+            }]),
+            transactional: true,
+        };
+        for _ in 0..200 {
+            pg.one_shot_statement(scope, "sha256:bench", &statement, &[])
+                .await
+                .unwrap();
+        }
+        let iterations: u32 = 2_000;
+        let mut samples = Vec::with_capacity(iterations as usize);
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            let one = std::time::Instant::now();
+            pg.one_shot_statement(scope, "sha256:bench", &statement, &[])
+                .await
+                .unwrap();
+            samples.push(one.elapsed().as_secs_f64() * 1_000.0);
+        }
+        let total = start.elapsed().as_secs_f64() * 1_000.0;
+        samples.sort_by(f64::total_cmp);
+        let pct = |percent: usize| samples[(samples.len() - 1) * percent / 100];
+        println!(
+            "BENCH run={run} n={iterations} total={total:.1}ms mean={:.4}ms \
+             p50={:.4}ms p90={:.4}ms p99={:.4}ms",
+            total / f64::from(iterations),
+            pct(50),
+            pct(90),
+            pct(99),
+        );
+        admin
+            .batch_execute(&format!(
+                "DROP SCHEMA {schema} CASCADE; DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"
+            ))
+            .await
+            .unwrap();
     }
 }
