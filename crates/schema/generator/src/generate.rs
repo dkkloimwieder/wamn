@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnType, Constraint, ConstraintKind, Table,
+    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind, Table,
 };
 
 use crate::manifest::{
@@ -25,6 +25,25 @@ use crate::{GenerateError, GenerateErrorKind};
 const POSTGRES_INTERFACE: &str = "wamn:postgres@0.1.0";
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
+/// The claim column carrying the caller's idempotency key, under the claim's
+/// primary key. One spelling, so a replay of one command can never look for
+/// its claim under another name.
+pub(crate) const CLAIM_KEY_COLUMN: &str = "idempotency_key";
+/// The claim column carrying the canonical request bytes the key is bound to.
+/// A second call with the same key and different bytes is refused against it.
+pub(crate) const CLAIM_COMMAND_COLUMN: &str = "canonical_command";
+/// Mint the claim, or yield nothing because the key already has one.
+const CREATE_CLAIM_STATEMENT: &str = "create_claim";
+/// Read the immutable original for one key. Writes nothing.
+const CREATE_REPLAY_STATEMENT: &str = "create_replay";
+/// Insert the row under the identities the claim already minted.
+const CREATE_STATEMENT: &str = "create";
+/// The three statements of one generated create, in emission order.
+const CREATE_STATEMENTS: [&str; 3] = [
+    CREATE_CLAIM_STATEMENT,
+    CREATE_REPLAY_STATEMENT,
+    CREATE_STATEMENT,
+];
 
 /// One package-owned authored SQL source supplied without filesystem access.
 #[derive(Debug, Clone, Copy)]
@@ -337,6 +356,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             &mut files,
             &mut sql_corpus,
             input.transactional,
+            input.catalog,
             &manifest,
             model_name,
             model,
@@ -573,7 +593,9 @@ fn validate_model(
     }
 
     for (action, operation) in &model.operations {
-        validate_operation(model_name, model, table, *action, operation)?;
+        validate_operation(
+            catalog, manifest, model_name, model, table, *action, operation,
+        )?;
     }
     Ok(())
 }
@@ -596,6 +618,8 @@ fn validate_definition_owner(
 }
 
 fn validate_operation(
+    catalog: &CatalogIr,
+    manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
@@ -604,6 +628,12 @@ fn validate_operation(
 ) -> Result<(), GenerateError> {
     let context = format!("{model_name}.{}", action.as_str());
     validate_field(table, model_name, "id")?;
+    if operation.claim.is_some() && action != CrudAction::Create {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} declares a command claim, which only a create carries"),
+        ));
+    }
 
     let server_owned = model.server_owned_fields.iter().collect::<BTreeSet<_>>();
     let mut writable = BTreeSet::new();
@@ -661,6 +691,7 @@ fn validate_operation(
         CrudAction::Create => {
             require_result(&context, operation.result, &[ResultClass::One])?;
             require_mutation_shape(&context, operation, false)?;
+            validate_claim(catalog, manifest, &context, model, table, operation)?;
         }
         CrudAction::Update => {
             require_result(&context, operation.result, &[ResultClass::One])?;
@@ -773,6 +804,202 @@ fn require_mutation_shape(
         ));
     }
     Ok(())
+}
+
+fn validate_claim(
+    catalog: &CatalogIr,
+    manifest: &PackageManifest,
+    context: &str,
+    model: &ModelDeclaration,
+    table: &Table,
+    operation: &OperationDeclaration,
+) -> Result<(), GenerateError> {
+    resolve_claim(catalog, manifest, context, model, table, operation).map(|_| ())
+}
+
+/// The identities one generated create would otherwise let PostgreSQL mint.
+///
+/// Exactly these must come from the claim. A column PostgreSQL defaults is
+/// minted fresh on every attempt, so a replay that re-ran the insert would hand
+/// out a SECOND identity for the same command.
+fn minted_identities<'a>(table: &'a Table, operation: &OperationDeclaration) -> Vec<&'a Column> {
+    table
+        .columns()
+        .iter()
+        .filter(|column| {
+            column.column_type() == ColumnType::Uuid
+                && !column.nullable()
+                && column.default() == Some(ColumnDefault::GenRandomUuid)
+                && column.generation().is_none()
+                && !operation
+                    .writable_fields
+                    .iter()
+                    .any(|field| field == column.name())
+        })
+        .collect()
+}
+
+/// Resolve and verify one create's claim against the catalog.
+///
+/// The claim is checked structurally, never by convention: the key column under
+/// a primary key, and every minted identity under its own `UNIQUE` column that
+/// PostgreSQL defaulted once. That is why a replay returns the same value BY
+/// CONSTRUCTION rather than because some caller took an early return.
+fn resolve_claim<'a>(
+    catalog: &'a CatalogIr,
+    manifest: &PackageManifest,
+    context: &str,
+    model: &ModelDeclaration,
+    table: &'a Table,
+    operation: &'a OperationDeclaration,
+) -> Result<sql::Claim<'a>, GenerateError> {
+    let declaration = operation.claim.as_ref().ok_or_else(|| {
+        GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} must declare the command claim its identity comes from"),
+        )
+    })?;
+    validate_identifier(&declaration.table, "claim table")?;
+    let claim = catalog
+        .tables()
+        .iter()
+        .find(|candidate| {
+            candidate.schema() == model.schema && candidate.name() == declaration.table
+        })
+        .ok_or_else(|| {
+            GenerateError::for_object(
+                GenerateErrorKind::UnknownRelation,
+                format!("{context} references unknown claim relation"),
+                format!("{}.{}", model.schema, declaration.table),
+            )
+        })?;
+    if !manifest
+        .internal_relations
+        .values()
+        .any(|relation| relation.schema == model.schema && relation.table == declaration.table)
+    {
+        return Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} claim must be a CDC-excluded internal relation"),
+            format!("{}.{}", model.schema, declaration.table),
+        ));
+    }
+    let primary_key = claim_primary_key(claim).ok_or_else(|| {
+        GenerateError::for_object(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} claim must key {CLAIM_KEY_COLUMN} under a primary key alone"),
+            format!("{}.{}", model.schema, declaration.table),
+        )
+    })?;
+    require_claim_column(context, claim, CLAIM_KEY_COLUMN, ColumnType::Text)?;
+    require_claim_column(context, claim, CLAIM_COMMAND_COLUMN, ColumnType::Bytes)?;
+    // The emitted claim INSERT writes the key and the canonical command and
+    // nothing else, so every other column must have a value without one.
+    for column in claim.columns() {
+        if column.name() != CLAIM_KEY_COLUMN
+            && column.name() != CLAIM_COMMAND_COLUMN
+            && !column.nullable()
+            && column.default().is_none()
+            && column.generation().is_none()
+        {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{context} claim column {} has no value the claim can supply",
+                    column.name()
+                ),
+                format!("{}.{}.{}", model.schema, declaration.table, column.name()),
+            ));
+        }
+    }
+
+    let minted = minted_identities(table, operation)
+        .into_iter()
+        .map(Column::name)
+        .collect::<BTreeSet<_>>();
+    let declared = declaration
+        .identities
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if minted != declared || !declared.contains("id") {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} claim must pre-generate exactly the identities the create mints"),
+        ));
+    }
+    let mut claim_columns = BTreeSet::new();
+    let mut identities = Vec::with_capacity(declaration.identities.len());
+    for (field, claim_column) in &declaration.identities {
+        if !claim_columns.insert(claim_column.as_str()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("{context} claim reuses column {claim_column} for two identities"),
+            ));
+        }
+        let column = column(claim, claim_column).ok_or_else(|| {
+            GenerateError::for_object(
+                GenerateErrorKind::UnknownColumn,
+                format!("{context} claim has no column {claim_column}"),
+                format!("{}.{}.{claim_column}", model.schema, declaration.table),
+            )
+        })?;
+        let pre_generated = column.column_type() == ColumnType::Uuid
+            && !column.nullable()
+            && column.default() == Some(ColumnDefault::GenRandomUuid)
+            && claim.constraints().iter().any(|constraint| {
+                matches!(
+                    constraint.kind(),
+                    ConstraintKind::Unique { columns }
+                        if columns.len() == 1 && columns[0].as_ref() == claim_column.as_str()
+                )
+            });
+        if !pre_generated {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{context} claim column {claim_column} must be a unique non-null uuid defaulting to gen_random_uuid()"
+                ),
+                format!("{}.{}.{claim_column}", model.schema, declaration.table),
+            ));
+        }
+        identities.push((field.as_str(), claim_column.as_str()));
+    }
+    Ok(sql::Claim {
+        table: claim,
+        primary_key,
+        identities,
+    })
+}
+
+fn claim_primary_key(claim: &Table) -> Option<&str> {
+    claim.constraints().iter().find_map(|constraint| {
+        matches!(
+            constraint.kind(),
+            ConstraintKind::PrimaryKey { columns }
+                if columns.len() == 1 && columns[0].as_ref() == CLAIM_KEY_COLUMN
+        )
+        .then(|| constraint.name())
+    })
+}
+
+fn require_claim_column(
+    context: &str,
+    claim: &Table,
+    name: &str,
+    ty: ColumnType,
+) -> Result<(), GenerateError> {
+    let valid =
+        column(claim, name).is_some_and(|column| column.column_type() == ty && !column.nullable());
+    if valid {
+        Ok(())
+    } else {
+        Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} claim must carry non-null {name} {}", ty.as_str()),
+            format!("{}.{}.{name}", claim.schema(), claim.name()),
+        ))
+    }
 }
 
 fn validate_query(
@@ -1227,10 +1454,15 @@ fn authored_sql_map(
     Ok(map)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "model emission owns the complete validated model and catalog context"
+)]
 fn emit_model(
     files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &mut BTreeMap<String, Vec<u8>>,
     transactional: &StatementTransactionality,
+    catalog: &CatalogIr,
     manifest: &PackageManifest,
     model_name: &str,
     model: &ModelDeclaration,
@@ -1238,16 +1470,35 @@ fn emit_model(
 ) -> Result<(), GenerateError> {
     emit_model_contract(files, model_name, model, table)?;
 
+    let claim = model.operations.get(&CrudAction::Create).map(|operation| {
+        resolve_claim(
+            catalog,
+            manifest,
+            &format!("{model_name}.create"),
+            model,
+            table,
+            operation,
+        )
+        .expect("create validation resolved the command claim")
+    });
+
     let mut operation_sql = BTreeMap::<String, Vec<String>>::new();
     for (action, operation) in &model.operations {
         let paths = emit_operation_sql(
-            files, sql_corpus, model_name, model, table, *action, operation,
+            files,
+            sql_corpus,
+            model_name,
+            table,
+            claim.as_ref(),
+            *action,
+            operation,
         )?;
         operation_sql.insert(action.as_str().to_owned(), paths);
     }
 
-    let native_operation_rows = operation_result_rows(model_name, model, table, Projection::Native);
-    let wamn_api = wamn_api(model_name, model, table, &operation_sql);
+    let native_operation_rows =
+        operation_result_rows(model_name, model, table, claim.as_ref(), Projection::Native);
+    let wamn_api = wamn_api(model_name, model, table, claim.as_ref(), &operation_sql);
     for (action, operation) in &model.operations {
         emit_operation_contracts(
             files,
@@ -1257,6 +1508,7 @@ fn emit_model(
             model_name,
             model,
             table,
+            claim.as_ref(),
             *action,
             operation,
             &wamn_api,
@@ -1549,6 +1801,51 @@ fn statement_contract(
         columns: columns.into_iter().collect(),
         transactional: transactional.needs_transaction(path),
     }
+}
+
+fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueContract> {
+    wamn_api
+        .operation_rows
+        .iter()
+        .find(|candidate| candidate.name == row)
+        .expect("operation accessor row was emitted from the same operation")
+        .fields
+        .iter()
+        .map(|field| statement_value_contract(&field.name, field.statement_type, field.nullable))
+        .collect()
+}
+
+/// What a consumer must know to replay one generated create.
+///
+/// The `identities` map is the law made checkable downstream: it names the
+/// claim column that pre-generated each model identity, so a reader can verify
+/// that a replay returns the same ids WITHOUT reading the orchestration.
+fn idempotency_contract(claim: &sql::Claim<'_>) -> Value {
+    json!({
+        "key": CLAIM_KEY_COLUMN,
+        "canonical_command": CLAIM_COMMAND_COLUMN,
+        "claim": {
+            "schema": claim.table.schema(),
+            "table": claim.table.name(),
+            "constraint": claim.primary_key,
+            "identities": claim
+                .identities
+                .iter()
+                .map(|(field, claim_column)| ((*field).to_owned(), *claim_column))
+                .collect::<BTreeMap<_, _>>(),
+        },
+        "statements": {
+            "claim": CREATE_CLAIM_STATEMENT,
+            "replay": CREATE_REPLAY_STATEMENT,
+            "insert": CREATE_STATEMENT,
+        },
+        "replay": {"writes": "none", "identity_source": "claim"},
+        "conflict": {
+            "on": "changed_canonical_command",
+            "refusal": AccessOperationErrorLiteral::IdempotencyConflict,
+        },
+        "atomicity": "claim_and_insert_commit_together",
+    })
 }
 
 fn statement_value_contract(name: &str, ty: ColumnType, nullable: bool) -> StatementValueContract {
@@ -2047,11 +2344,33 @@ fn emit_operation_sql(
     files: &mut BTreeMap<String, Vec<u8>>,
     sql_corpus: &mut BTreeMap<String, Vec<u8>>,
     model_name: &str,
-    _model: &ModelDeclaration,
     table: &Table,
+    claim: Option<&sql::Claim<'_>>,
     action: CrudAction,
     operation: &OperationDeclaration,
 ) -> Result<Vec<String>, GenerateError> {
+    if action == CrudAction::Create {
+        let claim = claim.expect("create validation resolved the command claim");
+        let mut paths = Vec::with_capacity(CREATE_STATEMENTS.len());
+        for (name, sql) in [
+            (CREATE_CLAIM_STATEMENT, sql::create_claim(claim)),
+            (CREATE_REPLAY_STATEMENT, sql::create_replay(table, claim)),
+            (CREATE_STATEMENT, sql::create(table, claim, operation)),
+        ] {
+            let path = format!("generated/sql/{model_name}/{name}.sql");
+            let bytes = sql.into_bytes();
+            insert_bytes(files, &path, bytes.clone())?;
+            if sql_corpus.insert(path.clone(), bytes).is_some() {
+                return Err(GenerateError::for_path(
+                    GenerateErrorKind::DuplicatePath,
+                    "generated SQL collides with the corpus",
+                    path,
+                ));
+            }
+            paths.push(path);
+        }
+        return Ok(paths);
+    }
     if action == CrudAction::Query {
         if let Some(authored) = &operation.authored_sql {
             return Ok(authored
@@ -2083,10 +2402,11 @@ fn emit_operation_sql(
 
     let sql = match action {
         CrudAction::Get => sql::get(table),
-        CrudAction::Create => sql::create(table, operation),
         CrudAction::Update => sql::update(table, operation),
         CrudAction::Delete => sql::delete(table, operation),
-        CrudAction::Query => unreachable!("query returned above"),
+        CrudAction::Create | CrudAction::Query => {
+            unreachable!("create and query returned above")
+        }
     };
     let path = format!("generated/sql/{model_name}/{}.sql", action.as_str());
     let bytes = sql.into_bytes();
@@ -2145,6 +2465,7 @@ fn emit_operation_contracts(
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
+    claim: Option<&sql::Claim<'_>>,
     action: CrudAction,
     operation: &OperationDeclaration,
     wamn_api: &WamnApi,
@@ -2159,34 +2480,31 @@ fn emit_operation_contracts(
         .iter()
         .filter(|accessor| accessor.operation == action)
         .collect::<Vec<_>>();
-    // Every accessor of one action returns the same row, so this is the
-    // operation's result shape and not just one statement's columns.
+    let model_columns = table
+        .columns()
+        .iter()
+        .map(|column| {
+            statement_value_contract(column.name(), column.column_type(), column.nullable())
+        })
+        .collect::<Vec<_>>();
+    // The operation's RESULT is the row it hands back, which for a create is
+    // the created or replayed model row and not the claim its statements read.
     let columns = if matches!(action, CrudAction::Update | CrudAction::Delete) {
         accessors.first().map_or_else(Vec::new, |accessor| {
-            wamn_api
-                .operation_rows
-                .iter()
-                .find(|row| row.name == accessor.row)
-                .expect("mutation accessor row was emitted from the same operation")
-                .fields
-                .iter()
-                .map(|field| {
-                    statement_value_contract(&field.name, field.statement_type, field.nullable)
-                })
-                .collect::<Vec<_>>()
+            operation_row_columns(wamn_api, &accessor.row)
         })
     } else {
-        table
-            .columns()
-            .iter()
-            .map(|column| {
-                statement_value_contract(column.name(), column.column_type(), column.nullable())
-            })
-            .collect::<Vec<_>>()
+        model_columns.clone()
     };
     let statements = accessors
         .iter()
         .map(|accessor| {
+            let statement_columns =
+                if accessor.row == format!("{}Row", rust_type_identifier(model_name)) {
+                    model_columns.clone()
+                } else {
+                    operation_row_columns(wamn_api, &accessor.row)
+                };
             statement_contract(
                 &accessor.name,
                 &accessor.sql_path,
@@ -2195,22 +2513,26 @@ fn emit_operation_contracts(
                 accessor.binds.iter().map(|bind| {
                     statement_value_contract(&bind.parameter, bind.statement_type, bind.nullable)
                 }),
-                columns.iter().cloned(),
+                statement_columns,
             )
         })
         .collect::<Vec<_>>();
+    let mut operation_contract = serde_json::Map::from_iter([
+        ("operation".to_owned(), json!(operation_id)),
+        ("permission_token".to_owned(), json!(operation.permission)),
+        ("grant".to_owned(), json!(operation_id)),
+        ("result".to_owned(), json!(operation.result)),
+        ("statements".to_owned(), json!(statements)),
+        ("transaction".to_owned(), json!("implicit")),
+        ("automatic_retry".to_owned(), json!(false)),
+    ]);
+    if let Some(claim) = claim.filter(|_| action == CrudAction::Create) {
+        operation_contract.insert("idempotency".to_owned(), idempotency_contract(claim));
+    }
     insert_json_line(
         files,
         &format!("{root}.operation.json"),
-        &json!({
-            "operation": operation_id,
-            "permission_token": operation.permission,
-            "grant": operation_id,
-            "result": operation.result,
-            "statements": statements,
-            "transaction": "implicit",
-            "automatic_retry": false,
-        }),
+        &Value::Object(operation_contract),
     )?;
     insert_json(
         files,
@@ -2305,7 +2627,17 @@ fn input_contract(
                 "invalid_limit": "invalid_input",
             }),
         ),
-        CrudAction::Create => common,
+        CrudAction::Create => merge_json(
+            common,
+            &json!({
+                CLAIM_KEY_COLUMN: {"type": "text", "required": true},
+                CLAIM_COMMAND_COLUMN: {
+                    "over": "writable_fields",
+                    "payload": "canonical_compact_json",
+                    "changed": "idempotency_conflict",
+                },
+            }),
+        ),
         CrudAction::Update | CrudAction::Delete => {
             let revision = operation
                 .revision_field
@@ -2369,6 +2701,15 @@ fn error_contract(table: &Table, action: CrudAction, operation: &OperationDeclar
         cases.push((
             Code::ConcurrencyConflict,
             json!({"literal": "concurrency_conflict"}),
+        ));
+    }
+    if action == CrudAction::Create {
+        cases.push((
+            Code::IdempotencyConflict,
+            json!({
+                "literal": "idempotency_conflict",
+                "from": "changed_canonical_command",
+            }),
         ));
     }
     for constraint in operation_constraints(table, action, operation) {
@@ -2490,14 +2831,14 @@ struct ConstraintNameSlice {
     names: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct RustRow {
     name: String,
     visibility: RustVisibility,
     fields: Vec<RustMember>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct RustMember {
     name: String,
     #[serde(rename = "type")]
@@ -2508,7 +2849,7 @@ struct RustMember {
     nullable: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct AccessorBind {
     parameter: String,
     postgres: String,
@@ -2603,6 +2944,7 @@ fn wamn_api(
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
+    claim: Option<&sql::Claim<'_>>,
     operation_sql: &BTreeMap<String, Vec<String>>,
 ) -> WamnApi {
     let model_row = format!("{}Row", rust_type_identifier(model_name));
@@ -2674,22 +3016,14 @@ fn wamn_api(
                     });
                 }
             }
-            CrudAction::Create => accessors.push(WamnAccessor {
-                name: "create".to_owned(),
-                visibility: RustVisibility::Crate,
-                operation: *action,
-                statement_digest_constant: statement_digest_constant_name(
-                    action.as_str(),
-                    0,
-                    paths.len(),
-                ),
-                sql_path: paths[0].clone(),
-                row: model_row.clone(),
-                fetch: AccessorFetch::One,
-                binds: operation
-                    .writable_fields
+            CrudAction::Create => {
+                let claim = claim.expect("create validation resolved the command claim");
+                let rows = create_rows(model_name, table, claim, Projection::Wamn);
+                let key_bind = accessor_bind(CLAIM_KEY_COLUMN, ColumnType::Text, false);
+                let mut binds = claim
+                    .identities
                     .iter()
-                    .map(|field| {
+                    .map(|(field, _)| {
                         bind_for_column(
                             table,
                             field,
@@ -2698,8 +3032,58 @@ fn wamn_api(
                             false,
                         )
                     })
-                    .collect(),
-            }),
+                    .collect::<Vec<_>>();
+                binds.extend(operation.writable_fields.iter().map(|field| {
+                    bind_for_column(
+                        table,
+                        field,
+                        &rust_identifier(field).expect("model field names were validated for Rust"),
+                        false,
+                    )
+                }));
+                for (index, (name, row, fetch, accessor_binds)) in [
+                    (
+                        CREATE_CLAIM_STATEMENT,
+                        rows[0].name.clone(),
+                        AccessorFetch::Optional,
+                        vec![
+                            key_bind.clone(),
+                            accessor_bind(CLAIM_COMMAND_COLUMN, ColumnType::Bytes, false),
+                        ],
+                    ),
+                    (
+                        CREATE_REPLAY_STATEMENT,
+                        rows[1].name.clone(),
+                        AccessorFetch::Optional,
+                        vec![key_bind],
+                    ),
+                    (
+                        CREATE_STATEMENT,
+                        model_row.clone(),
+                        AccessorFetch::One,
+                        binds,
+                    ),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    accessors.push(WamnAccessor {
+                        name: name.to_owned(),
+                        visibility: RustVisibility::Crate,
+                        operation: *action,
+                        statement_digest_constant: statement_digest_constant_name(
+                            action.as_str(),
+                            index,
+                            paths.len(),
+                        ),
+                        sql_path: paths[index].clone(),
+                        row,
+                        fetch,
+                        binds: accessor_binds,
+                    });
+                }
+                operation_rows.extend(rows);
+            }
             CrudAction::Update => {
                 let result_row =
                     operation_result_row(model_name, table, *action, operation, Projection::Wamn);
@@ -2864,16 +3248,79 @@ fn operation_result_rows(
     model_name: &str,
     model: &ModelDeclaration,
     table: &Table,
+    claim: Option<&sql::Claim<'_>>,
     projection: Projection,
 ) -> Vec<RustRow> {
     model
         .operations
         .iter()
-        .filter(|(action, _)| matches!(action, CrudAction::Update | CrudAction::Delete))
-        .map(|(action, operation)| {
-            operation_result_row(model_name, table, *action, operation, projection)
+        .flat_map(|(action, operation)| match action {
+            CrudAction::Create => create_rows(
+                model_name,
+                table,
+                claim.expect("create validation resolved the command claim"),
+                projection,
+            )
+            .to_vec(),
+            CrudAction::Update | CrudAction::Delete => vec![operation_result_row(
+                model_name, table, *action, operation, projection,
+            )],
+            CrudAction::Get | CrudAction::Query => Vec::new(),
         })
         .collect()
+}
+
+/// The two rows a generated create needs beyond the model row: what the claim
+/// minted, and what a replay reads back.
+///
+/// The replay row carries the canonical command beside the row so the caller
+/// can refuse a key rebound to a different request without a second read.
+fn create_rows(
+    model_name: &str,
+    table: &Table,
+    claim: &sql::Claim<'_>,
+    projection: Projection,
+) -> [RustRow; 2] {
+    let model_type = rust_type_identifier(model_name);
+    let claim_fields = claim
+        .identities
+        .iter()
+        .map(|(_, claim_column)| {
+            let column = column(claim.table, claim_column)
+                .expect("claim validation resolved every identity column");
+            RustMember {
+                name: rust_identifier(claim_column)
+                    .expect("claim column names were validated for Rust"),
+                rust_type: rust_type(column, projection),
+                statement_type: column.column_type(),
+                nullable: column.nullable(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut replay_fields = vec![RustMember {
+        name: CLAIM_COMMAND_COLUMN.to_owned(),
+        rust_type: projected_rust_type(ColumnType::Bytes, projection, false),
+        statement_type: ColumnType::Bytes,
+        nullable: false,
+    }];
+    replay_fields.extend(table.columns().iter().map(|column| RustMember {
+        name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
+        rust_type: rust_type(column, projection),
+        statement_type: column.column_type(),
+        nullable: column.nullable(),
+    }));
+    [
+        RustRow {
+            name: format!("{model_type}CreateClaimRow"),
+            visibility: RustVisibility::Public,
+            fields: claim_fields,
+        },
+        RustRow {
+            name: format!("{model_type}CreateReplayRow"),
+            visibility: RustVisibility::Public,
+            fields: replay_fields,
+        },
+    ]
 }
 
 fn operation_result_row(
@@ -3231,6 +3678,48 @@ fn required_schema_contract(
             table
                 .constraints()
                 .iter()
+                .map(|constraint| constraint.name().to_owned()),
+        );
+    }
+    // A create's generated SQL names the claim's primary-key constraint and
+    // reads back the columns that minted its identity, so the required-schema
+    // contract has to pin them. The internal-relation pass below registers the
+    // claim relation with no fields at all.
+    for model in manifest.models.values() {
+        let Some(claim) = model
+            .operations
+            .get(&CrudAction::Create)
+            .and_then(|operation| operation.claim.as_ref())
+        else {
+            continue;
+        };
+        let table = catalog
+            .tables()
+            .iter()
+            .find(|table| table.schema() == model.schema && table.name() == claim.table)
+            .expect("create validation resolved the claim relation");
+        let entry = consumed
+            .entry((model.schema.clone(), claim.table.clone()))
+            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+        entry.1.insert(CLAIM_KEY_COLUMN.to_owned());
+        entry.1.insert(CLAIM_COMMAND_COLUMN.to_owned());
+        entry.1.extend(claim.identities.values().cloned());
+        entry.2.extend(
+            table
+                .constraints()
+                .iter()
+                .filter(|constraint| match constraint.kind() {
+                    ConstraintKind::PrimaryKey { columns } => columns
+                        .iter()
+                        .any(|column| column.as_ref() == CLAIM_KEY_COLUMN),
+                    ConstraintKind::Unique { columns } => columns.iter().any(|column| {
+                        claim
+                            .identities
+                            .values()
+                            .any(|value| value == column.as_ref())
+                    }),
+                    ConstraintKind::ForeignKey { .. } | ConstraintKind::Check { .. } => false,
+                })
                 .map(|constraint| constraint.name().to_owned()),
         );
     }

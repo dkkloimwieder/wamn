@@ -262,6 +262,7 @@ pub enum AccessOperationErrorLiteral {
     InvalidInput,
     NotFound,
     ConcurrencyConflict,
+    IdempotencyConflict,
     UniqueViolation,
     ForeignKeyViolation,
     CheckViolation,
@@ -277,6 +278,7 @@ impl AccessOperationErrorLiteral {
             Self::InvalidInput => "invalid_input",
             Self::NotFound => "not_found",
             Self::ConcurrencyConflict => "concurrency_conflict",
+            Self::IdempotencyConflict => "idempotency_conflict",
             Self::UniqueViolation => "unique_violation",
             Self::ForeignKeyViolation => "foreign_key_violation",
             Self::CheckViolation => "check_violation",
@@ -1318,6 +1320,9 @@ fn validate_access_error_details(
     if matches!(action, CrudAction::Update | CrudAction::Delete) {
         expected.insert(Code::ConcurrencyConflict);
     }
+    if action == CrudAction::Create {
+        expected.insert(Code::IdempotencyConflict);
+    }
     for constraint in [
         Code::UniqueViolation,
         Code::ForeignKeyViolation,
@@ -1339,7 +1344,9 @@ fn validate_access_error_details(
             Code::InvalidInput if action == CrudAction::Query => {
                 (&[Key::Field], &[Key::Minimum, Key::Maximum, Key::Observed])
             }
-            Code::InvalidInput => (&[Key::Field], &[]),
+            // A key rebound to a different request names the field that
+            // carried it, exactly as any other refused input does.
+            Code::InvalidInput | Code::IdempotencyConflict => (&[Key::Field], &[]),
             Code::NotFound => (&[Key::Field, Key::Id], &[]),
             Code::ConcurrencyConflict => (&[Key::ExpectedRowVersion, Key::ObservedRowVersion], &[]),
             Code::UniqueViolation | Code::ForeignKeyViolation | Code::CheckViolation => {
@@ -1708,7 +1715,33 @@ pub struct OperationDeclaration {
     pub pagination: Option<PaginationDeclaration>,
     #[serde(default)]
     pub limit: Option<LimitDeclaration>,
+    /// The claim relation a generated `create` mints its identity from.
+    /// Required for `create` and refused for every other action.
+    #[serde(default)]
+    pub claim: Option<ClaimDeclaration>,
     pub result: ResultClass,
+}
+
+/// The command-claim relation of one generated `create`.
+///
+/// Ratified platform law, command-identity-from-claim: any identity a command
+/// creates comes from the CLAIM, not from the work. A create that minted its
+/// row id during the work would mint a SECOND id on replay, which is a
+/// duplicate identity — real stock on a row nothing points at — and not merely
+/// a duplicate row.
+///
+/// `identities` maps every model field the create would otherwise let
+/// PostgreSQL default to a claim column that pre-generated it. Generation
+/// refuses any create whose minted-identity set and `identities` keys differ,
+/// so a new `gen_random_uuid()` column added to the model breaks the build
+/// rather than silently re-minting on replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimDeclaration {
+    /// Claim relation, in the model's own schema.
+    pub table: String,
+    /// Model field to the claim column that pre-generates it.
+    pub identities: BTreeMap<String, String>,
 }
 
 /// Whether a registered operation may be bound to an external route.
