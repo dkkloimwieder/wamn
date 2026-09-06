@@ -22,8 +22,10 @@ RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-chef-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     cargo install cargo-chef --version 0.1.77 --locked
 
-# The planner may see source changes, but the recipe copied into each cook stage
-# changes only when the root workspace manifests or Cargo.lock change.
+# The planner may see source changes. The recipe copied into each cook stage
+# changes only when the root workspace manifests or Cargo.lock change, but the
+# cook stages also carry `components/` below, so a component source change does
+# re-run them.
 FROM chef AS root-planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
@@ -41,6 +43,19 @@ FROM chef AS root-recipe
 # per-developer RUSTC_WRAPPER setting -- see .cargo/config.toml.
 COPY .cargo/config.toml ./.cargo/config.toml
 COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
+# The root workspace `exclude`s `components/` and then takes four path
+# dependencies into it: wamn-event-reg, wamn-event-wire, wamn-execution-contract
+# and wamn-materializer. `cargo chef prepare` records manifests for workspace
+# MEMBERS only, so the recipe carries none of the four and every cook stage
+# fails at `failed to read /build/components/<crate>/Cargo.toml` before it
+# compiles anything (wamn-0h0g.10.19; broken since a0c95163 moved the execution
+# contract here). The whole tree is copied, not the four crate directories,
+# because all four inherit `version.workspace`, `[lints] workspace` and their
+# dependency versions from `components/Cargo.toml`, whose `members` list names
+# all 21 component crates. The cost is that a component source change re-runs
+# the cook stages; the cargo target cache mount they share keeps that re-run
+# incremental.
+COPY components ./components
 
 FROM root-recipe AS cook-host
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
