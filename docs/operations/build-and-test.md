@@ -109,6 +109,20 @@ The gate deliberately does not elevate upstream rustdoc warnings into a WAMN
 fork requirement. The branch policy is vanilla source plus only a consumed,
 red behavior patch; local documentation strictness is not such a behavior.
 
+**A fork patch is one recipe, and every step of it is pinned.** Commit on
+`wamn/2.8.0` in the sibling checkout and push that branch fast-forward. Then
+ONE in-tree change moves the `wash-runtime` rev in `Cargo.toml`, runs
+`cargo update -p wash-runtime`, and updates every pin that names the revision
+or the patch count: `tools/fork-sync-check` (revision and patch count),
+`fork_sync_check.rs`, `chart_seam_governance.rs` (short rev),
+`ip_name_lookup.rs`, `runtime-inventory.json` (`cargo_tree_root`), the
+`values-wamn.yaml` seam comment, and the ledger row in
+`docs/architecture/native-alignment-ledger.md` -- a deviation lands with its
+row or refuses. One bead under `wamn-2w3x` per patch. `tools/fork-sync-check
+run <fork>` is the gate (about 15 minutes: the fork formatter plus the
+wash-runtime tests). Never force-push the fork branch: a fix to a landed patch
+is a further commit and an amended row, not a rewrite.
+
 ## The full sweep
 
 ```bash
@@ -144,6 +158,53 @@ returns 34 at `1bffa614`. See "Live gates" below for why ignored is not skipped.
 ```bash
 cargo test -p wamn-proof-conformance --no-fail-fast
 ```
+
+**Adding or removing a Cargo workspace member moves TEN hard-coded sites,**
+all asserted against live `cargo metadata`, so a partial edit is red and a
+partial COMMIT is red even when the final tree is green (remeasured at
+`wamn-362o` adding two components: exactly ten files). Seven member
+inventories: (1) the workspace `Cargo.toml` members list, and for root also
+`[workspace.dependencies]`; (2) `architecture/package-roles.json`, one row
+`{workspace,name,manifest_path,role,target_class,bounded_context,deployable}`,
+unsorted, grouped by workspace then source directory, the optional eighth
+field `native` absent on non-native rows; (3) `architecture/workspace-tiers.json`
+-- `source_inventory.package_count`, EVERY tier's `root_packages` and
+`component_packages` (sorted, unique, byte-lexicographic),
+`profiles.expected_package_counts`, and the prose in `selection.reason`,
+`command_semantics` and `bare_cargo_semantics.selected_packages`, the last
+checked by whole-token equality against the live count;
+(4) `tests/conformance/tests/package_architecture.rs` `ROOT_MEMBER_COUNT` and
+`COMPONENT_WORKSPACES[].member_count`;
+(5) `tests/conformance/tests/profile_selectors.rs` -- `root_members.len()`,
+`component_members.len()`, the m1 and proof expected name lists, the
+`profile_counts` table, and the proof-minus-m1 difference set;
+(6) `tests/conformance/tests/retained_root_outcomes.rs` `RETAINED_ROOTS`,
+asserted set-equal to `package-roles.json` across all three workspaces;
+(7) `tests/conformance/tests/repo_lint.rs` `ROOT_MEMBER_COUNT`,
+`COMPONENT_MEMBER_COUNT`, `NO_STD_MEMBER_COUNT`. Three ABI guards, each a
+length-typed array asserting RAW BYTES (`cp` the file, never reformat):
+(8) `crates/platform/runtime/tests/node_wit_coherence.rs` `EXPECTED_COPIES`;
+(9) `tests/conformance/src/invocation.rs` `EXPECTED_NODE_ABI_COPIES`;
+(10) `crates/platform/runtime/tests/postgres_wit_coherence.rs`
+`EXPECTED_COPIES` -- a data-access guest vendors `wamn-postgres` as well as
+`wamn-node`, so both pairs move together. App-interface WIT copies
+(`wamn-<app>-<iface>`) are package-owned and guarded by nothing.
+
+**Tier placement** (from `workspace_tiers.rs`): `role=test` goes in `full_ci`
+and `deployed_system_proof`, excluded from `fast_developer_native`; a
+deployable cdylib guest goes in all four (`product_components`, `release`,
+`full_ci`, `deployed_system_proof`); a guest-consumed rlib (`adapter`/`guest`,
+`deployable: false`) goes in `full_ci` and `deployed_system_proof` only,
+because `release` asserts every member carries `cdylib` or `bin`. For
+components, `m1_inventory_tier` is `product_components` and
+`proof_inventory_tier` is `full_ci`. Baseline these gates BEFORE editing so an
+inherited red is not attributed to the change: this class rots in both
+directions. `profile_selectors.rs` and `workspace_tiers.rs` also assert the
+selector tools' SOURCE contains no canonical package name as a substring, so
+grep `tools/` before choosing a short name. A new guest needs
+`tools/component-virtualization.json` only if it must be virtualized; the
+allowlist test iterates declared artifacts only, so an omission is silent at
+gate time and shows up at deploy.
 
 **Conformance runs at the wave-end integrator pass, not per lane.** A lane
 runs the targeted `-p` selection its own change touches. Running the whole
@@ -1810,9 +1871,10 @@ docker run -d --name wamn-<suite>-pg -e POSTGRES_PASSWORD=pw \
   -p 127.0.0.1:${PORT}:5432 postgres:18
 # add `-c wal_level=logical` for the CDC / replica-identity recipes
 
-# ground truth — loop on this, nothing else
-until docker exec wamn-<suite>-pg \
-        psql -h 127.0.0.1 -U postgres -tAc 'select 1' >/dev/null 2>&1; do
+# ground truth — a connection FROM THE HOST, the way the suite will connect;
+# loop on this, nothing else (the PostgreSQL traps below say why not exec)
+until PGPASSWORD=pw psql -h 127.0.0.1 -p "${PORT}" -U postgres -d postgres \
+        -tAc 'select 1' >/dev/null 2>&1; do
   sleep 1
 done
 
@@ -1833,7 +1895,9 @@ Measured at `1bffa614` against `postgres:18` (18.6):
   `accepting connections` and `psql` returned `1`.
 
 `docker exec <name> psql -h 127.0.0.1 -U postgres -c 'select 1'` tracked the
-server's actual ability to answer in both runs. Loop on that.
+server's own ability to answer in both runs -- and on the WMS mint it answered
+about 45 s before a connection from the host did (`wamn-362o.38`). Loop on a
+connection made the way the suite will make it.
 
 Rules that follow:
 
@@ -1860,6 +1924,20 @@ the `wamn-pg` pool, `wamn-sysdb`, or the control-plane NATS Deployment named
 
 When a suite needs a database it can own, the correct tool is a throwaway
 docker `postgres:18`, above.
+
+Four traps around it:
+
+- **After a host reboot kind crash-loops:** `fs.inotify.max_user_instances`
+  resets to 128 -- `sysctl` it to 1024, then delete the crash-looped
+  `kube-proxy` pods.
+- **`kubectl port-forward` dies on every connection close.** Use a temporary
+  NodePort, or `kubectl exec -i <pod> -- psql`.
+- **Jobs are immutable** (delete before re-apply), and a ConfigMap edit does
+  not restart its pod.
+- **Kind-loaded images cannot be re-pulled:** removal is permanent unless a
+  host copy exists. Build the protected set from POD SPECS, not from running
+  containers; and the kind node container is named `wamn-control-plane`,
+  which matches a grep for "lane".
 
 ## Traps
 
@@ -1914,6 +1992,38 @@ measured failure modes: `env!("CARGO_MANIFEST_DIR")` resolves to *another*
 worktree, so a test validates the wrong tree; artifact collision overwrites in
 place, so a later run executes the other tree's code; and fingerprint thrash
 serialises every lane on one flock. Give each worktree its own directory.
+
+**Lane worktrees live under `$HOME/.cache/wamn-lanes/`, never under `/tmp`.**
+`/tmp` here is a 31 GB tmpfs and one warm target is 13 GB; an overflow surfaces
+as `EDQUOT` from `rustc` and froze every shell on the machine, the other
+session's included. `git worktree move` refuses to cross devices: `cp -a` the
+tree, `git worktree repair <new-path>`, then remove the old one. A lane uses
+its worktree's own default `target/` -- do not set `CARGO_TARGET_DIR` for a
+lane -- so `git worktree remove` takes the artifacts with the tree.
+
+**Cut lane worktrees yourself, pin the absolute path, and verify an anchor
+file.** A worktree provisioned for you can sit hundreds of commits behind the
+base you named while reporting a valid sha: it lacks every file the work
+needs and nothing says so. Forbid the main checkout by name in the brief, and
+`test -f <anchor>` before the first command.
+
+**Never `git worktree remove` the lane you are standing in.** The cwd is gone
+for every command chained after it (`Unable to read current working
+directory`); six chains lost their cleanup and one its launch in a day.
+Remove from the root checkout, or end the chain there.
+
+**A lane branch integrated by cherry-pick is not an ancestor of `HEAD`,** so
+`git branch -d` refuses and `-D` is correct -- after per-file `sha256sum`
+parity between the lane and the landed commit, never on the assumption.
+
+**No full workspace sweep inside a lane.** Targeted `-p` only while the lane
+is open; one sweep at the end, on the integrated tree.
+
+**A process-watch pattern that matches its own command line never exits.**
+`pgrep -f`, `pkill -f` and a log-watching grep all see the shell that invoked
+them, because the pattern is in that shell's argv; a `pkill -f` kills the
+caller (exit 144). Collect pids first and exclude `$$`, or match on something
+the watcher does not carry.
 
 **A guest fixture must PROVE its import survives.** An interface a guest never
 calls is elided by the component encoder, so the fixture silently stops
@@ -2473,6 +2583,95 @@ which must keep naming the world the crate's own `wit/world.wit` declares —
 `flow-http`, deliberately not renamed, because a versioned WIT package is a
 contract change. No `-p` resolution catches that one; only building the
 component does (`wamn-0h0g.26.22`).
+
+**Editing at scale.** Each of these cost real time on a scripted edit.
+
+- **Bound a code-block edit by brace scanning, never by a regex that can
+  start earlier than intended.**
+- **Every scripted replace asserts its match count.** A replace matching
+  twice yields a VOID mutant, and a run against the unmutated file reports
+  all-green -- which reads exactly like a surviving mutant. A zero-match
+  apply reads the same way.
+- **Inserting before a `fn` line steals the previous item's `#[test]`.**
+  Verify with `cargo test ... -- --list`.
+- **After adding a refusal, fix every fixture that supplied the now-refused
+  shape.** A new refusal has consumers exactly like a rename does, and a
+  green `-p` means nothing on a self-skipping gate.
+- **After renaming a public field or type, build the owning crate's own
+  `--tests`** and sweep every mention in one pass rather than fixing the
+  compiler's first complaint.
+- **Verify a claim per site before sweeping by count.**
+
+**Mutation discipline.** Apply, test, restore, sha256-verified at each step;
+debug builds; roughly one mutant per layer. The entries above -- exit-code
+scoring, the landed proof, the negative control -- are half of it. The rest:
+
+- **Run the unmutated arm first,** so the pass/fail pair is meaningful in
+  both directions.
+- **A sha-verified source restore is not a verified build.** `cp -p` and
+  `shutil.copy2` preserve mtime, so cargo reuses a STALE binary and the next
+  run reports the old source's result against the new file; the sha passes
+  because the file is byte-correct and only the artifact is old. Restore by
+  writing content, or `touch`, or clean. This cost a wrong bead and a phantom
+  feature-unification hunt.
+- **Each mutant must fail a named test for the intended reason.** If not, the
+  assert is inert -- say so. A mutant dying on leftover cluster state or
+  failing to compile proves nothing; discard and re-derive. An EQUIVALENT
+  mutant surviving is not a hole -- report it as equivalent.
+- **Prefer an additive mutant when a removal would break the build;** when
+  removing from a fixed-size array, adjust the size or the mutant is a
+  compile error, not a mutant.
+- **One fresh cluster per mutant when the subject is roles or grants** --
+  roles are cluster-wide.
+- **Re-derive each mutant yourself,** at the call site, against the current
+  tree; mutate only the production occurrence, never the test's
+  expectation, and `sha256sum` before and after.
+- **When a mutant's point is that an existing gate misses it, run the
+  existing gate against it:** a surviving old gate beside a dying new one is
+  the evidence; the claim alone is not.
+
+**PostgreSQL traps.** Each was measured on a disposable server, and each read
+as something else first.
+
+- **Probe readiness the way the suite will connect** -- the same host,
+  address and port -- never from inside the container: on the WMS mint
+  (`wamn-362o.38`) `docker exec ... psql` answered about 45 s before the
+  suite's own connection did. `pg_isready` and a bare TCP connect lie in the
+  other direction (the throwaway Postgres, above).
+- **Roles are cluster-wide: one fresh cluster per role or grant mutant,** and
+  one fresh container per suite.
+- **A leftover healthy object satisfies `IF NOT EXISTS` and masks a mutated
+  builder.** `DROP OWNED BY` before `DROP ROLE`, inside an existence check; a
+  gate applying a bare `CREATE DATABASE` or `CREATE ROLE` must drop first and
+  PASS TWICE IN A ROW. `IF NOT EXISTS` is not idempotent under concurrency;
+  only an `EXCEPTION` guard is race-tolerant.
+- **`DROP OWNED BY` reaches only the current database.** A role owning
+  objects elsewhere refuses to drop, with a `DETAIL` naming that database.
+- **`CREATE DATABASE` and `DROP DATABASE` are their own autocommit
+  statements.** `psql -c` wraps a multi-statement string in ONE transaction;
+  `psql -1` fights a file that owns its own `BEGIN` and swallows the real
+  error.
+- **A stock container leaves `PUBLIC` connectable:** `REVOKE CONNECT ON
+  DATABASE postgres FROM PUBLIC` in the preamble, or an isolation assertion
+  proves nothing.
+- **plpgsql `EXECUTE` accepts a multi-statement string; `PREPARE` refuses
+  `UPDATE ... RETURNING`** ("prepared statement is not a SELECT") -- use
+  `EXECUTE ... USING` there.
+- **Any row-locking clause requires `UPDATE` on at least one column,** so a
+  bare `REVOKE UPDATE` on a row-locked relation is a production outage, not a
+  hardening.
+- **`UPDATE ... WHERE pk IN (SELECT ... FOR UPDATE SKIP LOCKED)`
+  over-claims** through planner re-scan; fence the claim with `WITH ... AS
+  MATERIALIZED`.
+- **An expression index matches only the bare indexed expression:** the bare
+  call on the left, a scalar on the right. A function that calls
+  `current_database()` is `STABLE`, not `IMMUTABLE`, so the database must be
+  a literal in the body for the index to exist at all.
+- **RLS default-denies when no policy matches the current role.** Narrowing a
+  policy with `TO` locks out every other role rather than exempting it, and a
+  role that previously hit permission-denied on a function inside the
+  predicate now reads a SILENT EMPTY RESULT. Exempting needs `BYPASSRLS` or
+  its own permissive arm.
 
 ## Adding a span to the request path
 
