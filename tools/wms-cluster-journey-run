@@ -12,25 +12,24 @@ Without --apply, print the immutable plan and exit.
   --apply              Build and run the journey, then tear down owned resources
   --measure-startup    Cold, restart-first and steady pallet.get requests with trace breakdowns
   --demo               Hold the environment afterwards and serve the route at
-                       http://wms.localhost/ -- see THE DEMO below
+                       http://localhost:8080/ -- see THE DEMO below
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-wms-journey. Every Kubernetes and Helm
 command carries its private kubeconfig and context. The frozen kind-wamn cluster
 is never a target.
 
-THE DEMO. --demo changes three things and nothing else. The cluster keeps ONE
-host port mapping, hostPort 80 on listenAddress ::1 to nodePort 30950; the
-route's NodePort Service is pinned to 30950 instead of taking whatever
-Kubernetes allocates; and that Service outlives the run instead of being
-deleted, so the route still answers while the environment is held. The address
-is the IPv6 loopback because the FROZEN kind-wamn cluster publishes 0.0.0.0:80,
-which is IPv4, and wms.localhost already resolves to ::1, so the two do not
-collide and no hosts file is edited. The browser then sends exactly
-`Host: wms.localhost`, which is what the released route matches; a port in the
-authority would not match, because normalize_authority lowercases and nothing
-else. Set WAMN_JOURNEY_HOLD_SECONDS to choose how long it is held; --demo
-defaults it to 3600.
+THE DEMO. --demo changes four things and nothing else. The cluster keeps ONE
+host port mapping, hostPort 8080 to nodePort 30950; the route's NodePort Service
+is pinned to 30950 instead of taking whatever Kubernetes allocates; that Service
+outlives the run instead of being deleted; and the release's route host is
+localhost:8080 rather than wms.localhost. The route matches the authority
+VERBATIM, and a browser sends the port in Host, so the port has to be part of
+the route host or nothing a browser sends will match. The port is 8080 over
+IPv4 because the FROZEN kind-wamn cluster holds 0.0.0.0:80, and it is localhost
+rather than a .localhost name because those resolve to ::1 here and docker does
+not forward an IPv6 publish on the kind network. Set WAMN_JOURNEY_HOLD_SECONDS
+to choose how long it is held; --demo defaults it to 3600.
 EOF
 }
 
@@ -39,7 +38,15 @@ measure_startup=false
 demo=false
 evidence_dir=
 demo_node_port=30950
-demo_route_url=http://wms.localhost/
+demo_host_port=8080
+# The DEMO route host carries its port, because the released route matches the
+# authority verbatim and a browser sends the port in Host. It is `localhost` and
+# not `wms.localhost` because *.localhost resolves to ::1 on this machine and
+# docker does not forward an IPv6 publish on the `kind` network -- measured, the
+# same publish answers on the default bridge. `localhost` resolves to 127.0.0.1
+# as well, and IPv4 port 8080 is free while the frozen cluster holds 80.
+demo_route_host=localhost:$demo_host_port
+demo_route_url=http://$demo_route_host/
 while (($#)); do
   case "$1" in
     --apply) apply=true; shift ;;
@@ -167,6 +174,9 @@ app_package_dir=$repo_root/packages/$app_project
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 chart_version=2.8.0
 route_host=wms.localhost
+if [[ "$demo" == true ]]; then
+  route_host=$demo_route_host
+fi
 run_id=$$
 host_tag=wms-${short_head}-${run_id}-debug
 host_image=wamn-host:${host_tag}
@@ -563,16 +573,14 @@ fi
 
 # The shared config maps hostPort 80 for the FROZEN cluster, which still holds
 # it. A second cluster claiming the same address would refuse to start, so the
-# mapping is stripped -- except under --demo, which rewrites it to the IPv6
-# loopback the frozen cluster does not hold.
-awk -v demo="$demo" -v node_port="$demo_node_port" '
+# mapping is stripped -- except under --demo, which rewrites it to a free port.
+awk -v demo="$demo" -v node_port="$demo_node_port" -v host_port="$demo_host_port" '
   /^    extraPortMappings:/ {
     skipping = 1
     if (demo == "true") {
       print "    extraPortMappings:"
       print "      - containerPort: " node_port
-      print "        hostPort: 80"
-      print "        listenAddress: \"::1\""
+      print "        hostPort: " host_port
       print "        protocol: TCP"
     }
     next
@@ -586,9 +594,9 @@ if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]]; then
 fi
 if [[ "$demo" == true ]]; then
   if [[ $(grep -c 'hostPort:' "$kind_config") -ne 1 ]] ||
-     ! grep -q 'listenAddress: "::1"' "$kind_config" ||
+     ! grep -q "hostPort: $demo_host_port" "$kind_config" ||
      ! grep -q "containerPort: $demo_node_port" "$kind_config"; then
-    echo "demo kind config did not retain exactly one ::1 host port to $demo_node_port" >&2
+    echo "demo kind config did not retain exactly one host port $demo_host_port to $demo_node_port" >&2
     exit 2
   fi
 elif grep -q 'extraPortMappings\|hostPort:' "$kind_config"; then
