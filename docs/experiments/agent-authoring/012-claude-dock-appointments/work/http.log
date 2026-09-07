@@ -1,0 +1,120 @@
+### create-carrier (DOCK-0)
+POST /carrier/create
+request:  [{"request_id":"r-create-carrier","name":"Northbound Freight"}]
+status:   200
+response: [{"request_id":"r-create-carrier","value":{"carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","name":"Northbound Freight"}}]
+
+### create-dock (DOCK-0)
+POST /dock/create
+request:  [{"request_id":"r-create-dock","name":"Door 7"}]
+status:   200
+response: [{"request_id":"r-create-dock","value":{"dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","name":"Door 7"}}]
+
+### book-first (DOCK-2)
+POST /appointment/book
+request:  [{"request_id":"r-book-1","idempotency_key":"report-book-1","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T09:00:00Z","slot_end":"2026-10-01T10:00:00Z"}]
+status:   200
+response: [{"request_id":"r-book-1","value":{"appointment_id":"d6ab78ab-904a-496c-85a2-07a71dab9aa7","arrived_at":null,"carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"1","slot_end":"2026-10-01T10:00:00Z","slot_start":"2026-10-01T09:00:00Z","status":"scheduled"}}]
+
+### book-replay (DOCK-2)
+POST /appointment/book
+request:  [{"request_id":"r-book-replay","idempotency_key":"report-book-1","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T09:00:00Z","slot_end":"2026-10-01T10:00:00Z"}]
+status:   200
+response: [{"request_id":"r-book-replay","value":{"appointment_id":"d6ab78ab-904a-496c-85a2-07a71dab9aa7","arrived_at":null,"carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"1","slot_end":"2026-10-01T10:00:00Z","slot_start":"2026-10-01T09:00:00Z","status":"scheduled"}}]
+
+### book-changed-body (DOCK-3)
+POST /appointment/book
+request:  [{"request_id":"r-book-changed","idempotency_key":"report-book-1","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T14:00:00Z","slot_end":"2026-10-01T15:00:00Z"}]
+status:   200
+response: [{"error":{"code":"idempotency_conflict","detail":{"field":"idempotency_key"}},"request_id":"r-book-changed"}]
+
+### overlap-a (DOCK-1)
+POST /appointment/book
+request:  [{"request_id":"r-overlap-a","idempotency_key":"report-overlap-a","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T11:00:00Z","slot_end":"2026-10-01T12:00:00Z"}]
+status:   200
+response: [{"request_id":"r-overlap-a","value":{"appointment_id":"a6f7e9aa-b6b2-4915-b469-83ad54ddfdc3","arrived_at":null,"carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"1","slot_end":"2026-10-01T12:00:00Z","slot_start":"2026-10-01T11:00:00Z","status":"scheduled"}}]
+
+### overlap-b (DOCK-1)
+POST /appointment/book
+request:  [{"request_id":"r-overlap-b","idempotency_key":"report-overlap-b","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T11:30:00Z","slot_end":"2026-10-01T12:30:00Z"}]
+status:   200
+response: [{"error":{"code":"slot_unavailable","detail":{"field":"slot_start"}},"request_id":"r-overlap-b"}]
+
+### overlap-refuses-exactly-one/a (DOCK-1)
+POST /appointment/book
+### overlap-refuses-exactly-one/b (DOCK-1)
+request:  [{"request_id":"r-overlap-a","idempotency_key":"report-overlap-a","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T11:00:00Z","slot_end":"2026-10-01T12:00:00Z"}]
+POST /appointment/book
+status:   200
+request:  [{"request_id":"r-overlap-b","idempotency_key":"report-overlap-b","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T11:30:00Z","slot_end":"2026-10-01T12:30:00Z"}]
+status:   200
+response: [{"request_id":"r-overlap-a","value":{"appointment_id":"a6f7e9aa-b6b2-4915-b469-83ad54ddfdc3","arrived_at":null,"carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"1","slot_end":"2026-10-01T12:00:00Z","slot_start":"2026-10-01T11:00:00Z","status":"scheduled"}}]
+response: [{"error":{"code":"slot_unavailable","detail":{"field":"slot_start"}},"request_id":"r-overlap-b"}]
+
+
+### race/a (DOCK-1)
+POST /appointment/book
+### race/b (DOCK-1)
+POST /appointment/book
+request:  [{"request_id":"r-race-a","idempotency_key":"report-race-a","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T20:00:00Z","slot_end":"2026-10-01T21:00:00Z"}]
+status:   200
+request:  [{"request_id":"r-race-b","idempotency_key":"report-race-b","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-01T20:30:00Z","slot_end":"2026-10-01T21:30:00Z"}]
+status:   200
+response: [{"error":{"code":"slot_unavailable","detail":{"field":"slot_start"}},"request_id":"r-race-a"}]
+
+response: [{"request_id":"r-race-b","value":{"appointment_id":"cf279581-7539-4d26-aad7-c172a9391c13","arrived_at":null,"carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"1","slot_end":"2026-10-01T21:30:00Z","slot_start":"2026-10-01T20:30:00Z","status":"scheduled"}}]
+
+### check-in (DOCK-4)
+POST /appointment/check_in
+request:  [{"request_id":"r-check-in","appointment_id":"d6ab78ab-904a-496c-85a2-07a71dab9aa7","arrived_at":"2026-10-01T09:07:00Z"}]
+status:   200
+response: [{"request_id":"r-check-in","value":{"appointment_id":"d6ab78ab-904a-496c-85a2-07a71dab9aa7","arrived_at":"2026-10-01T09:07:00Z","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"2","slot_end":"2026-10-01T10:00:00Z","slot_start":"2026-10-01T09:00:00Z","status":"arrived"}}]
+
+### check-in-unknown (DOCK-5)
+POST /appointment/check_in
+request:  [{"request_id":"r-check-in-unknown","appointment_id":"00000000-0000-0000-0000-000000000000","arrived_at":"2026-10-01T09:07:00Z"}]
+status:   200
+response: [{"error":{"code":"not_found","detail":{"field":"appointment_id","id":"00000000-0000-0000-0000-000000000000"}},"request_id":"r-check-in-unknown"}]
+
+### check-in-twice (status moves forward only)
+POST /appointment/check_in
+request:  [{"request_id":"r-check-in-twice","appointment_id":"d6ab78ab-904a-496c-85a2-07a71dab9aa7","arrived_at":"2026-10-01T09:09:00Z"}]
+status:   200
+response: [{"error":{"code":"appointment_not_scheduled","detail":{"field":"appointment_id","id":"d6ab78ab-904a-496c-85a2-07a71dab9aa7"}},"request_id":"r-check-in-twice"}]
+
+### list-one-dock-one-day (DOCK-6)
+POST /appointment/query
+request:  [{"request_id":"r-query","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","day":"2026-10-01","status":"scheduled"}]
+status:   200
+response: [{"request_id":"r-query","value":{"appointments":[{"appointment_id":"a6f7e9aa-b6b2-4915-b469-83ad54ddfdc3","arrived_at":null,"carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"1","slot_end":"2026-10-01T12:00:00Z","slot_start":"2026-10-01T11:00:00Z","status":"scheduled"},{"appointment_id":"cf279581-7539-4d26-aad7-c172a9391c13","arrived_at":null,"carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"1","slot_end":"2026-10-01T21:30:00Z","slot_start":"2026-10-01T20:30:00Z","status":"scheduled"}]}}]
+
+### list-arrived (DOCK-6 status filter)
+POST /appointment/query
+request:  [{"request_id":"r-query-arrived","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","day":"2026-10-01","status":"arrived"}]
+status:   200
+response: [{"request_id":"r-query-arrived","value":{"appointments":[{"appointment_id":"d6ab78ab-904a-496c-85a2-07a71dab9aa7","arrived_at":"2026-10-01T09:07:00Z","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","row_version":"2","slot_end":"2026-10-01T10:00:00Z","slot_start":"2026-10-01T09:00:00Z","status":"arrived"}]}}]
+
+### list-other-day (DOCK-6 day filter)
+POST /appointment/query
+request:  [{"request_id":"r-query-other-day","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","day":"2026-10-02","status":"scheduled"}]
+status:   200
+response: [{"request_id":"r-query-other-day","value":{"appointments":[]}}]
+
+### book-unknown-carrier
+POST /appointment/book
+request:  [{"request_id":"r-unknown-carrier","idempotency_key":"report-unknown-carrier","carrier_id":"00000000-0000-0000-0000-000000000000","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-03T09:00:00Z","slot_end":"2026-10-03T10:00:00Z"}]
+status:   200
+response: [{"error":{"code":"carrier_not_found","detail":{"field":"carrier_id","id":"00000000-0000-0000-0000-000000000000"}},"request_id":"r-unknown-carrier"}]
+
+### book-unknown-dock
+POST /appointment/book
+request:  [{"request_id":"r-unknown-dock","idempotency_key":"report-unknown-dock","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"00000000-0000-0000-0000-000000000000","slot_start":"2026-10-03T09:00:00Z","slot_end":"2026-10-03T10:00:00Z"}]
+status:   200
+response: [{"error":{"code":"dock_not_found","detail":{"field":"dock_id","id":"00000000-0000-0000-0000-000000000000"}},"request_id":"r-unknown-dock"}]
+
+### book-backwards-slot
+POST /appointment/book
+request:  [{"request_id":"r-backwards","idempotency_key":"report-backwards","carrier_id":"59cc8f60-e91c-4b61-b928-ea9d9fd7ba0d","dock_id":"734b250c-e3bf-4c00-ab97-282940384a95","slot_start":"2026-10-03T10:00:00Z","slot_end":"2026-10-03T09:00:00Z"}]
+status:   200
+response: [{"error":{"code":"invalid_input","detail":{"field":"slot_end"}},"request_id":"r-backwards"}]
+

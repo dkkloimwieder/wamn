@@ -1,0 +1,6 @@
+Error: dev-stage-failed at introspect: dev-stage-owner-failed while introspect package: introspect package schemas
+
+Caused by:
+    0: dev-stage-owner-failed while introspect package: introspect package schemas
+    1: introspect package schemas
+    2: PostgreSQL introspection refused (unsupported-column-default) in schema `receiving` for `appointment.status`: unsupported PostgreSQL default `'scheduled'::text` for wamn:postgres type `text`

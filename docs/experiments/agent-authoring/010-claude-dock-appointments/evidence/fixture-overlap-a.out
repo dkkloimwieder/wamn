@@ -1,0 +1,2 @@
+[{"error":{"code":"slot_unavailable","detail":{"field":"slot_start","id":"bda93d13-1b12-43fd-8d9f-125b6ea03841"}},"request_id":"overlap-a"}]
+HTTP 200

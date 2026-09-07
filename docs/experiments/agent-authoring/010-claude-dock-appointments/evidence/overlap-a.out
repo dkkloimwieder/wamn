@@ -1,0 +1,2 @@
+[{"request_id":"r-overlap-a","value":{"appointment_id":"db0d51d7-e80c-454b-bf6e-29b555d0d15f","carrier_id":"4b7a4c0e-7237-476d-9a92-e8c59b2486a1","dock_id":"252cd390-cd27-4e38-b753-265c8afb623e","row_version":1,"slot_end":"2026-10-01T12:00:00Z","slot_start":"2026-10-01T11:00:00Z","status":"scheduled"}}]
+HTTP 200

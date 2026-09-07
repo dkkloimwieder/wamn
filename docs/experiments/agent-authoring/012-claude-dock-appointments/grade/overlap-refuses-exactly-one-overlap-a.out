@@ -1,0 +1,2 @@
+[{"request_id":"overlap-refuses-exactly-one-overlap-a","value":{"appointment_id":"c02b4caf-5013-437b-ae62-48e07d821fff","arrived_at":null,"carrier_id":"15bed841-9e0e-43ba-ace5-ce439d554c22","dock_id":"6f5531ed-857d-4fba-a827-7907362c96c8","row_version":"1","slot_end":"2026-10-01T12:00:00Z","slot_start":"2026-10-01T11:00:00Z","status":"scheduled"}}]
+200

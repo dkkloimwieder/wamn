@@ -1,0 +1,24 @@
+2026-09-07T04:20:13.396597Z  INFO connected to NATS
+2026-09-07T04:20:13.499857Z  INFO wiring activation doorbell listening; dropped every cached pointer channel="wamn_wiring_activation" dropped=0
+2026-09-07T04:20:13.600067Z  INFO release component pull completed component_digest=sha256:fe6ad0ed71f58200b7d916c5bcf4a0f174d6339e33e894e8242c031ed3701142 component_bytes=511569 elapsed_ms=32
+2026-09-07T04:20:13.618190Z  INFO release component compilation completed component_digest=sha256:fe6ad0ed71f58200b7d916c5bcf4a0f174d6339e33e894e8242c031ed3701142 compile_ms=17 compile_wall_ms=18
+2026-09-07T04:20:13.619962Z  WARN wamn.component.linker_setup:wamn.linker.register: component imports wamn:postgres but sets no wamn.tenant; calls will be refused component="dock#0"
+2026-09-07T04:20:13.621668Z  INFO release component instantiation completed component_digest=sha256:fe6ad0ed71f58200b7d916c5bcf4a0f174d6339e33e894e8242c031ed3701142 elapsed_ms=3 total_elapsed_ms=54
+2026-09-07T04:20:13.621773Z  INFO synchronous release preload completed synchronous_wirings=5 component_digests=1 elapsed_ms=170
+2026-09-07T04:20:13.621850Z  INFO release preload completed; component cache warm
+2026-09-07T04:20:13.642195Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=true
+2026-09-07T04:20:13.642241Z  INFO wamn-host welded to its release effective_release_id=1 manifest_digest=sha256:d58cd53c605f01b86d718f0d04be7f4a61e99eae564fded3ace074354af7aa82
+2026-09-07T04:20:13.642277Z  INFO HTTP server listening addr=127.0.0.1:46753 protocol="HTTP"
+2026-09-07T04:20:13.642322Z  INFO Starting WASI OTel plugin endpoint=http://127.0.0.1:4319 protocol="grpc"
+2026-09-07T04:20:13.642929Z  INFO WASI OTel plugin started
+2026-09-07T04:20:13.642988Z  INFO Host started host_id="2e1857bc-552a-4cbb-a3e6-4956b1b22f52" friendly_name="unknown-manager-8091" host_name="wamn-dev-receiving-2220241" labels={"hostgroup": "wamn-dev-receiving"} version="2.8.0"
+2026-09-07T04:20:13.643273Z  INFO Host provides interfaces count=10 interfaces=["wasi:cli/terminal-input,terminal-stdin,terminal-output,terminal-stdout,environment,exit,stdin,stderr,terminal-stderr,stdout@0.2.0", "wasi:clocks/monotonic-clock,wall-time@0.2.0", "wasi:clocks/wall-clock,monotonic-clock@0.2.0", "wasi:filesystem/preopens,types@0.2.0", "wasi:http/types,incoming-handler,outgoing-handler@0.2.0", "wasi:http/types,handler@0.3.0", "wasi:io/streams,error,poll@0.2.0", "wasi:random/random@0.2.0", "wasi:random/random,insecure,insecure-seed@0.2.0", "wasi:sockets/network,tcp-create-socket,udp-create-socket,instance-network,udp,ip-name-lookup,tcp@0.2.0"]
+2026-09-07T04:20:13.643323Z  INFO wamn-host runtime startup completed elapsed_ms=336
+2026-09-07T04:20:14.139414Z  INFO workload_start{workload_id=wamn-dev-flow-http workload.name="flow-http" workload.namespace="dev"}: Starting workload workload_id="wamn-dev-flow-http" namespace="dev" name="flow-http"
+2026-09-07T04:20:14.323283Z  INFO workload_stop{workload_id=wamn-dev-flow-http}: Stopping workload workload_id="wamn-dev-flow-http"
+2026-09-07T04:20:14.324996Z  INFO shutting down wamn-host
+2026-09-07T04:20:14.325131Z  INFO HTTP server stopping addr=127.0.0.1:46753
+2026-09-07T04:20:14.325225Z  INFO Stopping WASI OTel plugin
+2026-09-07T04:20:14.325721Z  INFO WASI OTel plugin stopped
+2026-09-07T04:20:14.325938Z  INFO HTTP server received shutdown signal
+failed to shutdown meter provider: Operation failed: [InternalFailure("Failed to shutdown")]

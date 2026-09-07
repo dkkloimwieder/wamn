@@ -1,0 +1,25 @@
+warning: `dock` (lib test) generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running unittests src/lib.rs (components/target/debug/deps/dock-6abc68eb9313df7d)
+
+running 17 tests
+test check_in::tests::an_unspellable_scalar_is_refused_before_any_statement ... ok
+test book::tests::an_unspellable_or_inverted_slot_is_refused_before_any_statement ... ok
+test book::tests::a_different_slot_is_a_different_command ... ok
+test error::tests::a_transition_refusal_carries_the_status_the_row_actually_holds ... ok
+test check_in::tests::the_arrival_is_stored_canonically_and_answered_on_the_wire ... ok
+test operation::tests::a_refusal_serializes_as_code_and_detail_beside_its_request_id ... ok
+test query::tests::an_empty_day_answers_with_an_empty_list ... ok
+test operation::tests::the_correlation_id_is_the_envelopes_and_the_body_is_the_items ... ok
+test book::tests::the_canonical_command_is_spelling_independent_and_excludes_the_key ... ok
+test scalar::tests::a_name_carries_no_surrounding_space_and_a_status_is_declared ... ok
+test scalar::tests::a_day_is_the_half_open_utc_calendar_day ... ok
+test query::tests::the_page_answers_under_appointments_in_the_order_the_statement_returned ... ok
+test scalar::tests::uuids_and_instants_are_respelled_canonically ... ok
+test scalar::tests::the_wire_spelling_drops_a_zero_fraction_and_keeps_a_real_one ... ok
+test error::tests::every_operation_refuses_only_what_its_contract_declares ... ok
+test operation::tests::a_non_array_envelope_refuses_the_invocation ... ok
+test operation::tests::an_oversized_envelope_refuses_before_any_item_runs ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

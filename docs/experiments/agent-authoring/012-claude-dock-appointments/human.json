@@ -1,0 +1,32 @@
+{
+  "E1": "4 - rows and operations only, twelve stages through Activate, no state outside the database",
+  "E2": "4 - a command table per create, identities minted on the claim row, no time or random source",
+  "E3": "4 - zero paths outside the allow-list; the column-default wall was worked AROUND, not cleared by editing the platform",
+  "E4": "4 - every must step reproduces, and the platform limits it could not clear are named in its own report",
+  "E5": "4 - each refusal cleared in one or two attempts, no action repeated three times",
+  "E6": "4 - naming and row_version checks pass, the migration is additive, and the concurrency rung it chose is the one the platform actually offers",
+  "E7": "4 - REPORT.md carries verbatim requests and responses and names each platform refusal, so the beads above were opened from it without the transcript",
+  "Q10.activated": [],
+  "Q10.present": "15 skills, frozen against run 001 (skills.json); none is a wamn authoring skill",
+  "Q11": "operations driven 5/5; all four S9 cases appear, but NONE unprompted: steps.json sits in the agent's own task directory and every run read it (wamn-nvbd.9)",
+  "Q3": "design-doc 8, code 169, generated 5, skill 0 (approximate: the driver used only Bash, so the classes count the paths cited in the 125 commands before the first file it created, of 192 commands in the run)",
+  "Q4": "curl: every operation the scenario names was driven against the held release over HTTP",
+  "Q6": "output tokens 142627, cost USD 28.95, model claude-opus-5[1m], 193 turns, 32 min",
+  "Q7": [
+    {
+      "category": "generator",
+      "minutes": 0.7,
+      "note": "Introspect refused DEFAULT 'scheduled'::text on the appointment status column; the whole text default vocabulary is three words",
+      "pointer": "wamn-frru"
+    },
+    {
+      "category": "env",
+      "minutes": 0.9,
+      "note": "Build refused: the target directory is set to an empty string in CARGO_TARGET_DIR, which the runner exports empty instead of unsetting",
+      "pointer": "wamn-nvbd.8"
+    }
+  ],
+  "Q8": [],
+  "Q9": [],
+  "conduct": "Two stalls rather than three, and it never hit the dirty-worktree refusal. It flagged the EXCLUDE trade under Decisions in its own report without being asked, and drove five concurrent overlapping pairs rather than the one the fixture names."
+}

@@ -1,0 +1,40 @@
+{
+  "E1": "4 - rows and operations only, twelve stages through Activate, no state outside the database",
+  "E2": "4 - a command table per create, identities minted on the claim row, no time or random source",
+  "E3": "4 - zero paths outside the allow-list; the column-default wall was worked AROUND, not cleared by editing the platform",
+  "E4": "4 - every must step reproduces, and the platform limits it could not clear are named in its own report",
+  "E5": "4 - each refusal cleared in one or two attempts, no action repeated three times",
+  "E6": "4 - naming and row_version checks pass, the migration is additive, and the concurrency rung it chose is the one the platform actually offers",
+  "E7": "4 - REPORT.md carries verbatim requests and responses and names each platform refusal, so the beads above were opened from it without the transcript",
+  "Q10.activated": [],
+  "Q10.present": "15 skills, frozen against run 001 (skills.json); none is a wamn authoring skill",
+  "Q11": "operations driven 5/5; all four S9 cases appear, but NONE unprompted: steps.json sits in the agent's own task directory and every run read it (wamn-nvbd.9)",
+  "Q3": "design-doc 14, code 165, generated 4, skill 0 (approximate: the driver used only Bash, so the classes count the paths cited in the 126 commands before the first file it created, of 191 commands in the run)",
+  "Q4": "curl: every operation the scenario names was driven against the held release over HTTP",
+  "Q6": "output tokens 150579, cost USD 31.14, model claude-opus-5[1m], 192 turns, 33 min",
+  "Q7": [
+    {
+      "category": "generator",
+      "minutes": 0.4,
+      "note": "Introspect refused DEFAULT 'scheduled'::text on the appointment status column; the whole text default vocabulary is three words",
+      "pointer": "wamn-frru"
+    },
+    {
+      "category": "env",
+      "minutes": 6.1,
+      "note": "Build refused: the target directory is set to an empty string in CARGO_TARGET_DIR, which the runner exports empty instead of unsetting",
+      "pointer": "wamn-nvbd.8"
+    },
+    {
+      "category": "rule-unknown",
+      "minutes": 1.3,
+      "note": "Apply refused with dev-worktree-dirty; the loop requires a committed worktree and nothing the agent read said so",
+      "pointer": "runs/010-claude-dock-appointments/dev-logs/005"
+    }
+  ],
+  "Q8": [
+    "Declared by the agent itself: it issued DELETE FROM against its own four tables through psql to reset state before the graded run. It is the one place it wrote to PostgreSQL outside its own operations, and it named it in its result rather than leaving it to be found."
+  ],
+  "Q9": [],
+  "conduct": "Read for 126 of its 191 commands before creating a single file, then authored the whole package in the remaining 65. Stayed inside the allow-list, declared its one direct database write, and reported the empty CARGO_TARGET_DIR rather than quietly working around it."
+}

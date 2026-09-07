@@ -1,0 +1,20 @@
+ --> /home/kaalin/.cache/wamn-pilot/runs/012-claude-dock-appointments/worktree/components/application/dock/../../../packages/dock/generated/wamn/appointment_check_in.rs:7:9
+running 17 tests
+test error::tests::an_internal_refusal_carries_an_empty_detail_object ... ok
+test error::tests::a_refusal_carries_the_detail_its_contract_declares ... ok
+test operation::tests::a_refused_item_carries_its_request_id_and_typed_code ... ok
+test operation::tests::a_listed_day_is_one_array_under_one_name ... ok
+test operation::tests::an_arrival_reports_the_instant_the_caller_supplied ... ok
+test operation::tests::a_different_slot_under_one_key_is_a_different_identity ... ok
+test operation::tests::an_unknown_member_refuses_rather_than_being_ignored ... ok
+test operation::tests::an_empty_or_backwards_slot_refuses_before_any_statement_runs ... ok
+test operation::tests::every_refusal_shape_the_manifest_declares_serializes_as_declared ... ok
+test wire::tests::a_caller_reads_back_the_second_precision_spelling_it_sent ... ok
+test wire::tests::a_nonzero_fraction_survives_the_wire_spelling ... ok
+test operation::tests::an_envelope_is_one_to_one_hundred_identified_items ... ok
+test wire::tests::a_day_is_a_half_open_utc_interval ... ok
+test wire::tests::an_offset_timestamp_binds_as_the_instant_it_names ... ok
+test operation::tests::the_command_identity_is_sorted_compact_canonical_json ... ok
+test operation::tests::one_booking_has_one_identity_however_its_caller_spells_it ... ok
+test wire::tests::only_a_canonical_uuid_is_admitted ... ok
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

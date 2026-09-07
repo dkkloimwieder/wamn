@@ -1,0 +1,30 @@
+### create-carrier
+[{"request_id":"create-carrier","value":{"carrier_id":"bf4594f0-fb6f-40f7-935a-7ee84bd8594e","name":"Northbound Freight"}}]
+HTTP 200
+### create-dock
+[{"request_id":"create-dock","value":{"dock_id":"59d7b753-1dae-4f42-aa4a-b50bd082f19c","name":"Door 7"}}]
+HTTP 200
+### book-first
+[{"request_id":"book-first","value":{"appointment_id":"097db697-47a6-4d4c-bd7e-9787fb5d72ef","carrier_id":"bf4594f0-fb6f-40f7-935a-7ee84bd8594e","dock_id":"59d7b753-1dae-4f42-aa4a-b50bd082f19c","row_version":1,"slot_end":"2026-10-01T10:00:00Z","slot_start":"2026-10-01T09:00:00Z","status":"scheduled"}}]
+HTTP 200
+### book-replay
+[{"request_id":"book-replay","value":{"appointment_id":"097db697-47a6-4d4c-bd7e-9787fb5d72ef","carrier_id":"bf4594f0-fb6f-40f7-935a-7ee84bd8594e","dock_id":"59d7b753-1dae-4f42-aa4a-b50bd082f19c","row_version":1,"slot_end":"2026-10-01T10:00:00Z","slot_start":"2026-10-01T09:00:00Z","status":"scheduled"}}]
+HTTP 200
+### book-changed-body
+[{"error":{"code":"idempotency_conflict","detail":{"field":"idempotency_key"}},"request_id":"book-changed-body"}]
+HTTP 200
+### overlap-refuses-exactly-one (overlap-a and overlap-b fired together)
+[{"error":{"code":"slot_unavailable","detail":{"field":"slot_start","id":"bda93d13-1b12-43fd-8d9f-125b6ea03841"}},"request_id":"overlap-a"}]
+HTTP 200
+[{"request_id":"overlap-b","value":{"appointment_id":"bda93d13-1b12-43fd-8d9f-125b6ea03841","carrier_id":"bf4594f0-fb6f-40f7-935a-7ee84bd8594e","dock_id":"59d7b753-1dae-4f42-aa4a-b50bd082f19c","row_version":1,"slot_end":"2026-10-01T12:30:00Z","slot_start":"2026-10-01T11:30:00Z","status":"scheduled"}}]
+HTTP 200
+slot_unavailable refusals: 1 (expected 1)
+### check-in
+[{"request_id":"check-in","value":{"appointment_id":"097db697-47a6-4d4c-bd7e-9787fb5d72ef","arrived_at":"2026-10-01T09:07:00Z","row_version":2,"status":"arrived"}}]
+HTTP 200
+### check-in-unknown
+[{"error":{"code":"not_found","detail":{"field":"appointment_id","id":"00000000-0000-0000-0000-000000000000"}},"request_id":"check-in-unknown"}]
+HTTP 200
+### list-one-dock-one-day
+[{"request_id":"list-one-dock-one-day","value":{"appointments":[{"appointment_id":"bda93d13-1b12-43fd-8d9f-125b6ea03841","arrived_at":null,"carrier_id":"bf4594f0-fb6f-40f7-935a-7ee84bd8594e","dock_id":"59d7b753-1dae-4f42-aa4a-b50bd082f19c","row_version":1,"slot_end":"2026-10-01T12:30:00Z","slot_start":"2026-10-01T11:30:00Z","status":"scheduled"}]}}]
+HTTP 200

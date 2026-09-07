@@ -1,0 +1,7 @@
+{"ts":"2026-09-07T02:41:59.981Z","n":"001","argv":["--help"],"exit":0,"ms":11}
+{"ts":"2026-09-07T02:42:00.007Z","n":"002","argv":["dev","--help"],"exit":0,"ms":12}
+{"ts":"2026-09-07T02:58:55.874Z","n":"003","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/010-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":789}
+{"ts":"2026-09-07T02:59:18.170Z","n":"004","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/010-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":897}
+{"ts":"2026-09-07T03:05:25.536Z","n":"005","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/010-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":58623}
+{"ts":"2026-09-07T03:06:44.082Z","n":"006","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/010-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":0,"ms":14559}
+{"ts":"2026-09-07T03:07:06.321Z","n":"007","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/010-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock","--hold"],"exit":0,"ms":203861}

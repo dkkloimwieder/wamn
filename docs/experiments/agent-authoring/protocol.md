@@ -241,8 +241,13 @@ The validator half, settled in
   `validate_add_constraint` requires the token after the constraint name to be
   `check` followed by an open parenthesis, and refuses everything else with
   "ADD CONSTRAINT admits only the demanded named CHECK form".
-- `CREATE EXTENSION btree_gist` passes the statement allowlist, because
-  `extension` is one of the admitted object kinds.
+- `CREATE EXTENSION btree_gist` is **REFUSED**. [corrected 2026-09-07: this
+  line said the opposite. It read the `is_ruled_operation` list as an allowlist
+  when that list is the REFUSED object classes. `extension` is in it, and the
+  caller refuses with "the statement operates on a refused object class". The
+  test `refuses_every_documented_ruled_object_class` pins `CREATE EXTENSION
+  pgcrypto` as refused. Nothing in `deploy/` or any crate installs `btree_gist`
+  for a package either. Found by runs 011 and 012, filed as `wamn-yk9l`.]
 
 The database half, measured on the environment's own target database as the
 role the loop uses: `btree_gist` 1.8 is available and the role creates it. A
@@ -251,14 +256,20 @@ with &&)` accepts the first booking and refuses an overlapping second with
 `conflicting key value violates exclusion constraint`. Both probes ran inside a
 transaction and rolled back, and the environment holds no residue from them.
 
-What this means for a run. An agent that reaches for the strongest rung and
-writes the constraint in the table it is already creating gets it, end to end,
-and H-3 scores it at the top. An agent that creates the table first and adds
-the constraint second is refused by a message that names CHECK and never names
-`EXCLUDE`, which reads as "exclusion constraints are not supported" when the
-truth is "not through this statement". That second path is a pre-priced stall
-in category `generator`, it is the platform's fault, and an agent that hits it
-is not marked down under H-3.
+What this means for a run. [rewritten 2026-09-07 on the corrected premise.]
+The strongest rung is NOT reachable from a package. The constraint form passes
+the name validator inside `CREATE TABLE`, but its equality half needs
+`btree_gist`, the package cannot create the extension, and nothing installs it.
+A ROW LOCK ON THE PARENT ROW, TAKEN BEFORE THE OVERLAP READ, IS THE RUNG THE
+PLATFORM ACTUALLY OFFERS. All three runs of series 010 found it without help
+and all three passed the contention invariant with it.
+
+H-3 therefore scores the row lock at the top, not `EXCLUDE`. An agent that
+reaches for `EXCLUDE` and is refused is not marked down: it read the
+documentation and the documentation was wrong. An agent that creates the table
+first and adds a constraint second meets a message that names CHECK and never
+names `EXCLUDE`, which is a pre-priced stall in category `generator` and is
+still the platform's fault.
 
 ## 5. Grading
 
@@ -408,11 +419,19 @@ the scores; the machine checks own PASS/FAIL.
 | series | platform | runs | why it closed |
 |---|---|---|---|
 | 001–009 | `wamn-10yt.10.39` open: a package that ships a component could not be authored inside its own paths | 001 | the wall was fixed, so no later run is comparable to this one |
-| 010–019 | the component allowlist closes over the packages | opens on the fixed commit | — |
+| 010–019 | the component allowlist closes over the packages, and the claim law is emitted by construction (`522a1941`) | 010, 011, 012 | open. Fixing `wamn-nvbd.9` closes it, because hiding the rubric changes what a run measures |
 
 Run 001 stands as the wall arm. Its finding is what the pilot exists to produce
 and it is unaffected by the two contaminations §11 records, because a blocker
 does not become less real for having been well documented.
+
+Series 010 is three runs, all `PASS`, all on `522a1941`, one at a time on an
+otherwise idle machine. It succeeds under §7.4: three valid runs exist, every
+stall carries a category and a pointer, and `env` never exceeds half the stalls
+in a run. The stall table lives on `wamn-nvbd.6`. Read the three passes with
+`wamn-nvbd.9`: every run could read `steps.json` from its own task directory, so
+the rubric was visible. The stall table is unaffected by that, because every
+stall is the platform refusing something.
 
 ## 10. Run report template
 
@@ -454,6 +473,18 @@ Raw: <nnn>-<agent>-<task>/
   this axis and its H1, H3 and craft scores are read with that in mind; its
   platform finding is unaffected, because a blocker does not become less real
   for having been well documented.
+- **The rubric is in the agent's own task directory.** `WAMN_PILOT_TASK_DIR`
+  holds `BRIEF.md`, `SCENARIO.md`, `task.json` AND `steps.json`. The last is the
+  grader's fixture: the route each step drives, the bodies, the reuse chains and
+  the exact expected `error_code` literals. Every run read it. Run 010 read it as
+  its FOURTH command and cites it 24 times, run 012 twenty times, run 011 seven,
+  run 001 twenty-four. Removing `docs/experiments/` from the worktree, the fix
+  above, does not touch this copy. So the passes in series 010 are passes against
+  a VISIBLE rubric, and no result may be read as authoring from domain language
+  alone. `task.json` leaks on its own too: the brief sends the agent there for
+  `allowed_paths` and the same file carries the check and fence names. Filed as
+  `wamn-nvbd.9`; the stall table is unaffected, because every stall is the
+  platform refusing something.
 - Test-set quality: a trivial set passes trivially; V3 is applied to the task's
   set before run 1, and the kill matrix is re-run when the set changes.
 - Known gaps: the statement verifier (work spec F21) and the missing flow-test
