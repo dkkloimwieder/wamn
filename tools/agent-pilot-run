@@ -79,8 +79,15 @@ resolve_run_directory() {
     local task_name; task_name="$(basename "$(cd "$TASK" && pwd -P)")"
     RUN_ID="$RUN-$AGENT-$task_name"
   else
-    local matches=("$PILOT_HOME"/runs/"$RUN"-*)
-    [[ -d "${matches[0]}" ]] || die "no run directory for --run $RUN; run up first" "$EX_ENV"
+    # Directories only. The frozen skill baseline lives beside the runs and
+    # matched this glob, so a plain wildcard reported two runs where there was
+    # one.
+    local -a matches=()
+    local candidate
+    for candidate in "$PILOT_HOME"/runs/"$RUN"-*; do
+      [[ -d "$candidate" ]] && matches+=("$candidate")
+    done
+    [[ ${#matches[@]} -ge 1 ]] || die "no run directory for --run $RUN; run up first" "$EX_ENV"
     [[ ${#matches[@]} -eq 1 ]] || die "more than one run directory for --run $RUN" "$EX_ENV"
     RUN_ID="$(basename "${matches[0]}")"
   fi
@@ -418,11 +425,11 @@ verb_up() {
     || die "the run worktree is not clean" "$EX_ENV"
 
   record_skills
-  if [[ -s "$PILOT_HOME/runs/001-skills.json" ]]; then
-    diff <(jq -S . "$PILOT_HOME/runs/001-skills.json") <(jq -S . "$DIR/skills.json") >/dev/null \
-      || die "the skill inventory differs from run 001; arms would not compare" "$EX_ENV"
+  if [[ -s "$PILOT_HOME/skills-baseline.json" ]]; then
+    diff <(jq -S . "$PILOT_HOME/skills-baseline.json") <(jq -S . "$DIR/skills.json") >/dev/null \
+      || die "the skill inventory differs from the frozen baseline; arms would not compare" "$EX_ENV"
   else
-    cp "$DIR/skills.json" "$PILOT_HOME/runs/001-skills.json"
+    cp "$DIR/skills.json" "$PILOT_HOME/skills-baseline.json"
   fi
 
   install -m 755 "$TREE/tools/agent-pilot-wamn-shim" "$DIR/bin/wamn"

@@ -34,8 +34,11 @@ if [[ -n "$REPLAY" ]]; then
   DIR="$(cd "$REPLAY" && pwd -P)" || die "--replay $REPLAY is not a directory"
 else
   [[ -n "$RUN" ]] || die "--run or --replay is required"
-  matches=("$PILOT_HOME"/runs/"$RUN"-*)
-  [[ -d "${matches[0]}" ]] || die "no run directory for $RUN" "$EX_ENV"
+  matches=()
+  for candidate in "$PILOT_HOME"/runs/"$RUN"-*; do
+    [[ -d "$candidate" ]] && matches+=("$candidate")
+  done
+  [[ ${#matches[@]} -eq 1 ]] || die "expected exactly one run directory for $RUN" "$EX_ENV"
   DIR="${matches[0]}"
 fi
 
