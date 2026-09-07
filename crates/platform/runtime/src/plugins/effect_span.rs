@@ -42,14 +42,20 @@
 //!   frozen plugin config. The guest supplies none of them and cannot spoof
 //!   them. An empty string means the surface holds no such claim.
 //! - `wamn.package_id` / `wamn.wiring_id` / `wamn.wiring_version` /
-//!   `wamn.node_id` / `wamn.occurrence` / `wamn.component_digest` — the
+//!   `wamn.node_id` / `wamn.occurrence` / `wamn.component_digest` /
+//!   `wamn.component_name` / `wamn.operation` — the
 //!   host-attested invocation the effect was raised under, declared `Empty` and
-//!   filled by [`record_wiring`] on a surface holding one. The four coordinates
+//!   filled by [`record_wiring`] on a surface holding one. The five coordinates
 //!   `wamn.component.invoke` also carries are spelled exactly as that parent
 //!   spells them, never a second vocabulary for the same position.
 //!   `wamn.package_id` and `wamn.occurrence` come from the same bound
 //!   invocation. The parent carries neither, so an effect span is the first
 //!   place a reader finds them (`wamn-b2m6.2`).
+//!   `wamn.component_name` names the executing component the way the catalog
+//!   admitted it. It is NOT `wamn.component`, which every surface fills with the
+//!   per-request pooled scope. That scope is an instance id and it changes on
+//!   every call, so it names no component a reader can look up
+//!   (`wamn-b2m6.7`).
 //! - `wamn.run_id` / `wamn.requirement` — declared `Empty`,
 //!   filled by [`record_run`] on the surfaces whose contract carries run
 //!   coordinates. Nothing constructs an [`EffectRun`] on any surface today; the
@@ -78,9 +84,9 @@
 //! `wamn.component.invoke`, the span
 //! `crates/execution/host/src/router_driver.rs` instruments each `Step::Invoke`
 //! with, which already carries `wamn.wiring_id`, `wamn.wiring_version`,
-//! `wamn.node_id` and `wamn.component_digest` — the spelling [`EffectWiring`]
-//! reuses rather than forking. `wamn.connection_http` copies them down so that
-//! one effect span is self-describing without a parent walk
+//! `wamn.node_id`, `wamn.component_digest` and `wamn.operation` — the spelling
+//! [`EffectWiring`] reuses rather than forking. `wamn.connection_http` copies
+//! them down so that one effect span is self-describing without a parent walk
 //! (`wamn-0h0g.24.12`); `wamn.jetstream` (`wamn-0h0g.24.15`) and `wamn:postgres`
 //! (`wamn-0h0g.24.14`, itself blocked on `wamn-0h0g.7.9`) cannot source the
 //! coordinates yet and leave the block empty. `wamn-0h0g.24.2` landed the
@@ -89,15 +95,14 @@
 //! is synchronous; `RouterDriver` drives `wiring.next` / `Step::Invoke` directly
 //! and is the production driver.)
 //!
-//! The EXECUTING NODE OPERATION is absent for a reason a reader has to know.
-//! `wamn.component.invoke` records `wamn.operation` from the `NodeCall` the
-//! router driver holds. `ConnectionInvocation`, the record every plugin binds
-//! per pooled instance, carries no operation and no component name, so no
-//! surface here can source either one. An effect span names the executing
-//! component by `wamn.component_digest`, which the release manifest keys that
-//! component on, and names the capability call by `effect.operation`. Putting
-//! the node operation on an effect span needs a wider bound invocation and a
-//! change in `crates/execution/host/src/router_driver.rs` (`wamn-b2m6.2`).
+//! The EXECUTING COMPONENT IDENTITY and the NODE OPERATION arrive the same way,
+//! and a reader has to know what each one answers. `ConnectionInvocation`, the
+//! record the router driver binds per pooled instance, carries the admitted
+//! component name and the operation the driver called (`wamn-b2m6.7`). Before
+//! that widening an effect span named its component only by
+//! `wamn.component_digest`, which is a manifest key, and named its call only by
+//! `effect.operation`, which is the capability method. Neither answers "which
+//! component, running which node operation, raised this effect".
 
 use std::time::{Duration, SystemTime};
 
@@ -126,6 +131,12 @@ pub(crate) struct EffectIdentity<'a> {
 /// packages name a wiring alike, and one walk visits the same node more than
 /// once. Without these two fields those calls record identical spans
 /// (`wamn-b2m6.2`).
+///
+/// `component_name` and `operation` say WHO ran the effect and WHICH node
+/// operation raised it. The digest names the component by the key its manifest
+/// stores it under, and `effect.operation` names the capability method. So
+/// without these two a reader has neither the component name a person calls the
+/// component by nor the operation the wiring ran (`wamn-b2m6.7`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EffectWiring<'a> {
     pub package_id: &'a str,
@@ -134,6 +145,8 @@ pub(crate) struct EffectWiring<'a> {
     pub node_id: &'a str,
     pub occurrence: u32,
     pub component_digest: &'a str,
+    pub component_name: &'a str,
+    pub operation: &'a str,
 }
 
 /// The run coordinates of one effect, for a surface whose contract carries them.
@@ -342,7 +355,7 @@ pub(crate) fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
 /// no way to compute, which is exactly the premise `wamn-0h0g.24.12`'s owner
 /// ruling refuted.
 ///
-/// `None` records the six keys EMPTY rather than leaving them unfilled,
+/// `None` records the eight keys EMPTY rather than leaving them unfilled,
 /// following [`EffectIdentity`]'s convention: one span shape per surface, where
 /// an empty value reads as "this effect holds no such claim" and never as "the
 /// enrichment was dropped".
@@ -354,6 +367,8 @@ pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_
         node_id: "",
         occurrence: 0,
         component_digest: "",
+        component_name: "",
+        operation: "",
     });
     span.record("wamn.package_id", wiring.package_id);
     span.record("wamn.wiring_id", wiring.wiring_id);
@@ -361,6 +376,8 @@ pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_
     span.record("wamn.node_id", wiring.node_id);
     span.record("wamn.occurrence", wiring.occurrence);
     span.record("wamn.component_digest", wiring.component_digest);
+    span.record("wamn.component_name", wiring.component_name);
+    span.record("wamn.operation", wiring.operation);
 }
 
 /// [9.1] Open one effect span: a per-surface constant name, that surface's own
@@ -418,6 +435,8 @@ macro_rules! effect_span {
             wamn.node_id = tracing::field::Empty,
             wamn.occurrence = tracing::field::Empty,
             wamn.component_digest = tracing::field::Empty,
+            wamn.component_name = tracing::field::Empty,
+            wamn.operation = tracing::field::Empty,
             wamn.run_id = tracing::field::Empty,
             wamn.requirement = tracing::field::Empty,
             effect.outcome = tracing::field::Empty,
