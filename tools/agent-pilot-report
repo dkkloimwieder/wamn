@@ -51,7 +51,10 @@ mkdir -p "$OUT/$RUN_ID"
 
 # The raw directory travels, minus the two things that must not: env holds
 # minted credentials, and worktree is a git worktree of this repository.
-rsync -a --delete --exclude env/ --exclude worktree/ --exclude 'run.json.*' \
+# env holds minted credentials, worktree is a git worktree, and bin is a tree of
+# symlinks that point outside the repository. Everything else travels.
+rsync -a --delete --delete-excluded --exclude env/ --exclude worktree/ --exclude bin/ \
+  --exclude 'run.json.*' --exclude verbs.lock \
   "$DIR/" "$OUT/$RUN_ID/"
 
 jq -r --slurpfile checklist "$DIR/checklist.json" \

@@ -1,0 +1,10 @@
+{
+  "agent": "claude",
+  "binary": "claude",
+  "started": "2026-09-07T00:05:22Z",
+  "ended": "2026-09-07T00:34:31Z",
+  "exit": 0,
+  "reason": "completed",
+  "model_id": "claude-opus-5[1m]",
+  "session_id": "51099c79-d67a-4968-9320-b17787045727"
+}

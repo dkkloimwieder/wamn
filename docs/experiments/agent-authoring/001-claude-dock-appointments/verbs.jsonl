@@ -1,0 +1,4 @@
+{"ts":"2026-09-07T00:06:25.360Z","n":"001","argv":["dev","--help"],"exit":0,"ms":9}
+{"ts":"2026-09-07T00:20:53.242Z","n":"002","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/001-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":107798}
+{"ts":"2026-09-07T00:28:36.251Z","n":"003","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/001-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":1453}
+{"ts":"2026-09-07T00:30:42.221Z","n":"004","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/001-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":1351}

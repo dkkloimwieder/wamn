@@ -1,0 +1,17 @@
+[
+  {"name":"chrome-devtools-cli","path":"/home/kaalin/.claude/skills/chrome-devtools-cli/SKILL.md","sha256":"25e089a6cf7cbb567f51e6f18ef61b4ef5f7faf62ae31cedde5ba916901aaa0a"},
+  {"name":"rust-guidelines","path":"/home/kaalin/.claude/skills/rust-guidelines/SKILL.md","sha256":"caac16827b31228f8bacda0c387b87ae17d6c40e979841b6a1b9533270b4664a"},
+  {"name":"capacity","path":"/home/kaalin/.agents/skills/microsoft-foundry/models/deploy-model/capacity/SKILL.md","sha256":"91b3ce958de44f728453572747504e8c9146f119892aa690546fd19f8d96a344"},
+  {"name":"customize","path":"/home/kaalin/.agents/skills/microsoft-foundry/models/deploy-model/customize/SKILL.md","sha256":"9424dbe2afc67b79d04bb21cc041dfc7e52ae1d87fb2a7c9c24b7ee4c44f5123"},
+  {"name":"preset","path":"/home/kaalin/.agents/skills/microsoft-foundry/models/deploy-model/preset/SKILL.md","sha256":"e3d6313af788327dc409c1515029209a362db9ce7ace999b95653e85fa9b688e"},
+  {"name":"deploy-model","path":"/home/kaalin/.agents/skills/microsoft-foundry/models/deploy-model/SKILL.md","sha256":"5854f59fefd21bf90a8ac4ee5c7d1341b9df72ca18cd05eec56814964943c113"},
+  {"name":"microsoft-foundry","path":"/home/kaalin/.agents/skills/microsoft-foundry/SKILL.md","sha256":"8388ebc43dd2110df73e7db139f1c2fa2506768de3a064ea7b3091c56b4e25c9"},
+  {"name":"rust-guidelines","path":"/home/kaalin/.codex/skills/rust-guidelines/SKILL.md","sha256":"caac16827b31228f8bacda0c387b87ae17d6c40e979841b6a1b9533270b4664a"},
+  {"name":"imagegen","path":"/home/kaalin/.codex/skills/.system/imagegen/SKILL.md","sha256":"681ddb4ad6d06a2acc78a3535b583f8d0c1ea800ecda3d56370d3310fd2cd4ba"},
+  {"name":"openai-docs","path":"/home/kaalin/.codex/skills/.system/openai-docs/SKILL.md","sha256":"7cb8fa1b2a0c635b5c61ffe1da7b8594a7ea0fce5b71e8d523e2025d88b2a05e"},
+  {"name":"plugin-creator","path":"/home/kaalin/.codex/skills/.system/plugin-creator/SKILL.md","sha256":"71b95b8219644f95d633721e7f7cd3c469edfc8fe50f8415d400dfb2d74bc7b9"},
+  {"name":"review-agent","path":"/home/kaalin/.codex/skills/.system/review-agent/SKILL.md","sha256":"07079efd0dc76f05fade424e5dfb048dce1de2df7626e1a4f56292a4f3f92228"},
+  {"name":"skill-creator","path":"/home/kaalin/.codex/skills/.system/skill-creator/SKILL.md","sha256":"6656e54755638e8efcf275a472b9672eaa8a9a1b9e59dc210e275b03b59e1e66"},
+  {"name":"skill-installer","path":"/home/kaalin/.codex/skills/.system/skill-installer/SKILL.md","sha256":"d68b77e5bbb34dedab89d134da52855f140fc4b4299b80104f534e3b9e98f8ee"},
+  {"name":"beads","path":".agents/skills/beads/SKILL.md","sha256":"1a621606cfa9a14cbacff84bf5c496b4c2c175c2df329e8d19d4e01fc989dedd"}
+]
