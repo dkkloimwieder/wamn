@@ -1344,6 +1344,43 @@ if [[ "$WAMN_DEV_ENV_SCRATCH" == "$WAMN_DEV_ENV_HOME"/wamn-dev-env.* ]]; then
 fi
 ```
 
+### `[AGENT-PILOT]` — the agent-authoring experiment harness
+
+Not a gate. It measures whether a coding agent can author a wamn package from a
+scenario and prove it works, with no human relay. The method, the rubric and the
+task fixtures live in `docs/experiments/agent-authoring/protocol.md`; the tools
+are specified in `docs/poc/agent-authoring-tooling-spec.md`. This section is the
+command surface only.
+
+```bash
+tools/agent-pilot-run all --run 001 --agent claude \
+  --task docs/experiments/agent-authoring/tasks/dock-appointments
+```
+
+The verbs run separately when you want to hold the environment between them:
+`up`, `launch`, `grade`, `down`. `down` is safe to run twice. `--agent stub`
+drives the whole shape without spending an agent, and `--stub-mode` reproduces
+each of the four driver exit reasons.
+
+Run directories live under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs`.
+They are working state and any tool may delete them. Evidence leaves the cache
+through `tools/agent-pilot-report`, which writes
+`docs/experiments/agent-authoring/<run>.md` and the raw directory beside it,
+minus the environment and the worktree.
+
+Rules the harness enforces rather than asks for:
+
+- One run per machine at a time, and never beside a cluster journey. It takes
+  the same five ports the development environment takes, plus the Gate's 8088,
+  and preflight refuses if any is in use.
+- The run worktree has no remote, so "do not push" is true by construction.
+- `bd` is off the agent's `PATH`, so the hooks no-op and a run cannot write the
+  task system. This is a known deviation from an ordinary session and it is
+  recorded in every run report.
+- The skill inventory is frozen against run 001. A run whose inventory differs
+  is refused, because both agents select skills by description and a skill
+  appearing between runs changes the measurement silently.
+
 ### `[GUEST-DIGEST-REPRODUCIBILITY]` — one commit, two checkouts, one digest
 
 A component digest must be a function of the bytes an author wrote. It was not:
