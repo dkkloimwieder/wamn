@@ -17,6 +17,8 @@ const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const OVERLAY_EVIDENCE_PATH: &str = "generated/platform-policy/data-access.json";
 const TENANT: &str = "package-data-access-live";
 const PASSWORD: &str = "package-data-access-live-password";
+/// The relation maps apply-package writes beside the application tables.
+const APPLIER_OWNED_RELATIONS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -63,7 +65,8 @@ async fn acl_identity(client: &Client) -> Vec<String> {
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
                 WHERE namespace.nspname = 'receiving' AND relation.relname IN ( \
                     'item', 'location', 'purchase_order', 'purchase_order_line', \
-                    'quality_inspection', 'record_receipt_command', 'receipt', 'receipt_line') \
+                    'quality_inspection', 'record_receipt_command', 'receipt', 'receipt_line', \
+                    'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
                UNION ALL \
                SELECT 'column:' || relation.relname || ':' || attribute.attname || ':' || attribute.xmin::text \
                  FROM pg_catalog.pg_attribute AS attribute \
@@ -71,13 +74,67 @@ async fn acl_identity(client: &Client) -> Vec<String> {
                  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
                 WHERE namespace.nspname = 'receiving' AND relation.relname IN ( \
                     'item', 'location', 'purchase_order', 'purchase_order_line', \
-                    'quality_inspection', 'record_receipt_command', 'receipt', 'receipt_line') \
+                    'quality_inspection', 'record_receipt_command', 'receipt', 'receipt_line', \
+                    'unconsumed_relation', 'unconsumed_sequence', 'unconsumed_view') \
                   AND attribute.attnum > 0 AND NOT attribute.attisdropped \
              ) AS observed ORDER BY identity COLLATE \"C\"",
             &[],
         )
         .await
         .expect("read ACL-bearing catalog identities")
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect()
+}
+
+/// Every privilege the App role reaches on the applier-owned relation maps.
+///
+/// This is a measurement, not an assumption. The maps carry no seeded grant, so
+/// an empty answer before reconciliation states that no guest path reads them.
+/// A non-empty answer is a finding about the applier, and the assertion that
+/// reads it says so.
+async fn applier_owned_authority(client: &Client) -> Vec<String> {
+    let table_privileges = vec![
+        "DELETE",
+        "INSERT",
+        "MAINTAIN",
+        "REFERENCES",
+        "SELECT",
+        "TRIGGER",
+        "TRUNCATE",
+        "UPDATE",
+    ];
+    let column_privileges = vec!["INSERT", "REFERENCES", "SELECT", "UPDATE"];
+    client
+        .query(
+            "SELECT held FROM ( \
+               SELECT relation.relname || ':' || privilege AS held \
+                 FROM pg_catalog.pg_class AS relation \
+                 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+                 CROSS JOIN unnest($1::text[]) AS privilege \
+                WHERE namespace.nspname = 'receiving' \
+                  AND relation.relname = ANY($3::text[]) \
+                  AND pg_catalog.has_table_privilege('wamn_app', relation.oid, privilege) \
+               UNION ALL \
+               SELECT relation.relname || ':' || attribute.attname || ':' || privilege \
+                 FROM pg_catalog.pg_class AS relation \
+                 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+                 JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
+                 CROSS JOIN unnest($2::text[]) AS privilege \
+                WHERE namespace.nspname = 'receiving' \
+                  AND relation.relname = ANY($3::text[]) \
+                  AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+                  AND pg_catalog.has_column_privilege( \
+                        'wamn_app', relation.oid, attribute.attnum, privilege) \
+             ) AS observed ORDER BY held COLLATE \"C\"",
+            &[
+                &table_privileges,
+                &column_privileges,
+                &APPLIER_OWNED_RELATIONS.as_slice(),
+            ],
+        )
+        .await
+        .expect("read App authority on the applier-owned relation maps")
         .into_iter()
         .map(|row| row.get(0))
         .collect()
@@ -163,12 +220,38 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .batch_execute(
             "GRANT DELETE ON TABLE receiving.purchase_order TO wamn_app; \
              GRANT UPDATE (location_code) ON TABLE receiving.location TO wamn_app; \
-             GRANT SELECT (id) ON TABLE receiving.item TO wamn_app; \
              GRANT DELETE ON TABLE receiving.quality_inspection TO wamn_app; \
              GRANT SELECT (item_number) ON TABLE receiving.item TO PUBLIC;",
         )
         .await
         .expect("seed direct ACL residue");
+    // Negative controls. The admin role mints three relations in the
+    // package-owned schema that no package declares, one of each carrier the
+    // sweep reads, and grants the App role authority on each. Proving the
+    // absence of authority afterwards needs a relation that no package speaks
+    // for. Every declared relation fails that test by construction.
+    admin
+        .batch_execute(
+            "CREATE TABLE receiving.unconsumed_relation ( \
+                 id uuid PRIMARY KEY DEFAULT gen_random_uuid(), note text); \
+             CREATE VIEW receiving.unconsumed_view AS SELECT id FROM receiving.location; \
+             CREATE SEQUENCE receiving.unconsumed_sequence; \
+             GRANT SELECT ON TABLE receiving.unconsumed_relation TO wamn_app; \
+             GRANT UPDATE (note) ON TABLE receiving.unconsumed_relation TO wamn_app; \
+             GRANT SELECT ON TABLE receiving.unconsumed_view TO wamn_app; \
+             GRANT USAGE ON SEQUENCE receiving.unconsumed_sequence TO wamn_app;",
+        )
+        .await
+        .expect("seed authority on relations no package declares");
+    // The applier-owned relation maps carry no seed. The sweep reaches them like
+    // every other relation in the schema, and this reading states what it finds
+    // there before it runs.
+    assert_eq!(
+        applier_owned_authority(&admin).await,
+        Vec::<String>::new(),
+        "a guest path already reaches an applier-owned relation map, which is a \
+         finding about apply-package rather than a reason to exclude the map"
+    );
 
     let incomplete = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
@@ -192,6 +275,11 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     assert!(
         !first_effect.is_noop(),
         "residual ACL did not require repair"
+    );
+    assert_eq!(
+        applier_owned_authority(&admin).await,
+        Vec::<String>::new(),
+        "reconciliation left App authority on an applier-owned relation map"
     );
     let guest = connect(&generation_url(&url, &generation)).await;
     guest
@@ -235,26 +323,40 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         delete.as_db_error().map(|error| error.code().code()),
         Some("42501")
     );
+    // receipt_line is insert-only with select_fields of id alone, so quantity is
+    // a real undeclared column. The arm used to name location.location_code,
+    // which 0ca9418c declared when it added location.list, so the assertion
+    // stated a falsehood from that commit until wamn-10yt.29.
     let undeclared_column = guest
-        .query("SELECT location_code FROM receiving.location", &[])
+        .query("SELECT quantity FROM receiving.receipt_line", &[])
         .await
-        .expect_err("undeclared location column remained readable");
+        .expect_err("undeclared receipt_line column remained readable");
     assert_eq!(
         undeclared_column
             .as_db_error()
             .map(|error| error.code().code()),
         Some("42501")
     );
-    let unconsumed_relation = guest
-        .query("SELECT id FROM receiving.item", &[])
-        .await
-        .expect_err("residual authority survived on an unconsumed package relation");
-    assert_eq!(
-        unconsumed_relation
-            .as_db_error()
-            .map(|error| error.code().code()),
-        Some("42501")
-    );
+    // The arm used to name receiving.item, which both packages declare and whose
+    // select fields carry id. It asserted that a declared read fails. The subject
+    // is now a relation no package declares, so the arm proves the absence of
+    // authority instead of fabricating it.
+    for unconsumed in [
+        "SELECT id FROM receiving.unconsumed_relation",
+        "SELECT note FROM receiving.unconsumed_relation",
+        "SELECT id FROM receiving.unconsumed_view",
+        "SELECT nextval('receiving.unconsumed_sequence')",
+    ] {
+        let denied = guest
+            .query(unconsumed, &[])
+            .await
+            .expect_err("seeded authority survived on a relation no package declares");
+        assert_eq!(
+            denied.as_db_error().map(|error| error.code().code()),
+            Some("42501"),
+            "{unconsumed} kept its seeded authority"
+        );
+    }
     for control_relation in ["wamn_entities", "wamn_cdc_exclusions"] {
         let denied = guest
             .query(&format!("SELECT * FROM receiving.{control_relation}"), &[])
@@ -527,4 +629,64 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
 
     std::fs::remove_dir_all(lineage_fixture_directory())
         .expect("remove the package lineage fixture");
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PG18 named by WAMN_CTL_PG_URL"]
+async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing() {
+    let Some(url) = support::LockedUrl::optional() else {
+        eprintln!("skipping package_data_access_live; WAMN_CTL_PG_URL is unset");
+        return;
+    };
+    let admin = install_lineage_fixture(&url).await;
+    apply(&url, receiving_package_root()).await;
+    apply(&url, overlay_package_root()).await;
+    // app_system and catalog are platform schemas. No package manifest names
+    // them, so the reconciler never reads a relation there. The floor grants the
+    // two schema files install stand outside every package declaration, and so
+    // do these two seeded grants.
+    admin
+        .batch_execute(
+            "GRANT DELETE ON TABLE app_system.audit_log TO wamn_app; \
+             GRANT UPDATE (tenant_id) ON TABLE catalog.packages TO wamn_app;",
+        )
+        .await
+        .expect("seed App authority inside the platform schemas");
+    reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![receiving_package_root(), overlay_package_root()],
+    ))
+    .await
+    .expect("reconcile the installed package set beside platform-schema authority");
+
+    for (relation, privilege) in [
+        ("app_system.audit_log", "DELETE"),
+        ("app_system.users", "SELECT"),
+        ("app_system.configurations", "UPDATE"),
+        ("catalog.packages", "SELECT"),
+    ] {
+        assert!(
+            admin
+                .query_one(
+                    "SELECT pg_catalog.has_table_privilege('wamn_app', $1, $2)",
+                    &[&relation, &privilege],
+                )
+                .await
+                .expect("read platform-schema table authority")
+                .get::<_, bool>(0),
+            "reconciliation revoked {privilege} on {relation}"
+        );
+    }
+    assert!(
+        admin
+            .query_one(
+                "SELECT pg_catalog.has_column_privilege( \
+                   'wamn_app', 'catalog.packages', 'tenant_id', 'UPDATE')",
+                &[],
+            )
+            .await
+            .expect("read platform-schema column authority")
+            .get::<_, bool>(0),
+        "reconciliation revoked the seeded platform-schema column grant"
+    );
 }

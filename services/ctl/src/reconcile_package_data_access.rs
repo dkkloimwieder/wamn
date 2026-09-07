@@ -1,6 +1,7 @@
 //! Converge the generated GuestSql authority union for the installed package set.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
@@ -19,9 +20,46 @@ const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
 const SELECT_INSTALLED_SQL: &str = "\
 SELECT package_id, package_version, manifest_sha256 FROM catalog.packages \
  WHERE tenant_id = $1 ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"";
-// apply-package owns these OID histories beside application tables; package ACL
-// declarations neither consume nor reconcile control-owned objects.
+// apply-package owns these OID histories beside application tables. No package
+// declaration consumes them, so the declared relation inventory leaves them out.
+// The sweep below still reads them, because every relation in a package-owned
+// schema is in scope for revocation.
 const CONTROL_OWNED_RELATION_MAPS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
+// A package-owned schema holds relations no package declares. The declared reads
+// bind one relation name at a time, so they never reach those relations and never
+// revoke a grant on them. This read asks the server which privileges the App role
+// still reaches on every relation in the package-owned schemas. The three branches
+// cover table-shaped relations, their columns, and sequences. The schema list is
+// the parameter that keeps the sweep inside package-owned ground.
+const UNDECLARED_RESIDUE_SQL: &str = "\
+SELECT namespace.nspname::text, relation.relname::text, relation.relkind::text, \
+       NULL::text, privilege \
+  FROM pg_catalog.pg_class AS relation \
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+  CROSS JOIN unnest($3::text[]) AS privilege \
+ WHERE namespace.nspname = ANY($2::text[]) \
+   AND relation.relkind IN ('r', 'p', 'v', 'm', 'f') \
+   AND pg_catalog.has_table_privilege($1, relation.oid, privilege) \
+UNION ALL \
+SELECT namespace.nspname::text, relation.relname::text, relation.relkind::text, \
+       attribute.attname::text, privilege \
+  FROM pg_catalog.pg_class AS relation \
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+  JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
+  CROSS JOIN unnest($4::text[]) AS privilege \
+ WHERE namespace.nspname = ANY($2::text[]) \
+   AND relation.relkind IN ('r', 'p', 'v', 'm', 'f') \
+   AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+   AND pg_catalog.has_column_privilege($1, relation.oid, attribute.attnum, privilege) \
+UNION ALL \
+SELECT namespace.nspname::text, relation.relname::text, relation.relkind::text, \
+       NULL::text, privilege \
+  FROM pg_catalog.pg_class AS relation \
+  JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+  CROSS JOIN unnest($5::text[]) AS privilege \
+ WHERE namespace.nspname = ANY($2::text[]) \
+   AND relation.relkind = 'S' \
+   AND pg_catalog.has_sequence_privilege($1, relation.oid, privilege)";
 
 /// Manifest hash of each package coordinate, keyed by id and version.
 type CoordinateHashes = BTreeMap<(String, String), String>;
@@ -61,6 +99,12 @@ struct DirectAcl {
     table: BTreeSet<(String, String, String, String, bool)>,
     column: BTreeSet<(String, String, String, String, String, bool)>,
 }
+
+/// One App privilege the server still reaches on an undeclared relation.
+///
+/// The parts are the schema, the relation, its `pg_class.relkind`, the column
+/// when the privilege is a column privilege, and the privilege name.
+type UndeclaredResidue = BTreeSet<(String, String, String, Option<String>, String)>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct EffectiveAcl {
@@ -233,7 +277,8 @@ async fn reconcile(
     let desired = desired_acl(&effective);
     let before_effective = effective_acl(&tx, &effective).await?;
     let desired_effective = desired_effective_acl(&effective);
-    let changed = before != desired || before_effective != desired_effective;
+    let residue = undeclared_residue(&tx, &effective).await?;
+    let changed = before != desired || before_effective != desired_effective || !residue.is_empty();
     if changed {
         tx.batch_execute(
             &render_effective_data_access_sql(&effective)
@@ -241,9 +286,15 @@ async fn reconcile(
         )
         .await
         .context("apply generated data-access reconciliation")?;
+        if !residue.is_empty() {
+            tx.batch_execute(&render_undeclared_revocation(effective.role(), &residue))
+                .await
+                .context("revoke App authority on undeclared package relations")?;
+        }
     }
     let after = direct_acl(&tx, &effective).await?;
     let after_effective = effective_acl(&tx, &effective).await?;
+    let after_residue = undeclared_residue(&tx, &effective).await?;
     ensure!(
         after == desired,
         "package-data-access-postcondition-refused: server ACL differs from generated evidence"
@@ -251,6 +302,14 @@ async fn reconcile(
     ensure!(
         after_effective == desired_effective,
         "package-data-access-effective-authority-refused: role={DATA_ACCESS_ROLE}; authority remains outside the generated direct ACL through PUBLIC, ownership, or inherited roles"
+    );
+    // PostgreSQL never revokes an owner from its own relation, so authority the
+    // App role owns survives every reconcile. Two outcomes converge, and the
+    // refusal names both: a package declares the relation, or the relation goes.
+    ensure!(
+        after_residue.is_empty(),
+        "package-data-access-undeclared-relation-refused: role={DATA_ACCESS_ROLE}; relations=[{}]; cause=the App role reaches authority no package declares, and an owner never loses a privilege on its own relation; remedy=declare the relation in a package, or drop the relation",
+        residue_targets(&after_residue)
     );
     tx.commit()
         .await
@@ -626,9 +685,140 @@ fn desired_effective_acl(effective: &EffectiveDataAccess) -> EffectiveAcl {
     desired
 }
 
+/// Read the App authority left on relations no presented package declares.
+///
+/// The scope is a wall. Only the schemas the presented packages own are read,
+/// so a platform schema never enters the sweep. Inside those schemas a relation
+/// counts when it carries an ACL a role holds. That means ordinary tables,
+/// partitioned tables, views, materialized views and foreign tables, all of
+/// which answer `has_table_privilege`, and sequences, which answer
+/// `has_sequence_privilege`. Indexes and composite types carry no ACL and
+/// PostgreSQL refuses a GRANT that names them, so the sweep leaves them out.
+///
+/// Only the relations the declared path already converges drop out here. Every
+/// relation means every relation, so the applier-owned relation maps stay in
+/// scope. Platform roles such as the CDC reader read those maps, and the App
+/// role never does, so a revocation there removes nothing that is true. A named
+/// exception list grows with the applier and hides the day that stops holding.
+async fn undeclared_residue(
+    tx: &Transaction<'_>,
+    effective: &EffectiveDataAccess,
+) -> anyhow::Result<UndeclaredResidue> {
+    let schemas = effective.schemas();
+    let table_privileges = vec![
+        "DELETE",
+        "INSERT",
+        "MAINTAIN",
+        "REFERENCES",
+        "SELECT",
+        "TRIGGER",
+        "TRUNCATE",
+        "UPDATE",
+    ];
+    let column_privileges = vec!["INSERT", "REFERENCES", "SELECT", "UPDATE"];
+    let sequence_privileges = vec!["SELECT", "UPDATE", "USAGE"];
+    let mut residue = UndeclaredResidue::new();
+    for row in tx
+        .query(
+            UNDECLARED_RESIDUE_SQL,
+            &[
+                &effective.role(),
+                &schemas,
+                &table_privileges,
+                &column_privileges,
+                &sequence_privileges,
+            ],
+        )
+        .await
+        .context("read residual App authority on undeclared package relations")?
+    {
+        let schema = row
+            .try_get::<_, String>(0)
+            .context("decode residue schema")?;
+        let table = row
+            .try_get::<_, String>(1)
+            .context("decode residue relation")?;
+        if effective
+            .relations()
+            .iter()
+            .any(|relation| relation.schema() == schema && relation.table() == table)
+        {
+            continue;
+        }
+        residue.insert((schema, table, row.get(2), row.get(3), row.get(4)));
+    }
+    Ok(residue)
+}
+
+/// Render the revocation that clears one residue read.
+///
+/// Revoking a privilege the role never held is not an error in PostgreSQL, so
+/// the render stays safe even when the read and the write disagree. The role
+/// and PUBLIC both lose the privilege, because PUBLIC reaches the App role.
+fn render_undeclared_revocation(role: &str, residue: &UndeclaredResidue) -> String {
+    let role = quote_identifier(role);
+    let mut targets = BTreeMap::<(&str, &str, &str), BTreeSet<&str>>::new();
+    for (schema, table, kind, column, _) in residue {
+        let columns = targets
+            .entry((schema.as_str(), table.as_str(), kind.as_str()))
+            .or_default();
+        if let Some(column) = column {
+            columns.insert(column.as_str());
+        }
+    }
+    let mut sql = String::new();
+    for ((schema, table, kind), columns) in targets {
+        let target = format!("{}.{}", quote_identifier(schema), quote_identifier(table));
+        // A sequence carries its own privilege vocabulary, and REVOKE refuses to
+        // name a sequence as a table.
+        let carrier = if kind == "S" { "SEQUENCE" } else { "TABLE" };
+        writeln!(
+            sql,
+            "REVOKE ALL PRIVILEGES ON {carrier} {target} FROM PUBLIC, {role};"
+        )
+        .expect("writing SQL to a String cannot fail");
+        if columns.is_empty() {
+            continue;
+        }
+        // A table-level revocation leaves a direct column grant in place, so the
+        // columns the read named lose each column privilege by name.
+        let columns = columns
+            .into_iter()
+            .map(quote_identifier)
+            .collect::<Vec<_>>()
+            .join(", ");
+        for privilege in ["SELECT", "INSERT", "UPDATE", "REFERENCES"] {
+            writeln!(
+                sql,
+                "REVOKE {privilege} ({columns}) ON TABLE {target} FROM PUBLIC, {role};"
+            )
+            .expect("writing SQL to a String cannot fail");
+        }
+    }
+    sql
+}
+
+/// Name each relation a refusal has to report.
+fn residue_targets(residue: &UndeclaredResidue) -> String {
+    residue
+        .iter()
+        .map(|(schema, table, ..)| format!("{schema}.{table}"))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn quote_identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CoordinateHashes, validate_presented_lineages};
+    use super::{
+        CoordinateHashes, UndeclaredResidue, render_undeclared_revocation,
+        validate_presented_lineages,
+    };
 
     const DOCK_SHA: &str =
         "sha256:1111111111111111111111111111111111111111111111111111111111111111";
@@ -702,6 +892,65 @@ mod tests {
         assert!(
             refusal.contains("package-data-access-source-drift: package=dock@1.0.0"),
             "the refusal did not name the immutable coordinate: {refusal}"
+        );
+    }
+
+    #[test]
+    fn a_residual_sequence_privilege_revokes_through_the_sequence_carrier() {
+        let residue = UndeclaredResidue::from([(
+            "receiving".to_owned(),
+            "unconsumed_sequence".to_owned(),
+            "S".to_owned(),
+            None,
+            "USAGE".to_owned(),
+        )]);
+        assert_eq!(
+            render_undeclared_revocation("wamn_app", &residue),
+            "REVOKE ALL PRIVILEGES ON SEQUENCE \"receiving\".\"unconsumed_sequence\" \
+             FROM PUBLIC, \"wamn_app\";\n"
+        );
+    }
+
+    #[test]
+    fn a_residual_column_privilege_revokes_beside_the_relation_it_sits_on() {
+        let residue = UndeclaredResidue::from([
+            (
+                "receiving".to_owned(),
+                "unconsumed_view".to_owned(),
+                "v".to_owned(),
+                None,
+                "SELECT".to_owned(),
+            ),
+            (
+                "receiving".to_owned(),
+                "unconsumed_view".to_owned(),
+                "v".to_owned(),
+                Some("id".to_owned()),
+                "SELECT".to_owned(),
+            ),
+        ]);
+        let sql = render_undeclared_revocation("wamn_app", &residue);
+        assert!(
+            sql.contains(
+                "REVOKE ALL PRIVILEGES ON TABLE \"receiving\".\"unconsumed_view\" \
+                 FROM PUBLIC, \"wamn_app\";"
+            ),
+            "the relation revocation is missing: {sql}"
+        );
+        assert!(
+            sql.contains(
+                "REVOKE SELECT (\"id\") ON TABLE \"receiving\".\"unconsumed_view\" \
+                 FROM PUBLIC, \"wamn_app\";"
+            ),
+            "the column revocation is missing: {sql}"
+        );
+    }
+
+    #[test]
+    fn an_empty_residue_read_renders_no_revocation_at_all() {
+        assert_eq!(
+            render_undeclared_revocation("wamn_app", &UndeclaredResidue::new()),
+            ""
         );
     }
 }
