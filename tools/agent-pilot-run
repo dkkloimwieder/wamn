@@ -443,6 +443,22 @@ verb_up() {
   # mutates no file, and it disappears with the process.
   git -C "$TREE" worktree add --detach "$DIR/worktree" "$commit" >> "$DIR/env.log" 2>&1 \
     || die "could not create the run worktree" "$EX_ENV"
+
+  # THE EXPERIMENT MUST NOT BE IN THE TREE IT MEASURES. Run 001 quoted this
+  # protocol's own EXCLUDE probe back in its report: the answer to a question
+  # the run existed to ask was sitting in the worktree, along with the task's
+  # scenario and its grader steps. Remove the whole experiment directory and
+  # commit the removal, then treat THAT commit as the run's baseline, so the
+  # worktree is clean and the agent's diff starts from a tree without it.
+  if [[ -d "$DIR/worktree/docs/experiments" ]]; then
+    git -C "$DIR/worktree" rm -r --quiet docs/experiments >> "$DIR/env.log" 2>&1 \
+      || die "could not remove the experiment directory from the run worktree" "$EX_ENV"
+    git -C "$DIR/worktree" -c user.name=pilot -c user.email=pilot@invalid \
+      commit --no-verify --quiet -m "chore(pilot): the experiment is not part of the tree it measures" \
+      >> "$DIR/env.log" 2>&1 \
+      || die "could not commit the experiment removal" "$EX_ENV"
+    commit="$(git -C "$DIR/worktree" rev-parse HEAD)"
+  fi
   [[ -z "$(git -C "$DIR/worktree" status --porcelain=v1 --untracked-files=all)" ]] \
     || die "the run worktree is not clean" "$EX_ENV"
 

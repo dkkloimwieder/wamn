@@ -428,6 +428,15 @@ Raw: <nnn>-<agent>-<task>/
 - Prompt leakage: the brief names `--hold` and the commit rule and nothing else,
   and never the four verification cases (those are S9);
   a brief that names more is a new arm.
+- **Leakage through the tree itself.** This document lives in the repository the
+  agent works in, and so do the task fixtures. Run 001 quoted §4.6's `EXCLUDE`
+  probe back in its report: the answer to a question the run existed to ask was
+  sitting in the worktree, next to the scenario and the grader's own steps. The
+  runner now removes `docs/experiments/` from the run worktree and commits the
+  removal, and that commit is the run's baseline. Run 001 is contaminated on
+  this axis and its H1, H3 and craft scores are read with that in mind; its
+  platform finding is unaffected, because a blocker does not become less real
+  for having been well documented.
 - Test-set quality: a trivial set passes trivially; V3 is applied to the task's
   set before run 1, and the kill matrix is re-run when the set changes.
 - Known gaps: the statement verifier (work spec F21) and the missing flow-test
