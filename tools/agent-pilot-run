@@ -421,8 +421,17 @@ verb_up() {
 
   mkdir -p "$DIR"/{env,fixture,bin,dev-logs,grade}
   chmod 700 "$DIR/env"
+  # wamn-nvbd.9. The AGENT's task directory carries the brief, the scenario and
+  # an identity-only manifest. The grading fixture and the `grade` block stay
+  # in the run directory, which only the grader reads. A rubric the author can
+  # read turns the run into test satisfaction rather than authoring: every run
+  # of series 001-012 read `steps.json`, one of them as its fourth command.
   cp -a "$task_dir/." "$DIR/fixture/"
   cp "$task_dir/task.json" "$DIR/task.json"
+  local steps_name; steps_name="$(jq -r '.grade.steps // "steps.json"' "$task_dir/task.json")"
+  cp "$task_dir/$steps_name" "$DIR/$steps_name"
+  rm -f "$DIR/fixture/$steps_name"
+  jq 'del(.grade)' "$task_dir/task.json" > "$DIR/fixture/task.json"
   read_manifest
   : > "$DIR/verbs.jsonl"; : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
   : > "$DIR/env.log"
@@ -540,6 +549,11 @@ verb_launch() {
   # system. Recorded as a known deviation from an ordinary session.
   (
     cd "$DIR/worktree"
+    # wamn-nvbd.8. UNSET, never `CARGO_TARGET_DIR=`. The bare assignment EXPORTS
+    # an empty value, cargo refuses it, and the agent pays an `env -u` prefix on
+    # every build command it runs. The agent builds into the worktree's own
+    # target directory.
+    unset CARGO_TARGET_DIR
     PATH="$DIR/bin:$TARGET/debug:$system_path" \
     WAMN_PILOT_REAL_WAMN="$TARGET/debug/wamn" \
     WAMN_DEV_CONFIG="$DIR/env/dev.json" \
@@ -547,7 +561,6 @@ verb_launch() {
     WAMN_ROUTE_CALLER_PAT_FILE="$DIR/env/route-caller-pat.json" \
     WAMN_PILOT_RUN_DIR="$DIR" \
     WAMN_PILOT_TASK_DIR="$DIR/fixture" \
-    CARGO_TARGET_DIR= \
     GIT_CONFIG_COUNT=1 \
     GIT_CONFIG_KEY_0=remote.origin.pushurl \
     GIT_CONFIG_VALUE_0="$DIR/no-push" \

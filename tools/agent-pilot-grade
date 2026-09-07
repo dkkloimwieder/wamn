@@ -48,7 +48,12 @@ mkdir -p "$DIR/grade"
 
 ROUTE_HOST="$(jq -r '.identity.route_host' "$MANIFEST")"
 OVERLAY_ROOT="$(jq -r '.overlay_root' "$MANIFEST")"
-STEPS="$DIR/fixture/$(jq -r '.grade.steps // "steps.json"' "$MANIFEST")"
+# wamn-nvbd.9: the grading fixture lives in the RUN directory, not in the
+# agent's task directory. A recorded run from series 001-012 still has it
+# under fixture/, so --replay looks there second.
+STEPS_NAME="$(jq -r '.grade.steps // "steps.json"' "$MANIFEST")"
+STEPS="$DIR/$STEPS_NAME"
+[[ -s "$STEPS" ]] || STEPS="$DIR/fixture/$STEPS_NAME"
 COMMIT="$(jq -r '.commit' "$DIR/run.json")"
 
 HELD_PID=""
@@ -184,6 +189,7 @@ grade_steps() {
   # the run has already failed on the loop.
   if [[ "$LOOP_PASS" != true || -z "${BASE_URL:-}" ]]; then
     STEP_RESULTS="$(jq -c '[.[] | {id, must: (.must // false), invariant: (.invariant // ""),
+                                   proves: (.proves // ""),
                                    pass: false, evidence: "not run: the loop served no release"}]' "$STEPS")"
     note "steps skipped: the loop served no release"
     return 0
@@ -191,11 +197,12 @@ grade_steps() {
 
   resolve_attachments
 
-  local step id must invariant operation path body response status payload verdict evidence
+  local step id must invariant proves operation path body response status payload verdict evidence
   while read -r step; do
     id="$(jq -r .id <<< "$step")"
     must="$(jq -r '.must // false' <<< "$step")"
     invariant="$(jq -r '.invariant // ""' <<< "$step")"
+    proves="$(jq -r '.proves // ""' <<< "$step")"
     verdict=false; evidence=""
     # Reset per step. A loop variable that survives the iteration would record
     # the previous step's answer against a sql or concurrent step, which sends
@@ -252,8 +259,8 @@ grade_steps() {
     fi
 
     STEP_RESULTS="$(jq -c --arg id "$id" --argjson must "$must" --arg inv "$invariant" \
-      --argjson pass "$verdict" --arg ev "$evidence" \
-      '. + [{id:$id, must:$must, invariant:$inv, pass:$pass, evidence:$ev}]' <<< "$STEP_RESULTS")"
+      --arg proves "$proves" --argjson pass "$verdict" --arg ev "$evidence" \
+      '. + [{id:$id, must:$must, invariant:$inv, proves:$proves, pass:$pass, evidence:$ev}]' <<< "$STEP_RESULTS")"
     jq -c --arg id "$id" --arg payload "${payload:-}" \
       '. + [{id:$id, value:(($payload | fromjson? // {}) | if type == "array" then .[0].value // {} else . end)}]' \
       "$DIR/grade/results.json" > "$DIR/grade/results.tmp" && mv "$DIR/grade/results.tmp" "$DIR/grade/results.json"
@@ -374,9 +381,13 @@ run_checks() {
   if [[ "$LOOP_PASS" != true ]]; then
     replay="not run: the loop served no release"
   else
+    # wamn-nvbd.7. Select on what a step DECLARES it proves, never on text in
+    # another field. This matched `replay|idempot` against `invariant`, which
+    # holds invariant IDS like DOCK-2, so it reported "no replay step" through
+    # three runs whose replay and changed-body steps both passed as must steps.
     replay="$(jq -r '
-      [.[] | select(.invariant | test("replay|idempot"; "i"))] as $r
-      | if ($r | length) == 0 then "no replay step in the fixture"
+      [.[] | select(.proves == "claim-replay")] as $r
+      | if ($r | length) == 0 then "no step declares claim-replay"
         elif ($r | all(.pass)) then "pass" else "fail" end' <<< "$STEP_RESULTS")"
   fi
 

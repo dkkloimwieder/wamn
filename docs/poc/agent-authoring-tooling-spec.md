@@ -129,7 +129,10 @@ run.json          A5
 task.json         copy of the manifest
 env/              provider output (0700)
 worktree/         git worktree, detached at the pinned commit, no remote
-fixture/          the task directory copied verbatim (brief, scenario, steps)
+fixture/          the AGENT's task directory: brief, scenario, and a task.json
+                  with `grade` removed. It carries NO grading fixture
+                  (wamn-nvbd.9)
+steps.json        the grading fixture, read by the grader only
 bin/              wamn (shim, A4) · wamn-ctl → $TARGET/debug/wamn-ctl
 transcript.jsonl  driver stream, verbatim, line-buffered
 driver.json       A3
@@ -298,6 +301,7 @@ human ratifies it.
   "overlay_root": "packages/<package-under-development>",
   "baseline": {"overlay_root": "packages/<existing>"},
   "allowed_paths": ["packages/<x>/**", "components/application/<x>/**", "components/Cargo.toml", "components/Cargo.lock"],
+  "grade": {…}                       # grader-only; `up` strips it from the agent's copy
   "grade": {"steps": "steps.json", "checks": ["claim-replay","row_version","naming"], "fence_reports": ["capability-surface","additive-migration","no-environment-data"]}
 }
 ```
@@ -310,7 +314,7 @@ commit. The brief names it.
 `must: true` steps decide PASS/FAIL (protocol §5); others are recorded:
 
 ```json
-[{"id":"…","must":true,"invariant":"<brief-invariant-id>","route":{"from":"attachments","operation":"<domain>.<action>"},
+[{"id":"…","must":true,"invariant":"<brief-invariant-id>","proves":"<check-name, optional>","route":{"from":"attachments","operation":"<domain>.<action>"},
   "body":{…}, "reuse":{"<field>":"<step-id>.value.<path>"},
   "expect":{"status":200,"item":"value|error","error_code":"…","equals":{"<path>":"<step-id>.value.<path>"}}},
  {"id":"…","must":true,"sql":"select count(*) …","expect":{"rows":1}},
@@ -359,11 +363,16 @@ Generic. Writes `$RUN/checklist.json` and `$RUN/grade/*`.
      version suffixes (`docs/poc/poc-work-order.md:10-16`). Removed the day Gate
      fences it.
 5. SIGINT the held loop; assert no verification database remains.
-6. `--replay <dir>`: runs steps 2–4 against a fixture `attachments.json`, a
-   recorded `grade/http.jsonl`, and a worktree snapshot, with no environment;
-   the tooling tests (T) use it.
-7. `checklist.json`: `{loop, paths, steps:[{id,must,pass,evidence}], checks:{…}, fences:{…},
-   human:{…:null}}`. Human fields (protocol §5) refuse `null` downstream.
+6. `--replay <dir>`: intended to run steps 2–4 against a fixture
+   `attachments.json`, a recorded `grade/http.jsonl` and a worktree snapshot,
+   with no environment. **IT DOES NOT DO THIS YET** (`wamn-nvbd.10`): it takes
+   the loop verdict from a `grade/checklist-input.json` no run writes, and it
+   still drives every step over HTTP against a live base URL. Measured against
+   all three recorded runs of series 010.
+7. `checklist.json`: `{loop, paths, steps:[{id,must,invariant,proves,pass,evidence}],
+   checks:{…}, fences:{…}, human:{…:null}}`. Human fields (protocol §5) refuse
+   `null` downstream. A named check reads the steps that DECLARE they prove it,
+   through `proves`, and never text in another field (`wamn-nvbd.7`).
 
 Exit gate: two graders on one run produce identical machine fields.
 

@@ -58,3 +58,19 @@ Q11 verification coverage: operations driven 5/5; all four S9 cases appear, but 
 
 Raw: `012-claude-dock-appointments/`
 
+## Regrade, 012
+
+Graded by the PRE-FIX grader, which reported `claim-replay` as `no replay step in
+the fixture`. That was a false verdict: the check matched `replay|idempot`
+against each step's `invariant`, and this fixture carries invariant ids there
+(`wamn-nvbd.7`).
+
+**Corrected verdict: `claim-replay` pass.** Recomputed on 2026-09-07 by the
+fixed selector, which reads what a step DECLARES it proves, applied to the step
+results this run already recorded: book-replay pass, book-changed-body pass.
+
+Nothing was re-run and nothing above was changed. The grader's `--replay` verb
+cannot regrade a torn-down run: it takes the loop verdict from a
+`checklist-input.json` these runs never wrote, and it still drives every step
+over HTTP against a base URL that no longer exists (`wamn-nvbd.10`). So this is
+a recomputation of ONE check over recorded results, not a second grading run.

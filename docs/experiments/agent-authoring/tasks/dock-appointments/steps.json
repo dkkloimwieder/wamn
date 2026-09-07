@@ -86,7 +86,8 @@
       "equals": {
         "appointment_id": "book-first.value.appointment_id"
       }
-    }
+    },
+    "proves": "claim-replay"
   },
   {
     "id": "book-changed-body",
@@ -109,7 +110,8 @@
       "status": 200,
       "item": "error",
       "error_code": "idempotency_conflict"
-    }
+    },
+    "proves": "claim-replay"
   },
   {
     "id": "overlap-a",
