@@ -1446,6 +1446,12 @@ Rules the harness enforces rather than asks for:
 - The grading fixture is harness state and lives outside the run directory,
   because the run directory is exported to the agent. `up` refuses the run when
   the fixture or a `grade` block is reachable from any path the agent is handed.
+- **The pilot builds its binaries from the main checkout, not from the run
+  worktree.** An edit that lands in the main checkout while `up` is building
+  goes into the binaries the measurement uses. `up` now hashes the tree before
+  and after the build and refuses the run if it changed. Do not write to the
+  main checkout until `up` reports ok; after that the run uses binaries already
+  built, and the agent compiles only inside its own worktree.
 
 ### `[GUEST-DIGEST-REPRODUCIBILITY]` — one commit, two checkouts, one digest
 

@@ -223,21 +223,39 @@ build_binaries() {
   # directory handed the agent a binary from a different commit, and the whole
   # measurement rests on the binaries being the pinned tree. Cargo decides
   # freshness; that is its job, and it costs seconds when there is nothing to do.
+  #
+  # THE PILOT BUILDS FROM THE RUN WORKTREE, NOT FROM THE MAIN CHECKOUT. It once
+  # built from $TREE, so an edit landing there during the build went straight
+  # into the binaries the measurement uses. A run died that way: a lane wrote a
+  # struct field mid-build and the build failed with a missing field, and
+  # preflight had checked the tree before the build, which was too early. The
+  # worktree is detached at the pinned commit and clean, so a lane's edit
+  # cannot reach these binaries at all.
+  local build_root="$DIR/worktree"
+  [[ -f "$build_root/Cargo.toml" ]] || die "the run worktree must exist before the build" "$EX_ENV"
+  # The tripwire on top of the structural fix. The build root cannot change,
+  # so this states an invariant rather than watching a race.
+  local tree_before; tree_before="$(git -C "$build_root" status --porcelain=v1 --untracked-files=no | sha256sum)"
   note "building into $TARGET"
   # One cargo command at a time: concurrent cargo in one target directory looks
   # exactly like a spurious failure.
   if true; then
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
-      cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-ctl --bin wamn --locked --offline
+      cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-ctl --bin wamn --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
-      cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-host --locked --offline
+      cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-host --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
-      cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-scenario-worker --locked --offline
+      cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-scenario-worker --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
-      cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-proof-integration --bin wamn-dev-env --locked --offline
+      cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-proof-integration --bin wamn-dev-env --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
-      cargo build --manifest-path "$TREE/components/Cargo.toml" -p http-route --target wasm32-wasip2 --locked --offline
+      cargo build --manifest-path "$build_root/components/Cargo.toml" -p http-route --target wasm32-wasip2 --locked --offline
   fi
+  # The tree the build read must be the tree preflight approved. Comparing it
+  # after the build turns a contaminated measurement into a refused run.
+  local tree_after; tree_after="$(git -C "$build_root" status --porcelain=v1 --untracked-files=no | sha256sum)"
+  [[ "$tree_before" == "$tree_after" ]] \
+    || die "the run worktree changed while the run was building; the binaries no longer match the pinned commit" "$EX_ENV"
   BUILD_SECONDS=$(( $(date +%s) - started ))
   # "Cached" is now a measurement, not a guess: cargo had nothing to do.
   BUILD_CACHED=$([[ $BUILD_SECONDS -lt 30 ]] && echo true || echo false)
@@ -498,8 +516,6 @@ verb_up() {
   : > "$DIR/verbs.jsonl"; : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
   : > "$DIR/env.log"
 
-  build_binaries
-
   # A2, the worktree contract: detached at the pinned commit, clean, and unable
   # to push.
   #
@@ -555,6 +571,9 @@ verb_up() {
   # After the worktree exists and the baseline commit has removed the
   # experiment, because half of what the fence checks lives in the worktree.
   assert_rubric_unreachable "$steps_name"
+
+  # The build reads the worktree, so it comes after the worktree is prepared.
+  build_binaries
 
   record_skills
   if [[ -s "$PILOT_HOME/skills-baseline.json" ]]; then
