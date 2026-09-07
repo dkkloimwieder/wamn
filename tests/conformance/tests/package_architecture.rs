@@ -1,15 +1,19 @@
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use wamn_proof_conformance::package_inventory;
 
 const ROOT_WORKSPACE: &str = "root";
 /// The guests live in more than one Cargo workspace. Feature unification is
 /// additive-only inside one invocation, so the `no_std` palette guests are
 /// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
+///
+/// The member count is the PLATFORM half. A package declares its own
+/// components, so a workspace also holds however many of those actually live in
+/// it, and adding a package must not move this number (wamn-10yt.10.39).
 const COMPONENT_WORKSPACES: [(&str, &str, usize); 2] = [
-    ("components", "components/Cargo.toml", 20),
+    ("components", "components/Cargo.toml", 17),
     ("components-no-std", "components/no-std/Cargo.toml", 4),
 ];
 const ROOT_MEMBER_COUNT: usize = 36;
@@ -179,11 +183,11 @@ fn architecture_manifest_path(root: &Path) -> PathBuf {
     root.join("architecture/package-roles.json")
 }
 
+/// The package-role inventory: the platform half the file declares, plus the
+/// package half the package manifests declare (wamn-10yt.10.39).
 fn read_architecture_manifest(root: &Path) -> ArchitectureManifest {
     let path = architecture_manifest_path(root);
-    let contents = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    serde_json::from_str(&contents)
+    serde_json::from_value(package_inventory::package_roles(root))
         .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
 }
 
@@ -773,8 +777,8 @@ fn manifest_classifies_both_workspaces_and_non_cargo_release_inputs() {
         );
         assert_eq!(
             workspace_manifest_paths(&root, &component_metadata).len(),
-            member_count,
-            "{workspace} member count"
+            member_count + package_inventory::derived_component_count(&root, cargo_manifest),
+            "{workspace} platform member count plus its package components"
         );
     }
     assert!(manifest.non_cargo_inputs.is_empty());

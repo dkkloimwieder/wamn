@@ -190,6 +190,23 @@ length-typed array asserting RAW BYTES (`cp` the file, never reformat):
 `wamn-node`, so both pairs move together. App-interface WIT copies
 (`wamn-<app>-<iface>`) are package-owned and guarded by nothing.
 
+**A component that a package declares moves none of the sites (2) to (7)**
+(`wamn-10yt.10.39`). `packages/<package>/wamn.json` names its components. The
+package half of every inventory above is derived from that file. This covers the
+tier lists, the per-workspace counts, the virtualization artifacts, and the
+`package-roles.json` row. The row's `bounded_context` is the declaring package's
+own model schema. Every number and name list in those files states the PLATFORM
+half only. One derivation per language owns this. In Rust it is
+`tests/conformance/src/package_inventory.rs`. In shell it is
+`tools/build-components` and `tools/workspace-tier`. Extend those. Do not write
+a second copy. Authoring such a package touches only `packages/<package>/`, the
+component crate directory, and the one workspace `members` line, which is site
+(1). The allowlist stays CLOSED. A crate with no package manifest is refused by
+`tools/build-components` with `component profile, canonical inventory, and
+locked metadata drifted`, and `package_architecture.rs` reports it as
+unclassified. If a package's models carry more than one schema, the package has
+no single bounded context and the derivation refuses.
+
 **Tier placement** (from `workspace_tiers.rs`): `role=test` goes in `full_ci`
 and `deployed_system_proof`, excluded from `fast_developer_native`; a
 deployable cdylib guest goes in all four (`product_components`, `release`,

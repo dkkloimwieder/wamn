@@ -6,10 +6,17 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use wamn_proof_conformance::package_inventory;
 
 const TOOL: &str = "tools/repo-lint";
 const ROOT_MEMBER_COUNT: usize = 36;
-const COMPONENT_MEMBER_COUNT: usize = 20;
+/// The component member counts are the PLATFORM half. A package declares its
+/// own components, so a component workspace also holds however many of those
+/// actually live in it, and adding a package must not move these numbers
+/// (wamn-10yt.10.39).
+const COMPONENT_MANIFEST: &str = "components/Cargo.toml";
+const COMPONENT_MEMBER_COUNT: usize = 17;
+const NO_STD_MANIFEST: &str = "components/no-std/Cargo.toml";
 const NO_STD_MEMBER_COUNT: usize = 4;
 const LEG_LABELS: [&str; 10] = [
     "connection HTTP per-invocation client",
@@ -173,20 +180,22 @@ fn workspace_member_count(root: &Path, manifest: &Path) -> usize {
 fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     let root = repository_root();
     let root_manifest = root.join("Cargo.toml");
-    let component_manifest = root.join("components/Cargo.toml");
-    let no_std_manifest = root.join("components/no-std/Cargo.toml");
     assert_eq!(
         workspace_member_count(&root, &root_manifest),
         ROOT_MEMBER_COUNT
     );
-    assert_eq!(
-        workspace_member_count(&root, &component_manifest),
-        COMPONENT_MEMBER_COUNT
-    );
-    assert_eq!(
-        workspace_member_count(&root, &no_std_manifest),
-        NO_STD_MEMBER_COUNT
-    );
+    // The declared counts are the PLATFORM half; each workspace also holds
+    // however many package components actually live in it.
+    for (relative, platform_count) in [
+        (COMPONENT_MANIFEST, COMPONENT_MEMBER_COUNT),
+        (NO_STD_MANIFEST, NO_STD_MEMBER_COUNT),
+    ] {
+        assert_eq!(
+            workspace_member_count(&root, &root.join(relative)),
+            platform_count + package_inventory::derived_component_count(&root, relative),
+            "{relative} platform member count plus its package components"
+        );
+    }
 
     let tool = root.join(TOOL);
     let metadata = fs::metadata(&tool).expect("read repo-lint metadata");
@@ -215,8 +224,8 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
 
     let root_path = root.display().to_string();
     let root_manifest_path = root_manifest.display().to_string();
-    let component_manifest_path = component_manifest.display().to_string();
-    let no_std_manifest_path = no_std_manifest.display().to_string();
+    let component_manifest_path = root.join(COMPONENT_MANIFEST).display().to_string();
+    let no_std_manifest_path = root.join(NO_STD_MANIFEST).display().to_string();
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")),
         vec![

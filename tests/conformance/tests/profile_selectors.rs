@@ -6,6 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
+use wamn_proof_conformance::package_inventory;
 
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const ROOT_MANIFEST: &str = "Cargo.toml";
@@ -146,26 +147,9 @@ fn root_profile_packages(contract: &Value, metadata: &CargoMetadata, profile: &s
 /// central file, and a guard that pinned the old list would put that edit back
 /// (wamn-10yt.10.39).
 fn package_components(root: &Path) -> Vec<String> {
-    let mut derived = BTreeSet::new();
-    let packages = root.join("packages");
-    let Ok(entries) = fs::read_dir(&packages) else {
-        return Vec::new();
-    };
-    for entry in entries.flatten() {
-        let manifest = entry.path().join("wamn.json");
-        let Ok(source) = fs::read_to_string(&manifest) else {
-            continue;
-        };
-        let document: Value = serde_json::from_str(&source)
-            .unwrap_or_else(|error| panic!("failed to parse {}: {error}", manifest.display()));
-        let Some(components) = document.get("components").and_then(Value::as_object) else {
-            continue;
-        };
-        for name in components.keys() {
-            derived.insert(name.replace('_', "-"));
-        }
-    }
-    derived.into_iter().collect()
+    package_inventory::component_names(root)
+        .into_iter()
+        .collect()
 }
 
 fn component_profile_packages(root: &Path, contract: &Value, profile: &str) -> Vec<String> {
@@ -186,11 +170,11 @@ fn set(values: &[String]) -> BTreeSet<String> {
     values.iter().cloned().collect()
 }
 
-fn assert_exact_set(label: &str, actual: &[String], expected: &[&str]) {
+fn assert_exact_set<T: AsRef<str>>(label: &str, actual: &[String], expected: &[T]) {
     let actual = set(actual);
     let expected = expected
         .iter()
-        .map(|value| (*value).to_string())
+        .map(|value| value.as_ref().to_owned())
         .collect::<BTreeSet<_>>();
     let extra = actual.difference(&expected).cloned().collect::<Vec<_>>();
     let missing = expected.difference(&actual).cloned().collect::<Vec<_>>();
@@ -329,8 +313,13 @@ fn profile_contract_matches_locked_metadata() {
         component_members.extend(members);
     }
 
+    // Every count and every name list below states the PLATFORM half only. A
+    // package declares its own components, so the derived half is added rather
+    // than written down, and adding a package moves none of these
+    // (wamn-10yt.10.39).
+    let derived = package_components(&root);
     assert_eq!(root_members.len(), 36);
-    assert_eq!(component_members.len(), 24);
+    assert_eq!(component_members.len(), 21 + derived.len());
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
 
@@ -440,35 +429,38 @@ fn profile_contract_matches_locked_metadata() {
 
     let component_m1 = component_profile_packages(&root, &contract, "m1");
     let component_proof = component_profile_packages(&root, &contract, "proof");
+    let platform_and_packages = |platform: &[&str]| {
+        let mut expected = platform
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<Vec<_>>();
+        expected.extend(derived.iter().cloned());
+        expected
+    };
     assert_exact_set(
         "component m1",
         &component_m1,
-        &[
+        &platform_and_packages(&[
             "blob-put",
-            "client-acme-receiving",
             "http-route",
             "http-request",
             "label-render",
             "materializer",
-            "receiving",
             "transform",
-            "wms",
-        ],
+        ]),
     );
     assert_exact_set(
         "component proof",
         &component_proof,
-        &[
+        &platform_and_packages(&[
             "blob-put",
             "busyloop",
-            "client-acme-receiving",
             "connection-http-standard",
             "http-route",
             "http-request",
             "label-render",
             "label-template",
             "materializer",
-            "receiving",
             "sockprobe",
             "sqlx-command",
             "std-virtualization-probe",
@@ -482,12 +474,11 @@ fn profile_contract_matches_locked_metadata() {
             "wamn-postgres-sqlx",
             "wamn-receiving-data-access",
             "wamn-wms-data-access",
-            "wms",
-        ],
+        ]),
     );
     assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 9);
-    assert_eq!(component_proof.len(), 24);
+    assert_eq!(component_m1.len(), 6 + derived.len());
+    assert_eq!(component_proof.len(), 21 + derived.len());
     assert_unique("component m1", &component_m1);
     assert_unique("component proof", &component_proof);
     assert_eq!(

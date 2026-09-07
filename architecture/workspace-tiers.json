@@ -153,7 +153,7 @@
         "wamn-wms-data-access"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 24 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build every component package through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -175,14 +175,12 @@
       "component_packages": [
         "blob-put",
         "busyloop",
-        "client-acme-receiving",
         "connection-http-standard",
         "http-request",
         "http-route",
         "label-render",
         "label-template",
         "materializer",
-        "receiving",
         "sockprobe",
         "sqlx-command",
         "std-virtualization-probe",
@@ -195,8 +193,7 @@
         "wamn-postgres-sqlx",
         "wamn-postgres-statements",
         "wamn-receiving-data-access",
-        "wamn-wms-data-access",
-        "wms"
+        "wamn-wms-data-access"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Build deployable native and proof owners plus every guest dependency and proof input, then execute the owning deploy/gates Jobs from docs/operations/build-and-test.md. Local Cargo success never substitutes for a named in-cluster gate of record."
@@ -214,14 +211,11 @@
       ],
       "component_packages": [
         "blob-put",
-        "client-acme-receiving",
         "http-request",
         "http-route",
         "label-render",
         "materializer",
-        "receiving",
-        "transform",
-        "wms"
+        "transform"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Release membership is the deployable classification, but release admission requires the immutable SR17/SR26 identity join below. Cargo defaults are not release evidence."
@@ -287,7 +281,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "the 20 members of components/Cargo.toml; the no_std palette guests are excluded and live in components/no-std",
+      "selected_packages": "the 17 platform members of components/Cargo.toml plus every component a packages/*/wamn.json declares; the no_std palette guests are excluded and live in components/no-std",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     },
     {
@@ -297,7 +291,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "the 4 members of components/no-std/Cargo.toml",
+      "selected_packages": "the 4 platform members of components/no-std/Cargo.toml plus every component a packages/*/wamn.json declares there",
       "qualification": "these members must never share a Cargo invocation with components/Cargo.toml; production guest artifacts require build --workspace --target wasm32-wasip2"
     }
   ],
