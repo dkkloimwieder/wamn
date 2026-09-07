@@ -497,12 +497,20 @@ Raw: <nnn>-<agent>-<task>/
   `WAMN_PILOT_RUN_DIR`, so the rubric was still one `cat` away, and run 020
   read it. Filed as `wamn-nvbd.12`. The fixture now lives in a harness grading
   directory that nothing hands the agent, and `up` refuses the run if the
-  fixture or a `grade` block is reachable from any exported path. Series 020
-  therefore reads: run 020 EXCLUDED, because it read the rubric; run 021 valid
-  only if its transcript never names the fixture, and the transcript is the
-  check because the harness records every command; run 022 clean, on the fixed
-  instrument. Section 6.5 asks for instrument equivalence, and a transcript
-  establishes it, so the series is not renumbered.
+  fixture or a `grade` block is reachable from any exported path.
+- **The instrument was readable too.** Both runs of series 020 read
+  `tools/agent-pilot-grade` out of their own worktree, which names every check,
+  every fence report and the verdict rules. The baseline commit now removes
+  `docs/experiments`, every `tools/agent-pilot-*` file, and the `[AGENT-PILOT]`
+  section of `docs/operations/build-and-test.md` by section fence, because the
+  agent needs the gate recipes and not the paragraph saying it is measured.
+  THE RULE: the instrument lives outside the tree the agent can read, or the
+  agent reads it. Agents read what is there; this is not a discipline problem.
+- **Series 020 is excluded, and series 030 is the clean baseline.** Run 020
+  read the fixture with one command. Run 021 read it in two, covering the whole
+  file, and also graded FAIL on `check-in`. Both stay in the record as the leak
+  instances. The instrument changed materially, so section 6.5 applies and the
+  series is renumbered; three arms, because nothing opens on fewer than two.
 - Test-set quality: a trivial set passes trivially; V3 is applied to the task's
   set before run 1, and the kill matrix is re-run when the set changes.
 - Known gaps: the statement verifier (work spec F21) and the missing flow-test
