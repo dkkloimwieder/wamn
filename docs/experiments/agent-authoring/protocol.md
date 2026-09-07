@@ -506,6 +506,20 @@ Raw: <nnn>-<agent>-<task>/
   agent needs the gate recipes and not the paragraph saying it is measured.
   THE RULE: the instrument lives outside the tree the agent can read, or the
   agent reads it. Agents read what is there; this is not a discipline problem.
+- **The first defect the fence produced.** Arm 031 is the first run whose
+  transcript touches no leak channel at all. It passed twelve stages, served a
+  release, and then every route step returned `schema-invalid`. The grading
+  fixture posts `name` to `carrier.create` and the agent declared `carrier_name`,
+  because the brief named the operations and never named a field. THE FIXTURE
+  PINNED A WIRE CONTRACT THE BRIEF DID NOT STATE. That was invisible in every
+  arm that could read `steps.json`, and visible the moment one could not, which
+  is the fence working and the strongest evidence that the earlier passes
+  measured rubric-reading. The brief now carries a data contract: per operation,
+  the input and output field names and types. It carries no expected error code,
+  no step and no verification list. The envelope fields `request_id` and
+  `idempotency_key` are platform law rather than scenario content, so they stay
+  out of the brief and the grader supplies them, and an agent that did not
+  implement the claim is graded on that property.
 - **Series 020 is excluded, and series 030 is the clean baseline.** Run 020
   read the fixture with one command. Run 021 read it in two, covering the whole
   file, and also graded FAIL on `check-in`. Both stay in the record as the leak
