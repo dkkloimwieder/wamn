@@ -162,13 +162,15 @@ fire_step() {
   local step="$1" path="$2" body="$3" request_id="$4"
   local envelope; envelope="$(jq -cn --arg rid "$request_id" --argjson body "$body" \
     '[{request_id:$rid} + $body]')"
+  # A transport failure is a step result, not a grader crash. Without this the
+  # first unreachable route takes the whole run down under set -e.
   curl --silent --show-error --max-time 60 \
     --header "Host: $ROUTE_HOST" \
     --header "Authorization: Bearer $(bearer_token)" \
     --header 'content-type: application/json' \
     --data "$envelope" \
     --write-out '\n%{http_code}' \
-    "$BASE_URL$path" 2>>"$DIR/grade/http.err"
+    "$BASE_URL$path" 2>>"$DIR/grade/http.err" || true
 }
 
 grade_steps() {
@@ -176,6 +178,17 @@ grade_steps() {
   : > "$DIR/grade/http.err"
   echo '[]' > "$DIR/grade/results.json"
   STEP_RESULTS='[]'
+
+  # No release, no steps. Driving routes against nothing would record a page of
+  # transport failures that all say the same thing the loop already said, and
+  # the run has already failed on the loop.
+  if [[ "$LOOP_PASS" != true || -z "${BASE_URL:-}" ]]; then
+    STEP_RESULTS="$(jq -c '[.[] | {id, must: (.must // false), invariant: (.invariant // ""),
+                                   pass: false, evidence: "not run: the loop served no release"}]' "$STEPS")"
+    note "steps skipped: the loop served no release"
+    return 0
+  fi
+
   resolve_attachments
 
   local step id must invariant operation path body response status payload verdict evidence
@@ -358,10 +371,14 @@ run_checks() {
 
   # claim-replay: proven through the steps, not re-implemented. A fixture that
   # names no replay step leaves this unproven and says so.
-  replay="$(jq -r '
-    [.[] | select(.invariant | test("replay|idempot"; "i"))] as $r
-    | if ($r | length) == 0 then "no replay step in the fixture"
-      elif ($r | all(.pass)) then "pass" else "fail" end' <<< "$STEP_RESULTS")"
+  if [[ "$LOOP_PASS" != true ]]; then
+    replay="not run: the loop served no release"
+  else
+    replay="$(jq -r '
+      [.[] | select(.invariant | test("replay|idempot"; "i"))] as $r
+      | if ($r | length) == 0 then "no replay step in the fixture"
+        elif ($r | all(.pass)) then "pass" else "fail" end' <<< "$STEP_RESULTS")"
+  fi
 
   # row_version: the concurrency column is spelled exactly so, everywhere the
   # agent declared one.

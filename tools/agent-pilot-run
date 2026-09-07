@@ -248,8 +248,11 @@ build_binaries() {
     || die "the flow-http workload was not built" "$EX_ENV"
 }
 
-# The frozen skill inventory (F17). Both agents select skills by description, so
-# a skill appearing between runs changes the measurement silently.
+# The frozen agent configuration. Both agents select skills by description, so a
+# skill appearing between runs changes the measurement silently (F17). The same
+# is true of the machine's settings and its output style: the first pilot run
+# used the Bash tool 154 times and no other tool, because the machine's active
+# output style told it to. Freeze both, or arms do not compare.
 record_skills() {
   local root
   {
@@ -272,6 +275,24 @@ record_skills() {
     echo "]"
   } > "$DIR/skills.json"
   jq -e . "$DIR/skills.json" >/dev/null || die "the skill inventory is not valid JSON" "$EX_ENV"
+
+  # The settings that shape an agent before it reads a single repository file.
+  {
+    echo "["
+    local first=1 file
+    for file in "$HOME/.claude/settings.json" "$HOME/.claude/settings.local.json" \
+                "$HOME/.codex/config.toml" "$DIR/worktree/.claude/settings.json"; do
+      [[ -f "$file" ]] || continue
+      [[ $first -eq 1 ]] || echo ","
+      first=0
+      printf '  {"path":%s,"sha256":%s}' \
+        "$(jq -Rn --arg v "${file/#$HOME/~}" '$v')" \
+        "$(jq -Rn --arg v "$(sha256sum "$file" | cut -d' ' -f1)" '$v')"
+    done
+    echo
+    echo "]"
+  } > "$DIR/settings.json"
+  jq -e . "$DIR/settings.json" >/dev/null || die "the settings inventory is not valid JSON" "$EX_ENV"
 }
 
 # ------------------------------------------------------- disposable infrastructure
@@ -523,14 +544,18 @@ verb_launch() {
   local ended; ended="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   local model_id session_id
   model_id="$(jq -rs '[.[] | .. | objects | (.model // empty)] | first // ""' "$DIR/transcript.jsonl" 2>/dev/null || echo "")"
+  local output_style
+  output_style="$(jq -rs '[.[] | .. | objects | (.output_style // empty)] | first // ""' "$DIR/transcript.jsonl" 2>/dev/null || echo "")"
   session_id="$(jq -rs '[.[] | .. | objects | (.session_id // empty)] | first // ""' "$DIR/transcript.jsonl" 2>/dev/null || echo "")"
 
   jq -n --arg agent "$AGENT" --arg binary "${driver[0]}" \
         --arg started "$started" --arg ended "$ended" \
         --argjson exit "$exit_code" --arg reason "$reason" \
         --arg model_id "$model_id" --arg session_id "$session_id" \
+        --arg output_style "$output_style" \
         '{agent:$agent, binary:$binary, started:$started, ended:$ended,
-          exit:$exit, reason:$reason, model_id:$model_id, session_id:$session_id}' \
+          exit:$exit, reason:$reason, model_id:$model_id, session_id:$session_id,
+          output_style:$output_style}' \
     > "$DIR/driver.json"
 
   summarize_verbs "$started"
