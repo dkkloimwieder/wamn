@@ -548,6 +548,15 @@ async fn apply(
             .with_context(|| format!("validate {} before apply", deferred.relative_path));
     }
 
+    // wamn-yk9l. The platform extensions go in FIRST, while this connection is
+    // still the administrator: `CREATE EXTENSION` is refused to a package by
+    // the migration policy and is not a privilege the package-owner role holds.
+    // Idempotent, so it converges a database provisioned before the list
+    // existed.
+    tx.batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
+        .await
+        .context("install the platform extensions")?;
+
     // Package text cannot issue SET ROLE: the pre-apply policy rejects a
     // package escalating itself. This host-issued SET LOCAL ROLE moves in the
     // opposite direction, narrowing the administrator to the existing

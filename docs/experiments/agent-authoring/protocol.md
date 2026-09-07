@@ -241,13 +241,17 @@ The validator half, settled in
   `validate_add_constraint` requires the token after the constraint name to be
   `check` followed by an open parenthesis, and refuses everything else with
   "ADD CONSTRAINT admits only the demanded named CHECK form".
-- `CREATE EXTENSION btree_gist` is **REFUSED**. [corrected 2026-09-07: this
-  line said the opposite. It read the `is_ruled_operation` list as an allowlist
-  when that list is the REFUSED object classes. `extension` is in it, and the
-  caller refuses with "the statement operates on a refused object class". The
-  test `refuses_every_documented_ruled_object_class` pins `CREATE EXTENSION
-  pgcrypto` as refused. Nothing in `deploy/` or any crate installs `btree_gist`
-  for a package either. Found by runs 011 and 012, filed as `wamn-yk9l`.]
+- `CREATE EXTENSION btree_gist` is **REFUSED to a package, and the PLATFORM
+  installs it.** [corrected twice on 2026-09-07. First correction: this line
+  said the extension passed the allowlist. It does not. It read the
+  `is_ruled_operation` list as an allowlist when that list names the REFUSED
+  object classes, and `refuses_every_documented_ruled_object_class` pins
+  `CREATE EXTENSION pgcrypto` as refused. Second correction, on the owner
+  ruling for `wamn-yk9l`: `btree_gist` is now installed by the platform in
+  every project-environment database, from the closed list
+  `wamn_control_provision::sql::PLATFORM_EXTENSIONS`, by `apply_package` before
+  any package DDL. So a package still cannot install an extension, and no
+  longer needs to.]
 
 The database half, measured on the environment's own target database as the
 role the loop uses: `btree_gist` 1.8 is available and the role creates it. A
@@ -256,20 +260,22 @@ with &&)` accepts the first booking and refuses an overlapping second with
 `conflicting key value violates exclusion constraint`. Both probes ran inside a
 transaction and rolled back, and the environment holds no residue from them.
 
-What this means for a run. [rewritten 2026-09-07 on the corrected premise.]
-The strongest rung is NOT reachable from a package. The constraint form passes
-the name validator inside `CREATE TABLE`, but its equality half needs
-`btree_gist`, the package cannot create the extension, and nothing installs it.
-A ROW LOCK ON THE PARENT ROW, TAKEN BEFORE THE OVERLAP READ, IS THE RUNG THE
-PLATFORM ACTUALLY OFFERS. All three runs of series 010 found it without help
-and all three passed the contention invariant with it.
+What this means for a run. [rewritten twice on 2026-09-07, and this is the
+state series 020 measures.] The strongest rung IS reachable. The platform
+installs `btree_gist`, and the constraint form already passes the name
+validator inside `CREATE TABLE`, so an agent that writes
+`EXCLUDE USING gist (<scalar> WITH =, <range> WITH &&)` in the table it is
+already creating gets the database enforcing the invariant. H-3 scores that at
+the top.
 
-H-3 therefore scores the row lock at the top, not `EXCLUDE`. An agent that
-reaches for `EXCLUDE` and is refused is not marked down: it read the
-documentation and the documentation was wrong. An agent that creates the table
-first and adds a constraint second meets a message that names CHECK and never
-names `EXCLUDE`, which is a pre-priced stall in category `generator` and is
-still the platform's fault.
+A ROW LOCK ON THE PARENT ROW, TAKEN BEFORE THE OVERLAP READ, IS A VALID RUNG 2
+and it is not marked down. All three runs of series 010 found it without help
+and all three passed the contention invariant with it, on a platform where the
+top rung did not yet exist.
+
+An agent that creates the table first and adds the constraint second is still
+refused, by a message that names CHECK and never names `EXCLUDE`. That is a
+pre-priced stall in category `generator` and it is still the platform's fault.
 
 ## 5. Grading
 

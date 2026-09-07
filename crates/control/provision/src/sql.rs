@@ -152,6 +152,39 @@ pub fn set_database_owner_sql(database: &str) -> String {
 /// (`wamn-db-<org>--<project>--<env>--<instance>`). In production the CNPG `Database` CRD
 /// creates the per-project-env database; this is the plain-SQL equivalent the
 /// substrate-agnostic gate uses off-cluster (wamn-q3n.8).
+/// PostgreSQL extensions the PLATFORM installs in every project-environment
+/// database. Closed, and owned here rather than by any package.
+///
+/// A package cannot install one: the migration policy lists `extension` among
+/// its refused object classes, so `CREATE EXTENSION` refuses inside package
+/// DDL. Anything a package's own DDL depends on must therefore be provisioned,
+/// and this list is that promise.
+///
+/// `btree_gist` carries the equality operator classes a `gist` index needs, so
+/// an `EXCLUDE USING gist (<scalar> WITH =, <range> WITH &&)` overlap
+/// constraint is expressible at all. Without it that constraint refuses at
+/// apply with an operator-class error, and the platform's own documented
+/// overlap rule is unreachable from a package (`wamn-yk9l`). Three independent
+/// agents authoring a dock-appointment package hit exactly that and all three
+/// fell back to a row lock.
+pub const PLATFORM_EXTENSIONS: [&str; 1] = ["btree_gist"];
+
+/// `CREATE EXTENSION IF NOT EXISTS` for every platform extension, for the
+/// CURRENT database.
+///
+/// Idempotent by construction, so it converges a database provisioned before
+/// this list existed rather than refusing on one that already has them. It
+/// needs the administrator connection: extension installation is not a
+/// privilege the package-owner role holds.
+pub fn install_platform_extensions_sql() -> String {
+    PLATFORM_EXTENSIONS
+        .iter()
+        .map(|extension| format!("CREATE EXTENSION IF NOT EXISTS {}", quote_ident(extension)))
+        .collect::<Vec<_>>()
+        .join(";\n")
+        + ";\n"
+}
+
 pub fn create_database_named_sql(database: &str) -> String {
     format!("CREATE DATABASE {}", quote_ident(database))
 }
@@ -1726,6 +1759,17 @@ pub fn drop_replication_slot_sql(slot: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The platform extension list is PINNED, because a package cannot install
+    /// one and a silent removal would take an author's constraint with it.
+    #[test]
+    fn the_platform_installs_btree_gist_and_nothing_else() {
+        assert_eq!(PLATFORM_EXTENSIONS, ["btree_gist"]);
+        assert_eq!(
+            install_platform_extensions_sql(),
+            "CREATE EXTENSION IF NOT EXISTS \"btree_gist\";\n"
+        );
+    }
 
     #[test]
     fn ensure_app_role_is_a_passwordless_nologin_acl_role() {
