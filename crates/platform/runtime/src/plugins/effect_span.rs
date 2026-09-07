@@ -41,12 +41,16 @@
 //!   component's identity, resolved HOST-side from bind-time claim maps and
 //!   frozen plugin config. The guest supplies none of them and cannot spoof
 //!   them. An empty string means the surface holds no such claim.
-//! - `wamn.wiring_id` / `wamn.wiring_version` / `wamn.node_id` /
-//!   `wamn.component_digest` — the wiring position the effect was raised at,
-//!   declared `Empty` and filled by [`record_wiring`] on a surface holding a
-//!   host-bound invocation. Spelled exactly as the `wamn.component.invoke`
-//!   parent spells them, never a second vocabulary for the same coordinates.
-//! - `wamn.run_id` / `wamn.occurrence` / `wamn.requirement` — declared `Empty`,
+//! - `wamn.package_id` / `wamn.wiring_id` / `wamn.wiring_version` /
+//!   `wamn.node_id` / `wamn.occurrence` / `wamn.component_digest` — the
+//!   host-attested invocation the effect was raised under, declared `Empty` and
+//!   filled by [`record_wiring`] on a surface holding one. The four coordinates
+//!   `wamn.component.invoke` also carries are spelled exactly as that parent
+//!   spells them, never a second vocabulary for the same position.
+//!   `wamn.package_id` and `wamn.occurrence` come from the same bound
+//!   invocation. The parent carries neither, so an effect span is the first
+//!   place a reader finds them (`wamn-b2m6.2`).
+//! - `wamn.run_id` / `wamn.requirement` — declared `Empty`,
 //!   filled by [`record_run`] on the surfaces whose contract carries run
 //!   coordinates. Nothing constructs an [`EffectRun`] on any surface today; the
 //!   contract that would is `wamn-0h0g.7.9`.
@@ -80,6 +84,16 @@
 //! (`wamn_router::NodeInvoker` has only test implementors because its `invoke`
 //! is synchronous; `RouterDriver` drives `wiring.next` / `Step::Invoke` directly
 //! and is the production driver.)
+//!
+//! The EXECUTING NODE OPERATION is absent for a reason a reader has to know.
+//! `wamn.component.invoke` records `wamn.operation` from the `NodeCall` the
+//! router driver holds. `ConnectionInvocation`, the record every plugin binds
+//! per pooled instance, carries no operation and no component name, so no
+//! surface here can source either one. An effect span names the executing
+//! component by `wamn.component_digest`, which the release manifest keys that
+//! component on, and names the capability call by `effect.operation`. Putting
+//! the node operation on an effect span needs a wider bound invocation and a
+//! change in `crates/execution/host/src/router_driver.rs` (`wamn-b2m6.2`).
 
 use std::time::{Duration, SystemTime};
 
@@ -95,17 +109,26 @@ pub(crate) struct EffectIdentity<'a> {
     pub component: &'a str,
 }
 
-/// The wiring position one effect was raised at.
+/// The wiring position one effect was raised at, and the package that executed
+/// it.
 ///
 /// Host-attested: copied down from the invocation the router driver bound before
 /// entering the pooled component, never from anything the guest sent. An empty
 /// field means "this effect holds no such claim" — the same convention
 /// [`EffectIdentity`] follows.
+///
+/// `package_id` and `occurrence` sit beside the position because a reader
+/// attributes an effect to one CALL. A wiring id is package-scoped, so two
+/// packages name a wiring alike, and one walk visits the same node more than
+/// once. Without these two fields those calls record identical spans
+/// (`wamn-b2m6.2`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EffectWiring<'a> {
+    pub package_id: &'a str,
     pub wiring_id: &'a str,
     pub wiring_version: u32,
     pub node_id: &'a str,
+    pub occurrence: u32,
     pub component_digest: &'a str,
 }
 
@@ -114,13 +137,12 @@ pub(crate) struct EffectWiring<'a> {
 /// Guest-supplied, and therefore only ever a trace label — the authority checks
 /// that make these coordinates load-bearing live in the plugin, not here.
 ///
-/// `node_id` is NOT here: one coordinate has one owner, and the owner is
-/// [`EffectWiring`], which the host attests rather than the guest asserts
-/// (`wamn-0h0g.24.12`).
+/// `node_id` and `occurrence` are NOT here: one coordinate has one owner, and
+/// the owner is [`EffectWiring`], which the host attests rather than the guest
+/// asserts (`wamn-0h0g.24.12`, `wamn-b2m6.2`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EffectRun<'a> {
     pub run_id: &'a str,
-    pub occurrence: u32,
     pub requirement: &'a str,
 }
 
@@ -199,14 +221,13 @@ pub(crate) const EFFECT_OPERATION: &str = "effect.operation";
 pub(crate) fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
     if let Some(run) = run {
         span.record("wamn.run_id", run.run_id);
-        span.record("wamn.occurrence", run.occurrence);
         span.record("wamn.requirement", run.requirement);
     }
 }
 
-/// Copy the wiring position of one invocation onto the fields [`effect_span`]
-/// declared `Empty`, so an effect span answers "which wiring, which node" on its
-/// own instead of only through its `wamn.component.invoke` parent.
+/// Copy one bound invocation onto the fields [`effect_span`] declared `Empty`,
+/// so an effect span answers "which package, which wiring, which node, which
+/// visit" on its own instead of only through its `wamn.component.invoke` parent.
 ///
 /// Called by the surface AFTER the macro rather than from inside it. The macro
 /// takes no wiring argument on purpose: widening its arity would force the two
@@ -214,20 +235,24 @@ pub(crate) fn record_run(span: &tracing::Span, run: Option<EffectRun<'_>>) {
 /// no way to compute, which is exactly the premise `wamn-0h0g.24.12`'s owner
 /// ruling refuted.
 ///
-/// `None` records the four keys EMPTY rather than leaving them unfilled,
+/// `None` records the six keys EMPTY rather than leaving them unfilled,
 /// following [`EffectIdentity`]'s convention: one span shape per surface, where
 /// an empty value reads as "this effect holds no such claim" and never as "the
 /// enrichment was dropped".
 pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_>>) {
     let wiring = wiring.unwrap_or(EffectWiring {
+        package_id: "",
         wiring_id: "",
         wiring_version: 0,
         node_id: "",
+        occurrence: 0,
         component_digest: "",
     });
+    span.record("wamn.package_id", wiring.package_id);
     span.record("wamn.wiring_id", wiring.wiring_id);
     span.record("wamn.wiring_version", wiring.wiring_version);
     span.record("wamn.node_id", wiring.node_id);
+    span.record("wamn.occurrence", wiring.occurrence);
     span.record("wamn.component_digest", wiring.component_digest);
 }
 
@@ -278,12 +303,13 @@ macro_rules! effect_span {
             wamn.tenant = %identity.tenant,
             wamn.project = %identity.project,
             wamn.component = %identity.component,
+            wamn.package_id = tracing::field::Empty,
             wamn.wiring_id = tracing::field::Empty,
             wamn.wiring_version = tracing::field::Empty,
             wamn.node_id = tracing::field::Empty,
+            wamn.occurrence = tracing::field::Empty,
             wamn.component_digest = tracing::field::Empty,
             wamn.run_id = tracing::field::Empty,
-            wamn.occurrence = tracing::field::Empty,
             wamn.requirement = tracing::field::Empty,
         );
         $crate::plugins::effect_span::record_run(&span, $run);
@@ -391,6 +417,97 @@ pub(crate) fn record_ack_lag_ms(
         ack_lag_ms(published, now),
         &ack_lag_labels(project, registration),
     );
+}
+
+/// Span-shape proof support for the surfaces that fill this vocabulary.
+///
+/// It lives beside the vocabulary and not beside one surface. Every surface
+/// freezes the WHOLE span value as a literal, so a second copy of the reader
+/// could disagree with the first about what a trace reader receives.
+#[cfg(test)]
+pub(crate) mod span_proof {
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+
+    /// The spans one call exported, read back through an in-memory exporter, so
+    /// an assertion names what a trace reader RECEIVES rather than what the call
+    /// site wrote.
+    ///
+    /// The layer's own bookkeeping attributes — tracing target, source location,
+    /// thread, and busy/idle timings — are switched off, so the exported set is
+    /// exactly the span's declared fields and a field the enrichment should not
+    /// carry cannot hide among them.
+    pub(crate) struct SpanHarness {
+        exporter: InMemorySpanExporter,
+        provider: SdkTracerProvider,
+        _guard: tracing::subscriber::DefaultGuard,
+    }
+
+    impl SpanHarness {
+        pub(crate) fn install(tracer: &'static str) -> Self {
+            use opentelemetry::trace::TracerProvider as _;
+            use tracing_subscriber::layer::SubscriberExt as _;
+
+            let exporter = InMemorySpanExporter::default();
+            let provider = SdkTracerProvider::builder()
+                .with_simple_exporter(exporter.clone())
+                .build();
+            let layer = tracing_opentelemetry::layer()
+                .with_tracer(provider.tracer(tracer))
+                .with_target(false)
+                .with_location(false)
+                .with_threads(false)
+                .with_tracked_inactivity(false);
+            let guard =
+                tracing::subscriber::set_default(tracing_subscriber::registry().with(layer));
+            Self {
+                exporter,
+                provider,
+                _guard: guard,
+            }
+        }
+
+        /// Every span of one name, in the order the exporter finished them, each
+        /// as its sorted attribute set.
+        ///
+        /// A test that opens two spans reads both. Two calls that record the
+        /// same attributes are one repeated value here, which is what makes
+        /// "these two calls are indistinguishable" a failing assertion.
+        pub(crate) fn every_span(&self, name: &str) -> Vec<Vec<(String, String)>> {
+            self.provider.force_flush().expect("test spans must flush");
+            self.exporter
+                .get_finished_spans()
+                .expect("test span exporter must remain readable")
+                .iter()
+                .filter(|span| span.name == name)
+                .map(|span| {
+                    let mut attributes: Vec<(String, String)> = span
+                        .attributes
+                        .iter()
+                        .map(|attr| (attr.key.to_string(), attr.value.to_string()))
+                        .collect();
+                    attributes.sort();
+                    attributes
+                })
+                .collect()
+        }
+
+        /// The one span of that name, for a test that opened exactly one.
+        pub(crate) fn attributes(&self, name: &str) -> Vec<(String, String)> {
+            let mut spans = self.every_span(name);
+            assert_eq!(spans.len(), 1, "exactly one {name} span must be exported");
+            spans.pop().expect("the one exported span")
+        }
+    }
+
+    /// One expected attribute set, sorted the way [`SpanHarness`] sorts.
+    pub(crate) fn expected_attributes(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        let mut pairs: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect();
+        pairs.sort();
+        pairs
+    }
 }
 
 #[cfg(test)]

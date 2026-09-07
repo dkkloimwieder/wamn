@@ -321,11 +321,12 @@ fn build_store(
 
 /// The `wamn.blobstore` span over one guest object-store effect.
 ///
-/// Carries the shared identity vocabulary plus the wiring position this
-/// component was invoked at, copied from the host-attested invocation — never
-/// anything the guest sent. A pooled instance with no invocation bound records
-/// the wiring keys empty, which says "about to be refused" where a missing
-/// field would look like lost instrumentation.
+/// Carries the shared identity vocabulary plus the invocation this component
+/// was entered under: the package, the wiring position and the occurrence,
+/// copied from the host-attested invocation — never anything the guest sent. A
+/// pooled instance with no invocation bound records those keys empty, which says
+/// "about to be refused" where a missing field would look like lost
+/// instrumentation.
 ///
 /// The object KEY is deliberately absent: keys are guest-authored and can carry
 /// tenant data, and a span is a wider audience than the effect itself.
@@ -348,9 +349,11 @@ pub(super) fn blobstore_span(
     record_wiring(
         &span,
         invocation.as_ref().map(|invocation| EffectWiring {
+            package_id: &invocation.package_id,
             wiring_id: &invocation.wiring_id,
             wiring_version: invocation.wiring_version,
             node_id: &invocation.node_id,
+            occurrence: invocation.occurrence,
             component_digest: &invocation.component_digest,
         }),
     );
@@ -399,7 +402,8 @@ mod tests {
     };
 
     use super::*;
-    use crate::plugins::wamn_postgres::CandidateBindingWorld;
+    use crate::plugins::effect_span::span_proof::{SpanHarness, expected_attributes};
+    use crate::plugins::wamn_postgres::{CandidateBindingWorld, WamnPostgresConfig};
 
     fn released() -> ConnectionInvocation {
         ConnectionInvocation {
@@ -515,6 +519,59 @@ mod tests {
         assert_eq!(
             release_coordinates(&candidate(), Some(&manifest), "tenant-a"),
             Err(BindingError::Unauthorized)
+        );
+    }
+
+    /// A plugin that opens no connection, so a span assertion needs no database
+    /// and no object store.
+    fn offline_plugin() -> WamnBlobstore {
+        let postgres = WamnPostgres::new(WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 1,
+            statement_timeout_ms: 1,
+            row_limit: 1,
+        })
+        .expect("an offline postgres plugin does not open a connection");
+        WamnBlobstore::new(
+            Arc::new(postgres),
+            Arc::new(WamnCredentials::empty()),
+            "tenant-a",
+            "project-a",
+            None,
+        )
+    }
+
+    /// The blobstore surface fills the SAME vocabulary the HTTP surface fills,
+    /// so one object-store effect names the call that raised it by the same
+    /// keys.
+    #[test]
+    fn a_blobstore_effect_span_names_the_invocation_it_was_raised_under() {
+        let plugin = offline_plugin();
+        let component_id = "component-store-3";
+        plugin
+            .bind_invocation(component_id, released())
+            .expect("the fresh store accepts its invocation");
+        let component_digest = released().component_digest;
+
+        let harness = SpanHarness::install("blobstore-span-test");
+        drop(blobstore_span(&plugin, component_id, "get-data"));
+
+        assert_eq!(
+            harness.attributes("wamn.blobstore"),
+            expected_attributes(&[
+                ("effect.operation", "get-data"),
+                ("wamn.tenant", "tenant-a"),
+                ("wamn.project", "project-a"),
+                ("wamn.component", component_id),
+                ("wamn.package_id", "package_a"),
+                ("wamn.wiring_id", "orders"),
+                ("wamn.wiring_version", "3"),
+                ("wamn.node_id", "archive"),
+                ("wamn.occurrence", "1"),
+                ("wamn.component_digest", component_digest.as_str()),
+            ]),
         );
     }
 }
