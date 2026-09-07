@@ -31,8 +31,11 @@ done
 [[ -n "$RUN" ]] || die "--run is required"
 
 TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-matches=("$PILOT_HOME"/runs/"$RUN"-*)
-[[ -d "${matches[0]}" ]] || die "no run directory for $RUN"
+matches=()
+for candidate in "$PILOT_HOME"/runs/"$RUN"-*; do
+  [[ -d "$candidate" ]] && matches+=("$candidate")
+done
+[[ ${#matches[@]} -eq 1 ]] || die "expected exactly one run directory for $RUN"
 DIR="${matches[0]}"
 RUN_ID="$(basename "$DIR")"
 
