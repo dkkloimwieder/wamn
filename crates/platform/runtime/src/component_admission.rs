@@ -5,7 +5,8 @@ use std::fmt;
 
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::{
-    AdmittedComponentEffect, AdmittedComponentFacts, ComponentDeclaration, normalize_component_fact,
+    AdmittedComponentEffect, AdmittedComponentFacts, ComponentDeclaration,
+    ComponentEffectProvenance, normalize_component_fact,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
@@ -313,21 +314,18 @@ fn operation_signature_mismatch(
 /// union: a wrapper with an empty capability inventory reaches an effect
 /// through the operations it calls, and an empty projection claims it pure.
 ///
-/// A dependency contributes its PACKAGE and no interface. The interface this
-/// component imports is the dependency operation itself, and `wamn_catalog`
-/// excludes an operation-dependency import from the effect interfaces by rule.
-/// The package never collides with a capability package: an operation
-/// dependency is by construction an unregistered package.
+/// A dependency contributes its PACKAGE and no interface, so its fact carries
+/// the INHERITED provenance and the audited-imports proof stays with the
+/// IMPORTED one. The interface this component imports is the dependency
+/// operation itself, and `wamn_catalog` excludes an operation-dependency
+/// import from the effect interfaces by rule. The package never collides with
+/// a capability package: an operation dependency is by construction an
+/// unregistered package.
 fn derive_effects(
     imports: &wamn_component_policy::ComponentImports,
     effectful_dependencies: &BTreeSet<&str>,
 ) -> Vec<AdmittedComponentEffect> {
     let mut grouped: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
-    for dependency in effectful_dependencies.iter().copied() {
-        grouped
-            .entry(wamn_component_policy::import_pkg(dependency))
-            .or_default();
-    }
     for name in imports.iter() {
         // Posture comes from the registry row matched on package AND version.
         // Grouping stays package-grain because the persisted projection is
@@ -345,8 +343,19 @@ fn derive_effects(
         .into_iter()
         .map(|(package, interfaces)| AdmittedComponentEffect {
             package: package.to_owned(),
+            provenance: ComponentEffectProvenance::Imported,
             interfaces: interfaces.into_iter().collect(),
         })
+        .chain(
+            effectful_dependencies
+                .iter()
+                .copied()
+                .map(|dependency| AdmittedComponentEffect {
+                    package: wamn_component_policy::import_pkg(dependency).to_owned(),
+                    provenance: ComponentEffectProvenance::Inherited,
+                    interfaces: Vec::new(),
+                }),
+        )
         .collect()
 }
 
@@ -891,10 +900,12 @@ mod tests {
             vec![
                 AdmittedComponentEffect {
                     package: "wamn:connection".to_string(),
+                    provenance: ComponentEffectProvenance::Imported,
                     interfaces: vec!["wamn:connection/http@0.1.0".to_string()],
                 },
                 AdmittedComponentEffect {
                     package: "wamn:postgres".to_string(),
+                    provenance: ComponentEffectProvenance::Imported,
                     interfaces: vec!["wamn:postgres/client@0.1.0".to_string()],
                 },
             ]
@@ -940,6 +951,7 @@ mod tests {
             component.effects,
             [AdmittedComponentEffect {
                 package: "wamn-receiving:receiving".to_string(),
+                provenance: ComponentEffectProvenance::Inherited,
                 interfaces: Vec::new(),
             }]
         );

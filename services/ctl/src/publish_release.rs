@@ -3056,6 +3056,7 @@ mod tests {
             &dependency,
             vec![AdmittedComponentEffect {
                 package: "wamn:postgres".to_owned(),
+                provenance: wamn_catalog::ComponentEffectProvenance::Imported,
                 interfaces: vec!["client".to_owned()],
             }],
         );

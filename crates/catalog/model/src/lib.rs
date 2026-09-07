@@ -21,12 +21,12 @@ mod wiring_compatibility;
 pub use component_library::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,
-    ComponentConnectionType, ComponentDeclaration, ComponentFactError, ComponentFactErrorKind,
-    ComponentOperationDeclaration, ComponentOperationDependency, ComponentPackageScope,
-    ComponentParameterDeclaration, ComponentPortDeclaration, ComponentSchema, ComponentSqlField,
-    ComponentSqlStatement, ComponentSqlValueType, bind_component_statement_facts,
-    component_sql_digest, normalize_component_fact, schema_digests_match,
-    verify_stored_effect_projection,
+    ComponentConnectionType, ComponentDeclaration, ComponentEffectProvenance, ComponentFactError,
+    ComponentFactErrorKind, ComponentOperationDeclaration, ComponentOperationDependency,
+    ComponentPackageScope, ComponentParameterDeclaration, ComponentPortDeclaration,
+    ComponentSchema, ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType,
+    bind_component_statement_facts, component_sql_digest, normalize_component_fact,
+    schema_digests_match, verify_stored_effect_projection,
 };
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,

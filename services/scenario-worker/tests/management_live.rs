@@ -556,8 +556,8 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
                      '{BLOBSTORE_COMPONENT_DIGEST}', '{BLOBSTORE_PROJECTION_HASH}', \
                      '[\"wasmcloud:blobstore/blobstore@0.1.0\"]', \
                      '{BLOBSTORE_IMPORTS_FINGERPRINT}', \
-                     '[{{\"package\":\"wasmcloud:blobstore\",\"interfaces\":\
-[\"wasmcloud:blobstore/blobstore@0.1.0\"]}}]'); \
+                     '[{{\"package\":\"wasmcloud:blobstore\",\"provenance\":\"imported\",\
+\"interfaces\":[\"wasmcloud:blobstore/blobstore@0.1.0\"]}}]'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"
@@ -608,6 +608,7 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
     let imports = imports.to_string();
     let effects = serde_json::json!([{
         "package": "wamn:connection",
+        "provenance": "imported",
         "interfaces": [HTTP_IMPORT],
     }])
     .to_string();
