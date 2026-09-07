@@ -579,8 +579,8 @@ mod tests {
     #[test]
     fn extra_row_mints_cursor_from_last_returned_row_and_normalizes_utc() {
         let mut rows = vec![
-            row(FIRST_ID, "2026-08-29T12:34:56.123456+00:00"),
-            row(SECOND_ID, "2026-08-29T12:35:56.123456+00:00"),
+            row(FIRST_ID, "2026-08-29T12:34:56.123456Z"),
+            row(SECOND_ID, "2026-08-29T12:35:56.123456Z"),
         ];
         let page = finish_page(&mut rows, 1, PurchaseOrderSort::CreatedAtAscending).unwrap();
 
@@ -602,7 +602,7 @@ mod tests {
 
     #[test]
     fn no_extra_row_has_no_next_cursor() {
-        let mut rows = vec![row(FIRST_ID, "2026-08-29T12:34:56.123456+00:00")];
+        let mut rows = vec![row(FIRST_ID, "2026-08-29T12:34:56.123456Z")];
         let page = finish_page(&mut rows, 1, PurchaseOrderSort::CreatedAtAscending).unwrap();
 
         assert_eq!(page.item.len(), 1);
@@ -667,13 +667,13 @@ mod tests {
         generated::PurchaseOrderUpdateRow {
             outcome: Some(outcome.to_owned()),
             observed_row_version: (outcome == "concurrency_conflict").then_some(2),
-            created_at: complete.then(|| TimestampTz("2026-08-29T12:34:56+00:00".to_owned())),
+            created_at: complete.then(|| TimestampTz("2026-08-29T12:34:56.000000Z".to_owned())),
             id: complete.then(|| WamnUuid(FIRST_ID.to_owned())),
             purchase_order_number: complete.then(|| "PO-100".to_owned()),
             row_version: complete.then_some(2),
             status: complete.then(|| "open".to_owned()),
             supplier_id: complete.then(|| WamnUuid(SECOND_ID.to_owned())),
-            updated_at: complete.then(|| TimestampTz("2026-08-29T12:35:56+00:00".to_owned())),
+            updated_at: complete.then(|| TimestampTz("2026-08-29T12:35:56.000000Z".to_owned())),
         }
     }
 }

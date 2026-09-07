@@ -11,6 +11,7 @@
 //! second consumer pulls it here.
 
 pub mod ceiling;
+pub mod claim_law;
 
 use std::path::PathBuf;
 use std::time::Duration;

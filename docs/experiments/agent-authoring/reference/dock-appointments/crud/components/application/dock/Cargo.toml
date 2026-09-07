@@ -1,0 +1,27 @@
+[package]
+name = "dock"
+version.workspace = true
+edition.workspace = true
+description = "Package-grain dock-appointment operation component"
+license = "Apache-2.0"
+
+[dependencies]
+chrono = { workspace = true, features = ["std"] }
+futures-executor = "0.3"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+uuid = "1"
+wamn-execution-contract = { workspace = true }
+wamn-postgres-statements = { workspace = true }
+wit-bindgen = { workspace = true }
+
+[lib]
+# `rlib` beside `cdylib` so the crate's own unit tests run on the host.
+# `tools/build-components` selects the single cdylib target for virtualization,
+# and one `[lib]` with two crate types is still one target. The WIT exports are
+# gated to wasm in `src/lib.rs`, which says why.
+crate-type = ["cdylib", "rlib"]
+bench = false
+
+[lints]
+workspace = true
