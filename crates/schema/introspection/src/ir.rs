@@ -143,8 +143,11 @@ impl Column {
     }
 
     /// Admitted semantic default, if any.
-    pub const fn default(&self) -> Option<ColumnDefault> {
-        self.default
+    ///
+    /// Borrowed rather than copied: a default now carries its VALUE, so the
+    /// enum is no longer `Copy` (`wamn-frru`).
+    pub const fn default(&self) -> Option<&ColumnDefault> {
+        self.default.as_ref()
     }
 
     /// Server-generated property, if any.
@@ -187,18 +190,65 @@ impl ColumnType {
     }
 }
 
-/// Closed defaults demanded by the Receiving base and Acme overlay migrations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "snake_case")]
+/// One admitted column default: a named server function, or a literal of the
+/// column's own type carrying its VALUE.
+///
+/// The variants were once Receiving's own words, `TextOpen`, `TextNotRequired`
+/// and `TextPending`, which put one package's vocabulary in the platform and
+/// refused every other author's word. Three independent agents wrote
+/// `DEFAULT 'scheduled'` for a status column and all three were refused at
+/// Introspect (`wamn-frru`). A default's FORM is platform vocabulary. Its VALUE
+/// is the package's own, and R-A already rules that package-local values expand
+/// under the validator.
+///
+/// The allowlist therefore closes over forms. What it still refuses is
+/// unchanged in kind: an expression, a function call other than the two named
+/// here, and a literal whose type is not the column's.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ColumnDefault {
     GenRandomUuid,
     CurrentTimestamp,
-    TextOpen,
-    TextNotRequired,
-    TextPending,
-    BooleanFalse,
-    Int64One,
-    NumericZero,
+    Text {
+        value: Box<str>,
+    },
+    Boolean {
+        value: bool,
+    },
+    Int64 {
+        value: i64,
+    },
+    /// Carried as text, because a numeric default keeps the precision the
+    /// author wrote and `f64` would not.
+    Numeric {
+        value: Box<str>,
+    },
+}
+
+impl ColumnDefault {
+    /// A text literal default.
+    pub fn text(value: impl Into<Box<str>>) -> Self {
+        Self::Text {
+            value: value.into(),
+        }
+    }
+
+    /// A boolean literal default.
+    pub const fn boolean(value: bool) -> Self {
+        Self::Boolean { value }
+    }
+
+    /// A bigint literal default.
+    pub const fn int64(value: i64) -> Self {
+        Self::Int64 { value }
+    }
+
+    /// A numeric literal default, carried verbatim.
+    pub fn numeric(value: impl Into<Box<str>>) -> Self {
+        Self::Numeric {
+            value: value.into(),
+        }
+    }
 }
 
 /// A PostgreSQL server-generated column property.
@@ -511,31 +561,101 @@ pub fn postgres_type(postgres_name: &str) -> Result<ColumnType, IrError> {
 }
 
 /// Normalize an admitted `pg_get_expr` default to its semantic IR variant.
+///
+/// Two server functions are admitted by name, each for the one type it serves.
+/// Everything else must be a LITERAL of the column's own type, optionally cast
+/// to that same type. An expression, any other function call, and a literal of
+/// a different type all refuse, which is the whole wall this allowlist keeps.
 pub fn postgres_default(
     column_type: ColumnType,
     expression: &str,
 ) -> Result<ColumnDefault, IrError> {
     let normalized = expression.trim();
-    let default = match (column_type, normalized) {
-        (ColumnType::Uuid, "gen_random_uuid()") => ColumnDefault::GenRandomUuid,
-        (ColumnType::Timestamptz, "CURRENT_TIMESTAMP") => ColumnDefault::CurrentTimestamp,
-        (ColumnType::Text, "'open'::text" | "'open'") => ColumnDefault::TextOpen,
-        (ColumnType::Text, "'not_required'::text" | "'not_required'") => {
-            ColumnDefault::TextNotRequired
-        }
-        (ColumnType::Text, "'pending'::text" | "'pending'") => ColumnDefault::TextPending,
-        (ColumnType::Boolean, "false" | "'false'::boolean") => ColumnDefault::BooleanFalse,
-        (ColumnType::Int64, "1" | "'1'::bigint") => ColumnDefault::Int64One,
-        (ColumnType::Numeric, "0" | "'0'::numeric" | "0::numeric") => ColumnDefault::NumericZero,
-        _ => {
-            return Err(IrError {
-                kind: IrErrorKind::UnsupportedDefault,
-                input: normalized.into(),
-                column_type: Some(column_type),
-            });
-        }
+    let refuse = || IrError {
+        kind: IrErrorKind::UnsupportedDefault,
+        input: normalized.into(),
+        column_type: Some(column_type),
     };
-    Ok(default)
+
+    match (column_type, normalized) {
+        (ColumnType::Uuid, "gen_random_uuid()") => return Ok(ColumnDefault::GenRandomUuid),
+        (ColumnType::Timestamptz, "CURRENT_TIMESTAMP") => {
+            return Ok(ColumnDefault::CurrentTimestamp);
+        }
+        _ => {}
+    }
+
+    let literal = strip_own_cast(normalized, column_type).ok_or_else(refuse)?;
+    match column_type {
+        ColumnType::Text => quoted_value(literal)
+            .map(ColumnDefault::text)
+            .ok_or_else(refuse),
+        ColumnType::Boolean => match unquoted(literal).to_ascii_lowercase().as_str() {
+            "true" => Ok(ColumnDefault::boolean(true)),
+            "false" => Ok(ColumnDefault::boolean(false)),
+            _ => Err(refuse()),
+        },
+        ColumnType::Int64 => unquoted(literal)
+            .parse::<i64>()
+            .map(ColumnDefault::int64)
+            .map_err(|_| refuse()),
+        ColumnType::Numeric => {
+            let value = unquoted(literal);
+            if is_numeric_literal(&value) {
+                Ok(ColumnDefault::numeric(value))
+            } else {
+                Err(refuse())
+            }
+        }
+        // Int32, Float64, Bytes, Json and Uuid admit no literal default form
+        // yet. Adding one is the same shape as this function's other arms.
+        _ => Err(refuse()),
+    }
+}
+
+/// Remove a trailing `::type` cast when it names the column's OWN type.
+///
+/// A cast to any other type is a type mismatch, not a default, so it refuses by
+/// returning `None` rather than by silently dropping the cast.
+fn strip_own_cast(expression: &str, column_type: ColumnType) -> Option<&str> {
+    let Some((value, cast)) = expression.rsplit_once("::") else {
+        return Some(expression.trim());
+    };
+    let cast = cast.trim();
+    if postgres_type(cast).ok()? == column_type {
+        Some(value.trim())
+    } else {
+        None
+    }
+}
+
+/// The inside of a single-quoted SQL string, with doubled quotes collapsed.
+fn quoted_value(literal: &str) -> Option<Box<str>> {
+    let inner = literal.strip_prefix('\'')?.strip_suffix('\'')?;
+    // A lone quote inside would have ended the literal, so any quote left here
+    // must be one of a doubled pair.
+    if inner.replace("''", "").contains('\'') {
+        return None;
+    }
+    Some(inner.replace("''", "'").into())
+}
+
+/// A quoted literal's contents, or the bare token when it carries no quotes.
+fn unquoted(literal: &str) -> String {
+    quoted_value(literal).map_or_else(|| literal.to_owned(), str::into_string)
+}
+
+/// A decimal numeric literal, with an optional sign and one optional point.
+fn is_numeric_literal(value: &str) -> bool {
+    let digits = value.strip_prefix(['+', '-']).unwrap_or(value);
+    let mut parts = digits.split('.');
+    let whole = parts.next().unwrap_or_default();
+    let fraction = parts.next().unwrap_or("0");
+    parts.next().is_none()
+        && !whole.is_empty()
+        && !fraction.is_empty()
+        && whole.bytes().all(|byte| byte.is_ascii_digit())
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 fn boxed_strings(values: impl IntoIterator<Item = impl Into<Box<str>>>) -> Box<[Box<str>]> {

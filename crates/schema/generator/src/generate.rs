@@ -829,7 +829,7 @@ fn minted_identities<'a>(table: &'a Table, operation: &OperationDeclaration) -> 
         .filter(|column| {
             column.column_type() == ColumnType::Uuid
                 && !column.nullable()
-                && column.default() == Some(ColumnDefault::GenRandomUuid)
+                && column.default() == Some(&ColumnDefault::GenRandomUuid)
                 && column.generation().is_none()
                 && !operation
                     .writable_fields
@@ -946,7 +946,7 @@ fn resolve_claim<'a>(
         })?;
         let pre_generated = column.column_type() == ColumnType::Uuid
             && !column.nullable()
-            && column.default() == Some(ColumnDefault::GenRandomUuid)
+            && column.default() == Some(&ColumnDefault::GenRandomUuid)
             && claim.constraints().iter().any(|constraint| {
                 matches!(
                     constraint.kind(),

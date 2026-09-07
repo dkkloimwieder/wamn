@@ -10,14 +10,14 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
             "status",
             ColumnType::Text,
             false,
-            Some(ColumnDefault::TextOpen),
+            Some(ColumnDefault::text("open")),
             None,
         ),
         Column::new(
             "row_version",
             ColumnType::Int64,
             false,
-            Some(ColumnDefault::Int64One),
+            Some(ColumnDefault::int64(1)),
             None,
         ),
         Column::new("ratio", ColumnType::Float64, false, None, None),
@@ -43,7 +43,7 @@ fn complete_ir(reverse_collections: bool) -> CatalogIr {
             "amount",
             ColumnType::Numeric,
             false,
-            Some(ColumnDefault::NumericZero),
+            Some(ColumnDefault::numeric("0")),
             None,
         ),
         Column::new(
@@ -146,17 +146,17 @@ fn canonical_bytes_freeze_the_complete_ir() {
     let ir = complete_ir(false);
     let expected = concat!(
         r#"{"tables":[{"schema":"receiving","name":"purchase_order","columns":["#,
-        r#"{"name":"amount","type":"numeric","nullable":false,"default":"numeric_zero","generation":null},"#,
+        r#"{"name":"amount","type":"numeric","nullable":false,"default":{"kind":"numeric","value":"0"},"generation":null},"#,
         r#"{"name":"count","type":"int32","nullable":false,"default":null,"generation":null},"#,
-        r#"{"name":"created_at","type":"timestamptz","nullable":false,"default":"current_timestamp","generation":null},"#,
+        r#"{"name":"created_at","type":"timestamptz","nullable":false,"default":{"kind":"current_timestamp"},"generation":null},"#,
         r#"{"name":"enabled","type":"boolean","nullable":false,"default":null,"generation":null},"#,
-        r#"{"name":"id","type":"uuid","nullable":false,"default":"gen_random_uuid","generation":null},"#,
+        r#"{"name":"id","type":"uuid","nullable":false,"default":{"kind":"gen_random_uuid"},"generation":null},"#,
         r#"{"name":"metadata","type":"json","nullable":true,"default":null,"generation":null},"#,
         r#"{"name":"payload","type":"bytes","nullable":false,"default":null,"generation":null},"#,
         r#"{"name":"ratio","type":"float64","nullable":false,"default":null,"generation":null},"#,
-        r#"{"name":"row_version","type":"int64","nullable":false,"default":"int64_one","generation":null},"#,
+        r#"{"name":"row_version","type":"int64","nullable":false,"default":{"kind":"int64","value":1},"generation":null},"#,
         r#"{"name":"sequence_id","type":"int64","nullable":false,"default":null,"generation":{"kind":"identity","mode":"always"}},"#,
-        r#"{"name":"status","type":"text","nullable":false,"default":"text_open","generation":null},"#,
+        r#"{"name":"status","type":"text","nullable":false,"default":{"kind":"text","value":"open"},"generation":null},"#,
         r#"{"name":"status_key","type":"text","nullable":false,"default":null,"generation":{"kind":"stored","expression":"lower(status)"}}],"#,
         r#""constraints":[{"name":"purchase_order_amount_check","kind":"check","expression":"(amount >= (0)::numeric)"},"#,
         r#"{"name":"purchase_order_id_pkey","kind":"primary_key","columns":["id"]},"#,
@@ -164,7 +164,7 @@ fn canonical_bytes_freeze_the_complete_ir() {
         r#""indexes":[{"name":"purchase_order_created_at_idx","columns":[{"name":"created_at","direction":"desc"}]},"#,
         r#"{"name":"purchase_order_status_idx","columns":[{"name":"status","direction":"asc"}]}]},"#,
         r#"{"schema":"receiving","name":"purchase_order_line","columns":["#,
-        r#"{"name":"id","type":"uuid","nullable":false,"default":"gen_random_uuid","generation":null},"#,
+        r#"{"name":"id","type":"uuid","nullable":false,"default":{"kind":"gen_random_uuid"},"generation":null},"#,
         r#"{"name":"purchase_order_id","type":"uuid","nullable":false,"default":null,"generation":null}],"#,
         r#""constraints":[{"name":"purchase_order_line_id_pkey","kind":"primary_key","columns":["id"]},"#,
         r#"{"name":"purchase_order_line_purchase_order_id_fkey","kind":"foreign_key","columns":[{"column":"purchase_order_id","referenced_column":"id"}],"referenced_schema":"receiving","referenced_table":"purchase_order","on_update":"no_action","on_delete":"cascade"}],"#,
@@ -232,36 +232,91 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     );
     assert_eq!(
         postgres_default(ColumnType::Text, "'open'::text").unwrap(),
-        ColumnDefault::TextOpen
+        ColumnDefault::text("open")
     );
     assert_eq!(
         postgres_default(ColumnType::Text, "'not_required'::text").unwrap(),
-        ColumnDefault::TextNotRequired
+        ColumnDefault::text("not_required")
     );
     for spelling in ["'pending'", "'pending'::text"] {
         assert_eq!(
             postgres_default(ColumnType::Text, spelling).unwrap(),
-            ColumnDefault::TextPending
+            ColumnDefault::text("pending")
         );
     }
     assert_eq!(
         postgres_default(ColumnType::Boolean, "false").unwrap(),
-        ColumnDefault::BooleanFalse
+        ColumnDefault::boolean(false)
     );
     assert_eq!(
         postgres_default(ColumnType::Int64, "1").unwrap(),
-        ColumnDefault::Int64One
+        ColumnDefault::int64(1)
     );
     assert_eq!(
         postgres_default(ColumnType::Numeric, "0::numeric").unwrap(),
-        ColumnDefault::NumericZero
+        ColumnDefault::numeric("0")
     );
 
-    let default_error = postgres_default(ColumnType::Text, "'closed'::text").unwrap_err();
-    assert_eq!(default_error.kind(), IrErrorKind::UnsupportedDefault);
-    assert_eq!(default_error.column_type(), Some(ColumnType::Text));
+    // A word nobody enumerated. Three agents wrote exactly this shape and all
+    // three were refused before wamn-frru; the allowlist closes over FORMS now.
+    assert_eq!(
+        postgres_default(ColumnType::Text, "'scheduled'::text").unwrap(),
+        ColumnDefault::text("scheduled")
+    );
+    assert_eq!(
+        postgres_default(ColumnType::Boolean, "true").unwrap(),
+        ColumnDefault::boolean(true)
+    );
+    assert_eq!(
+        postgres_default(ColumnType::Int64, "'-12'::bigint").unwrap(),
+        ColumnDefault::int64(-12)
+    );
+    assert_eq!(
+        postgres_default(ColumnType::Numeric, "'0.00'::numeric").unwrap(),
+        ColumnDefault::numeric("0.00")
+    );
+    // A doubled quote is one quote, and it does not end the literal.
+    assert_eq!(
+        postgres_default(ColumnType::Text, "'it''s'::text").unwrap(),
+        ColumnDefault::text("it's")
+    );
+
+    // THE WALL THAT REMAINS. A form that is not a literal of the column's own
+    // type still refuses, and each of these is a different way to miss it.
+    for (column_type, expression) in [
+        // an expression, not a literal
+        (ColumnType::Int64, "1 + 1"),
+        // a function call that is not one of the two admitted by name
+        (ColumnType::Text, "upper('open')"),
+        (ColumnType::Timestamptz, "now()"),
+        // the right shape cast to the WRONG type
+        (ColumnType::Text, "'open'::name"),
+        (ColumnType::Int64, "'1'::integer"),
+        // a literal of another type entirely
+        (ColumnType::Boolean, "'open'"),
+        (ColumnType::Int64, "'not a number'"),
+        (ColumnType::Numeric, "'1.2.3'"),
+        // a bare identifier
+        (ColumnType::Text, "open"),
+        // the two named functions on a type they do not serve
+        (ColumnType::Text, "gen_random_uuid()"),
+        // a type with no literal default form yet
+        (ColumnType::Json, "'{}'::json"),
+    ] {
+        let error = postgres_default(column_type, expression).expect_err(&format!(
+            "{expression} is not a default for {column_type:?}"
+        ));
+        assert_eq!(
+            error.kind(),
+            IrErrorKind::UnsupportedDefault,
+            "{expression}"
+        );
+        assert_eq!(error.column_type(), Some(column_type), "{expression}");
+    }
+
+    let default_error = postgres_default(ColumnType::Text, "upper('open')").unwrap_err();
     assert_eq!(
         default_error.to_string(),
-        "unsupported PostgreSQL default `'closed'::text` for wamn:postgres type `text`"
+        "unsupported PostgreSQL default `upper('open')` for wamn:postgres type `text`"
     );
 }

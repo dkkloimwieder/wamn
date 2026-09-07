@@ -533,7 +533,7 @@ async fn assert_additive_columns(client: &Client) {
         .expect("client inspection field remains in IR");
     assert_eq!(
         inspection_required.default(),
-        Some(ColumnDefault::BooleanFalse)
+        Some(&ColumnDefault::boolean(false))
     );
     let quality_status = table
         .columns()
@@ -542,7 +542,7 @@ async fn assert_additive_columns(client: &Client) {
         .expect("client quality field remains in IR");
     assert_eq!(
         quality_status.default(),
-        Some(ColumnDefault::TextNotRequired)
+        Some(&ColumnDefault::text("not_required"))
     );
     assert!(!quality_status.nullable());
     assert!(
@@ -564,7 +564,7 @@ async fn assert_additive_columns(client: &Client) {
         .expect("quality inspection status remains in IR");
     assert_eq!(
         inspection_status.default(),
-        Some(ColumnDefault::TextPending)
+        Some(&ColumnDefault::text("pending"))
     );
     let ir_columns = table
         .columns()
