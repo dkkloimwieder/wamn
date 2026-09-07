@@ -184,6 +184,10 @@ grade_steps() {
     must="$(jq -r '.must // false' <<< "$step")"
     invariant="$(jq -r '.invariant // ""' <<< "$step")"
     verdict=false; evidence=""
+    # Reset per step. A loop variable that survives the iteration would record
+    # the previous step's answer against a sql or concurrent step, which sends
+    # no request of its own.
+    payload=""; status=""; response=""
 
     if jq -e 'has("sql")' <<< "$step" >/dev/null; then
       # A read-only assertion against the durable database. Nothing seeds it;
