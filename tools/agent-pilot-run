@@ -491,9 +491,20 @@ verb_up() {
   # scenario and its grader steps. Remove the whole experiment directory and
   # commit the removal, then treat THAT commit as the run's baseline, so the
   # worktree is clean and the agent's diff starts from a tree without it.
-  if [[ -d "$DIR/worktree/docs/experiments" ]]; then
-    git -C "$DIR/worktree" rm -r --quiet docs/experiments >> "$DIR/env.log" 2>&1 \
-      || die "could not remove the experiment directory from the run worktree" "$EX_ENV"
+  #
+  # THE HARNESS IS PART OF THE EXPERIMENT. Runs 020 and 021 both read
+  # tools/agent-pilot-grade out of the worktree, which names every check, every
+  # fence report and the verdict rules. The grader binary the run uses is
+  # installed into the run directory from the main checkout, so removing these
+  # scripts from the worktree costs the agent nothing it needs.
+  local strip=()
+  [[ -d "$DIR/worktree/docs/experiments" ]] && strip+=(docs/experiments)
+  while IFS= read -r tool; do
+    [[ -n "$tool" ]] && strip+=("$tool")
+  done < <(git -C "$DIR/worktree" ls-files 'tools/agent-pilot-*')
+  if [[ ${#strip[@]} -gt 0 ]]; then
+    git -C "$DIR/worktree" rm -r --quiet "${strip[@]}" >> "$DIR/env.log" 2>&1 \
+      || die "could not remove the experiment from the run worktree" "$EX_ENV"
     git -C "$DIR/worktree" -c user.name=pilot -c user.email=pilot@invalid \
       commit --no-verify --quiet -m "chore(pilot): the experiment is not part of the tree it measures" \
       >> "$DIR/env.log" 2>&1 \
