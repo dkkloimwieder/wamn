@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# Recording wrapper for `wamn`, copied to $RUN/bin/wamn by `agent-pilot-run up`.
-#
-# The pilot measures how an agent drives the loop, so every invocation is a
-# datum: its argv, its exit code, its duration, and its whole output. The agent
-# sees an ordinary `wamn` on PATH and never learns it is being watched.
+# Wrapper for `wamn`.
 #
 # bash >= 5.1 is required: `wait` covers process substitutions there, which is
 # what makes the log files complete at the moment the row is written. The

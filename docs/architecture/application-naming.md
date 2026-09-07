@@ -59,6 +59,18 @@ Canonical means one spelling of what PostgreSQL holds, never a transformation
 of it. Durable command, cursor, and weld JSON use
 `wamn_execution_contract::canonical_json_bytes` as their single byte authority.
 
+CANONICALIZE ON INGEST, THEN HASH. An input arrives in any accepted
+representation and is re-spelled to the canonical one before the idempotency key
+hashes it. The key hashes the canonical bytes, never the arriving bytes, because
+a caller whose retry infrastructure re-spells a timestamp or a UUID otherwise
+gets `idempotency_conflict` for the same command.
+
+CANONICALIZATION NORMALIZES REPRESENTATION, NEVER VALUE. Timestamp spelling,
+UUID case and key order are representation, so they re-spell. Numeric scale is
+value in PostgreSQL, because `12.3400` is what the column holds and it differs
+from `12.34`, so scale is preserved and a scale difference is still a body
+difference.
+
 ## Command envelopes
 
 `receiving.record_receipt` accepts `1..=100` outer items and `1..=100` lines
