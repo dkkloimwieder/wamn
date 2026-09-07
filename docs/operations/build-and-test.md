@@ -200,8 +200,11 @@ half only. One derivation per language owns this. In Rust it is
 `tests/conformance/src/package_inventory.rs`. In shell it is
 `tools/build-components` and `tools/workspace-tier`. Extend those. Do not write
 a second copy. Authoring such a package touches only `packages/<package>/`, the
-component crate directory, and the one workspace `members` line, which is site
-(1). The allowlist stays CLOSED. A crate with no package manifest is refused by
+component crate directory, and two shared files in the components workspace.
+Those two are the `members` line in `components/Cargo.toml`, which is site (1),
+and `components/Cargo.lock`. Cargo owns the lockfile and regenerates it, but
+`cargo metadata --locked` refuses a stale one, so the new `[[package]]` stanza
+lands with the package (wamn-10yt.10.40). The allowlist stays CLOSED. A crate with no package manifest is refused by
 `tools/build-components` with `component profile, canonical inventory, and
 locked metadata drifted`, and `package_architecture.rs` reports it as
 unclassified. If a package's models carry more than one schema, the package has

@@ -45,9 +45,18 @@ the ones that cost the blobstore seam a live refusal. That refusal came after
 admission had already passed (`wamn-362o.41`,
 `crates/platform/runtime/src/component_admission.rs:259-260`).
 
-Blobstore is execution one. **MQTT ingress for application 2 is execution two**
-(`docs/poc/poc-application-portfolio.md:13`). The second execution is what
-proves the shape. Correct a wrong step there. Do not work around it.
+Blobstore is execution one, and it is still the only one. MQTT ingress for
+application 2 WAS execution two (`docs/poc/poc-application-portfolio.md:13`).
+The owner withdrew that on 2026-09-07: NATS captures MQTT natively, so app 2
+runs no step of this template (`wamn-7tva.1`).
+
+**This template therefore rests on one execution.** The named trigger for a
+second one is a guest that CALLS a new capability. MQTT publish FROM a
+component is the candidate, and `docs/exe-model.md:86` already lists it among
+the next node-ABI consumers after blob-put. A guest that RECEIVES something
+does not need a seam, because the platform delivers to it. The second
+execution is what proves the shape. Correct a wrong step there. Do not work
+around it.
 
 ### The blobstore seam, in the order it landed
 
@@ -251,8 +260,9 @@ operation dependency. The registry had already admitted it
 
 Search the tree for any remaining namespace test before you push the first
 guest. **These classifiers get one case wrong.** That case is a seam whose
-package namespace is neither `wasi` nor `wamn`. An MQTT package authored
-outside the `wamn` namespace lands in exactly that case.
+package namespace is neither `wasi` nor `wamn`. `wasmcloud:blobstore` is the
+one landed example. MQTT was the expected second one until the owner withdrew
+it on 2026-09-07.
 
 **If you skip this step:** the seam admits in the registry and refuses at push.
 The error names a dependency mismatch instead of the real cause.
@@ -342,8 +352,10 @@ without a measurable gate is not built
 
 - **Whether a seam needs a guest-visible interface at all.** The platform can
   use a capability on its own behalf. Such a seam is host-side only, with no
-  WIT and no registry row. This is a design choice. It has no owner ruling. It
-  matters immediately, because it is open for MQTT.
+  WIT and no registry row. This is a design choice, and it stays open in
+  general. The owner settled the MQTT case on 2026-09-07: a capability a guest
+  RECEIVES from needs no guest-visible interface, because the platform consumes
+  and delivers (`wamn-7tva.1`, `wamn-7tva.2`).
 - **The posture of a new row.** `Ambient` or `Effect` is a security judgment
   the owner makes. The registry only records it.
 - **Which verbs to refuse.** Step 3 records refusals. It does not choose them.

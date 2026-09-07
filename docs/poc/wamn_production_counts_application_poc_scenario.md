@@ -3,6 +3,14 @@
 Status: **DRAFT 2026-09-06, for owner review before code.** Bead
 `wamn-7tva.1`, epic `wamn-7tva`. No code lands under this bead.
 
+**AMENDED 2026-09-07 by owner ruling.** Three questions this draft left open
+are answered, and the answers moved the ingress design. The MQTT seam is
+reading B, and less than a bridge, because NATS captures MQTT natively. The
+`wamn:jetstream` registry row is refused, because a tenant guest imports
+nothing to receive events. `count.record` is an `event_handler` the platform
+delivers to, not a pull consumer the guest drives. Sections 0, 5, 6, 12 and 13
+carry the change. The rulings are recorded on `wamn-7tva.1` and `wamn-7tva.2`.
+
 Structure follows the application-brief skeleton in
 `docs/experiments/agent-authoring/protocol.md` section 4.5 (`:162-195`). Scope
 is fixed by `docs/poc/poc-application-portfolio.md` row 2 (`:13`) and its
@@ -20,8 +28,13 @@ These are decided. This document does not re-decide them.
    work orders (`wamn-7tva`, `docs/poc/poc-application-portfolio.md:13`).
 2. The ingress is a JetStream pull consumer, with ack after process, and a
    dead-letter queue (`wamn-7tva`, `docs/poc/poc-application-portfolio.md:13`).
+   [amended 2026-09-07: the PLATFORM owns that consumer. The application guest
+   exports an `event_handler` and is delivered to. See section 5.]
 3. The new seam is MQTT ingress. It is the second execution of
    `docs/poc/seam-template.md` (`docs/poc/poc-application-portfolio.md:13`).
+   [amended 2026-09-07: withdrawn. NATS captures MQTT natively, so the seam
+   template runs no steps here and keeps blobstore as its only proven
+   execution. The trigger for a second execution is named in section 5.]
 4. The exit gate is the MQTT simulator at 500 messages per second with 5
    percent duplicates, yielding byte-exact rollups, with the dead-letter queue
    receiving only poison (`docs/poc/poc-application-portfolio.md:27-28`).
@@ -179,33 +192,40 @@ route. It never seeds the database
 through `inventory.adjust`
 (`docs/poc/wamn_wms_application_poc_scenario.md:246-248`).
 
-### `count.record`: a JetStream pull consumer
+### `count.record`: an event handler the platform delivers to
+
+The banked ingress is a JetStream pull consumer. The PLATFORM owns it. The
+application guest owns no step below except the last one.
 
 The ordered procedure, one step per sentence.
 
-1. Bind a durable pull consumer over the ingress stream. Use
-   `bind-registration`, which ties every fetched message to a release identity
-   (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:150`).
-2. Fetch a bounded batch
+1. The `wamn:jetstream` host plugin binds a durable consumer over the ingress
+   stream through `bind-registration`, which ties every fetched message to a
+   release identity
+   (`crates/platform/runtime/src/plugins/wamn_jetstream.rs:1568`,
+   `crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:150`).
+2. It fetches a bounded batch
    (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:112`). The
    `max-messages` argument is the backpressure control. The server-side ack
    floor holds the rest.
-3. Read each message's body, subject, headers and delivery metadata
+3. It reads each message's body, subject, headers and delivery metadata
    (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:118-127`).
-4. Parse the envelope. Call `count.record` with `idempotency_key` set to the
-   envelope's `message_id`.
-5. On success, and on an idempotent replay, call `ack`
-   (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:129`). Ack only
-   after the command commits.
-6. On a transient platform failure, call `nack` with a delay
-   (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:132`). It
-   counts against `max-deliver`.
-7. On a permanent refusal, call `dead-letter` with the reason
-   (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:140`). PC-1,
-   PC-2, PC-3, PC-7 and unparseable bytes are the permanent refusals.
-8. Never call `term` without a dead-letter first
-   (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:135`). A
-   terminated message with no DLQ row is a lost fact.
+4. Delivery is gated on the serving release's registration projection, so an
+   event whose registration identity is absent from the release never reaches a
+   component (`services/host/src/host.rs:719-722`).
+5. The run id is minted from the flow and the stream position, so a redelivery
+   re-mints the SAME id and the write-ahead conflict clause absorbs the
+   duplicate (`crates/execution/run-state/src/queue/evt.rs:1-16`).
+6. `RouterDeliveryBridge` delivers the event into the wiring the registration
+   names (`crates/execution/host/src/router_delivery.rs:385-462`).
+7. The plugin settles the message: ack after the command commits and after an
+   idempotent replay, nack with a delay on a transient platform failure, and
+   dead-letter on a permanent refusal
+   (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:129-140`).
+   PC-1, PC-2, PC-3, PC-7 and unparseable bytes are the permanent refusals.
+8. The guest exports `count.record` as an `event_handler` operation
+   (`crates/schema/generator/src/manifest.rs:75`) and is delivered to. It
+   imports nothing to receive the event.
 
 Consumer configuration carries `stream-name`, `durable`, `filter-subject`,
 `ack-wait-ms` and `max-deliver`
@@ -213,22 +233,21 @@ Consumer configuration carries `stream-name`, `durable`, `filter-subject`,
 Redelivery count arrives as `delivered` in the message metadata (`:52-56`).
 
 `dead-letter` is reachable only on a message fetched through
-`bind-registration`. The host derives the destination. The guest never names a
-DLQ subject
+`bind-registration`. The host derives the destination. Nothing names a DLQ
+subject
 (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:136-140`). The
 DLQ stream is `WAMN_DLQ` (`components/events/wire/src/lib.rs:256`).
 
+**Why the guest imports nothing** (owner ruling 2026-09-07). A capability
+registry row governs what a TENANT guest imports, and admission refuses an
+unregistered import by absence
+(`crates/platform/component-policy/src/lib.rs:99-100`). App 2's guest is a
+tenant guest that only exports, so it needs no row. `wamn:jetstream` stays a
+platform-side plugin, and the capability set stays at eight rows.
+
 ### What does not exist yet
 
-The path above is not reachable today. Four gaps.
-
-**I1. `wamn:jetstream` has no capability registry row.** The registry holds
-eight rows, and none of them is `wamn:jetstream`
-(`crates/platform/component-policy/src/lib.rs:130-173`). An unregistered import
-is refused by absence (`:99-100`). The conformance suite pins the size at eight
-and pins the effect list
-(`tests/conformance/tests/capability_registry.rs:136-151`). A tenant guest
-therefore cannot consume JetStream at all.
+The path above is not reachable today. Two gaps, down from four.
 
 **I2. There is no external ingress stream.** Streams are provisioned out of
 band (`crates/platform/runtime/src/plugins/wamn_jetstream.rs:19-21`). The only
@@ -238,35 +257,54 @@ from a write-ahead-log publication (`services/cdc-reader/src/lib.rs:3`). An
 MQTT ingress stream is neither.
 
 **I3. There is no registration sourced from an external subject.** A
-registration today is a CDC event reader. It names a publication and a
-replication slot (`crates/control/registry/src/types.rs:467-486`). `bind-registration`
-checks package and registration ids against the serving manifest. Without such
-a registration, host DLQ derivation has nothing to derive from.
+registration today is a CDC event reader by construction. `EventReader`
+requires a `publication`, a replication `slot` and a replication secret, and it
+carries `deny_unknown_fields`
+(`crates/control/registry/src/types.rs:467-486`). An external MQTT source has
+none of the three. The delivery-side registration is package-identified too:
+the serving manifest keys each registration by package and source package
+(`crates/execution/host/src/router_delivery.rs:462`), and the generator
+requires the source package to be the package itself or a declared dependency
+(`crates/schema/generator/src/manifest.rs:752-783`). Without an
+external-source registration kind, host DLQ derivation has nothing to derive
+from.
 
-**I4. The MQTT seam does not exist.** A case-insensitive search of the tree ran
-on 2026-09-06. It covered Rust sources, manifests, WIT and Kubernetes YAML. It
-found no occurrence of MQTT.
+**I1 and I4 are withdrawn by owner ruling 2026-09-07.** I1 asked for a
+`wamn:jetstream` registry row, which the ruling refuses: the guest imports
+nothing to receive events. I4 asked for an MQTT seam, which the ruling
+replaces with native NATS capability, measured below.
 
 Each gap needs a bead. **This lane cannot create beads. The integrator must
 file them.**
 
-### One ruling this document does not make
+### The ruling, 2026-09-07
 
-There are two readings of "MQTT ingress seam". Both are presented.
+**Reading B, and less than a bridge.** NATS speaks MQTT natively and
+JetStream-backed, since 2.2. Machines publish MQTT topics to the pinned NATS
+server. JetStream captures them into the ingress stream. The platform consumes
+that stream exactly as section 5 describes. There is no WIT, no registry row
+and no bridge process. The seam template runs no steps here.
 
-**Reading A, guest-visible.** MQTT is a WIT package a guest imports. It follows
-every step of `docs/poc/seam-template.md`, registry row and connection
-vocabulary included. A tenant component subscribes.
+Measured on 2026-09-07, on a disposable container removed by name afterward.
 
-**Reading B, host-side bridge.** A platform-owned bridge subscribes to MQTT and
-publishes into the ingress stream. There is no WIT and no registry row. Steps
-1, 3, 5 and 12 of the template apply. Steps 4, 8 and 11 do not.
+| fact | result |
+|---|---|
+| the pin supports MQTT | `nats:2.10-alpine` reports server version 2.10.29 (`deploy/infra/nats-jetstream.yaml:145`, `test-support/infrastructure/std-virtualization.compose.yaml:71`) |
+| our configuration enables it | no. There is no `mqtt` block in the tree. Enabling it is a ConfigMap block plus a port |
+| the server runs it | with `jetstream` plus `mqtt { port: 1883 }` the log reads `Listening for MQTT clients on mqtt://0.0.0.0:1883` |
+| capture is end to end | an MQTT publish to topic `counts/line1/tick` landed in stream `COUNTS`, subject filter `counts.>`, on subject `counts.line1.tick`, byte-exact |
+| at-least-once is available | a QoS 1 publish returned PUBACK for its packet id and landed at stream sequence 2 |
 
-Reading B is smaller, and it matches the banked ingress. The epic names a
-JetStream pull consumer as the ingress, not an MQTT import. Reading A makes the
-template's second execution a real second run of all twelve steps, which is
-what `wamn-7tva` says the seam is for. **The owner must rule. This document
-does not pick.**
+MQTT topic separators map to NATS subject separators, so the subject an
+external source writes is predictable from its topic.
+
+**The seam template keeps ONE proven execution.** Blobstore stays its only
+consumer until a CALLING consumer appears. A WIT package a guest imports for
+something it RECEIVES rather than CALLS is machinery invented to exercise a
+template, and rule R-C refuses it on its own text
+(`docs/architecture/poc-architecture-review.md:34`). The named trigger is MQTT
+publish FROM a component. `docs/exe-model.md:86` already lists MQTT among the
+next node-ABI consumers after blob-put, which is that same publish direction.
 
 ## 6. External services
 
@@ -276,18 +314,23 @@ Only from the admitted list
 | service | used for | status in the tree |
 |---|---|---|
 | `wamn:postgres` | every command and every query | registry row exists, posture `Effect` (`crates/platform/component-policy/src/lib.rs:137-141`) |
-| JetStream | the count ingress and the DLQ | contract exists (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit`). **No registry row.** Gap I1. |
+| JetStream | the count ingress and the DLQ | platform-side only. The plugin fetches and settles (`crates/platform/runtime/src/plugins/wamn_jetstream.rs:1568`). The guest imports nothing. **No registry row is needed** (ruling 2026-09-07). |
+| MQTT | how machine counts reach the ingress stream | native NATS capability on the `nats:2.10-alpine` pin, measured 2026-09-07. Not enabled in our configuration yet. |
 | `wamn:connection` | not used by app 2 | registry row exists (`crates/platform/component-policy/src/lib.rs:142-146`) |
 | `wasmcloud:blobstore` | not used by app 2 | registry row exists (`crates/platform/component-policy/src/lib.rs:147-151`) |
 
 Anything outside that list is a platform ask. This document lists three, and
 flags each as platform work.
 
-- **PA-1.** A `wamn:jetstream` capability registry row, with a declared
-  posture, its ledger row, and the conformance-set update. Gap I1.
-- **PA-2.** An external ingress stream, plus a registration kind sourced from
-  an external subject. Gaps I2 and I3.
-- **PA-3.** The MQTT seam itself, through `docs/poc/seam-template.md`. Gap I4.
+- **PA-1.** MQTT enabled on the pinned NATS server: an `mqtt` block and its
+  port, in `deploy/infra/nats-jetstream.yaml` and in the disposable compose
+  file. No code.
+- **PA-2.** An external ingress stream, plus an external-source registration
+  kind that declares a subject and an envelope contract and claims no package
+  identity. Gaps I2 and I3, tracked on `wamn-7tva.2`.
+
+The `wamn:jetstream` registry row and the MQTT seam were the third and fourth
+asks of this draft. The owner refused both on 2026-09-07.
 
 Binding names stay open to the author
 (`docs/experiments/agent-authoring/protocol.md:178`).
@@ -364,7 +407,7 @@ exact. A duplicate keeps its original `event_id`
 (`test-support/simulator/src/emit.rs:88-91`), so it arrives as the same
 `message_id`. No conflict here.
 
-**E3. Gate item 3 cannot be measured until I1, I2 and I3 close.** The
+**E3. Gate item 3 cannot be measured until I2 and I3 close.** The
 `dead-letter` verb is reachable only through `bind-registration`. No external
 registration exists.
 
@@ -476,8 +519,8 @@ body. It is not a JetStream concern. The sink publishes one message per event.
 
 | # | Question | Where |
 |---|---|---|
-| 1 | Reading A or Reading B for the MQTT seam? | section 5 |
-| 2 | What posture does a `wamn:jetstream` registry row carry? | section 6. Only the owner classifies. |
+| 1 | ~~Reading A or Reading B for the MQTT seam?~~ | RULED 2026-09-07: reading B, and less than a bridge. Section 5. |
+| 2 | ~~What posture does a `wamn:jetstream` registry row carry?~~ | RULED 2026-09-07: no row. Section 5. |
 | 3 | Is `count.rollup` a projection, as proposed? | section 4, a design choice with no ruling |
 | 4 | Are `WO-000000` and `LINE-00` the code shapes? | section 2, a design choice with no ruling |
 | 5 | What does `ItemOutcome` mean for an asynchronous sink? | section 11 |
@@ -486,10 +529,9 @@ body. It is not a JetStream concern. The sink publishes one message per event.
 
 | id | gap |
 |---|---|
-| I1 | a `wamn:jetstream` capability registry row, its posture, its ledger row, and the conformance-set update |
-| I2 | an external ingress stream, provisioned outside the CDC reader's `EVT_` path |
-| I3 | a registration kind sourced from an external subject, so `bind-registration` and host DLQ derivation both work |
-| I4 | the MQTT seam, through `docs/poc/seam-template.md` |
+| I2 | an external ingress stream, provisioned outside the CDC reader's `EVT_` path (`wamn-7tva.2`) |
+| I3 | an external-source registration kind, so `bind-registration` and host DLQ derivation both work (`wamn-7tva.2`) |
+| I5 | MQTT enabled on the pinned NATS server, a ConfigMap block and a port |
 | E1 | a paced emitter, the first to apply `Profile::rate` |
 | E4 | a `machine_counts` simulator profile |
 | Q5 | `ItemOutcome` semantics for an asynchronous sink |

@@ -29,7 +29,7 @@ interface in A6; they live in the protocol (`docs/experiments/agent-authoring/pr
 | F13 | Platform HTTP contract: `POST` routes with a JSON-array body of items carrying `request_id`; response array of `{request_id, value}` or `{request_id, error:{code,…}}`; permission refusal is 403 `{error:{code:"permission-denied", operation}}`; `auth-policy: pat`, bearer token from the minted PAT file. | `tests/integration/src/route_authentication_live.rs:2728-2748`, `:3462-3470`; F10 |
 | F14 | Claim law: idempotent replay returns the immutable original result; a changed request under the same key typed-refuses. Generator half in progress. | `docs/poc/wamn_wms_application_poc_scenario.md:198-209`, bead `wamn-10yt.19` |
 | F15 | Package content must carry no host, URL, secret reference, or environment name (admission half in progress). | bead `wamn-10yt.20` |
-| F16 | A new component must be a member of the components workspace. | `components/Cargo.toml:10-13` |
+| F16 | A new component must be a member of the components workspace. Membership costs two shared files: the `members` line in `components/Cargo.toml`, and the `[[package]]` stanza in `components/Cargo.lock`, which `cargo metadata --locked` requires to be current. | `components/Cargo.toml:10-13`, bead `wamn-10yt.10.40` |
 | F17 | Beads hooks are guarded by `command -v bd`. `AGENTS.md` is a symlink to `CLAUDE.md`. `CLAUDE.md:107` names the global `rust-guidelines` skill; `:130` names `.agents/skills/beads`. No `.claude/skills` in the repo. | `.claude/settings.json`, `.beads/hooks/post-checkout:4`, `CLAUDE.md` |
 | F18 | Test-set execution against a candidate wiring is being built on the management side; no handler yet. | beads `wamn-0h0g.8.5` (in_progress), `.8.5.4` (open) |
 | F19 | The loop's read seam and activated-endpoint publish exist; the loop console is the view-only client. | beads `wamn-10yt.10.26`, `.10.27` (closed), `wamn-dggp` |
@@ -297,7 +297,7 @@ human ratifies it.
   "package_sources": ["packages/<existing-base>", "…"],
   "overlay_root": "packages/<package-under-development>",
   "baseline": {"overlay_root": "packages/<existing>"},
-  "allowed_paths": ["packages/<x>/**", "components/application/<x>/**", "components/Cargo.toml"],
+  "allowed_paths": ["packages/<x>/**", "components/application/<x>/**", "components/Cargo.toml", "components/Cargo.lock"],
   "grade": {"steps": "steps.json", "checks": ["claim-replay","row_version","naming"], "fence_reports": ["capability-surface","additive-migration","no-environment-data"]}
 }
 ```
