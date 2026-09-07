@@ -140,6 +140,12 @@
       "connection": "postgres",
       "transaction": "explicit_per_input",
       "automatic_retry": false,
+      "idempotent_by": {
+        "inherited": {
+          "base": "base_receiving",
+          "operation": "receiving.record_receipt"
+        }
+      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -566,6 +572,13 @@
       "connection": "postgres",
       "transaction": "explicit_per_input",
       "automatic_retry": false,
+      "idempotent_by": {
+        "state": {
+          "guards": {
+            "quality_inspection": "expected_row_version"
+          }
+        }
+      },
       "input": {
         "fields": [
           {

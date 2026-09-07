@@ -136,8 +136,14 @@ ledger.
    reaches an effectful operation.
 2. **The effect observation.** What the platform says happened. A span carries
    the originating wiring position and the executing package, component and
-   operation, and an outcome that is one of refused before dispatch, responded,
-   timeout or cancelled.
+   operation, and an outcome. The six outcomes are refused before dispatch,
+   responded, timeout, cancelled, effect-uncertain and response-lost. A timeout
+   names a deadline that really elapsed. Effect-uncertain is the state the
+   premium durable shelf contract above names. The two are one vocabulary and
+   not two. The platform sent an attempt and recorded no outcome for it.
+   Response-lost is the different state where the far side acted and its answer
+   never arrived. The remedy for response-lost is to read the result again. The
+   remedy for effect-uncertain is never to send again.
 3. **The durable protocol.** The premium durable shelf contract above. It is
    **shelved**: it is specified, it is not the default tier, and no work depends
    on it today.
@@ -250,7 +256,9 @@ retirement beads remove the package and its marker together.
 
 - Component supply-chain checks return as a load-bearing boundary.
 - At-least-once permits duplicate effects; authors provide idempotency and the
-  platform deduplicates only at named admission boundaries.
+  platform deduplicates only at named admission boundaries. Node retry being off
+  does not mean there are no duplicates, because a redelivery or an expired
+  lease replays work the platform already sent.
 - Per-edge host crossings buy shared pools and observability; WAC is the escape.
 - The default tier trades durable node history for traces and a bounded live view.
 - Hot wiring is accepted only with typed shape checks, semantic gates, versioned

@@ -339,6 +339,16 @@
       "connection": "postgres",
       "transaction": "explicit_per_input",
       "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "record_receipt_command",
+        "identities": {
+          "receipt_id": "receipt_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {

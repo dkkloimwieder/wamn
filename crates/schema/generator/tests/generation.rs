@@ -828,11 +828,18 @@ fn overlay_manifest() -> Value {
         "statements",
         "transaction",
         "automatic_retry",
+        "claim",
         "canonicalization",
         "constraint_errors",
     ] {
         composition_object.remove(field);
     }
+    // The composed command holds no claim of its own. It rides the base claim,
+    // and it says so rather than leaving generation to infer it.
+    composition_object.insert(
+        "idempotent_by".to_owned(),
+        json!({"inherited": {"base": "base_receiving", "operation": "receiving.record_receipt"}}),
+    );
 
     overlay["package"] = json!({"id": "client_acme_receiving", "version": "3.0.0"});
     overlay["base_dependencies"] = json!({
@@ -2684,14 +2691,16 @@ fn shipped_command_source_map_parity_and_bind_fixtures_align_structurally() {
 fn custom_statement_declarations_drive_both_siblings_without_domain_tables() {
     let catalog = receiving_catalog();
     let mut declaration = shipped_manifest();
-    declaration["custom_operations"]["receiving.record_receipt"]["statements"]["claim_command"]["parameters"]
-        [1] = json!({
+    // Not the claim's own statements. The claim binds those to the claim
+    // relation, so a renamed row member there is a refusal and not a rename.
+    declaration["custom_operations"]["receiving.record_receipt"]["statements"]["validate_receipt_line"]
+        ["parameters"][1] = json!({
         "name": "canonical_payload",
         "type": "text",
         "nullable": true
     });
-    declaration["custom_operations"]["receiving.record_receipt"]["statements"]["claim_command"]["row"]
-        [0] = json!({
+    declaration["custom_operations"]["receiving.record_receipt"]["statements"]["validate_receipt_line"]
+        ["row"][0] = json!({
         "name": "claimed_receipt_id",
         "type": "text",
         "nullable": true
@@ -2704,7 +2713,7 @@ fn custom_statement_declarations_drive_both_siblings_without_domain_tables() {
     let accessor = object_named(
         source_map["wamn_accessors"].as_array().unwrap(),
         "name",
-        "claim_command",
+        "validate_receipt_line",
     );
     let bind = object_named(
         accessor["binds"].as_array().unwrap(),
@@ -2716,7 +2725,7 @@ fn custom_statement_declarations_drive_both_siblings_without_domain_tables() {
     let row = object_named(
         source_map["wamn_rows"].as_array().unwrap(),
         "name",
-        "ClaimCommandRow",
+        "ValidateReceiptLineRow",
     );
     let field = object_named(
         row["fields"].as_array().unwrap(),
@@ -3681,6 +3690,427 @@ fn idempotency_conflict_is_closed_to_the_create() {
         let mut manifest = claim_manifest();
         mutate(&mut manifest);
         let refusal = run(&claim_catalog(), &manifest, &QUERY_SOURCES).expect_err(label);
+        assert_eq!(
+            refusal.kind(),
+            GenerateErrorKind::InvalidOperation,
+            "{label}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Authored command: command-identity-from-claim.
+//
+// The law was ratified on an authored command, so the generator carries it for
+// an authored command and not for a generated create alone (wamn-10yt.26). The
+// shipped receiving package is the fixture, so these run against the same
+// declaration the tree ships.
+// ---------------------------------------------------------------------------
+
+/// EXIT GATE: an authored claim-bearing command CARRIES the two claim contract
+/// tests, exactly as a generated create does.
+///
+/// The whole artifact is frozen. An added, removed or renamed field fails here,
+/// because a runner reads this file and a silent rename would make it skip a
+/// case rather than refuse.
+#[test]
+fn an_authored_command_carries_the_two_claim_contract_tests() {
+    let package = shipped_generation(&receiving_catalog(), &shipped_manifest()).unwrap();
+
+    assert_eq!(
+        artifact_json(
+            &package,
+            "generated/contracts/receiving/record_receipt.claim-tests.json"
+        ),
+        json!({
+            "operation": "wamn-receiving:receiving/record-receipt@1.0.0",
+            "law": "command-identity-from-claim",
+            "cases": [
+                {
+                    "id": "replay_returns_the_immutable_original",
+                    "given": "the same idempotency_key with the same canonical_command",
+                    "first_call": ["claim_command", "finalize_command"],
+                    "second_call": ["claim_command", "find_replay"],
+                    "expect": {
+                        "claim": "no_row",
+                        "canonical_command": "equal",
+                        "result": "identical_to_the_first_call",
+                        "writes": "none",
+                        "identity_source": "claim",
+                    },
+                },
+                {
+                    "id": "changed_request_under_a_live_key_refuses",
+                    "given": "the same idempotency_key with a changed canonical_command",
+                    "first_call": ["claim_command", "finalize_command"],
+                    "second_call": ["claim_command", "find_replay"],
+                    "expect": {
+                        "claim": "no_row",
+                        "canonical_command": "differs",
+                        "writes": "none",
+                        "refusal": "idempotency_conflict",
+                    },
+                },
+            ],
+        })
+    );
+}
+
+/// EXIT GATE: a command that declares no idempotence refuses generation, and
+/// the refusal names all three remedies.
+///
+/// An author who writes a command that says nothing reads this text and nothing
+/// else. It names every value, the relation and columns the claim value needs,
+/// the guard the state value needs, and the two keys the inherited value takes.
+#[test]
+fn a_command_that_declares_no_idempotence_refuses_and_names_all_three_remedies() {
+    let mut declaration = shipped_manifest();
+    let operation = declaration["custom_operations"]["receiving.record_receipt"]
+        .as_object_mut()
+        .unwrap();
+    operation.remove("idempotent_by");
+    operation.remove("claim");
+
+    let refusal = shipped_generation(&receiving_catalog(), &declaration)
+        .expect_err("a command without declared idempotence was accepted");
+
+    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidOperation);
+    let message = refusal.to_string();
+    for remedy in [
+        "receiving.record_receipt",
+        "idempotent_by",
+        "\"claim\"",
+        "idempotency_key",
+        "canonical_command",
+        "gen_random_uuid()",
+        "identities",
+        "finalize",
+        "\"state\"",
+        "\"guards\"",
+        "expected_row_version",
+        "\"inherited\"",
+        "\"base\"",
+    ] {
+        assert!(
+            message.contains(remedy),
+            "the refusal does not name {remedy}: {message}"
+        );
+    }
+}
+
+/// EXIT GATE: a state-idempotent command CARRIES its one contract test, and its
+/// shape is checked rather than trusted.
+///
+/// The whole artifact is frozen. This command mints nothing, so the case it
+/// carries is about writes and not about ids: a repeat is the unchanged
+/// original or a typed conflict, and never a silent second write.
+///
+/// `guards` names the relation, schema qualified, beside the version field. A
+/// reader of the artifact alone can say WHICH row the guard protects.
+#[test]
+fn a_state_idempotent_command_carries_the_relation_its_version_guards() {
+    let mut overlay = overlay_manifest();
+    let projection = projection_operation();
+    let operation = overlay["custom_operations"]["receiving.record_receipt"]
+        .as_object_mut()
+        .unwrap();
+    operation.insert("connection".to_owned(), json!("postgres"));
+    operation.insert("transaction".to_owned(), json!("explicit_per_input"));
+    operation.insert("automatic_retry".to_owned(), json!(false));
+    operation.insert("relations".to_owned(), projection["relations"].clone());
+    operation.insert("statements".to_owned(), projection["statements"].clone());
+    operation.insert(
+        "idempotent_by".to_owned(),
+        json!({"state": {"guards": {"purchase_order": "value.expected_row_version"}}}),
+    );
+    operation["input"]["fields"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "path": "value.expected_row_version",
+            "type": "int64",
+            "nullable": false
+        }));
+
+    let package = run(&receiving_catalog(), &overlay, &generic_operation_sources()).unwrap();
+
+    assert!(
+        package
+            .file("generated/contracts/receiving/record_receipt.claim-tests.json")
+            .is_none()
+    );
+    assert_eq!(
+        artifact_json(
+            &package,
+            "generated/contracts/receiving/record_receipt.state-tests.json"
+        ),
+        json!({
+            "operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
+            "law": "command-idempotence-from-state",
+            "guards": [
+                {
+                    "relation": "receiving.purchase_order",
+                    "expected_version": "value.expected_row_version",
+                },
+            ],
+            "cases": [
+                {
+                    "id": "a_repeat_is_a_no_op_or_a_typed_conflict",
+                    "given": "the same request sent again after the first call succeeded",
+                    "expect": {
+                        "writes": "none",
+                        "outcome": "unchanged_original_or_refusal",
+                        "refusal": "concurrency_conflict",
+                        "second_write": "never",
+                        "identity_minted": "none",
+                    },
+                },
+            ],
+        })
+    );
+}
+
+/// EXIT GATE: a command riding a base claim CARRIES its one contract test, and
+/// names the base it rides.
+///
+/// The whole artifact is frozen. The composed command holds no claim of its
+/// own, and the case asserts its replay hands back the BASE's original result.
+#[test]
+fn a_command_riding_a_base_claim_carries_its_one_contract_test() {
+    let overlay = overlay_manifest();
+
+    let package = run(&receiving_catalog(), &overlay, &generic_operation_sources()).unwrap();
+
+    assert_eq!(
+        artifact_json(
+            &package,
+            "generated/contracts/receiving/record_receipt.inherited-tests.json"
+        ),
+        json!({
+            "operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
+            "law": "command-identity-from-claim",
+            "inherits": {
+                "alias": "base_receiving",
+                "package": "wamn_receiving",
+                "version": "1.0.0",
+                "digest": format!("sha256:{}", "a".repeat(64)),
+                "operation": "receiving.record_receipt",
+            },
+            "cases": [
+                {
+                    "id": "replay_returns_the_base_original",
+                    "given": "the same idempotency_key with the same canonical_command",
+                    "expect": {
+                        "identity_source": "base_claim",
+                        "base_result": "identical_to_the_base_first_call",
+                        "result": "the_base_original_under_this_command_decoration",
+                        "writes": "none",
+                        "claim": "none_of_its_own",
+                    },
+                },
+            ],
+        })
+    );
+}
+
+/// EXIT GATE: an inherited command that writes its own row is refused, and the
+/// refusal names the shape that owns a write.
+///
+/// The rule is not narrowed to an id column. A command riding a base claim
+/// decorates a base result, so the moment it writes it writes under an identity
+/// it does not own. That command is a command with a claim that also composes,
+/// and the refusal says exactly that so the author does not narrow the rule.
+#[test]
+fn an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim() {
+    let mut overlay = overlay_manifest();
+    let projection = projection_operation();
+    let operation = overlay["custom_operations"]["receiving.record_receipt"]
+        .as_object_mut()
+        .unwrap();
+    operation.insert("connection".to_owned(), json!("postgres"));
+    operation.insert("transaction".to_owned(), json!("explicit_per_input"));
+    operation.insert("automatic_retry".to_owned(), json!(false));
+    operation.insert("relations".to_owned(), projection["relations"].clone());
+    operation.insert("statements".to_owned(), projection["statements"].clone());
+    operation["relations"][0]["insert_fields"] = json!(["id"]);
+
+    let refusal = run(&receiving_catalog(), &overlay, &generic_operation_sources())
+        .expect_err("an inherited command that writes its own row was accepted");
+
+    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidOperation);
+    let message = refusal.to_string();
+    for remedy in [
+        "inherited",
+        "receiving.purchase_order",
+        "idempotent_by claim",
+        "claim relation",
+    ] {
+        assert!(
+            message.contains(remedy),
+            "the refusal does not name {remedy}: {message}"
+        );
+    }
+}
+
+/// Turn the shipped command into a state-idempotent one with the given guards.
+fn state_command(declaration: &mut Value, guards: Value) {
+    let operation = declaration["custom_operations"]["receiving.record_receipt"]
+        .as_object_mut()
+        .unwrap();
+    operation.insert(
+        "idempotent_by".to_owned(),
+        json!({"state": {"guards": guards}}),
+    );
+    operation.remove("claim");
+    for relation in operation["relations"].as_array_mut().unwrap() {
+        relation["insert_fields"] = json!([]);
+    }
+}
+
+/// EXIT GATE: each declared value admits only its own shape, so no command
+/// borrows another value's guarantee.
+///
+/// A claim outside `claim` is a second identity source. A minted row under
+/// `state` or `inherited` is an identity with no claim behind it. A `state`
+/// command must name the relation each version guards, and that relation and
+/// field must be ones it already declares. An `inherited` command must name a
+/// base operation this package actually depends on.
+#[test]
+fn each_declared_idempotence_value_admits_only_its_own_shape() {
+    let catalog = receiving_catalog();
+    let cases: [(&str, fn(&mut Value)); 7] = [
+        (
+            "idempotent_by claim with no claim declared",
+            |declaration: &mut Value| {
+                declaration["custom_operations"]["receiving.record_receipt"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("claim");
+            },
+        ),
+        (
+            "idempotent_by state that still declares a claim",
+            |declaration: &mut Value| {
+                declaration["custom_operations"]["receiving.record_receipt"]["idempotent_by"] =
+                    json!({"state": {"guards": {"purchase_order": "value.purchase_order_id"}}});
+            },
+        ),
+        (
+            "idempotent_by state that mints a row of its own",
+            |declaration: &mut Value| {
+                let operation = declaration["custom_operations"]["receiving.record_receipt"]
+                    .as_object_mut()
+                    .unwrap();
+                operation.insert(
+                    "idempotent_by".to_owned(),
+                    json!({"state": {"guards": {"purchase_order": "value.purchase_order_id"}}}),
+                );
+                operation.remove("claim");
+            },
+        ),
+        (
+            "idempotent_by state that guards no relation at all",
+            |declaration: &mut Value| {
+                state_command(declaration, json!({}));
+            },
+        ),
+        (
+            "idempotent_by state guarding a relation it never declared",
+            |declaration: &mut Value| {
+                state_command(
+                    declaration,
+                    json!({"absent_relation": "value.purchase_order_id"}),
+                );
+            },
+        ),
+        (
+            "idempotent_by state guarding with a field it never takes",
+            |declaration: &mut Value| {
+                state_command(declaration, json!({"purchase_order": "absent_field"}));
+            },
+        ),
+        (
+            "idempotent_by inherited naming an undeclared base",
+            |declaration: &mut Value| {
+                let operation = declaration["custom_operations"]["receiving.record_receipt"]
+                    .as_object_mut()
+                    .unwrap();
+                operation.insert(
+                    "idempotent_by".to_owned(),
+                    json!({"inherited": {"base": "absent_base", "operation": "receiving.record_receipt"}}),
+                );
+                operation.remove("claim");
+                for relation in operation["relations"].as_array_mut().unwrap() {
+                    relation["insert_fields"] = json!([]);
+                }
+            },
+        ),
+    ];
+    for (label, mutate) in cases {
+        let mut declaration = shipped_manifest();
+        mutate(&mut declaration);
+        let refusal = shipped_generation(&catalog, &declaration).expect_err(label);
+        assert_eq!(
+            refusal.kind(),
+            GenerateErrorKind::InvalidOperation,
+            "{label}"
+        );
+    }
+}
+
+/// EXIT GATE: an authored claim is checked structurally, so a declaration that
+/// only looks like the law is refused.
+///
+/// Each mutant breaks one link in the chain that makes a replay return the same
+/// value BY CONSTRUCTION. The claim relation must be CDC-excluded, its identity
+/// columns must be minted once, the claim statement must hand back exactly
+/// those columns, and the replay statement must read them all back.
+#[test]
+fn an_authored_claim_is_refused_unless_every_identity_comes_from_it() {
+    let catalog = receiving_catalog();
+    let cases: [(&str, fn(&mut Value)); 5] = [
+        (
+            "a claim relation the operation never declared",
+            |declaration: &mut Value| {
+                declaration["custom_operations"]["receiving.record_receipt"]["claim"]["table"] =
+                    json!("absent_command");
+            },
+        ),
+        (
+            "an identity that is not a claim column",
+            |declaration: &mut Value| {
+                declaration["custom_operations"]["receiving.record_receipt"]["claim"]["identities"] =
+                    json!({"receipt_id": "purchase_order_id"});
+            },
+        ),
+        (
+            "an identity the command never returns",
+            |declaration: &mut Value| {
+                declaration["custom_operations"]["receiving.record_receipt"]["claim"]["identities"] =
+                    json!({"claimed_id": "receipt_id"});
+            },
+        ),
+        (
+            "a claim statement that hands back something other than the identity",
+            |declaration: &mut Value| {
+                declaration["custom_operations"]["receiving.record_receipt"]["statements"]["claim_command"]
+                    ["row"][0] =
+                    json!({"name": "purchase_order_id", "type": "uuid", "nullable": false});
+            },
+        ),
+        (
+            "a replay statement that drops the canonical command",
+            |declaration: &mut Value| {
+                declaration["custom_operations"]["receiving.record_receipt"]["statements"]["find_replay"]
+                    ["row"][0] =
+                    json!({"name": "claimed_command", "type": "bytes", "nullable": false});
+            },
+        ),
+    ];
+    for (label, mutate) in cases {
+        let mut declaration = shipped_manifest();
+        mutate(&mut declaration);
+        let refusal = shipped_generation(&catalog, &declaration).expect_err(label);
         assert_eq!(
             refusal.kind(),
             GenerateErrorKind::InvalidOperation,

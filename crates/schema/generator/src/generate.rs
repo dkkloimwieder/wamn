@@ -10,13 +10,13 @@ use wamn_schema_introspection::ir::{
 };
 
 use crate::manifest::{
-    AccessOperationErrorLiteral, AuthoredSqlDeclaration, ContractFieldDeclaration, CrudAction,
-    CursorDirection, CustomOperationDeclaration, CustomOperationKind,
-    CustomOperationResultDeclaration, ModelDeclaration, OperationDeclaration,
-    OperationErrorDetailDeclaration, PackageManifest, PolicyContractRequirement,
-    PolicyContractState, ResultClass, SortDeclaration, StaticSqlFetch,
-    canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
-    validate_identifier, validate_operation_vocabulary,
+    AccessOperationErrorLiteral, AuthoredSqlDeclaration, CommandIdempotence,
+    ContractFieldDeclaration, CrudAction, CursorDirection, CustomOperationDeclaration,
+    CustomOperationKind, CustomOperationResultDeclaration, InheritedClaimDeclaration,
+    ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest,
+    PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration,
+    StateGuardDeclaration, StaticSqlFetch, canonical_operation_identity, custom_artifact_stem,
+    rust_identifier, rust_type_identifier, validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
@@ -495,6 +495,7 @@ fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(
             operation_name,
             operation,
         )?;
+        validate_custom_claim(input.catalog, manifest, operation_name, operation)?;
     }
     Ok(())
 }
@@ -859,40 +860,13 @@ fn resolve_claim<'a>(
             format!("{context} must declare the command claim its identity comes from"),
         )
     })?;
-    validate_identifier(&declaration.table, "claim table")?;
-    let claim = catalog
-        .tables()
-        .iter()
-        .find(|candidate| {
-            candidate.schema() == model.schema && candidate.name() == declaration.table
-        })
-        .ok_or_else(|| {
-            GenerateError::for_object(
-                GenerateErrorKind::UnknownRelation,
-                format!("{context} references unknown claim relation"),
-                format!("{}.{}", model.schema, declaration.table),
-            )
-        })?;
-    if !manifest
-        .internal_relations
-        .values()
-        .any(|relation| relation.schema == model.schema && relation.table == declaration.table)
-    {
-        return Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} claim must be a CDC-excluded internal relation"),
-            format!("{}.{}", model.schema, declaration.table),
-        ));
-    }
-    let primary_key = claim_primary_key(claim).ok_or_else(|| {
-        GenerateError::for_object(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} claim must key {CLAIM_KEY_COLUMN} under a primary key alone"),
-            format!("{}.{}", model.schema, declaration.table),
-        )
-    })?;
-    require_claim_column(context, claim, CLAIM_KEY_COLUMN, ColumnType::Text)?;
-    require_claim_column(context, claim, CLAIM_COMMAND_COLUMN, ColumnType::Bytes)?;
+    let (claim, primary_key) = require_claim_relation(
+        catalog,
+        manifest,
+        context,
+        &model.schema,
+        &declaration.table,
+    )?;
     // The emitted claim INSERT writes the key and the canonical command and
     // nothing else, so every other column must have a value without one.
     for column in claim.columns() {
@@ -937,32 +911,7 @@ fn resolve_claim<'a>(
                 format!("{context} claim reuses column {claim_column} for two identities"),
             ));
         }
-        let column = column(claim, claim_column).ok_or_else(|| {
-            GenerateError::for_object(
-                GenerateErrorKind::UnknownColumn,
-                format!("{context} claim has no column {claim_column}"),
-                format!("{}.{}.{claim_column}", model.schema, declaration.table),
-            )
-        })?;
-        let pre_generated = column.column_type() == ColumnType::Uuid
-            && !column.nullable()
-            && column.default() == Some(&ColumnDefault::GenRandomUuid)
-            && claim.constraints().iter().any(|constraint| {
-                matches!(
-                    constraint.kind(),
-                    ConstraintKind::Unique { columns }
-                        if columns.len() == 1 && columns[0].as_ref() == claim_column.as_str()
-                )
-            });
-        if !pre_generated {
-            return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidOperation,
-                format!(
-                    "{context} claim column {claim_column} must be a unique non-null uuid defaulting to gen_random_uuid()"
-                ),
-                format!("{}.{}.{claim_column}", model.schema, declaration.table),
-            ));
-        }
+        require_pre_generated_identity(context, claim, claim_column)?;
         identities.push((field.as_str(), claim_column.as_str()));
     }
     Ok(sql::Claim {
@@ -970,6 +919,96 @@ fn resolve_claim<'a>(
         primary_key,
         identities,
     })
+}
+
+/// Find one claim relation and check the shape the law needs from it.
+///
+/// A generated create and an authored command share this check, because the law
+/// is one law. The relation is CDC-excluded, it keys the idempotency key under a
+/// primary key alone, and it stores the canonical command beside that key. The
+/// primary key is what makes a second call with the same key mint nothing.
+fn require_claim_relation<'a>(
+    catalog: &'a CatalogIr,
+    manifest: &PackageManifest,
+    context: &str,
+    schema: &str,
+    table: &str,
+) -> Result<(&'a Table, &'a str), GenerateError> {
+    validate_identifier(table, "claim table")?;
+    let claim = catalog
+        .tables()
+        .iter()
+        .find(|candidate| candidate.schema() == schema && candidate.name() == table)
+        .ok_or_else(|| {
+            GenerateError::for_object(
+                GenerateErrorKind::UnknownRelation,
+                format!("{context} references unknown claim relation"),
+                format!("{schema}.{table}"),
+            )
+        })?;
+    if !manifest
+        .internal_relations
+        .values()
+        .any(|relation| relation.schema == schema && relation.table == table)
+    {
+        return Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} claim must be a CDC-excluded internal relation"),
+            format!("{schema}.{table}"),
+        ));
+    }
+    let primary_key = claim_primary_key(claim).ok_or_else(|| {
+        GenerateError::for_object(
+            GenerateErrorKind::InvalidOperation,
+            format!("{context} claim must key {CLAIM_KEY_COLUMN} under a primary key alone"),
+            format!("{schema}.{table}"),
+        )
+    })?;
+    require_claim_column(context, claim, CLAIM_KEY_COLUMN, ColumnType::Text)?;
+    require_claim_column(context, claim, CLAIM_COMMAND_COLUMN, ColumnType::Bytes)?;
+    Ok((claim, primary_key))
+}
+
+/// Refuse a claim column PostgreSQL can mint a second time.
+///
+/// The column defaults `gen_random_uuid()` once, under its own `UNIQUE`
+/// constraint, so the claim row holds one value for the life of the key. That
+/// is why a replay returns the same identity BY CONSTRUCTION rather than
+/// because some caller took an early return.
+fn require_pre_generated_identity(
+    context: &str,
+    claim: &Table,
+    claim_column: &str,
+) -> Result<(), GenerateError> {
+    let object = format!("{}.{}.{claim_column}", claim.schema(), claim.name());
+    let column = column(claim, claim_column).ok_or_else(|| {
+        GenerateError::for_object(
+            GenerateErrorKind::UnknownColumn,
+            format!("{context} claim has no column {claim_column}"),
+            object.clone(),
+        )
+    })?;
+    let pre_generated = column.column_type() == ColumnType::Uuid
+        && !column.nullable()
+        && column.default() == Some(&ColumnDefault::GenRandomUuid)
+        && claim.constraints().iter().any(|constraint| {
+            matches!(
+                constraint.kind(),
+                ConstraintKind::Unique { columns }
+                    if columns.len() == 1 && columns[0].as_ref() == claim_column
+            )
+        });
+    if pre_generated {
+        Ok(())
+    } else {
+        Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{context} claim column {claim_column} must be a unique non-null uuid defaulting to gen_random_uuid()"
+            ),
+            object,
+        ))
+    }
 }
 
 fn claim_primary_key(claim: &Table) -> Option<&str> {
@@ -1089,6 +1128,126 @@ fn validate_query(
         validate_authored_variants(&context, sort, authored)?;
     }
     Ok(())
+}
+
+/// Check one authored command's claim against the catalog it runs on.
+///
+/// The law is the same law a generated create carries. The relation shape and
+/// the pre-generated identity columns go through the same helpers. What differs
+/// is where the ids are named. A generated create mints them in the model
+/// table, and an authored command hands them out in its own result. The
+/// identity map is therefore read against the result fields and against the row
+/// the claim statement returns.
+///
+/// The three statements are named because the emitted contract tests name them.
+/// The claim statement returns exactly the pre-generated columns, and the
+/// replay statement returns the canonical command beside every one of them.
+/// A command missing either cannot return the immutable original on a replay.
+fn validate_custom_claim(
+    catalog: &CatalogIr,
+    manifest: &PackageManifest,
+    operation_name: &str,
+    operation: &CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    let Some(declaration) = &operation.claim else {
+        return Ok(());
+    };
+    // The claim relation is one the operation already declares, so the schema
+    // comes from that declaration and the command holds the access it needs.
+    let relation = operation
+        .relations
+        .iter()
+        .find(|relation| relation.table == declaration.table)
+        .ok_or_else(|| {
+            GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation_name} claim {} must be one of the operation's declared relations",
+                    declaration.table
+                ),
+            )
+        })?;
+    let (claim, _) = require_claim_relation(
+        catalog,
+        manifest,
+        operation_name,
+        &relation.schema,
+        &declaration.table,
+    )?;
+    let result = operation.result.as_ref().ok_or_else(|| {
+        GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation_name} claim needs a declared result to hand identities out in"),
+        )
+    })?;
+    if declaration.identities.is_empty() {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation_name} claim must pre-generate at least one identity"),
+        ));
+    }
+    let mut claim_columns = BTreeSet::new();
+    for (field, claim_column) in &declaration.identities {
+        if !claim_columns.insert(claim_column.as_str()) {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("{operation_name} claim reuses column {claim_column} for two identities"),
+            ));
+        }
+        if !result
+            .fields
+            .iter()
+            .any(|candidate| candidate.path == *field)
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("{operation_name} claim identity {field} is not a result field"),
+            ));
+        }
+        require_pre_generated_identity(operation_name, claim, claim_column)?;
+    }
+    let minted = claim_statement_row(operation_name, operation, &declaration.claim, "claim")?;
+    if minted != claim_columns {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{operation_name} statement {} must return exactly the pre-generated identities",
+                declaration.claim
+            ),
+        ));
+    }
+    let replayed = claim_statement_row(operation_name, operation, &declaration.replay, "replay")?;
+    if !replayed.contains(CLAIM_COMMAND_COLUMN) || !claim_columns.is_subset(&replayed) {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{operation_name} statement {} must return {CLAIM_COMMAND_COLUMN} and every pre-generated identity",
+                declaration.replay
+            ),
+        ));
+    }
+    claim_statement_row(operation_name, operation, &declaration.finalize, "finalize")?;
+    Ok(())
+}
+
+/// The row one named claim statement returns, refusing an undeclared name.
+fn claim_statement_row<'a>(
+    operation_name: &str,
+    operation: &'a CustomOperationDeclaration,
+    statement: &str,
+    role: &str,
+) -> Result<BTreeSet<&'a str>, GenerateError> {
+    let declaration = operation.statements.get(statement).ok_or_else(|| {
+        GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("{operation_name} claim names unknown {role} statement {statement}"),
+        )
+    })?;
+    Ok(declaration
+        .row
+        .iter()
+        .map(|value| value.name.as_str())
+        .collect())
 }
 
 fn validate_custom_operation_sql(
@@ -1779,7 +1938,38 @@ fn emit_custom_operation_contracts(
         files,
         &format!("{root}.errors.json"),
         &custom_operation_error_contract(catalog, operation),
-    )
+    )?;
+    // One artifact per declared shape, named for the shape it holds. A runner
+    // reads the shape off the file name and never guesses which cases apply.
+    match &operation.idempotent_by {
+        Some(CommandIdempotence::Claim) => {
+            let claim = operation
+                .claim
+                .as_ref()
+                .expect("idempotent_by claim was validated to carry a claim");
+            insert_json(
+                files,
+                &format!("{root}.claim-tests.json"),
+                &claim_contract_tests(&operation_id, &claim.claim, &claim.finalize, &claim.replay),
+            )?;
+        }
+        Some(CommandIdempotence::State(state)) => {
+            insert_json(
+                files,
+                &format!("{root}.state-tests.json"),
+                &state_contract_test(&operation_id, operation, state),
+            )?;
+        }
+        Some(CommandIdempotence::Inherited(inherited)) => {
+            insert_json(
+                files,
+                &format!("{root}.inherited-tests.json"),
+                &inherited_contract_test(manifest, &operation_id, inherited),
+            )?;
+        }
+        None => {}
+    }
+    Ok(())
 }
 
 fn statement_contract(
@@ -1848,25 +2038,26 @@ fn idempotency_contract(claim: &sql::Claim<'_>) -> Value {
     })
 }
 
-/// The two contract tests every create-shaped command carries.
+/// The two contract tests every claim-bearing command carries.
 ///
 /// The claim law is a property of the emitted statements, so its tests belong
-/// to the command rather than to whoever writes the package. Every create gets
-/// both by construction, and a package author writes neither.
+/// to the command rather than to whoever writes the package. A generated create
+/// and an authored command each get both by construction, and a package author
+/// writes neither.
 ///
 /// Each case names the statements in the order a caller runs them. The first
-/// call mints the claim and inserts. The second call re-runs `create_claim`,
-/// which returns no row under the claim's primary key, so the caller reads the
-/// durable original through `create_replay`. Case one asserts that the original
-/// comes back unchanged with no write. Case two asserts the typed refusal when
-/// that original was minted for a different request.
+/// call mints the claim and finishes it. The second call re-runs the claim
+/// statement, which returns no row under the claim's primary key. The caller
+/// then reads the durable original through the replay statement. Case one
+/// asserts that the original comes back unchanged with no write. Case two
+/// asserts the typed refusal when that original was minted for another request.
 ///
-/// Binds are not repeated here. `create.input.json` states the request shape
-/// and the operation contract states each statement's binds and columns.
+/// Binds are not repeated here. The input contract states the request shape and
+/// the operation contract states each statement's binds and columns.
 ///
 /// EXECUTING these cases needs a live database. That runner is `wamn-f89v`,
 /// and it opens on its first consumer. What this emits is the case list.
-fn claim_contract_tests(operation_id: &str) -> Value {
+fn claim_contract_tests(operation_id: &str, claim: &str, finalize: &str, replay: &str) -> Value {
     json!({
         "operation": operation_id,
         "law": "command-identity-from-claim",
@@ -1874,8 +2065,8 @@ fn claim_contract_tests(operation_id: &str) -> Value {
             {
                 "id": "replay_returns_the_immutable_original",
                 "given": "the same idempotency_key with the same canonical_command",
-                "first_call": [CREATE_CLAIM_STATEMENT, CREATE_STATEMENT],
-                "second_call": [CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT],
+                "first_call": [claim, finalize],
+                "second_call": [claim, replay],
                 "expect": {
                     "claim": "no_row",
                     "canonical_command": "equal",
@@ -1887,13 +2078,117 @@ fn claim_contract_tests(operation_id: &str) -> Value {
             {
                 "id": "changed_request_under_a_live_key_refuses",
                 "given": "the same idempotency_key with a changed canonical_command",
-                "first_call": [CREATE_CLAIM_STATEMENT, CREATE_STATEMENT],
-                "second_call": [CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT],
+                "first_call": [claim, finalize],
+                "second_call": [claim, replay],
                 "expect": {
                     "claim": "no_row",
                     "canonical_command": "differs",
                     "writes": "none",
                     "refusal": AccessOperationErrorLiteral::IdempotencyConflict,
+                },
+            },
+        ],
+    })
+}
+
+/// The one contract test every state-idempotent command carries.
+///
+/// This command mints nothing, so there is no id to return twice. What a repeat
+/// must never do is write a second time in silence. A repeat after the first
+/// call succeeded sees a moved version and gets `concurrency_conflict`. A repeat
+/// that still matches the version finds the work already done and writes
+/// nothing.
+///
+/// Both outcomes are admitted, and a second write is admitted under neither.
+/// That is what makes the command idempotent by state rather than by a claim.
+///
+/// `guards` names each protected relation, schema qualified, beside the input
+/// field carrying its expected version. A reader sees WHICH row the guard
+/// protects, which a command guarding two rows would otherwise leave open.
+///
+/// EXECUTING this case needs a live database. That runner is `wamn-f89v`,
+/// and it opens on its first consumer. What this emits is the case list.
+fn state_contract_test(
+    operation_id: &str,
+    operation: &CustomOperationDeclaration,
+    state: &StateGuardDeclaration,
+) -> Value {
+    let guards = state
+        .guards
+        .iter()
+        .map(|(table, field)| {
+            let relation = operation
+                .relations
+                .iter()
+                .find(|candidate| candidate.table == *table)
+                .expect("state guard was validated against a declared relation");
+            json!({
+                "relation": format!("{}.{}", relation.schema, relation.table),
+                "expected_version": field,
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "operation": operation_id,
+        "law": "command-idempotence-from-state",
+        "guards": guards,
+        "cases": [
+            {
+                "id": "a_repeat_is_a_no_op_or_a_typed_conflict",
+                "given": "the same request sent again after the first call succeeded",
+                "expect": {
+                    "writes": "none",
+                    "outcome": "unchanged_original_or_refusal",
+                    "refusal": AccessOperationErrorLiteral::ConcurrencyConflict,
+                    "second_write": "never",
+                    "identity_minted": "none",
+                },
+            },
+        ],
+    })
+}
+
+/// The one contract test every command riding a base claim carries.
+///
+/// The identity in this command's result was minted by the BASE command's
+/// claim. This command adds no claim of its own, because a second claim over
+/// one identity is the defect the law names. What it must prove is that its
+/// replay hands back the base's original result and not a fresh one.
+///
+/// The base is named here, digest included, so a reader sees which command's
+/// claim this one rides without opening the base package.
+///
+/// EXECUTING this case needs a live database. That runner is `wamn-f89v`,
+/// and it opens on its first consumer. What this emits is the case list.
+fn inherited_contract_test(
+    manifest: &PackageManifest,
+    operation_id: &str,
+    inherited: &InheritedClaimDeclaration,
+) -> Value {
+    let dependency = manifest
+        .base_dependencies
+        .get(&inherited.base)
+        .expect("inherited idempotence was validated against a declared base dependency");
+    json!({
+        "operation": operation_id,
+        "law": "command-identity-from-claim",
+        "inherits": {
+            "alias": inherited.base,
+            "package": dependency.package,
+            "version": dependency.version,
+            "digest": dependency.digest,
+            "operation": inherited.operation,
+        },
+        "cases": [
+            {
+                "id": "replay_returns_the_base_original",
+                "given": "the same idempotency_key with the same canonical_command",
+                "expect": {
+                    "identity_source": "base_claim",
+                    "base_result": "identical_to_the_base_first_call",
+                    "result": "the_base_original_under_this_command_decoration",
+                    "writes": "none",
+                    "claim": "none_of_its_own",
                 },
             },
         ],
@@ -2605,7 +2900,12 @@ fn emit_operation_contracts(
         insert_json(
             files,
             &format!("{root}.claim-tests.json"),
-            &claim_contract_tests(&operation_id),
+            &claim_contract_tests(
+                &operation_id,
+                CREATE_CLAIM_STATEMENT,
+                CREATE_STATEMENT,
+                CREATE_REPLAY_STATEMENT,
+            ),
         )?;
     }
     Ok(())

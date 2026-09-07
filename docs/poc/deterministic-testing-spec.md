@@ -24,9 +24,10 @@ One new dependency, `proptest`. Everything runs in the normal test sweep on
 the stable pin.
 
 - D1: the walk simulator, WALK-1..6, `proptest` shrinking.
-- D7: generated contract tests for create-shaped commands. `wamn-10yt.19`
-  needs them anyway. [landed 2026-09-07 as
-  `generated/contracts/<model>/create.claim-tests.json`.]
+- D7: generated contract tests for commands. `wamn-10yt.19` needs them anyway.
+  [landed 2026-09-07 as `generated/contracts/<model>/create.claim-tests.json`
+  for a CRUD create; widened by `wamn-10yt.26` to every command, which declares
+  `idempotent_by` and emits the artifact that value names.]
 - The first half of D8: invariant functions as plain `fn check(state)` for the
   walk and for run-state. No feature flag.
 - A `proptest` twin for `sql_lex.rs` only (C1 target 1, the policy parser).

@@ -243,6 +243,16 @@
       "connection": "postgres",
       "transaction": "explicit_per_input",
       "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "inventory_move_command",
+        "identities": {
+          "movement_id": "movement_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -746,6 +756,16 @@
       "connection": "postgres",
       "transaction": "explicit_per_input",
       "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "inventory_adjust_command",
+        "identities": {
+          "movement_id": "movement_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -1235,6 +1255,16 @@
       "connection": "postgres",
       "transaction": "explicit_per_input",
       "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "inventory_merge_command",
+        "identities": {
+          "movement_id": "movement_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -1787,6 +1817,17 @@
       "connection": "postgres",
       "transaction": "explicit_per_input",
       "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "inventory_split_command",
+        "identities": {
+          "movement_id": "movement_id",
+          "new_pallet_id": "new_pallet_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
