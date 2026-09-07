@@ -37,5 +37,8 @@
     "files_changed": 88,
     "outside_allowed_paths": []
   },
-  "down": null
+  "down": {
+    "ok": true,
+    "residue": []
+  }
 }

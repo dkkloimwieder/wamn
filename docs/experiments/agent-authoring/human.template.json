@@ -1,4 +1,5 @@
 {
+  "conduct": "<what the agent did with the rules the brief gave it>",
   "Q3": "design-doc <n>, code <n>, skill <n>, generated <n>, other <n>",
   "Q4": "none | curl | invented-script | loop-only",
   "Q6": "tokens <n>, cost <n>, model <id>",
