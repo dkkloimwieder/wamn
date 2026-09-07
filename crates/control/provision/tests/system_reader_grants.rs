@@ -304,6 +304,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
     for relation in [
         "identity.pats",
         "identity.principals",
+        "identity.project_env_memberships",
         "identity.project_roles",
         "provisioning.sagas",
         "registry.orgs",
@@ -452,11 +453,12 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         vec![
             "relation|identity|pats|SELECT|false".to_owned(),
             "relation|identity|principals|SELECT|false".to_owned(),
+            "relation|identity|project_env_memberships|SELECT|false".to_owned(),
             "relation|identity|project_roles|SELECT|false".to_owned(),
             "schema|identity|identity|USAGE|false".to_owned(),
         ],
         "the stable identity-reader role's aclexplode inventory is not exactly \
-         USAGE on identity plus SELECT on the three relations it reads"
+         USAGE on identity plus SELECT on the four relations it reads"
     );
     // The registry reader is untouched by the identity reader's convergence —
     // neither batch may narrow or widen the other.
@@ -477,6 +479,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     for relation in [
         "identity.pats",
         "identity.principals",
+        "identity.project_env_memberships",
         "identity.project_roles",
     ] {
         probes.push_str(&format!(
@@ -545,6 +548,9 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         "SELECT role FROM identity.project_roles \
          WHERE principal_id = '00000000-0000-4000-8000-000000000000'::uuid \
            AND org = 'acme' AND project = 'receiving' ORDER BY role",
+        "SELECT EXISTS (SELECT 1 FROM identity.project_env_memberships \
+         WHERE principal_id = '00000000-0000-4000-8000-000000000000'::uuid \
+           AND org = 'acme' AND project = 'receiving' AND env = 'dev')",
     ] {
         assert_eq!(
             reader_sqlstate(identity_url, statement),
@@ -574,6 +580,19 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         (
             "UPDATE identity.project_roles SET role = 'project-admin'",
             "escalate an existing project role",
+        ),
+        (
+            "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
+             VALUES ('00000000-0000-4000-8000-000000000000'::uuid, 'acme', 'receiving', 'dev')",
+            "self-grant environment membership",
+        ),
+        (
+            "UPDATE identity.project_env_memberships SET env = 'prod'",
+            "move membership into another environment",
+        ),
+        (
+            "DELETE FROM identity.project_env_memberships",
+            "revoke environment memberships",
         ),
         (
             "INSERT INTO identity.principals (kind, subject, display_name) \

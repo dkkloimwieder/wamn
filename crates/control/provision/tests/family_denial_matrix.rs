@@ -109,8 +109,10 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// The denial matrix is a claim about THESE objects: the run plane plus the
 /// catalog relations the platform families read. A family reaching one it does
 /// not own is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 22] = [
+const MATRIX_RELATIONS: [&str; 24] = [
     "app_system.permissions",
+    "app_system.user_roles",
+    "app_system.users",
     "catalog.component_library",
     "catalog.connection_bindings",
     "catalog.connection_generations",
@@ -186,6 +188,8 @@ const MATRIX: [FamilyReach; 9] = [
         family: WorkloadRoleFamily::App,
         relations: &[
             "app_system.permissions|SELECT|table",
+            "app_system.user_roles|SELECT|table",
+            "app_system.users|SELECT|table",
             "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
@@ -279,6 +283,8 @@ const MATRIX: [FamilyReach; 9] = [
         family: WorkloadRoleFamily::HttpAdmitter,
         relations: &[
             "app_system.permissions|SELECT|table",
+            "app_system.user_roles|SELECT|table",
+            "app_system.users|SELECT|table",
             "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",

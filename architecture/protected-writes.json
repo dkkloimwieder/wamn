@@ -70,6 +70,38 @@
     },
     {
       "scope": "production-control-database",
+      "relation": "identity.project_env_memberships",
+      "ops": false,
+      "installer": "platform-identity",
+      "owner": "platform-identity",
+      "mechanisms": [
+        "direct-dml",
+        "foreign-key:delete:cascade;from=identity.principals;constraint=project_env_memberships_principal_id_principal_kind_fkey",
+        "foreign-key:delete:cascade;from=registry.project_envs;constraint=project_env_memberships_org_project_env_fkey"
+      ],
+      "roles": [
+        {
+          "role": "wamn_system",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:project_env_memberships_human_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal_kind = 'human'::text)",
+        "constraint:project_env_memberships_org_project_env_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (org, project, env) REFERENCES registry.project_envs(org, project, env) ON DELETE CASCADE",
+        "constraint:project_env_memberships_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (principal_id, org, project, env)",
+        "constraint:project_env_memberships_principal_id_principal_kind_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (principal_id, principal_kind) REFERENCES identity.principals(id, kind) ON DELETE CASCADE",
+        "row-security:enabled=false;forced=false"
+      ]
+    },
+    {
+      "scope": "production-control-database",
       "relation": "identity.project_roles",
       "ops": false,
       "installer": "platform-identity",

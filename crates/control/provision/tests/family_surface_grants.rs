@@ -706,14 +706,14 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
 
 /// THE CALLABLE-HTTP ADMITTER SURFACE, AS THE SERVER SEES IT.
 ///
-/// Seven catalog relations, the exact operation-grant relation, and no run plane
+/// Seven catalog relations, three fresh permission relations, and no run plane
 /// — asserted by EQUALITY over the whole inventory, so acquiring any adjacent
 /// authority fails here rather than at the next incident.
 #[test]
-fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
+fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     let Ok(admin) = std::env::var("WAMN_FAMILY_SURFACE_PG_URL") else {
         eprintln!(
-            "skipping the_http_admitter_role_adds_exactly_the_operation_grant_read \
+            "skipping the_http_admitter_role_adds_exactly_the_fresh_permission_reads \
              (set WAMN_FAMILY_SURFACE_PG_URL to run)"
         );
         return;
@@ -744,6 +744,8 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
         .map(|relation| format!("relation|catalog|{relation}|SELECT"))
         .collect();
     expected.push("relation|app_system|permissions|SELECT".to_owned());
+    expected.push("relation|app_system|user_roles|SELECT".to_owned());
+    expected.push("relation|app_system|users|SELECT".to_owned());
     expected.push("schema|app_system|app_system|USAGE".to_owned());
     expected.push("schema|catalog|catalog|USAGE".to_owned());
     expected.sort();
@@ -751,7 +753,7 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
         inventory(&admin, stable),
         expected,
         "the callable-HTTP admitter's aclexplode inventory is not exactly USAGE \
-         on catalog and app_system plus the eight SELECTs its host reads"
+         on catalog and app_system plus the ten SELECTs its host reads"
     );
     // MEASURED, and the reason the probe block below cannot assert a NEGATIVE
     // for `require_executor_platform_authority`: `deploy/sql/run-state.sql`
@@ -793,7 +795,7 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
         inventory(&admin, stable),
         expected,
         "a hand-granted adjacent privilege survived a re-apply: this credential \
-         must never read role state or perform admission or claim work"
+         must never read role definitions or perform admission or claim work"
     );
 
     let mut probes = format!(
@@ -825,6 +827,16 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
                AND NOT has_table_privilege(r, 'catalog.{relation}', 'UPDATE') \
                AND NOT has_table_privilege(r, 'catalog.{relation}', 'DELETE'), \
                'the callable-HTTP admitter writes nothing anywhere'; \n"
+        ));
+    }
+    for relation in ["users", "user_roles"] {
+        probes.push_str(&format!(
+            "  ASSERT has_table_privilege(r, 'app_system.{relation}', 'SELECT'), \
+               'cannot read the human permission relation app_system.{relation}'; \
+             ASSERT NOT has_table_privilege(r, 'app_system.{relation}', 'INSERT') \
+               AND NOT has_table_privilege(r, 'app_system.{relation}', 'UPDATE') \
+               AND NOT has_table_privilege(r, 'app_system.{relation}', 'DELETE'), \
+               'the callable-HTTP admitter writes human permission authority'; \n"
         ));
     }
     for relation in [
@@ -867,7 +879,7 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
     let digest = format!("sha256:{}", "a".repeat(64));
     run_admin(
         &admin,
-        "seed one readable fact in each of the seven relations",
+        "seed one readable fact in each catalog and fresh permission relation",
         &format!(
             // `connection_instances.active_generation` and
             // `connection_generations` reference each other, and the instance's
@@ -918,6 +930,10 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
                      'active', 'valid', '{digest}');\n\
              INSERT INTO app_system.roles (tenant_id, name, is_system) \
              VALUES ('tenant-a', 'route-caller', true);\n\
+             INSERT INTO app_system.users (tenant_id, id, email) \
+             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'caller@example.test');\n\
+             INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'route-caller');\n\
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
              VALUES ('tenant-a', 'route-caller', \
                      'wamn-receiving:purchase-order/get@1.0.0');\n\
@@ -958,5 +974,17 @@ fn the_http_admitter_role_adds_exactly_the_operation_grant_read() {
         ),
         "1",
         "the callable-HTTP generation cannot read the exact operation grant"
+    );
+    assert_eq!(
+        query(
+            &as_login,
+            "SELECT p.permission FROM app_system.users u \
+             JOIN app_system.user_roles ur ON ur.tenant_id = u.tenant_id AND ur.user_id = u.id \
+             JOIN app_system.permissions p ON p.tenant_id = ur.tenant_id AND p.role_name = ur.role_name \
+             WHERE u.tenant_id = 'tenant-a' AND u.id = '00000000-0000-4000-8000-000000000001' \
+               AND u.status = 'active'"
+        ),
+        "wamn-receiving:purchase-order/get@1.0.0",
+        "the callable-HTTP generation cannot read the human user's fresh permission"
     );
 }

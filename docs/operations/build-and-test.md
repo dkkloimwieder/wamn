@@ -1091,6 +1091,36 @@ docker rm -f wamn-route-auth-pg # BY EXPLICIT NAME. Never prune.
 It owns the fresh server: control/project databases and cluster-wide roles are
 created and reset. The frozen cluster is never a valid target.
 
+The same gate covers human PATs and explicit project-environment membership
+(`wamn-ctc8.19`). It calls the provisioning CLI handlers and the production
+route reader. It tests scope isolation, repeated grants and revocations,
+fresh role removal, disabled users, and the org-issued principal UUID.
+Service PAT scope and permission tests remain in the gate.
+
+The human path reads the PAT, the environment membership, and the tenant
+permissions. The service path retains its PAT, project-role, and tenant
+permission reads. Fresh-auth measurement belongs to `wamn-ctc8.12`.
+
+For an existing system database, install the `identity.project_env_memberships`
+definition from `deploy/sql/system-schema.sql` as `wamn_system`.
+Do not replay the complete bootstrap against an existing database.
+Before hosts restart, reconcile the IdentityReader and HttpAdmitter grants
+through the existing provisioning command.
+The first gains membership `SELECT`. The second gains `SELECT` on
+`app_system.users` and `app_system.user_roles`.
+
+Use the existing org-issued human UUID when you grant or revoke membership:
+
+```bash
+wamn-ctl grant-project-env-membership --org acme --project receiving --env dev \
+  --principal-id "$WAMN_HUMAN_PRINCIPAL_ID"
+wamn-ctl revoke-project-env-membership --org acme --project receiving --env dev \
+  --principal-id "$WAMN_HUMAN_PRINCIPAL_ID"
+```
+
+Both commands read the administrator URL from `WAMN_SYSTEM_ADMIN_URL`.
+They create no users, roles, or tokens.
+
 ### `[WAMN-DEV-LIVE]` — clean twelve-stage product command and cleanup
 
 This gate runs the literal `wamn dev` product command through all twelve

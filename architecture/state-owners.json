@@ -116,7 +116,7 @@
     "platform-runtime": {
       "path": "crates/platform/runtime",
       "role": "reader",
-      "note": "reader-only: the host's wiring-resolution and claim snapshots name catalog relations in production SQL but author none"
+      "note": "The host reads catalog facts and current application permissions. These reads change no rows."
     },
     "event-materializer": {
       "path": "components/events/materializer",
@@ -441,6 +441,23 @@
     },
     {
       "id": "identity.principals",
+      "plane": "control",
+      "semantic_owner": "platform-identity",
+      "migration_owners": [
+        "platform-identity"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "platform-identity"
+      ],
+      "readers": [
+        "platform-identity"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "identity.project_env_memberships",
       "plane": "control",
       "semantic_owner": "platform-identity",
       "migration_owners": [
@@ -1021,7 +1038,8 @@
         "project-state"
       ],
       "readers": [
-        "project-state"
+        "project-state",
+        "platform-runtime"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1057,7 +1075,8 @@
         "project-state"
       ],
       "readers": [
-        "project-state"
+        "project-state",
+        "platform-runtime"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1076,7 +1095,8 @@
       ],
       "readers": [
         "project-state",
-        "provision-store"
+        "provision-store",
+        "platform-runtime"
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"

@@ -24,7 +24,7 @@
 -- what .6 provision-org connects as. A superuser driving the apply `SET ROLE
 -- wamn_system` first.
 --
--- THE GENERIC DEPLOYMENT MODEL (D18, docs/archive/platform/deployment-model.md, wamn-8df.3;
+-- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
 -- org-scoped policies + templates, wamn-8df.4): the closed tier/env CHECK
 -- enumerations are RETIRED. `env` is a validated slug resolving a
 -- `registry.env_policies` row IN ITS ORG's set (referential integrity — the
@@ -36,7 +36,7 @@
 -- provision-org time; there is NO platform-global policy seed — an org
 -- instantiates a template and then customizes its own rows per-env.
 --
--- THE FOUR INVARIANTS (docs/archive/platform/postgres-topology.md §T1), and how this schema
+-- THE FOUR INVARIANTS for T1, and how this schema
 -- encodes / makes each testable:
 --   (1) request-path-free  — an ARCHITECTURAL property, not a DB constraint. No
 --       data-plane workload (gateway/runner/dispatcher/webhook) may reference
@@ -318,6 +318,28 @@ CREATE TABLE registry.project_envs (
         DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT project_envs_instance_suffix_check
         CHECK (instance_suffix ~ '^[a-z0-9]{8}$')
+);
+
+-- Human project access is an explicit grant to one project-environment
+-- (wamn-ctc8.19). Keep the platform-issued principal UUID: app_system.users
+-- uses that same UUID for the environment's roles and permissions. Management
+-- project roles do not grant membership, and services use their existing
+-- environment-bound authentication. Deleting an environment removes its
+-- grants, so provisioning the same triple again cannot inherit them.
+CREATE TABLE identity.project_env_memberships (
+    principal_id   uuid NOT NULL,
+    principal_kind text NOT NULL DEFAULT 'human',
+    org            text NOT NULL,
+    project        text NOT NULL,
+    env            text NOT NULL,
+    granted_at     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (principal_id, org, project, env),
+    FOREIGN KEY (principal_id, principal_kind)
+        REFERENCES identity.principals (id, kind) ON DELETE CASCADE,
+    FOREIGN KEY (org, project, env)
+        REFERENCES registry.project_envs (org, project, env) ON DELETE CASCADE,
+    CONSTRAINT project_env_memberships_human_check
+        CHECK (principal_kind = 'human')
 );
 
 -- The env_policies → orgs CASCADE is added HERE, after projects/project_envs

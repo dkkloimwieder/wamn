@@ -2,8 +2,9 @@
 //!
 //! MVP outcome: management auth.
 //!
-//! This crate owns human and service principals, project-role assignments, and
-//! opaque personal access tokens. It deliberately contains no HTTP, OIDC, JWT,
+//! This crate owns human and service principals, project-role assignments,
+//! project-environment memberships, and opaque personal access tokens.
+//! It deliberately contains no HTTP, OIDC, JWT,
 //! or per-project `app_system` authority: every function here is
 //! transport-neutral and takes an already-open client. An OIDC adapter may
 //! resolve an externally authenticated subject through [`resolve_subject`].
@@ -47,6 +48,14 @@ const ASSIGN_PROJECT_ROLE_SQL: &str = "INSERT INTO identity.project_roles \
     ON CONFLICT DO NOTHING";
 const SELECT_PROJECT_ROLES_SQL: &str = "SELECT role FROM identity.project_roles \
     WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 ORDER BY role";
+const GRANT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env_memberships \
+    (principal_id, org, project, env) VALUES ($1::text::uuid, $2, $3, $4) \
+    ON CONFLICT DO NOTHING";
+const SELECT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "SELECT EXISTS (\
+    SELECT 1 FROM identity.project_env_memberships \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4)";
+const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_env_memberships \
+    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4";
 // Every stored token instant crosses this API as second-resolution RFC 3339 UTC
 // text rendered by PostgreSQL, so the crate needs no calendar dependency and a
 // later transport can put the value straight on the wire.
@@ -189,6 +198,7 @@ impl fmt::Display for PrincipalStatus {
 }
 
 /// Opaque platform principal identity minted by the system database.
+/// Parsing checks UUID spelling; it does not prove existence or authentication.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PrincipalId(Box<str>);
 
@@ -202,6 +212,28 @@ impl PrincipalId {
 impl fmt::Display for PrincipalId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for PrincipalId {
+    type Err = IdentityError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.len() != 36
+            || !value.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            })
+        {
+            return Err(IdentityError::new(
+                IdentityErrorKind::InvalidInput,
+                "principal ID must be a hyphenated UUID",
+            ));
+        }
+        Ok(Self(value.to_ascii_lowercase().into()))
     }
 }
 
@@ -669,17 +701,87 @@ fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<ProjectRole>, IdentityErro
         .collect()
 }
 
-/// The two identity reads a route authentication performs, prepared once.
+/// Grant a human principal membership in one registered project-environment.
+///
+/// Repeated grants are harmless. The database rejects service principals and
+/// missing environments. Membership does not create tenant users or assign roles.
+pub async fn grant_project_env_membership(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Result<(), IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    let env = checked_scope_segment("env", env)?;
+    client
+        .execute(
+            GRANT_PROJECT_ENV_MEMBERSHIP_SQL,
+            &[&principal_id.as_str(), &org, &project, &env],
+        )
+        .await
+        .map_err(database_error)?;
+    Ok(())
+}
+
+/// Read the explicit membership fact for one principal and project-environment.
+///
+/// Credential authentication must separately verify that the principal is active.
+/// Project management roles and memberships in other environments do not count.
+pub async fn has_project_env_membership(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Result<bool, IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    let env = checked_scope_segment("env", env)?;
+    client
+        .query_one(
+            SELECT_PROJECT_ENV_MEMBERSHIP_SQL,
+            &[&principal_id.as_str(), &org, &project, &env],
+        )
+        .await
+        .map_err(database_error)?
+        .try_get(0)
+        .map_err(database_error)
+}
+
+/// Revoke membership, returning whether an explicit grant was removed.
+pub async fn revoke_project_env_membership(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Result<bool, IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    let env = checked_scope_segment("env", env)?;
+    let removed = client
+        .execute(
+            REVOKE_PROJECT_ENV_MEMBERSHIP_SQL,
+            &[&principal_id.as_str(), &org, &project, &env],
+        )
+        .await
+        .map_err(database_error)?;
+    Ok(removed != 0)
+}
+
+/// The identity reads used by route authentication, prepared once.
 ///
 /// The free functions above hand `query`/`query_opt` a `&str`. `tokio-postgres`
 /// converts a `&str` through `prepare::prepare` on every call and never caches
 /// it (`prepare_cached` belongs to `deadpool_postgres::Object`, and the route's
 /// identity reader is a bare `Client`), so each read cost a Parse+Describe round
-/// trip before its Bind+Execute. Measured at 1.184 ms and 0.709 ms per request
-/// against a 0.30 ms single round trip: see
+/// trip before its Bind+Execute. The PAT and project-role reads were measured
+/// at 1.184 ms and 0.709 ms per request against a 0.30 ms single round trip: see
 /// `docs/perf/2026.09/2a-auth-instrument.md`.
 ///
-/// Holding the two `Statement` handles moves that Parse to process start. The
+/// Holding the `Statement` handles moves that Parse to process start. The
 /// handles are bound to the connection they were prepared on, so this type must
 /// be used only with the client it was prepared from; a different connection
 /// would refuse the statement name.
@@ -687,10 +789,11 @@ fn decode_project_roles(rows: Vec<Row>) -> Result<Vec<ProjectRole>, IdentityErro
 pub struct PreparedIdentityReads {
     pat_by_prefix: Statement,
     project_roles: Statement,
+    project_env_membership: Statement,
 }
 
 impl PreparedIdentityReads {
-    /// Parse both statements on `client`, once.
+    /// Parse the identity statements on `client`, once.
     pub async fn prepare(client: &(impl GenericClient + Sync)) -> Result<Self, IdentityError> {
         Ok(Self {
             pat_by_prefix: client
@@ -699,6 +802,10 @@ impl PreparedIdentityReads {
                 .map_err(database_error)?,
             project_roles: client
                 .prepare(SELECT_PROJECT_ROLES_SQL)
+                .await
+                .map_err(database_error)?,
+            project_env_membership: client
+                .prepare(SELECT_PROJECT_ENV_MEMBERSHIP_SQL)
                 .await
                 .map_err(database_error)?,
         })
@@ -740,6 +847,29 @@ impl PreparedIdentityReads {
             .await
             .map_err(database_error)?;
         decode_project_roles(rows)
+    }
+
+    /// [`has_project_env_membership`] over the prepared handle, with one round trip.
+    pub async fn has_project_env_membership(
+        &self,
+        client: &(impl GenericClient + Sync),
+        principal_id: &PrincipalId,
+        org: &str,
+        project: &str,
+        env: &str,
+    ) -> Result<bool, IdentityError> {
+        let org = checked_scope_segment("org", org)?;
+        let project = checked_scope_segment("project", project)?;
+        let env = checked_scope_segment("env", env)?;
+        client
+            .query_one(
+                &self.project_env_membership,
+                &[&principal_id.as_str(), &org, &project, &env],
+            )
+            .await
+            .map_err(database_error)?
+            .try_get(0)
+            .map_err(database_error)
     }
 }
 
@@ -929,6 +1059,28 @@ fn database_error(error: tokio_postgres::Error) -> IdentityError {
 mod tests {
     use super::*;
 
+    #[test]
+    fn principal_id_parsing_preserves_uuid_identity_and_rejects_other_spellings() {
+        let id = "A56F21C8-591A-4B4B-B4E9-15357C0B4A81"
+            .parse::<PrincipalId>()
+            .expect("parse a principal UUID");
+        assert_eq!(id.as_str(), "a56f21c8-591a-4b4b-b4e9-15357c0b4a81");
+        for invalid in [
+            "",
+            "author@example.com",
+            "a56f21c8591a4b4bb4e915357c0b4a81",
+            "a56f21c8-591a-4b4b-b4e9-15357c0b4a8z",
+            "a56f21c8_591a-4b4b-b4e9-15357c0b4a81",
+            " a56f21c8-591a-4b4b-b4e9-15357c0b4a81",
+        ] {
+            assert_eq!(
+                invalid.parse::<PrincipalId>().unwrap_err().kind(),
+                IdentityErrorKind::InvalidInput,
+                "accepted invalid principal ID {invalid:?}"
+            );
+        }
+    }
+
     /// THE PREMISE `wamn-0h0g.12.67`'s GRANT SET RESTS ON.
     ///
     /// `wamn_identity_reader` is provisioned SELECT-only, and that is correct
@@ -955,7 +1107,7 @@ mod tests {
                 );
             }
         }
-        // …and they reach exactly the three relations that role is granted.
+        // …and they reach the original three relations that role is granted.
         for (statement, relations) in [
             (
                 SELECT_PAT_BY_PREFIX_SQL,

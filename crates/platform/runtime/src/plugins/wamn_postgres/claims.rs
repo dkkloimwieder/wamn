@@ -37,6 +37,16 @@ const OPERATION_PERMISSIONS_SQL: &str = "SELECT permission \
     WHERE tenant_id = $1 AND role_name = $2 \
     ORDER BY permission";
 
+const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permissions.permission \
+    FROM app_system.users AS users \
+    JOIN app_system.user_roles AS user_roles \
+      ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id \
+    JOIN app_system.permissions AS permissions \
+      ON permissions.tenant_id = user_roles.tenant_id \
+      AND permissions.role_name = user_roles.role_name \
+    WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active' \
+    ORDER BY permissions.permission";
+
 pub struct WamnPostgres {
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
@@ -1799,6 +1809,48 @@ impl WamnPostgres {
             .map(|row| {
                 row.try_get::<_, String>(0)
                     .context("decode registered-operation permission")
+            })
+            .collect()
+    }
+
+    /// Read the current permissions of an org-issued user in this tenant.
+    ///
+    /// Route authentication first requires membership in the release environment.
+    /// This single tenant read uses the callable-HTTP authority, with no session claims.
+    pub async fn user_operation_permissions(
+        &self,
+        project: &str,
+        tenant: &str,
+        principal_id: &wamn_platform_identity::PrincipalId,
+    ) -> anyhow::Result<BTreeSet<String>> {
+        anyhow::ensure!(
+            valid_project(project),
+            "invalid operation-permission project"
+        );
+        anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
+        let (connection, _policy) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let statement = match connection
+            .prepare_cached(USER_OPERATION_PERMISSIONS_SQL)
+            .await
+        {
+            Ok(statement) => statement,
+            Err(error) => {
+                self.destroy(connection);
+                return Err(error).context("prepare user operation permissions");
+            }
+        };
+        let rows = connection
+            .query(&statement, &[&tenant, &principal_id.as_str()])
+            .instrument(tracing::info_span!("wamn.auth.perm.query"))
+            .await
+            .context("read user operation permissions")?;
+        rows.into_iter()
+            .map(|row| {
+                row.try_get::<_, String>(0)
+                    .context("decode user operation permission")
             })
             .collect()
     }
@@ -3791,6 +3843,26 @@ mod tests {
         let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
 
         pg.operation_permissions(DEFAULT_PROJECT, "tenant-a", "route-caller")
+            .await
+            .expect_err("a provider that names no credential resolves nothing");
+
+        let asked = provider
+            .asked
+            .lock()
+            .expect("recording provider lock poisoned")
+            .clone();
+        assert_eq!(asked, vec![AuthorityClass::CallableHttp]);
+    }
+
+    #[tokio::test]
+    async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
+        let provider = Arc::new(RecordingProvider::default());
+        let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
+        let principal_id = "00000000-0000-0000-0000-000000000019"
+            .parse()
+            .expect("user UUID");
+
+        pg.user_operation_permissions(DEFAULT_PROJECT, "tenant-a", &principal_id)
             .await
             .expect_err("a provider that names no credential resolves nothing");
 

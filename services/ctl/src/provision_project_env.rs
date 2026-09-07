@@ -2609,8 +2609,8 @@ fn verify_executor_platform_acl_role_inventory(
 
 /// THE CALLABLE-HTTP ADMITTER DENIAL MATRIX (`wamn-0h0g.22.37`).
 ///
-/// `USAGE` on `catalog` and `app_system`, the exact catalog reads, one
-/// `app_system.permissions` read, and NOTHING on the run plane — the
+/// `USAGE` on `catalog` and `app_system`, the exact catalog and fresh permission
+/// reads, and NOTHING on the run plane — the
 /// disjointness from the executor family is the security property, and it is
 /// asserted by equality for the same reason the two T1 readers' is. A `wamn_run`
 /// schema `USAGE` alone would fail here, which is what stops this credential
@@ -2646,6 +2646,18 @@ fn verify_http_admitter_acl_role_inventory(
             "relation".to_string(),
             "app_system".to_string(),
             "permissions".to_string(),
+            "SELECT".to_string(),
+        ),
+        (
+            "relation".to_string(),
+            "app_system".to_string(),
+            "users".to_string(),
+            "SELECT".to_string(),
+        ),
+        (
+            "relation".to_string(),
+            "app_system".to_string(),
+            "user_roles".to_string(),
             "SELECT".to_string(),
         ),
     ]);
@@ -4521,6 +4533,7 @@ mod tests {
             role_acl("schema", "identity", "identity", "USAGE"),
             role_acl("relation", "identity", "pats", "SELECT"),
             role_acl("relation", "identity", "principals", "SELECT"),
+            role_acl("relation", "identity", "project_env_memberships", "SELECT"),
             role_acl("relation", "identity", "project_roles", "SELECT"),
         ];
         let verify = |inventory: &[RoleAcl], database: &str| {
@@ -4542,6 +4555,9 @@ mod tests {
             role_acl("relation", "identity", "pats", "UPDATE"),
             role_acl("relation", "identity", "project_roles", "INSERT"),
             role_acl("relation", "identity", "project_roles", "UPDATE"),
+            role_acl("relation", "identity", "project_env_memberships", "INSERT"),
+            role_acl("relation", "identity", "project_env_memberships", "UPDATE"),
+            role_acl("relation", "identity", "project_env_memberships", "DELETE"),
             role_acl("column", "identity", "pats.token_hash", "UPDATE"),
             // …and the other reader's plane.
             role_acl("schema", "registry", "registry", "USAGE"),
@@ -4560,6 +4576,39 @@ mod tests {
         }
         verify(&[], "wamn_system").expect_err("an empty control-database inventory passed");
         verify(&[], "some_project_db").unwrap();
+    }
+
+    #[test]
+    fn the_http_admitter_permission_inventory_requires_fresh_reads_and_refuses_writes() {
+        let mut exact = vec![
+            role_acl("schema", "app_system", "app_system", "USAGE"),
+            role_acl("schema", "catalog", "catalog", "USAGE"),
+            role_acl("relation", "app_system", "permissions", "SELECT"),
+            role_acl("relation", "app_system", "users", "SELECT"),
+            role_acl("relation", "app_system", "user_roles", "SELECT"),
+        ];
+        for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
+            exact.push(role_acl("relation", "catalog", relation, "SELECT"));
+        }
+        let verify = |inventory: &[RoleAcl]| {
+            verify_http_admitter_acl_role_inventory(
+                WorkloadRoleFamily::HttpAdmitter.acl_role(),
+                "project_db",
+                "project_db",
+                inventory,
+            )
+        };
+        verify(&exact).expect("the fresh permission reads have their exact grant set");
+        for relation in ["users", "user_roles", "permissions"] {
+            let mut missing = exact.clone();
+            missing.retain(|acl| acl.schema_name != "app_system" || acl.object_name != relation);
+            verify(&missing).expect_err("a required fresh permission read is missing");
+            for privilege in ["INSERT", "UPDATE", "DELETE"] {
+                let mut widened = exact.clone();
+                widened.push(role_acl("relation", "app_system", relation, privilege));
+                verify(&widened).expect_err("the HTTP admitter cannot write permission authority");
+            }
+        }
     }
 
     /// Every family publishes a Secret whose name, component label and body are

@@ -34,6 +34,7 @@ use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::dev::DevSourceState;
 use wamn_ctl::dev::watch::GitSource;
+use wamn_ctl::project_env_membership::{self, ProjectEnvMembershipArgs};
 use wamn_ctl::provision_project_env;
 use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_component::{self, PushComponentArgs};
@@ -44,8 +45,8 @@ use wamn_execution_host::{
     WiringCacheCapacity, authorize_attachment_for_test,
 };
 use wamn_platform_identity::{
-    PrincipalKind, assign_project_role, create_service, issue_pat, resolve_subject, revoke_pat,
-    route_caller_subject,
+    PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat,
+    resolve_subject, revoke_pat, route_caller_subject,
 };
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -308,7 +309,7 @@ const JOURNEY_PACKAGES: [JourneyPackage; 2] = [
     },
 ];
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum Refusal {
     Authentication(u16, String),
     Permission(Box<str>),
@@ -626,6 +627,197 @@ fn flip_last_hex_digit(token: &str) -> String {
     format!("{head}{replacement}")
 }
 
+async fn prove_human_environment_membership(
+    admin: &Client,
+    admin_url: &str,
+    identity_url: &str,
+    project: &Client,
+    route_auth: &FlowHttpRouting,
+    weld: &ReleaseManifestWeld,
+) -> anyhow::Result<()> {
+    let human = create_human(admin, "member@example.test", "Environment member").await?;
+    let other = create_human(admin, "other@example.test", "Other member").await?;
+    let token = issue_pat(
+        admin,
+        human.id(),
+        "membership proof",
+        Duration::from_secs(3600),
+    )
+    .await?;
+    let authorization = format!("Bearer {}", token.token());
+    let membership = |org: &str, env: &str, principal_id: &str| ProjectEnvMembershipArgs {
+        org: org.to_owned(),
+        project: PROJECT.to_owned(),
+        env: env.to_owned(),
+        principal_id: principal_id.to_owned(),
+        system_database_url: admin_url.to_owned(),
+    };
+    admin.batch_execute(
+        "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+         VALUES ('other-org', 'pooled', 'route-auth-pg18'); \
+         INSERT INTO registry.projects (org, id) VALUES ('other-org', 'receiving'); \
+         INSERT INTO registry.env_policies \
+           (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
+         VALUES ('other-org', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
+         INSERT INTO registry.project_envs (org, project, env, secret_name, secret_namespace, instance_suffix) \
+         VALUES ('acme', 'receiving', 'prod', 'membership-prod', 'wamn-system', 'member01'), \
+                ('other-org', 'receiving', 'dev', 'membership-other', 'wamn-system', 'member02');"
+    ).await?;
+    project
+        .execute(
+            "INSERT INTO app_system.users (tenant_id, id, email) \
+         VALUES ($1, $2::text::uuid, 'member@example.test'), \
+                ($1, $3::text::uuid, 'other@example.test'), \
+                ('other-tenant', $2::text::uuid, 'member@example.test')",
+            &[&TENANT, &human.id().as_str(), &other.id().as_str()],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO app_system.roles (tenant_id, name) \
+         VALUES ($1, 'human-reader'), ($1, 'human-extra'), \
+                ('other-tenant', 'human-reader')",
+            &[&TENANT],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+         VALUES ($1, $2::text::uuid, 'human-reader'), ($1, $2::text::uuid, 'human-extra'), \
+                ('other-tenant', $2::text::uuid, 'human-reader')",
+            &[&TENANT, &human.id().as_str()],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+         VALUES ($1, 'human-reader', $2), ($1, 'human-extra', 'extra-operation'), \
+                ('other-tenant', 'human-reader', 'other-tenant-operation')",
+            &[&TENANT, &OPERATION],
+        )
+        .await?;
+    // A project-wide role and another environment's membership cannot authorize this route.
+    assign_project_role(admin, human.id(), ORG, PROJECT, ROUTE_CALLER_ROLE).await?;
+    let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());
+    let mut admissions = 0;
+    assert_eq!(
+        invoke(route_auth, weld, Some(&authorization), &mut admissions).await,
+        Err(unauthorized.clone())
+    );
+    for (org, env) in [(ORG, OTHER_ENVIRONMENT), ("other-org", ENVIRONMENT)] {
+        project_env_membership::grant(membership(org, env, human.id().as_str())).await?;
+        assert_eq!(
+            invoke(route_auth, weld, Some(&authorization), &mut admissions).await,
+            Err(unauthorized.clone()),
+            "membership in {org}/{PROJECT}/{env} authorized a different environment"
+        );
+    }
+    let mut forbidden_writer = membership(ORG, ENVIRONMENT, human.id().as_str());
+    forbidden_writer.system_database_url = identity_url.to_owned();
+    project_env_membership::grant(forbidden_writer)
+        .await
+        .expect_err("the identity reader cannot provision membership");
+    assert_eq!(
+        invoke(route_auth, weld, Some(&authorization), &mut admissions).await,
+        Err(unauthorized.clone())
+    );
+    assert_eq!(admissions, 0, "a nonmember reached application admission");
+
+    for _ in 0..2 {
+        project_env_membership::grant(membership(ORG, ENVIRONMENT, human.id().as_str())).await?;
+    }
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM identity.project_env_memberships \
+         WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4",
+                &[&human.id().as_str(), &ORG, &PROJECT, &ENVIRONMENT],
+            )
+            .await?
+            .get::<_, i64>(0),
+        1
+    );
+    invoke(route_auth, weld, Some(&authorization), &mut admissions)
+        .await
+        .expect("the exact member reaches application admission");
+    let caller = route_auth
+        .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&authorization))
+        .await
+        .expect("authenticate human PAT")
+        .expect("authenticated caller");
+    assert_eq!(caller.principal_id(), human.id().as_str());
+    assert!(caller.permits(OPERATION));
+    assert!(
+        caller.permits("extra-operation"),
+        "all of this user's environment roles contribute permissions"
+    );
+    assert!(
+        !caller.permits("other-tenant-operation"),
+        "another tenant's role leaked"
+    );
+
+    project_env_membership::grant(membership(ORG, ENVIRONMENT, other.id().as_str())).await?;
+    let other_token =
+        issue_pat(admin, other.id(), "other member", Duration::from_secs(3600)).await?;
+    assert_eq!(
+        invoke(
+            route_auth,
+            weld,
+            Some(&format!("Bearer {}", other_token.token())),
+            &mut admissions
+        )
+        .await,
+        Err(Refusal::Permission(OPERATION.into())),
+        "membership alone cannot supply another user's permissions"
+    );
+    project.execute(
+        "DELETE FROM app_system.user_roles WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = 'human-reader'",
+        &[&TENANT, &human.id().as_str()],
+    ).await?;
+    assert_eq!(
+        invoke(route_auth, weld, Some(&authorization), &mut admissions).await,
+        Err(Refusal::Permission(OPERATION.into())),
+        "role removal must affect the next request"
+    );
+    project.execute(
+        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'human-reader')",
+        &[&TENANT, &human.id().as_str()],
+    ).await?;
+    project.execute(
+        "UPDATE app_system.users SET status = 'disabled' WHERE tenant_id = $1 AND id = $2::text::uuid",
+        &[&TENANT, &human.id().as_str()],
+    ).await?;
+    assert_eq!(
+        invoke(route_auth, weld, Some(&authorization), &mut admissions).await,
+        Err(Refusal::Permission(OPERATION.into()))
+    );
+    project.execute(
+        "UPDATE app_system.users SET status = 'active' WHERE tenant_id = $1 AND id = $2::text::uuid",
+        &[&TENANT, &human.id().as_str()],
+    ).await?;
+    invoke(route_auth, weld, Some(&authorization), &mut admissions)
+        .await
+        .expect("restored environment role authorizes again");
+    for _ in 0..2 {
+        project_env_membership::revoke(membership(ORG, ENVIRONMENT, human.id().as_str())).await?;
+        assert_eq!(
+            invoke(route_auth, weld, Some(&authorization), &mut admissions).await,
+            Err(unauthorized.clone())
+        );
+    }
+    project_env_membership::grant(membership(ORG, ENVIRONMENT, human.id().as_str())).await?;
+    disable_principal(admin, human.id()).await?;
+    assert_eq!(
+        invoke(route_auth, weld, Some(&authorization), &mut admissions).await,
+        Err(unauthorized)
+    );
+    assert_eq!(
+        admissions, 2,
+        "a refused human request reached application admission"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires a fresh disposable PG18 named by WAMN_ROUTE_AUTH_PG18_URL"]
 async fn production_route_caller_authentication_and_operation_authorization() {
@@ -705,6 +897,19 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     )
     .await
     .expect("build route authentication");
+
+    prove_human_environment_membership(
+        &admin,
+        &admin_url,
+        &identity_url,
+        &project,
+        &route_auth,
+        &weld,
+    )
+    .await
+    .expect(
+        "prove human environment membership through the production CLI and route authentication",
+    );
 
     let mut router_admissions = 0;
     let valid = format!("Bearer {}", route.token);

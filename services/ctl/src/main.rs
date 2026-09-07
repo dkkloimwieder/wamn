@@ -4,10 +4,10 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    apply_package, author_wiring, bind_connection, enable_cdc_project_env, print_release_env, promote, provision,
-    provision_org, provision_project_env, publish_release, push_component, push_release_manifest,
-    reconcile_package_data_access, reconcile_replica_identity, reconcile_run_plane,
-    terminalize_effect_uncertain,
+    apply_package, author_wiring, bind_connection, enable_cdc_project_env, print_release_env,
+    project_env_membership, promote, provision, provision_org, provision_project_env,
+    publish_release, push_component, push_release_manifest, reconcile_package_data_access,
+    reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -29,6 +29,10 @@ enum Command {
     ProvisionOrg(provision_org::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
+    /// Grant one human access to one project environment.
+    GrantProjectEnvMembership(project_env_membership::ProjectEnvMembershipArgs),
+    /// Revoke one human's access to one project environment.
+    RevokeProjectEnvMembership(project_env_membership::ProjectEnvMembershipArgs),
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(enable_cdc_project_env::EnableCdcProjectEnvArgs),
     /// Apply one exact package-owned migration stream to a project database.
@@ -80,6 +84,8 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionProject(args) => provision::run(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
+        Command::GrantProjectEnvMembership(args) => project_env_membership::grant(args).await,
+        Command::RevokeProjectEnvMembership(args) => project_env_membership::revoke(args).await,
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
         Command::ApplyPackage(args) => apply_package::run(args).await,
         Command::BindConnection(args) => bind_connection::run(args).await,
@@ -93,5 +99,51 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
         Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,
         Command::TerminalizeEffectUncertain(args) => terminalize_effect_uncertain::run(args).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::{Cli, Command};
+
+    #[test]
+    fn project_environment_membership_verbs_parse_exact_scope() {
+        for verb in [
+            "grant-project-env-membership",
+            "revoke-project-env-membership",
+        ] {
+            let cli = Cli::try_parse_from([
+                "wamn-ctl",
+                verb,
+                "--org",
+                "acme",
+                "--project",
+                "billing",
+                "--env",
+                "dev",
+                "--principal-id",
+                "00112233-4455-6677-8899-aabbccddeeff",
+                "--system-database-url",
+                "postgres://admin:secret@localhost/wamn_system",
+            ])
+            .unwrap();
+            let args = match cli.command {
+                Command::GrantProjectEnvMembership(args) => {
+                    assert_eq!(verb, "grant-project-env-membership");
+                    args
+                }
+                Command::RevokeProjectEnvMembership(args) => {
+                    assert_eq!(verb, "revoke-project-env-membership");
+                    args
+                }
+                _ => panic!("expected a project environment membership command"),
+            };
+            assert_eq!(args.org, "acme");
+            assert_eq!(args.project, "billing");
+            assert_eq!(args.env, "dev");
+            assert_eq!(args.principal_id, "00112233-4455-6677-8899-aabbccddeeff");
+        }
     }
 }

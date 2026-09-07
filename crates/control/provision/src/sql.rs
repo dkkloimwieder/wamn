@@ -786,15 +786,11 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// Converge the stable callable-HTTP admitter role to its exact read surface
 /// (`wamn-0h0g.22.37`).
 ///
-/// # The surface is ONE statement, and that is the whole finding
-///
-/// `AuthorityClass::CallableHttp` is selected from exactly one place in
-/// production — `WamnPostgres::connection_effect_snapshot` — and that method
-/// issues the connection-effect snapshot plus the operation-grant lookup. Their
-/// `FROM` and `LEFT JOIN` clauses name
-/// [`HTTP_ADMITTER_CATALOG_RELATIONS`] plus `app_system.permissions`, so `USAGE`
-/// on those two schemas plus eight `SELECT`s is the family's total authority
-/// anywhere in the cluster.
+/// The connection-effect snapshot and fresh operation-permission reads use
+/// [`HTTP_ADMITTER_CATALOG_RELATIONS`] and the three app-system relations below.
+/// Human permission reads join the active application user to its role grants;
+/// service permission reads continue to read `app_system.permissions` alone.
+/// `USAGE` on those two schemas plus ten `SELECT`s is the family's authority.
 ///
 /// # What it deliberately does NOT hold
 ///
@@ -805,7 +801,7 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// * NO write of any grain, so no `wamn_authority.tenant_key(text)` EXECUTE
 ///   either. That grant exists for the families whose INSERT or UPDATE makes
 ///   PostgreSQL evaluate a `<table>_tkey` expression index; a pure reader never
-///   forms an index entry, and the one statement carries no predicate over the
+///   forms an index entry, and these statements carry no predicate over the
 ///   derivation for the planner to evaluate.
 /// * NO function EXECUTE at all. The statement calls only built-ins.
 ///
@@ -831,7 +827,9 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
         ));
     }
     sql.push_str(&format!(
-        " GRANT SELECT ON TABLE app_system.\"permissions\" TO {role};"
+        " GRANT SELECT ON TABLE app_system.\"permissions\" TO {role}; \
+         GRANT SELECT ON TABLE app_system.\"users\" TO {role}; \
+         GRANT SELECT ON TABLE app_system.\"user_roles\" TO {role};"
     ));
     sql
 }
@@ -980,13 +978,19 @@ pub const SYSTEM_PLANE_SCHEMAS: [&str; 3] = ["identity", "provisioning", "regist
 /// over `WAMN_SYSTEM_URL` and nothing else, so this is its whole authority.
 pub const REGISTRY_READER_RELATIONS: [&str; 1] = ["event_readers"];
 
-/// The relations the management surface's two identity `SELECT`s touch.
+/// The relations the management and human route identity reads touch.
 ///
 /// `SELECT_PAT_BY_PREFIX_SQL` joins `pats` to `principals`; `SELECT_PROJECT_ROLES_SQL`
-/// reads `project_roles` (both in `crates/identity/platform/src/lib.rs`).
+/// reads `project_roles`; human routes require `project_env_memberships`
+/// (all in `crates/identity/platform/src/lib.rs`).
 /// PostgreSQL checks privileges on every relation a statement references, so all
-/// three are load bearing.
-pub const IDENTITY_READER_RELATIONS: [&str; 3] = ["pats", "principals", "project_roles"];
+/// four are load bearing.
+pub const IDENTITY_READER_RELATIONS: [&str; 4] = [
+    "pats",
+    "principals",
+    "project_env_memberships",
+    "project_roles",
+];
 
 /// Converge one system-plane reader's stable ACL role to exactly `SELECT` on
 /// `relations` inside `schema`, and nothing anywhere else in the control plane.
@@ -1049,8 +1053,8 @@ pub fn grant_registry_reader_surface_sql() -> String {
 
 /// Converge `wamn_identity_reader` to its exact identity read surface.
 ///
-/// `SELECT` on three `identity` relations, and NO `INSERT` and NO `UPDATE`
-/// anywhere. Both consuming statements are plain reads that take no row lock, so
+/// `SELECT` on four `identity` relations, and NO `INSERT` and NO `UPDATE`
+/// anywhere. The consuming statements are plain reads that take no row lock, so
 /// a genuinely SELECT-only role serves the surface as it stands.
 ///
 /// **SELECT-only is correct only because `POST /login` no longer exists.** The
@@ -2129,7 +2133,7 @@ mod tests {
     /// Rust builder, so byte-equality here is the only thing that catches the
     /// builder moving in a plain `cargo test`.
     #[test]
-    fn the_http_admitter_surface_adds_only_the_operation_grant_read() {
+    fn the_http_admitter_surface_adds_only_fresh_operation_permission_reads() {
         let sql = grant_http_admitter_surface_sql("wamn_run");
         assert_eq!(
             surface_grants(WorkloadRoleFamily::HttpAdmitter, &sql),
@@ -2149,8 +2153,10 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_instances\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE app_system.\"permissions\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads seven catalog relations and the operation grants, and holds \
+             GRANT SELECT ON TABLE app_system.\"permissions\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE app_system.\"users\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE app_system.\"user_roles\" TO \"wamn_http_admitter\";",
+            "the callable-HTTP admitter reads seven catalog relations and three permission relations, and holds \
              nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
@@ -2354,7 +2360,7 @@ mod tests {
     /// The identity reader's WHOLE batch, pinned as the string the builder
     /// emits (`wamn-0h0g.12.67`).
     #[test]
-    fn the_identity_reader_grants_exactly_three_selects_and_revokes_the_whole_plane() {
+    fn the_identity_reader_grants_exactly_four_selects_and_revokes_the_whole_plane() {
         let sql = grant_identity_reader_surface_sql();
         assert!(sql.starts_with(&ensure_workload_acl_role_sql(
             WorkloadRoleFamily::IdentityReader
@@ -2372,6 +2378,7 @@ mod tests {
              GRANT USAGE ON SCHEMA \"identity\" TO \"wamn_identity_reader\"; \
              GRANT SELECT ON TABLE \"identity\".\"pats\" TO \"wamn_identity_reader\"; \
              GRANT SELECT ON TABLE \"identity\".\"principals\" TO \"wamn_identity_reader\"; \
+             GRANT SELECT ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_reader\"; \
              GRANT SELECT ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_reader\";"
         );
     }

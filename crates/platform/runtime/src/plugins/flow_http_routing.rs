@@ -384,7 +384,7 @@ impl AuthenticatedCaller {
 /// Trusted dependencies and scope for PAT-backed route authentication.
 pub struct RouteAuthentication {
     identity_reader: Arc<tokio_postgres::Client>,
-    /// The two identity statements, parsed once at construction rather than on
+    /// The identity statements, parsed once at construction rather than on
     /// every request. See [`PreparedIdentityReads`].
     prepared: PreparedIdentityReads,
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
@@ -407,7 +407,7 @@ impl RouteAuthentication {
     /// Bind the two read authorities to trusted package coordinates.
     ///
     /// Environment and tenant remain single-sourced from the welded release.
-    /// Async because it parses the two identity statements on `identity_reader`
+    /// Async because it parses the identity statements on `identity_reader`
     /// here, once, instead of on every request. A reader that cannot parse them
     /// cannot authenticate anything, so this fails at startup rather than on the
     /// first request.
@@ -580,37 +580,68 @@ impl FlowHttpRouting {
                 })?
                 .ok_or_else(unauthorized)?;
             let principal = principal.principal();
-            if principal.kind() != PrincipalKind::Service
-                || principal.subject() != authentication.expected_subject.as_ref()
-            {
-                return Err(unauthorized());
+            let permissions = match principal.kind() {
+                PrincipalKind::Service => {
+                    if principal.subject() != authentication.expected_subject.as_ref() {
+                        return Err(unauthorized());
+                    }
+                    let roles = authentication
+                        .prepared
+                        .project_roles(
+                            authentication.identity_reader.as_ref(),
+                            principal.id(),
+                            &authentication.org,
+                            &authentication.project,
+                        )
+                        .instrument(tracing::info_span!("wamn.auth.roles"))
+                        .await
+                        .map_err(|error| {
+                            tracing::warn!(error = %error, "route caller role lookup unavailable");
+                            authentication_unavailable()
+                        })?;
+                    if !roles.iter().any(|role| role.as_str() == ROUTE_CALLER_ROLE) {
+                        return Err(unauthorized());
+                    }
+                    authentication
+                        .postgres
+                        .operation_permissions(
+                            &authentication.project,
+                            &manifest.release.tenant_id,
+                            ROUTE_CALLER_ROLE,
+                        )
+                        .instrument(tracing::info_span!("wamn.auth.permissions"))
+                        .await
+                }
+                PrincipalKind::Human => {
+                    let member = authentication
+                        .prepared
+                        .has_project_env_membership(
+                            authentication.identity_reader.as_ref(),
+                            principal.id(),
+                            &authentication.org,
+                            &authentication.project,
+                            &manifest.release.environment,
+                        )
+                        .instrument(tracing::info_span!("wamn.auth.membership"))
+                        .await
+                        .map_err(|error| {
+                            tracing::warn!(error = %error, "route caller membership lookup unavailable");
+                            authentication_unavailable()
+                        })?;
+                    if !member {
+                        return Err(unauthorized());
+                    }
+                    authentication
+                        .postgres
+                        .user_operation_permissions(
+                            &authentication.project,
+                            &manifest.release.tenant_id,
+                            principal.id(),
+                        )
+                        .instrument(tracing::info_span!("wamn.auth.permissions"))
+                        .await
+                }
             }
-            let roles = authentication
-                .prepared
-                .project_roles(
-                    authentication.identity_reader.as_ref(),
-                    principal.id(),
-                    &authentication.org,
-                    &authentication.project,
-                )
-                .instrument(tracing::info_span!("wamn.auth.roles"))
-                .await
-            .map_err(|error| {
-                tracing::warn!(error = %error, "route caller role lookup unavailable");
-                authentication_unavailable()
-            })?;
-            if !roles.iter().any(|role| role.as_str() == ROUTE_CALLER_ROLE) {
-                return Err(unauthorized());
-            }
-            let permissions = authentication
-                .postgres
-                .operation_permissions(
-                    &authentication.project,
-                    &manifest.release.tenant_id,
-                    ROUTE_CALLER_ROLE,
-                )
-                .instrument(tracing::info_span!("wamn.auth.permissions"))
-                .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "route operation grants unavailable");
                     authentication_unavailable()

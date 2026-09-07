@@ -89,7 +89,8 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// [`WorkloadRoleFamily::ServiceReader`]. TWO families, not one, because the
 /// two grant sets are disjoint and must stay so: `wamn-0h0g.12.116`'s consumer
 /// reads `registry.event_readers` and `wamn-0h0g.12.67`'s reads
-/// `identity.pats`, `identity.principals` and `identity.project_roles` — one
+/// `identity.pats`, `identity.principals`, `identity.project_env_memberships`
+/// and `identity.project_roles` — one
 /// family for both is how one role gets widened to the union. Only the
 /// families land here; the grants, Secrets and consumers are those two beads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
