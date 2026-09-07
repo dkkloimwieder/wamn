@@ -217,16 +217,16 @@ resolve_target() {
 build_binaries() {
   resolve_target "$COMMIT"
   mkdir -p "$TARGET"
-  local built=1 started; started="$(date +%s)"
-  local artifact
-  for artifact in debug/wamn debug/wamn-host debug/wamn-scenario-worker \
-                  debug/wamn-dev-env wasm32-wasip2/debug/http_route.wasm; do
-    [[ -s "$TARGET/$artifact" ]] || built=0
-  done
-  if [[ $built -eq 0 ]]; then
-    note "building into $TARGET"
-    # One cargo command at a time: concurrent cargo in one target directory
-    # looks exactly like a spurious failure.
+  local started; started="$(date +%s)"
+  # ALWAYS run cargo. An earlier version skipped the build when the artifacts
+  # merely EXISTED, which is not the same as being current: a reused target
+  # directory handed the agent a binary from a different commit, and the whole
+  # measurement rests on the binaries being the pinned tree. Cargo decides
+  # freshness; that is its job, and it costs seconds when there is nothing to do.
+  note "building into $TARGET"
+  # One cargo command at a time: concurrent cargo in one target directory looks
+  # exactly like a spurious failure.
+  if true; then
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
       cargo build --manifest-path "$TREE/Cargo.toml" -p wamn-ctl --bin wamn --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
@@ -238,8 +238,9 @@ build_binaries() {
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
       cargo build --manifest-path "$TREE/components/Cargo.toml" -p http-route --target wasm32-wasip2 --locked --offline
   fi
-  BUILD_CACHED=$([[ $built -eq 1 ]] && echo true || echo false)
   BUILD_SECONDS=$(( $(date +%s) - started ))
+  # "Cached" is now a measurement, not a guess: cargo had nothing to do.
+  BUILD_CACHED=$([[ $BUILD_SECONDS -lt 30 ]] && echo true || echo false)
   for artifact in debug/wamn debug/wamn-host debug/wamn-scenario-worker debug/wamn-dev-env; do
     [[ -x "$TARGET/$artifact" ]] || die "$TARGET/$artifact was not built" "$EX_ENV"
   done
@@ -572,8 +573,13 @@ watch_driver() {
   echo completed
 }
 
+# Cheap enough to run every five seconds. The agent builds inside its own
+# worktree, so target directories and git internals are pruned: walking a cold
+# build tree would cost more than the thing it is watching.
 worktree_fingerprint() {
-  find "$DIR/worktree" -newermt '-1 year' -printf '%T@ %s %p\n' 2>/dev/null \
+  find "$DIR/worktree" \
+    \( -name target -o -name .git -o -name node_modules \) -prune -o \
+    -type f -printf '%T@ %s %p\n' 2>/dev/null \
     | sha256sum | cut -d' ' -f1
 }
 
