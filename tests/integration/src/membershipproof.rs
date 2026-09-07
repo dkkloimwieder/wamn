@@ -16,6 +16,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_platform_identity::{PrincipalId, assign_project_role, create_human, issue_pat};
 
 const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
+const OPERATION_GRANT: &str = "wamn-receiving:purchase-order/get@1.0.0";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const PROOF_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -170,11 +171,11 @@ async fn exercise(
     .context("seed the dedicated proof role")?;
     tx.execute(
         "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
-         VALUES ($1, $2, 'purchase_order.get')",
-        &[&args.tenant, &role],
+         VALUES ($1, $2, $3)",
+        &[&args.tenant, &role, &OPERATION_GRANT],
     )
     .await
-    .context("grant only purchase_order.get to the proof role")?;
+    .context("grant only the canonical purchase-order/get operation to the proof role")?;
     tx.execute(
         "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
          VALUES ($1, $2::text::uuid, $3)",
@@ -365,7 +366,7 @@ async fn cleanup(
 
 #[cfg(test)]
 mod tests {
-    use super::{MembershipProofArgs, PURCHASE_ORDER_ID, check_record};
+    use super::{MembershipProofArgs, OPERATION_GRANT, PURCHASE_ORDER_ID, check_record};
     use clap::Parser;
     use serde_json::json;
 
@@ -373,6 +374,16 @@ mod tests {
     struct ProofCommand {
         #[command(flatten)]
         proof: MembershipProofArgs,
+    }
+
+    #[test]
+    fn permission_uses_the_generated_canonical_operation_grant() {
+        let contract: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../packages/receiving/generated/contracts/purchase_order/get.operation.json"
+        ))
+        .expect("parse the generated purchase-order/get contract");
+        assert_eq!(contract["grant"], OPERATION_GRANT);
+        assert_ne!(contract["permission_token"], OPERATION_GRANT);
     }
 
     #[test]
