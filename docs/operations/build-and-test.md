@@ -749,6 +749,69 @@ trap - EXIT
 The two containers and their ports are owned by this invocation. Never point
 the gate at shared infrastructure or the frozen cluster.
 
+### `[CLAIM-LAW-LIVE]` — the emitted claim contract tests, executed
+
+`tests/integration/src/claim_law_live.rs` with the runner in
+`test-support/harness/src/claim_law.rs` (`wamn-f89v`). The generator emits
+`packages/wms/generated/contracts/inventory/move.claim-tests.json` and nothing
+executed it. The runner reads that file and its sibling `move.operation.json`.
+The sibling names the SQL file and the binds for every statement a case runs.
+The runner then runs that SQL on a live server.
+
+The database must be a **fresh disposable PostgreSQL 18** with no `wms` schema.
+The tests refuse a database that already has one, create it, and apply
+`packages/wms/migrations/0001_initial.sql` themselves. Nothing else is needed:
+the claim ledger table has no foreign key to the pallet.
+
+```bash
+set -euo pipefail
+CLAIM_LAW_PG_CONTAINER=wamn-claim-law-pg18
+CLAIM_LAW_PG_PORT=54331
+if docker container inspect "$CLAIM_LAW_PG_CONTAINER" >/dev/null 2>&1; then
+  echo "$CLAIM_LAW_PG_CONTAINER already exists" >&2
+  exit 1
+fi
+claim_law_cleanup() {
+  docker rm -f "$CLAIM_LAW_PG_CONTAINER" >/dev/null 2>&1 || true
+}
+trap claim_law_cleanup EXIT
+
+docker run -d --name "$CLAIM_LAW_PG_CONTAINER" \
+  -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=wamn_claim_law \
+  -p "127.0.0.1:${CLAIM_LAW_PG_PORT}:5432" postgres:18
+for CLAIM_LAW_ATTEMPT in {1..60}; do
+  docker exec "$CLAIM_LAW_PG_CONTAINER" \
+    psql -h 127.0.0.1 -U postgres -d wamn_claim_law -tAc 'SELECT 1' \
+    >/dev/null 2>&1 && break
+  sleep 1
+done
+
+WAMN_CLAIM_LAW_PG_URL="postgresql://postgres:probe@127.0.0.1:${CLAIM_LAW_PG_PORT}/wamn_claim_law" \
+  cargo test -p wamn-proof-integration --lib --locked --offline \
+  claim_law_live:: -- --ignored --nocapture
+
+claim_law_cleanup
+trap - EXIT
+```
+
+Expect `test result: ok. 3 passed; 0 failed`. The three are the two emitted
+cases and the mutant arm. A run without `--ignored` selects only
+`the_emitted_contract_names_the_two_cases_the_live_tests_execute`. That one
+reads the artifact and needs no server. Expect `1 passed` there.
+
+Zero writes is measured, not assumed. Inside the replay transaction the runner
+asks `pg_current_xact_id_if_assigned()`. PostgreSQL assigns a transaction id
+the first time a transaction writes a row. A NULL answer therefore covers every
+table, and it still fails when an insert is cancelled by a later delete. The
+first call asks the same question and must get an id back, so a detector stuck
+at NULL fails there first.
+
+The mutant arm rewrites one clause of the emitted
+`command/inventory_move/claim_command.sql`. It turns
+`ON CONFLICT ... DO NOTHING` into
+`DO UPDATE SET canonical_command = EXCLUDED.canonical_command`. Both emitted
+cases must then go red. The arm fails if either one still passes.
+
 ### `[EVT-REPLICA-IDENT]` — per-entity `REPLICA IDENTITY FULL` reconciler
 
 `services/ctl/tests/replica_identity_live.rs` (wamn-l5i9.31).

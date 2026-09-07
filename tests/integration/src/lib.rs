@@ -8,6 +8,8 @@ pub use wamn_test_infrastructure::ctl_process;
 mod acme_overlay_publication;
 mod cdc_reader_process;
 pub mod cdcbench;
+#[cfg(test)]
+mod claim_law_live;
 pub mod dashproof;
 mod hot_route_trace;
 mod measurement_schema;
