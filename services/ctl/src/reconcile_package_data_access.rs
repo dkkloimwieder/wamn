@@ -23,6 +23,9 @@ SELECT package_id, package_version, manifest_sha256 FROM catalog.packages \
 // declarations neither consume nor reconcile control-owned objects.
 const CONTROL_OWNED_RELATION_MAPS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
 
+/// Manifest hash of each package coordinate, keyed by id and version.
+type CoordinateHashes = BTreeMap<(String, String), String>;
+
 /// Post-apply generated ACL reconciliation arguments.
 #[derive(Debug, Args)]
 pub struct ReconcilePackageDataAccessArgs {
@@ -260,7 +263,7 @@ async fn validate_installed_set(
     tenant: &str,
     packages: &[PresentedPackage],
 ) -> anyhow::Result<()> {
-    let mut installed = BTreeMap::new();
+    let mut installed = CoordinateHashes::new();
     for row in tx
         .query(SELECT_INSTALLED_SQL, &[&tenant])
         .await
@@ -268,46 +271,71 @@ async fn validate_installed_set(
     {
         let package_id = row.get::<_, String>(0);
         let package_version = row.get::<_, String>(1);
-        let coordinate = format!("{package_id}@{package_version}");
         ensure!(
             installed
-                .insert(coordinate.clone(), row.get::<_, String>(2))
+                .insert(
+                    (package_id.clone(), package_version.clone()),
+                    row.get::<_, String>(2)
+                )
                 .is_none(),
-            "package-data-access-installed-set-repeats-coordinate: {coordinate}"
+            "package-data-access-installed-set-repeats-coordinate: {package_id}@{package_version}"
         );
     }
     let presented = packages
         .iter()
         .map(|package| {
             (
-                format!("{}@{}", package.package_id, package.package_version),
+                (package.package_id.clone(), package.package_version.clone()),
                 package.manifest_sha256.clone(),
             )
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<CoordinateHashes>();
+    validate_presented_lineages(&installed, &presented)
+}
+
+/// Refuse unless the presented roots cover every applied package lineage.
+///
+/// A source tree carries one version of a package at a time, so the applied set
+/// is a lineage history rather than a live set. An author who bumps a version,
+/// or who reverts a failed bump, leaves a sibling coordinate applied beside the
+/// live one. That sibling is the same authority contributor at another point in
+/// its lineage, so the presented root speaks for the whole lineage. Only a
+/// package with no presented root at all drops a contribution from the union,
+/// and only that case refuses. A presented coordinate that never reached Apply
+/// also refuses, because its declared relations are not on the server yet.
+fn validate_presented_lineages(
+    installed: &CoordinateHashes,
+    presented: &CoordinateHashes,
+) -> anyhow::Result<()> {
+    let presented_packages = presented
+        .keys()
+        .map(|(package_id, _)| package_id.clone())
+        .collect::<BTreeSet<_>>();
     let missing = installed
         .keys()
-        .filter(|coordinate| !presented.contains_key(*coordinate))
-        .cloned()
+        .map(|(package_id, _)| package_id.clone())
+        .filter(|package_id| !presented_packages.contains(package_id))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>();
-    let unexpected = presented
+    let unapplied = presented
         .keys()
         .filter(|coordinate| !installed.contains_key(*coordinate))
-        .cloned()
+        .map(|(package_id, package_version)| format!("{package_id}@{package_version}"))
         .collect::<Vec<_>>();
     ensure!(
-        missing.is_empty() && unexpected.is_empty(),
-        "package-data-access-installed-set-mismatch: missing-artifacts=[{}]; unexpected-artifacts=[{}]; remedy=present every applied package root",
+        missing.is_empty() && unapplied.is_empty(),
+        "package-data-access-installed-set-mismatch: missing-packages=[{}]; unapplied-artifacts=[{}]; remedy=present one root for each applied package and apply each presented root",
         missing.join(","),
-        unexpected.join(",")
+        unapplied.join(",")
     );
-    for (coordinate, recorded_hash) in installed {
-        let presented_hash = presented
-            .get(&coordinate)
-            .expect("installed and presented coordinate sets were proved equal");
+    for ((package_id, package_version), presented_hash) in presented {
+        let recorded_hash = installed
+            .get(&(package_id.clone(), package_version.clone()))
+            .expect("every presented coordinate was proved applied");
         ensure!(
-            &recorded_hash == presented_hash,
-            "package-data-access-source-drift: package={coordinate}; recorded-sha256={recorded_hash}; presented-sha256={presented_hash}"
+            recorded_hash == presented_hash,
+            "package-data-access-source-drift: package={package_id}@{package_version}; recorded-sha256={recorded_hash}; presented-sha256={presented_hash}"
         );
     }
     Ok(())
@@ -596,4 +624,84 @@ fn desired_effective_acl(effective: &EffectiveDataAccess) -> EffectiveAcl {
         }
     }
     desired
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CoordinateHashes, validate_presented_lineages};
+
+    const DOCK_SHA: &str =
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    const WMS_SHA: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+
+    fn coordinates(entries: &[(&str, &str, &str)]) -> CoordinateHashes {
+        entries
+            .iter()
+            .map(|(package_id, package_version, manifest_sha256)| {
+                (
+                    ((*package_id).to_owned(), (*package_version).to_owned()),
+                    (*manifest_sha256).to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_tree_carrying_only_the_earlier_version_reconciles_beside_the_applied_bump() {
+        let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA), ("dock", "1.1.0", DOCK_SHA)]);
+        let presented = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
+        validate_presented_lineages(&installed, &presented)
+            .expect("a reverted tree recovers beside the coordinate its failed bump applied");
+    }
+
+    #[test]
+    fn a_tree_carrying_only_the_newer_version_reconciles_beside_the_applied_predecessor() {
+        let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA), ("dock", "1.1.0", DOCK_SHA)]);
+        let presented = coordinates(&[("dock", "1.1.0", DOCK_SHA)]);
+        validate_presented_lineages(&installed, &presented)
+            .expect("a bumped tree recovers beside the coordinate it replaces");
+    }
+
+    #[test]
+    fn an_applied_package_with_no_presented_root_still_refuses_with_a_remedy_the_author_can_run() {
+        let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA), ("wms", "2.0.0", WMS_SHA)]);
+        let presented = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
+        let refusal = validate_presented_lineages(&installed, &presented)
+            .expect_err("a dropped package contribution must refuse");
+        let refusal = refusal.to_string();
+        assert!(
+            refusal.contains("missing-packages=[wms]"),
+            "the refusal did not name the uncovered package: {refusal}"
+        );
+        assert!(
+            refusal.contains("remedy=present one root for each applied package"),
+            "the refusal did not name a remedy the author can run: {refusal}"
+        );
+    }
+
+    #[test]
+    fn a_presented_coordinate_that_never_reached_apply_refuses() {
+        let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
+        let presented = coordinates(&[("dock", "1.1.0", DOCK_SHA)]);
+        let refusal = validate_presented_lineages(&installed, &presented)
+            .expect_err("an unapplied presented coordinate must refuse")
+            .to_string();
+        assert!(
+            refusal.contains("unapplied-artifacts=[dock@1.1.0]"),
+            "the refusal did not name the unapplied coordinate: {refusal}"
+        );
+    }
+
+    #[test]
+    fn a_presented_root_whose_bytes_moved_under_a_published_version_still_refuses() {
+        let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
+        let presented = coordinates(&[("dock", "1.0.0", WMS_SHA)]);
+        let refusal = validate_presented_lineages(&installed, &presented)
+            .expect_err("a moved manifest under a published version must refuse")
+            .to_string();
+        assert!(
+            refusal.contains("package-data-access-source-drift: package=dock@1.0.0"),
+            "the refusal did not name the immutable coordinate: {refusal}"
+        );
+    }
 }

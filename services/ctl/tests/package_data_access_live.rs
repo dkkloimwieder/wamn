@@ -14,6 +14,7 @@ use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessAr
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
+const OVERLAY_EVIDENCE_PATH: &str = "generated/platform-policy/data-access.json";
 const TENANT: &str = "package-data-access-live";
 const PASSWORD: &str = "package-data-access-live-password";
 
@@ -289,4 +290,241 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         first,
         "replay rewrote ACL state"
     );
+}
+
+fn lineage_fixture_directory() -> PathBuf {
+    std::env::temp_dir().join("wamn-ctl-package-lineage-live")
+}
+
+fn manifest_sha256(bytes: &[u8]) -> String {
+    format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
+    )
+}
+
+/// Stage one package root under the lineage fixture directory.
+///
+/// The shipped generated evidence records a manifest hash that its manifest no
+/// longer has, because `ce7ffac4` edited every `packages/*/wamn.json` without
+/// regenerating `generated/platform-policy/data-access.json`. This helper
+/// copies the shipped root and writes the hash the generator writes today. A
+/// `bump` also moves the coordinate, which is how an author recovers from a
+/// stage that refused an already published version.
+fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> (PathBuf, String) {
+    let root = lineage_fixture_directory().join(name);
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("migrations")).expect("create staged migrations directory");
+    std::fs::create_dir_all(root.join("generated/platform-policy"))
+        .expect("create staged evidence directory");
+    for entry in std::fs::read_dir(source.join("migrations")).expect("read package migrations") {
+        let entry = entry.expect("read one package migration entry");
+        std::fs::copy(
+            entry.path(),
+            root.join("migrations").join(entry.file_name()),
+        )
+        .expect("copy one package migration");
+    }
+
+    let manifest_bytes = std::fs::read(source.join("wamn.json")).expect("read package manifest");
+    let manifest_bytes = match bump {
+        None => manifest_bytes,
+        Some((version, predecessor)) => {
+            let mut manifest: serde_json::Value =
+                serde_json::from_slice(&manifest_bytes).expect("parse package manifest");
+            let package = manifest
+                .get_mut("package")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("package manifest carries a package identity");
+            package.insert("version".to_owned(), serde_json::json!(version));
+            package.insert(
+                "predecessor_version".to_owned(),
+                serde_json::json!(predecessor),
+            );
+            wamn_execution_contract::canonical_json_bytes(&manifest)
+        }
+    };
+    let staged_sha256 = manifest_sha256(&manifest_bytes);
+    std::fs::write(root.join("wamn.json"), &manifest_bytes).expect("write staged manifest");
+
+    let mut overlay: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(source.join(OVERLAY_EVIDENCE_PATH)).expect("read package evidence"),
+    )
+    .expect("parse package evidence");
+    let overlay_object = overlay
+        .as_object_mut()
+        .expect("package evidence is an object");
+    if let Some((version, _)) = bump {
+        let package: String = overlay_object
+            .get("package")
+            .and_then(serde_json::Value::as_str)
+            .expect("package evidence names its coordinate")
+            .split('@')
+            .next()
+            .expect("a coordinate always carries a package id")
+            .to_owned();
+        overlay_object.insert(
+            "package".to_owned(),
+            serde_json::json!(format!("{package}@{version}")),
+        );
+    }
+    overlay_object.insert(
+        "manifest_sha256".to_owned(),
+        serde_json::json!(staged_sha256),
+    );
+    std::fs::write(
+        root.join(OVERLAY_EVIDENCE_PATH),
+        wamn_execution_contract::canonical_json_bytes(&overlay),
+    )
+    .expect("write staged evidence");
+    (root, staged_sha256)
+}
+
+async fn install_lineage_fixture(url: &str) -> Client {
+    let admin = connect(url).await;
+    admin
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DO $reset$ BEGIN \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
+                 EXECUTE 'DROP OWNED BY wamn_app'; \
+                 EXECUTE 'DROP ROLE wamn_app'; \
+               END IF; \
+               CREATE ROLE wamn_app NOLOGIN; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                 CREATE ROLE wamn_scenario_author NOLOGIN; \
+               END IF; \
+             END $reset$;",
+        )
+        .await
+        .expect("reset package lineage fixture");
+    admin
+        .batch_execute(CATALOG_SCHEMA)
+        .await
+        .expect("install package catalog");
+    admin
+        .batch_execute(APP_SCHEMA)
+        .await
+        .expect("install application authorization floor");
+    admin
+}
+
+async fn apply(url: &str, package: PathBuf) {
+    apply_package::run(ApplyPackageArgs {
+        package,
+        database_url: url.to_owned(),
+        tenant: TENANT.to_owned(),
+    })
+    .await
+    .expect("apply one package coordinate");
+}
+
+#[tokio::test]
+#[ignore = "requires disposable PG18 named by WAMN_CTL_PG_URL"]
+async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
+    let Some(url) = support::LockedUrl::optional() else {
+        eprintln!("skipping package_data_access_live; WAMN_CTL_PG_URL is unset");
+        return;
+    };
+    let admin = install_lineage_fixture(&url).await;
+    let (released, _) = stage_package_root(&receiving_package_root(), "receiving", None);
+    let (overlay, _) = stage_package_root(&overlay_package_root(), "overlay", None);
+    let (bumped, bumped_sha256) = stage_package_root(
+        &receiving_package_root(),
+        "receiving-bumped",
+        Some(("1.1.0", "1.0.0")),
+    );
+    apply(&url, released.clone()).await;
+    apply(&url, overlay.clone()).await;
+
+    // The failed run applied the bumped coordinate and then refused later on.
+    // Both coordinates of one package are now applied, and no source tree can
+    // present them together.
+    apply(&url, bumped.clone()).await;
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT count(*) FROM catalog.packages \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving'",
+                &[&TENANT],
+            )
+            .await
+            .expect("count the applied Receiving coordinates")
+            .get::<_, i64>(0),
+        2,
+        "the failed bump did not leave two applied coordinates"
+    );
+
+    let reverted = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![released.clone(), overlay.clone()],
+    ))
+    .await
+    .expect("a tree carrying only the earlier version reconciles beside the applied bump");
+    assert!(
+        !reverted.is_noop(),
+        "the reverted tree did not converge the generated authority"
+    );
+
+    let forward = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![bumped.clone(), overlay.clone()],
+    ))
+    .await
+    .expect("a tree carrying only the newer version reconciles beside the applied predecessor");
+    assert!(
+        forward.is_noop(),
+        "the same authority union changed under the newer coordinate"
+    );
+
+    // A published version stays immutable. Moving the bytes under an applied
+    // coordinate is still refused, and the refusal names that coordinate.
+    let mut moved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(bumped.join("wamn.json")).expect("read manifest"))
+            .expect("parse manifest");
+    moved
+        .get_mut("package")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the staged manifest carries a package identity")
+        .insert("predecessor_version".to_owned(), serde_json::json!("0.9.0"));
+    let moved_bytes = wamn_execution_contract::canonical_json_bytes(&moved);
+    let moved_sha256 = manifest_sha256(&moved_bytes);
+    assert_ne!(
+        moved_sha256, bumped_sha256,
+        "the manifest bytes did not move"
+    );
+    std::fs::write(bumped.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
+    let mut evidence: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(bumped.join(OVERLAY_EVIDENCE_PATH)).expect("read staged evidence"),
+    )
+    .expect("parse staged evidence");
+    evidence
+        .as_object_mut()
+        .expect("package evidence is an object")
+        .insert(
+            "manifest_sha256".to_owned(),
+            serde_json::json!(moved_sha256),
+        );
+    std::fs::write(
+        bumped.join(OVERLAY_EVIDENCE_PATH),
+        wamn_execution_contract::canonical_json_bytes(&evidence),
+    )
+    .expect("regenerate evidence for the moved manifest");
+    let drift = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![bumped.clone(), overlay.clone()],
+    ))
+    .await
+    .expect_err("moved bytes reconciled under an already applied version");
+    assert!(
+        drift
+            .to_string()
+            .contains("package-data-access-source-drift: package=wamn_receiving@1.1.0"),
+        "the immutable coordinate did not carry its drift refusal: {drift:#}"
+    );
+
+    std::fs::remove_dir_all(lineage_fixture_directory())
+        .expect("remove the package lineage fixture");
 }
