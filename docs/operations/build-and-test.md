@@ -1417,6 +1417,9 @@ Rules the harness enforces rather than asks for:
 - The skill inventory is frozen against run 001. A run whose inventory differs
   is refused, because both agents select skills by description and a skill
   appearing between runs changes the measurement silently.
+- The grading fixture is harness state and lives outside the run directory,
+  because the run directory is exported to the agent. `up` refuses the run when
+  the fixture or a `grade` block is reachable from any path the agent is handed.
 
 ### `[GUEST-DIGEST-REPRODUCIBILITY]` — one commit, two checkouts, one digest
 

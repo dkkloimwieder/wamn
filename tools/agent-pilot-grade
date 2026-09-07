@@ -67,11 +67,24 @@ fi
 
 ROUTE_HOST="$(jq -r '.identity.route_host' "$MANIFEST")"
 OVERLAY_ROOT="$(jq -r '.overlay_root' "$MANIFEST")"
-# wamn-nvbd.9: the grading fixture lives in the RUN directory, not in the
-# agent's task directory. A recorded run from series 001-012 still has it
-# under fixture/, so --replay looks there second.
-STEPS_NAME="$(jq -r '.grade.steps // "steps.json"' "$MANIFEST")"
-STEPS="$DIR/$STEPS_NAME"
+
+# wamn-nvbd.12: the grading fixture and the grade block live OUTSIDE the run
+# directory, because the run directory is handed to the agent. Older runs kept
+# them inside it, so resolution falls back through the two places they used.
+#
+#   1. the harness grading directory, which nothing exports  (022 onward)
+#   2. the run directory root                                (013 to 021)
+#   3. the agent's own fixture directory                     (001 to 012)
+RUN_KEY="$(basename "$DIR")"
+GRADING="$PILOT_HOME/grading/${RUN_KEY%%-*}"
+GRADE_MANIFEST="$GRADING/task.json"
+jq -e 'has("grade")' "$GRADE_MANIFEST" >/dev/null 2>&1 || GRADE_MANIFEST="$MANIFEST"
+jq -e 'has("grade")' "$GRADE_MANIFEST" >/dev/null 2>&1 \
+  || die "no grade block for $RUN_KEY in $GRADING or $MANIFEST" "$EX_ENV"
+
+STEPS_NAME="$(jq -r '.grade.steps // "steps.json"' "$GRADE_MANIFEST")"
+STEPS="$GRADING/$STEPS_NAME"
+[[ -s "$STEPS" ]] || STEPS="$DIR/$STEPS_NAME"
 [[ -s "$STEPS" ]] || STEPS="$DIR/fixture/$STEPS_NAME"
 COMMIT="$(jq -r '.commit' "$DIR/run.json")"
 

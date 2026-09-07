@@ -491,6 +491,18 @@ Raw: <nnn>-<agent>-<task>/
   `allowed_paths` and the same file carries the check and fence names. Filed as
   `wamn-nvbd.9`; the stall table is unaffected, because every stall is the
   platform refusing something.
+- **The rubric moved, and stayed readable.** The `wamn-nvbd.9` fix put the
+  fixture at the run directory root and stripped the `grade` block from the
+  agent's `task.json`. The run directory is exported to the agent as
+  `WAMN_PILOT_RUN_DIR`, so the rubric was still one `cat` away, and run 020
+  read it. Filed as `wamn-nvbd.12`. The fixture now lives in a harness grading
+  directory that nothing hands the agent, and `up` refuses the run if the
+  fixture or a `grade` block is reachable from any exported path. Series 020
+  therefore reads: run 020 EXCLUDED, because it read the rubric; run 021 valid
+  only if its transcript never names the fixture, and the transcript is the
+  check because the harness records every command; run 022 clean, on the fixed
+  instrument. Section 6.5 asks for instrument equivalence, and a transcript
+  establishes it, so the series is not renumbered.
 - Test-set quality: a trivial set passes trivially; V3 is applied to the task's
   set before run 1, and the kill matrix is re-run when the set changes.
 - Known gaps: the statement verifier (work spec F21) and the missing flow-test

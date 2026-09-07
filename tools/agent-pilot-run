@@ -404,6 +404,29 @@ run_standup() {
   chmod 700 "$DIR/env"
 }
 
+# The rubric must be unreachable from every path the agent is handed. This is a
+# check, not a hope: it walks the exported values themselves, so a new export
+# that happens to contain the fixture fails the run instead of the measurement.
+#
+# The paths below are exactly the ones launch exports, plus the working
+# directory the driver starts in. Keep the two lists in step.
+assert_rubric_unreachable() {
+  local steps_name="$1" handed found=""
+  for handed in "$DIR" "$DIR/fixture" "$DIR/bin" "$DIR/env" "$DIR/worktree" "$DIR/no-push" "$TARGET/debug"; do
+    [[ -e "$handed" ]] || continue
+    while IFS= read -r hit; do
+      found="$found $hit"
+    done < <(find "$handed" -name "$steps_name" -not -path '*/target/*' 2>/dev/null)
+    # The grade block is half the rubric: it names the checks and the fences.
+    while IFS= read -r manifest; do
+      jq -e 'has("grade")' "$manifest" >/dev/null 2>&1 && found="$found $manifest(grade)"
+    done < <(find "$handed" -maxdepth 2 -name 'task.json' 2>/dev/null)
+  done
+  if [[ -n "$found" ]]; then
+    die "the grading rubric is reachable from a path the agent is handed:$found" "$EX_ENV"
+  fi
+}
+
 # ------------------------------------------------------------------ up, the verb
 
 verb_up() {
@@ -421,18 +444,27 @@ verb_up() {
 
   mkdir -p "$DIR"/{env,fixture,bin,dev-logs,grade}
   chmod 700 "$DIR/env"
-  # wamn-nvbd.9. The AGENT's task directory carries the brief, the scenario and
-  # an identity-only manifest. The grading fixture and the `grade` block stay
-  # in the run directory, which only the grader reads. A rubric the author can
-  # read turns the run into test satisfaction rather than authoring: every run
-  # of series 001-012 read `steps.json`, one of them as its fourth command.
+  # wamn-nvbd.9 and wamn-nvbd.12. The AGENT's task directory carries the brief,
+  # the scenario and an identity-only manifest. A rubric the author can read
+  # turns the run into test satisfaction rather than authoring.
+  #
+  # THE GRADING FIXTURE LIVES OUTSIDE THE RUN DIRECTORY. The first attempt at
+  # this moved it from the fixture directory to the run directory root, and the
+  # run directory is exported to the agent as WAMN_PILOT_RUN_DIR. Run 020 read
+  # the whole rubric with one cat. The fixture is harness state now: nothing the
+  # agent is handed names the directory it sits in, and only the grader reads it.
+  local grading="$PILOT_HOME/grading/$RUN"
+  rm -rf "$grading"; mkdir -p "$grading"; chmod 700 "$grading"
   cp -a "$task_dir/." "$DIR/fixture/"
-  cp "$task_dir/task.json" "$DIR/task.json"
   local steps_name; steps_name="$(jq -r '.grade.steps // "steps.json"' "$task_dir/task.json")"
-  cp "$task_dir/$steps_name" "$DIR/$steps_name"
+  cp "$task_dir/$steps_name" "$grading/$steps_name"
+  cp "$task_dir/task.json" "$grading/task.json"
+  # Every copy the agent can reach loses the grade block and the fixture.
   rm -f "$DIR/fixture/$steps_name"
   jq 'del(.grade)' "$task_dir/task.json" > "$DIR/fixture/task.json"
+  jq 'del(.grade)' "$task_dir/task.json" > "$DIR/task.json"
   read_manifest
+  assert_rubric_unreachable "$steps_name"
   : > "$DIR/verbs.jsonl"; : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
   : > "$DIR/env.log"
 
