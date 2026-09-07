@@ -1,0 +1,18 @@
+{
+  "Q3": "design-doc <n>, code <n>, skill <n>, generated <n>, other <n>",
+  "Q4": "none | curl | invented-script | loop-only",
+  "Q6": "tokens <n>, cost <n>, model <id>",
+  "Q7": [],
+  "Q8": [],
+  "Q9": [],
+  "Q10.present": "see skills.json",
+  "Q10.activated": [],
+  "Q11": "operations driven <n>/<m>, S9 cases unprompted <n>/4",
+  "E1": "",
+  "E2": "",
+  "E3": "",
+  "E4": "",
+  "E5": "",
+  "E6": "",
+  "E7": ""
+}

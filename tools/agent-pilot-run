@@ -538,12 +538,35 @@ verb_launch() {
   [[ "$reason" == "completed" ]] || return "$EX_DRIVER"
 }
 
+# Hide `bd` without hiding what sits beside it.
+#
+# Dropping a whole PATH entry was wrong: on this machine `bd` shares a
+# directory with `claude`, `codex`, `kubectl` and thirty-six other tools, so
+# removing the entry removed the driver itself. Instead each directory that
+# holds a `bd` is replaced by a shadow directory of symlinks to everything in
+# it EXCEPT `bd`. Every other entry passes through untouched.
+#
+# It must be absence, not failure: the repository's git hooks guard on
+# `command -v bd`, so a `bd` that exits non-zero would still be found and run.
 strip_bd_from_path() {
-  local out="" part
+  local out="" part shadow index=0
   IFS=: read -ra parts <<< "$PATH"
   for part in "${parts[@]}"; do
-    [[ -x "$part/bd" ]] && continue
-    out="${out:+$out:}$part"
+    if [[ -x "$part/bd" ]]; then
+      shadow="$DIR/bin/shadow-$index"
+      mkdir -p "$shadow"
+      local entry name
+      for entry in "$part"/*; do
+        name="$(basename "$entry")"
+        [[ "$name" == "bd" ]] && continue
+        [[ -x "$entry" || -L "$entry" ]] || continue
+        ln -sfn "$entry" "$shadow/$name"
+      done
+      out="${out:+$out:}$shadow"
+      index=$((index + 1))
+    else
+      out="${out:+$out:}$part"
+    fi
   done
   printf '%s' "$out"
 }
