@@ -25,7 +25,8 @@ the stable pin.
 
 - D1: the walk simulator, WALK-1..6, `proptest` shrinking.
 - D7: generated contract tests for create-shaped commands. `wamn-10yt.19`
-  needs them anyway.
+  needs them anyway. [landed 2026-09-07 as
+  `generated/contracts/<model>/create.claim-tests.json`.]
 - The first half of D8: invariant functions as plain `fn check(state)` for the
   walk and for run-state. No feature flag.
 - A `proptest` twin for `sql_lex.rs` only (C1 target 1, the policy parser).
@@ -477,7 +478,7 @@ applies: no test reads source as text.
 | phase | id | item | size | exit gate |
 |---|---|---|---|---|
 | 0 | D1 | walk simulator: `proptest` strategies, fake clock, WALK-1..6 | small | 10 000 cases pass; one injected bug in `apply` found and shrunk to under five nodes |
-| 0 | D7 | generated contract tests for create-shaped commands (`wamn-10yt.19`) | small | every shipped command carries both claim tests; mutants over the emitted SQL fail them |
+| 0 | D7 | generated contract tests for create-shaped commands (`wamn-10yt.19`) | small | [amended 2026-09-07] every create-shaped command carries both claim tests BY CONSTRUCTION, proven by emission tests; mutants over the emitted SQL fail named tests. Executing the cases is `wamn-f89v` |
 | 0 | D8a | invariant functions `fn check(state)` for walk and run-state, called from tests | small | D1 and the queue tests call them after every step |
 | 0 | D6a | `proptest` twin for `sql_lex.rs` | small | grammar cases committed; a known-bad statement is refused |
 | 1 | D3 | in-process host harness (`virtualized_std_guest` pattern), recording wrapper, replay for `wamn:postgres`, multiset matching, divergence diff | medium | Part A exit gate |
@@ -517,8 +518,12 @@ Nothing here touches the deployment boundary, the durable tier, or RLS.
 2. Guest determinism: no wash-runtime change; the harness owns the context.
    The probe runs for the record only.
 3. D2 replaces the one-off crash gate in the tooling spec.
-4. D7 is the proof shape for `wamn-10yt.19` and supersedes the earlier
-   "emission tests plus mutants" acceptance.
+4. D7 is the proof shape for `wamn-10yt.19`. [amended 2026-09-07 by owner
+   ruling: the supersession is WITHDRAWN. The acceptance is the original
+   emission tests plus mutants over the emitted SQL, because no shipped package
+   declares a create and an executing gate would be vacuous. The generator
+   emits the two cases so the law holds by construction before the first create
+   exists. Executing them is `wamn-f89v`, which opens on its first consumer.]
 5. D2b: file the `$now` bead. The shadow schema is refused.
 6. `bolero`: refused for now; Phase 3 trigger.
 7. Tripwires: deferred with D8b; Phase 3 trigger.

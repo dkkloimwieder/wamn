@@ -3235,6 +3235,76 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
     );
 }
 
+/// EXIT GATE: every create-shaped command CARRIES the two claim contract
+/// tests, so no package author writes them and none can omit them.
+///
+/// The whole artifact is frozen. An added, removed or renamed field fails here,
+/// because a runner reads this file and a silent rename would make it skip a
+/// case rather than refuse.
+///
+/// D7, wamn-10yt.19. The cases are emitted, not executed. Executing them needs
+/// a live database, which is wamn-f89v.
+#[test]
+fn every_generated_create_carries_the_two_claim_contract_tests() {
+    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
+
+    assert_eq!(
+        artifact_json(
+            &package,
+            "generated/contracts/purchase_order/create.claim-tests.json"
+        ),
+        json!({
+            "operation": "wamn-receiving:purchase-order/create@1.0.0",
+            "law": "command-identity-from-claim",
+            "cases": [
+                {
+                    "id": "replay_returns_the_immutable_original",
+                    "given": "the same idempotency_key with the same canonical_command",
+                    "first_call": ["create_claim", "create"],
+                    "second_call": ["create_claim", "create_replay"],
+                    "expect": {
+                        "claim": "no_row",
+                        "canonical_command": "equal",
+                        "result": "identical_to_the_first_call",
+                        "writes": "none",
+                        "identity_source": "claim",
+                    },
+                },
+                {
+                    "id": "changed_request_under_a_live_key_refuses",
+                    "given": "the same idempotency_key with a changed canonical_command",
+                    "first_call": ["create_claim", "create"],
+                    "second_call": ["create_claim", "create_replay"],
+                    "expect": {
+                        "claim": "no_row",
+                        "canonical_command": "differs",
+                        "writes": "none",
+                        "refusal": "idempotency_conflict",
+                    },
+                },
+            ],
+        })
+    );
+}
+
+/// EXIT GATE: a command that is not a create carries no claim tests, so the
+/// artifact never appears where the law does not apply.
+#[test]
+fn only_a_create_carries_claim_contract_tests() {
+    let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
+
+    for action in ["get", "query", "update", "delete"] {
+        assert!(
+            package
+                .file(&format!(
+                    "generated/contracts/purchase_order/{action}.claim-tests.json"
+                ))
+                .is_none(),
+            "{action} carries claim tests"
+        );
+    }
+}
+
 /// EXIT GATE: the claim's shape reaches the required-schema contract and the
 /// data-access overlay, so nothing the emitted SQL names is left unpinned.
 #[test]

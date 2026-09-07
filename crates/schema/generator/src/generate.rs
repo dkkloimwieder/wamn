@@ -1848,6 +1848,58 @@ fn idempotency_contract(claim: &sql::Claim<'_>) -> Value {
     })
 }
 
+/// The two contract tests every create-shaped command carries.
+///
+/// The claim law is a property of the emitted statements, so its tests belong
+/// to the command rather than to whoever writes the package. Every create gets
+/// both by construction, and a package author writes neither.
+///
+/// Each case names the statements in the order a caller runs them. The first
+/// call mints the claim and inserts. The second call re-runs `create_claim`,
+/// which returns no row under the claim's primary key, so the caller reads the
+/// durable original through `create_replay`. Case one asserts that the original
+/// comes back unchanged with no write. Case two asserts the typed refusal when
+/// that original was minted for a different request.
+///
+/// Binds are not repeated here. `create.input.json` states the request shape
+/// and the operation contract states each statement's binds and columns.
+///
+/// EXECUTING these cases needs a live database. That runner is `wamn-f89v`,
+/// and it opens on its first consumer. What this emits is the case list.
+fn claim_contract_tests(operation_id: &str) -> Value {
+    json!({
+        "operation": operation_id,
+        "law": "command-identity-from-claim",
+        "cases": [
+            {
+                "id": "replay_returns_the_immutable_original",
+                "given": "the same idempotency_key with the same canonical_command",
+                "first_call": [CREATE_CLAIM_STATEMENT, CREATE_STATEMENT],
+                "second_call": [CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT],
+                "expect": {
+                    "claim": "no_row",
+                    "canonical_command": "equal",
+                    "result": "identical_to_the_first_call",
+                    "writes": "none",
+                    "identity_source": "claim",
+                },
+            },
+            {
+                "id": "changed_request_under_a_live_key_refuses",
+                "given": "the same idempotency_key with a changed canonical_command",
+                "first_call": [CREATE_CLAIM_STATEMENT, CREATE_STATEMENT],
+                "second_call": [CREATE_CLAIM_STATEMENT, CREATE_REPLAY_STATEMENT],
+                "expect": {
+                    "claim": "no_row",
+                    "canonical_command": "differs",
+                    "writes": "none",
+                    "refusal": AccessOperationErrorLiteral::IdempotencyConflict,
+                },
+            },
+        ],
+    })
+}
+
 fn statement_value_contract(name: &str, ty: ColumnType, nullable: bool) -> StatementValueContract {
     StatementValueContract {
         name: name.to_owned(),
@@ -2548,7 +2600,15 @@ fn emit_operation_contracts(
         files,
         &format!("{root}.errors.json"),
         &error_contract(table, action, operation),
-    )
+    )?;
+    if claim.is_some() && action == CrudAction::Create {
+        insert_json(
+            files,
+            &format!("{root}.claim-tests.json"),
+            &claim_contract_tests(&operation_id),
+        )?;
+    }
+    Ok(())
 }
 
 /// The generated CRUD result contract, in the shape a custom operation
