@@ -1,0 +1,4 @@
+Error: dev-stage-failed at virtualize: dev-stage-state-invalid while select package component artifact: dock@0.1.0 component dock derived build package dock with 0 artifact matches
+
+Caused by:
+    dev-stage-state-invalid while select package component artifact: dock@0.1.0 component dock derived build package dock with 0 artifact matches

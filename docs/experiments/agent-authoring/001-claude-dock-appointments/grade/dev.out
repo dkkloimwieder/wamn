@@ -1,0 +1,5 @@
+applied dock@0.1.0: 1 migration(s)
+Error: dev-stage-failed at build: dev-stage-state-invalid while build production components: command exited with exit status: 65: build-components: component profile, canonical inventory, and locked metadata drifted
+
+Caused by:
+    dev-stage-state-invalid while build production components: command exited with exit status: 65: build-components: component profile, canonical inventory, and locked metadata drifted
