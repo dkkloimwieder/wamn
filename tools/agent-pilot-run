@@ -400,12 +400,20 @@ verb_up() {
 
   build_binaries
 
-  # A2, the worktree contract: detached at the pinned commit, no remote, clean.
-  # No remote is not tidiness. It is what makes "do not push" true by
-  # construction rather than by asking the agent nicely.
+  # A2, the worktree contract: detached at the pinned commit, clean, and unable
+  # to push.
+  #
+  # NOT by removing the remote. `git remote remove` inside a worktree edits the
+  # SHARED repository config, so it deletes origin for the main checkout and
+  # every other worktree, along with the branch tracking that referenced it.
+  # Measured the hard way on run 001: the next push from an unrelated worktree
+  # failed with "origin does not appear to be a git repository".
+  #
+  # The block is a push URL override carried in the driver's ENVIRONMENT
+  # instead (see `launch`). It applies to every git command the agent runs, it
+  # mutates no file, and it disappears with the process.
   git -C "$TREE" worktree add --detach "$DIR/worktree" "$commit" >> "$DIR/env.log" 2>&1 \
     || die "could not create the run worktree" "$EX_ENV"
-  git -C "$DIR/worktree" remote remove origin >> "$DIR/env.log" 2>&1 || true
   [[ -z "$(git -C "$DIR/worktree" status --porcelain=v1 --untracked-files=all)" ]] \
     || die "the run worktree is not clean" "$EX_ENV"
 
@@ -495,6 +503,9 @@ verb_launch() {
     WAMN_PILOT_RUN_DIR="$DIR" \
     WAMN_PILOT_TASK_DIR="$DIR/fixture" \
     CARGO_TARGET_DIR= \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=remote.origin.pushurl \
+    GIT_CONFIG_VALUE_0="$DIR/no-push" \
       "${driver[@]}" >> "$DIR/transcript.jsonl" 2>> "$DIR/env.log"
   ) &
   local driver_pid=$!
