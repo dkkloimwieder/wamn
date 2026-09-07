@@ -380,8 +380,8 @@ mod tests {
     #[test]
     fn the_extra_row_mints_the_cursor_from_the_last_row_kept() {
         let mut rows = vec![
-            row(FIRST, "2026-08-29T12:34:56.123456+00:00"),
-            row(SECOND, "2026-08-29T12:35:56.123456+00:00"),
+            row(FIRST, "2026-08-29T12:34:56.123456Z"),
+            row(SECOND, "2026-08-29T12:35:56.123456Z"),
         ];
         let page = finish_page(&mut rows, 1, DEFAULT_SORT).unwrap();
         assert_eq!(page.item.len(), 1);
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(key.0, "2026-08-29T12:34:56.123456Z");
         assert_eq!(id.0, FIRST);
 
-        let mut rows = vec![row(FIRST, "2026-08-29T12:34:56.123456+00:00")];
+        let mut rows = vec![row(FIRST, "2026-08-29T12:34:56.123456Z")];
         assert!(
             finish_page(&mut rows, 1, DEFAULT_SORT)
                 .unwrap()
@@ -409,7 +409,7 @@ mod tests {
             field: SortField::LocationId,
             direction: CursorDirection::Descending,
         };
-        let encoded = row_cursor(&row(FIRST, "2026-08-29T12:34:56+00:00"), location_sort).unwrap();
+        let encoded = row_cursor(&row(FIRST, "2026-08-29T12:34:56.000000Z"), location_sort).unwrap();
         assert!(matches!(
             decode(location_sort, Some(&encoded)).unwrap(),
             Cursor::Id(Some(_), Some(_))

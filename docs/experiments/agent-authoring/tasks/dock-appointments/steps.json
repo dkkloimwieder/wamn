@@ -196,7 +196,7 @@
       "item": "value",
       "value": {
         "status": "arrived",
-        "arrived_at": "2026-10-01T09:07:00Z"
+        "arrived_at": "2026-10-01T09:07:00.000000Z"
       }
     }
   },

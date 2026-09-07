@@ -63,8 +63,8 @@ Everything about how you store and compute them is yours.
 | `appointment.check_in` | `appointment_id` uuid, `arrived_at` timestamp | `status` text, `arrived_at` timestamp |
 | `appointment.query` | `dock_id` uuid, `day` date, `status` text | `appointments`, a list whose entries carry `slot_start` timestamp |
 
-A timestamp is RFC 3339 with a Z offset, as in `2026-10-01T09:00:00Z`. A date is
-`2026-10-01`.
+A timestamp is UTC RFC 3339 with exactly six fractional digits and a Z offset,
+as in `2026-10-01T09:00:00.000000Z`. A date is `2026-10-01`.
 
 The envelope is platform law rather than scenario content. Every command carries
 `request_id` and `idempotency_key`, and the caller supplies both.

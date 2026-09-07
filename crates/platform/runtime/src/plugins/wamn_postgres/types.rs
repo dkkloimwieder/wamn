@@ -153,9 +153,9 @@ impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
             }
             "bytea" => SqlValue::Bytes(<&[u8]>::from_sql(ty, raw)?.to_vec()),
             "numeric" => SqlValue::Numeric(decode_binary_numeric(raw)?),
-            "timestamptz" => SqlValue::Timestamptz(
-                DateTime::<Utc>::from_sql(ty, raw)?.to_rfc3339_opts(SecondsFormat::Micros, false),
-            ),
+            "timestamptz" => {
+                SqlValue::Timestamptz(canonical_timestamptz(DateTime::<Utc>::from_sql(ty, raw)?))
+            }
             "json" => SqlValue::Json(std::str::from_utf8(raw)?.to_string()),
             "jsonb" => {
                 let (version, body) = raw.split_first().ok_or("empty jsonb value")?;
@@ -196,6 +196,15 @@ impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
     fn accepts(_ty: &Type) -> bool {
         true
     }
+}
+
+/// Spell a PostgreSQL `timestamptz` the one way the platform spells it: UTC
+/// RFC 3339 with exactly six fractional digits and a `Z` offset.
+/// `docs/architecture/application-naming.md` rules this form and every writer
+/// already emits it. This read path is the single emitter, so nothing below it
+/// gets to decide the spelling by omission.
+fn canonical_timestamptz(value: DateTime<Utc>) -> String {
+    value.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
 /// Decode Postgres's binary NUMERIC wire format into its canonical string
@@ -326,6 +335,28 @@ mod tests {
         );
     }
 
+    /// The live carrier tests compare each read-back value to its
+    /// canonicalizer, so this test is the one place that pins the
+    /// canonicalizer itself to the spelling
+    /// `docs/architecture/application-naming.md` rules.
+    #[test]
+    fn the_timestamptz_canonicalizer_spells_utc_rfc3339_with_six_fractional_digits_and_a_z() {
+        for (parsed, spelled) in [
+            ("2026-10-01T09:07:00+02:00", "2026-10-01T07:07:00.000000Z"),
+            ("2026-10-01T09:07:00Z", "2026-10-01T09:07:00.000000Z"),
+            ("2026-10-01T09:07:00.25Z", "2026-10-01T09:07:00.250000Z"),
+            (
+                "2026-10-01T09:07:00.123456789Z",
+                "2026-10-01T09:07:00.123456Z",
+            ),
+        ] {
+            let value = DateTime::parse_from_rfc3339(parsed)
+                .expect("the fixture parses")
+                .to_utc();
+            assert_eq!(canonical_timestamptz(value), spelled);
+        }
+    }
+
     #[test]
     fn param_text_encoding() {
         use tokio_postgres::types::ToSql;
@@ -346,5 +377,123 @@ mod tests {
         let p = PgParam(SqlValue::Boolean(true));
         p.to_sql(&Type::BOOL, &mut buf).unwrap();
         assert_eq!(&buf[..], b"t");
+    }
+
+    // -----------------------------------------------------------------------
+    // Live carrier spelling (wamn-10yt.31)
+    //
+    // Four of the WIT `sql-value` variants carry a typed PostgreSQL value as
+    // text. A test that compares them to a hand-typed literal proves only that
+    // someone typed the literal to match. These two tests compare each carrier
+    // to its own canonicalizer instead: PostgreSQL's output function for every
+    // lexical-preserving type, and `canonical_timestamptz` for the one type
+    // whose canonical spelling PostgreSQL does not produce.
+    // -----------------------------------------------------------------------
+
+    const CARRIER_URL_ENV: &str = "WAMN_CARRIER_SPELLING_PG_URL";
+
+    async fn live_client() -> tokio_postgres::Client {
+        let url = std::env::var(CARRIER_URL_ENV).unwrap_or_else(|_| {
+            panic!("set {CARRIER_URL_ENV} to a disposable PostgreSQL 18 database")
+        });
+        let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+            .await
+            .expect("connect to the disposable carrier-spelling database");
+        tokio::spawn(async move {
+            if let Err(error) = connection.await {
+                eprintln!("carrier-spelling live connection failed: {error}");
+            }
+        });
+        client
+    }
+
+    #[tokio::test]
+    #[ignore = "requires WAMN_CARRIER_SPELLING_PG_URL for a disposable PostgreSQL 18 database"]
+    async fn live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells() {
+        let client = live_client().await;
+        client
+            .batch_execute(
+                "CREATE TEMPORARY TABLE carrier_timestamp (at timestamptz NOT NULL); \
+                 INSERT INTO carrier_timestamp (at) VALUES \
+                     ('2026-10-01T09:07:00+02:00'), \
+                     ('2026-10-01T09:07:00.250000Z'), \
+                     ('2026-10-01T09:07:00Z')",
+            )
+            .await
+            .expect("seed the timestamptz carrier");
+
+        let rows = client
+            .query("SELECT at FROM carrier_timestamp ORDER BY at", &[])
+            .await
+            .expect("read the timestamptz carrier back");
+        assert_eq!(rows.len(), 3);
+        for row in &rows {
+            let decoded = decode_row(row).expect("decode the read-back row");
+            let SqlValue::Timestamptz(spelled) = &decoded[0] else {
+                panic!("a timestamptz column carries the timestamptz variant");
+            };
+            assert_eq!(
+                spelled.as_bytes(),
+                canonical_timestamptz(row.get::<_, DateTime<Utc>>(0)).as_bytes()
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires WAMN_CARRIER_SPELLING_PG_URL for a disposable PostgreSQL 18 database"]
+    async fn live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer() {
+        let client = live_client().await;
+        client
+            .batch_execute(
+                "CREATE TEMPORARY TABLE carrier_spelling ( \
+                     amount numeric NOT NULL, \
+                     at timestamptz NOT NULL, \
+                     doc json NOT NULL, \
+                     docb jsonb NOT NULL, \
+                     ident uuid NOT NULL); \
+                 INSERT INTO carrier_spelling VALUES ( \
+                     '12.3400', \
+                     '2026-10-01T09:07:00+02:00', \
+                     '{\"b\":1,   \"a\":2}', \
+                     '{\"b\":1,   \"a\":2}', \
+                     '0FB4A2C1-1111-4222-8333-444444444444')",
+            )
+            .await
+            .expect("seed every text carrier");
+
+        let row = client
+            .query_one(
+                "SELECT amount, amount::text, at, doc, doc::text, docb, docb::text, \
+                        ident, ident::text \
+                   FROM carrier_spelling",
+                &[],
+            )
+            .await
+            .expect("read every text carrier back");
+        let decoded = decode_row(&row).expect("decode every text carrier");
+
+        // numeric, json, jsonb and uuid preserve what PostgreSQL holds, so
+        // PostgreSQL's own output function is their canonicalizer and the
+        // reference comes off the same row.
+        for (carrier, canonicalizer) in [(0usize, 1usize), (3, 4), (5, 6), (7, 8)] {
+            let spelled = match &decoded[carrier] {
+                SqlValue::Numeric(value) | SqlValue::Json(value) | SqlValue::Uuid(value) => value,
+                other => panic!("column {carrier} does not carry a typed value as text: {other:?}"),
+            };
+            let SqlValue::Text(reference) = &decoded[canonicalizer] else {
+                panic!("column {canonicalizer} is not the canonicalizer's own output");
+            };
+            assert_eq!(spelled.as_bytes(), reference.as_bytes());
+        }
+
+        // `timestamptz_out` spells a space and a two-digit offset, so the
+        // platform canonicalizer is the authority for this one carrier.
+        let SqlValue::Timestamptz(spelled) = &decoded[2] else {
+            panic!("column 2 does not carry the timestamptz variant");
+        };
+        assert_eq!(
+            spelled.as_bytes(),
+            canonical_timestamptz(row.get::<_, DateTime<Utc>>(2)).as_bytes()
+        );
     }
 }

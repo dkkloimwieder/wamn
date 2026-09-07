@@ -2075,6 +2075,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `crates/platform/runtime/tests/production_claim_durable_live.rs` | `WAMN_DURABLE_TIER_PG_URL` | `cargo test -p wamn-runtime --test production_claim_durable_live -- --include-ignored` |
 | `crates/platform/runtime/tests/release_manifest_source.rs` | `WAMN_RELEASE_MANIFEST_ARTIFACT_BASE` **and** `WAMN_REGISTRY_AUTH_FILE` | `cargo test -p wamn-runtime --test release_manifest_source -- --include-ignored` |
 | `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs` | `WAMN_POOL_LIFECYCLE_PG_URL` | `cargo test -p wamn-runtime --all-features --lib live_size_one_guest_and_platform_pools -- --include-ignored` |
+| `crates/platform/runtime/src/plugins/wamn_postgres/types.rs` | `WAMN_CARRIER_SPELLING_PG_URL` | `cargo test -p wamn-runtime --lib plugins::wamn_postgres::types::tests::live_ -- --include-ignored --nocapture` |
 | `services/ctl/tests/dispatch_reader_provisioning_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test dispatch_reader_provisioning_live` |
 
 **The rows from `cdc.rs` down were added by `wamn-0h0g.15.137.2`, which means
