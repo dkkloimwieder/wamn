@@ -17,6 +17,10 @@
 //! * **A refused verb** is `other`, naming the verb and why. It is NOT
 //!   `access-denied`: nothing about this component's access is at issue — WAMN
 //!   does not implement the verb in that shape for anyone.
+//! * **A lost response body** is `other`, saying the object was found and
+//!   telling the guest to re-read. It is NOT `no-such-object`, which says the
+//!   object is gone when the store just proved it is there, and it is NOT
+//!   `timeout`, which names a deadline that never elapsed (`wamn-b2m6.3`).
 
 use super::bindings::wasmcloud::blobstore::types::Error as WitError;
 use super::store::StoreError;
@@ -37,6 +41,7 @@ pub fn to_wit(error: &StoreError) -> WitError {
             WitError::Other(format!("{verb} is refused by this platform: {reason}"))
         }
         StoreError::Backend(backend) => backend_to_wit(backend),
+        StoreError::ResponseLost(_) => WitError::Other(error.to_string()),
     }
 }
 
@@ -143,6 +148,24 @@ mod tests {
             ),
             "a refused verb must not masquerade as an access decision"
         );
+    }
+
+    /// The store proved the object is there and then stopped sending it. The
+    /// guest must be told to read again, and must not be told the object is
+    /// missing.
+    #[test]
+    fn a_lost_body_is_other_and_tells_the_guest_to_re_read() {
+        let error = to_wit(&StoreError::ResponseLost(object_store::Error::Generic {
+            store: "S3",
+            source: "stream closed".into(),
+        }));
+        match error {
+            WitError::Other(message) => {
+                assert!(message.contains("re-read"), "{message}");
+                assert!(message.contains("was found"), "{message}");
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
     }
 
     #[test]

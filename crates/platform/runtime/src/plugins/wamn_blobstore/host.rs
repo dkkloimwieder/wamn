@@ -51,6 +51,8 @@ use super::plugin::{WAMN_BLOBSTORE_ID, WamnBlobstore};
 use super::store::{BoundContainer, StoreError};
 use super::wit_error::to_wit;
 
+use crate::plugins::effect_span::{EffectOutcome, EffectOutcomeGuard};
+
 /// The refusal a store-owned verb returns.
 fn refused(verb: &'static str, reason: &'static str) -> WitError {
     to_wit(&StoreError::Refused { verb, reason })
@@ -343,6 +345,38 @@ where
     })
 }
 
+/// Which of the five outcomes one store effect reached.
+///
+/// A confinement refusal, a refused verb and an intake refusal are all decided
+/// on this host before any store call, so they are refused before dispatch. A
+/// missing object is the store answering, not the platform declining. A body
+/// that stopped arriving after the object was found is response-lost, the same
+/// shape the HTTP surface names at its own body read.
+///
+/// `object_store::Error` is `non_exhaustive`, so the last arm is a wildcard and
+/// not a list. It records [`EffectOutcome::EffectUncertain`]: a generic backend
+/// failure is an attempt the platform made and holds no outcome for. A timeout
+/// there names a deadline that never elapsed (owner ruling, `wamn-b2m6.3`).
+fn store_outcome(error: Option<&StoreError>) -> EffectOutcome {
+    let Some(error) = error else {
+        return EffectOutcome::Responded;
+    };
+    match error {
+        StoreError::Confinement(_) | StoreError::Intake(_) | StoreError::Refused { .. } => {
+            EffectOutcome::RefusedBeforeDispatch
+        }
+        StoreError::NoSuchObject => EffectOutcome::Responded,
+        StoreError::ResponseLost(_) => EffectOutcome::ResponseLost,
+        StoreError::Backend(backend) => match backend {
+            object_store::Error::NotFound { .. }
+            | object_store::Error::PermissionDenied { .. }
+            | object_store::Error::Unauthenticated { .. }
+            | object_store::Error::AlreadyExists { .. } => EffectOutcome::Responded,
+            _ => EffectOutcome::EffectUncertain,
+        },
+    }
+}
+
 /// Run one store effect inside its span and record its latency.
 ///
 /// Every store touch goes through here, so an effect cannot be added later
@@ -360,6 +394,9 @@ where
 
     let (plugin, component_id) = plugin_and_caller(accessor)?;
     let span = super::plugin::blobstore_span(&plugin, &component_id, operation);
+    // Declared before the effect so it outlives the instrumented future. An
+    // effect dropped mid-flight records `cancelled` through this guard.
+    let mut observed = EffectOutcomeGuard::new(&span);
     let started = std::time::Instant::now();
     let outcome = effect.instrument(span).await;
     crate::plugins::effect_span::record_effect_ms(
@@ -369,8 +406,15 @@ where
         &plugin.project,
         started.elapsed(),
     );
+    let observation = store_outcome(outcome.as_ref().err());
+    observed.settle(observation);
     if let Err(error) = &outcome {
-        tracing::warn!(effect.operation = operation, error = %error, "blobstore effect refused");
+        tracing::warn!(
+            effect.operation = operation,
+            effect.outcome = observation.label(),
+            error = %error,
+            "blobstore effect failed"
+        );
     }
     Ok(outcome)
 }
@@ -400,4 +444,90 @@ where
         }
     };
     plugin.container_for(&component_id, store_alias).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::wamn_blobstore::confinement::KeyRefusal;
+    use crate::plugins::wamn_blobstore::intake::IntakeError;
+
+    /// A key the wall refused never reached the store. A missing object is the
+    /// store answering. The two must not read alike.
+    #[test]
+    fn a_confinement_refusal_and_a_missing_object_do_not_read_alike() {
+        assert_eq!(
+            store_outcome(Some(&StoreError::Confinement(KeyRefusal::ParentTraversal))),
+            EffectOutcome::RefusedBeforeDispatch,
+        );
+        assert_eq!(
+            store_outcome(Some(&StoreError::NoSuchObject)),
+            EffectOutcome::Responded,
+        );
+    }
+
+    /// An intake refusal and a refused verb are decided on this host, so both
+    /// are refused before dispatch.
+    #[test]
+    fn a_host_side_refusal_records_refused_before_dispatch() {
+        assert_eq!(
+            store_outcome(Some(&StoreError::Intake(IntakeError::TooLarge {
+                limit: MAX_OBJECT_BYTES,
+                observed: MAX_OBJECT_BYTES + 1,
+            }))),
+            EffectOutcome::RefusedBeforeDispatch,
+        );
+        assert_eq!(
+            store_outcome(Some(&StoreError::Refused {
+                verb: "copy-object",
+                reason: "x",
+            })),
+            EffectOutcome::RefusedBeforeDispatch,
+        );
+    }
+
+    /// A backend failure the platform cannot place is an attempt with no
+    /// recorded outcome. A refusal before dispatch states that nothing was
+    /// written, and a timeout states that a deadline elapsed. The platform knows
+    /// neither.
+    #[test]
+    fn an_unplaceable_backend_failure_records_effect_uncertain() {
+        let unplaceable = StoreError::Backend(object_store::Error::Generic {
+            store: "S3",
+            source: "connection reset".into(),
+        });
+        assert_eq!(
+            store_outcome(Some(&unplaceable)),
+            EffectOutcome::EffectUncertain,
+        );
+        assert_ne!(store_outcome(Some(&unplaceable)), EffectOutcome::Timeout);
+    }
+
+    /// The store found the object and its body stopped arriving. That is the
+    /// same shape the HTTP surface names, and it reads as response-lost on both.
+    /// Effect-uncertain claims an unknown that the found object rules out.
+    #[test]
+    fn a_body_lost_after_the_object_was_found_records_response_lost() {
+        let lost = StoreError::ResponseLost(object_store::Error::Generic {
+            store: "S3",
+            source: "stream closed".into(),
+        });
+        assert_eq!(store_outcome(Some(&lost)), EffectOutcome::ResponseLost);
+        assert_ne!(store_outcome(Some(&lost)), EffectOutcome::EffectUncertain);
+    }
+
+    /// An effect that returned is the store answering, whatever it answered.
+    #[test]
+    fn an_effect_that_returned_records_responded() {
+        assert_eq!(store_outcome(None), EffectOutcome::Responded);
+        assert_eq!(
+            store_outcome(Some(&StoreError::Backend(
+                object_store::Error::PermissionDenied {
+                    path: "p".to_owned(),
+                    source: "no".into(),
+                }
+            ))),
+            EffectOutcome::Responded,
+        );
+    }
 }

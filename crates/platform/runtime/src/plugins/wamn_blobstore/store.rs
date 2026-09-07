@@ -15,8 +15,8 @@ use super::intake::IntakeError;
 /// Why a store operation failed.
 ///
 /// Confinement and intake refusals are kept distinct from transport failures:
-/// the first two are decided here before anything leaves the host, and only
-/// [`StoreError::Backend`] describes the remote.
+/// the first two are decided here before anything leaves the host, and
+/// [`StoreError::Backend`] and [`StoreError::ResponseLost`] describe the remote.
 #[derive(Debug)]
 pub enum StoreError {
     /// The guest-supplied key broke a containment rule.
@@ -27,6 +27,12 @@ pub enum StoreError {
     NoSuchObject,
     /// The backend refused or failed.
     Backend(object_store::Error),
+    /// The store answered and its body did not arrive.
+    ///
+    /// Distinct from [`StoreError::Backend`] because the store already proved
+    /// it acted: the object was found and the read began. The remedy is to
+    /// re-read, never to write again (`wamn-b2m6.3`).
+    ResponseLost(object_store::Error),
     /// The verb is refused by WAMN and will not be implemented in this shape.
     Refused {
         /// The verb refused.
@@ -44,6 +50,7 @@ impl StoreError {
             Self::Intake(error) => error.code(),
             Self::NoSuchObject => "no_such_object",
             Self::Backend(_) => "backend_failure",
+            Self::ResponseLost(_) => "response_lost",
             Self::Refused { .. } => "verb_refused",
         }
     }
@@ -58,6 +65,11 @@ impl core::fmt::Display for StoreError {
             Self::Intake(error) => write!(formatter, "{error}"),
             Self::NoSuchObject => formatter.write_str("no such object"),
             Self::Backend(error) => write!(formatter, "object store failed: {error}"),
+            Self::ResponseLost(error) => write!(
+                formatter,
+                "the object was found and its body did not arrive, so re-read rather than \
+                 write again: {error}"
+            ),
             Self::Refused { verb, reason } => {
                 write!(formatter, "{verb} is refused by this platform: {reason}")
             }
@@ -148,7 +160,9 @@ impl BoundContainer {
     /// # Errors
     ///
     /// [`StoreError::NoSuchObject`] when absent; confinement or backend
-    /// failure otherwise.
+    /// failure otherwise. A body that stops arriving after the object was found
+    /// is [`StoreError::ResponseLost`], not a backend failure: the store acted,
+    /// and only the read of its answer failed.
     pub async fn get(&self, author_key: &str) -> Result<Vec<u8>, StoreError> {
         let path = self.path(author_key)?;
         match self.store.get(&path).await {
@@ -156,7 +170,7 @@ impl BoundContainer {
                 .bytes()
                 .await
                 .map(|bytes| bytes.to_vec())
-                .map_err(StoreError::Backend),
+                .map_err(StoreError::ResponseLost),
             Err(object_store::Error::NotFound { .. }) => Err(StoreError::NoSuchObject),
             Err(error) => Err(StoreError::Backend(error)),
         }

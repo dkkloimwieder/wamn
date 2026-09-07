@@ -54,6 +54,10 @@
 //!   filled by [`record_run`] on the surfaces whose contract carries run
 //!   coordinates. Nothing constructs an [`EffectRun`] on any surface today; the
 //!   contract that would is `wamn-0h0g.7.9`.
+//! - `effect.outcome` — what the platform says happened to the effect. One of
+//!   six words and never a seventh, declared `Empty` and filled by
+//!   [`EffectOutcomeGuard`] on the surfaces that run their effect through it.
+//!   [`EffectOutcome`] states what each word claims (`wamn-b2m6.3`).
 //!
 //! Each surface adds its own leading fields — `db.system` / `db.operation` for
 //! `wamn:postgres` (OTel DB semantic conventions, frozen), `effect.operation`
@@ -144,6 +148,109 @@ pub(crate) struct EffectWiring<'a> {
 pub(crate) struct EffectRun<'a> {
     pub run_id: &'a str,
     pub requirement: &'a str,
+}
+
+/// What the platform says happened to one effect.
+///
+/// Six words, and never a seventh. `docs/exe-model.md` rules the set under "The
+/// three effect contracts". Each word claims only what the platform knows, and
+/// the four claims it must never make are written here because the tree made
+/// all four before `wamn-b2m6.3`, when every failure rendered as the single
+/// word "refused":
+///
+/// * A TIMEOUT IS NOT A ROLLBACK. The platform sent the request and got no
+///   answer. What the far side did with that request is unknown, so
+///   [`Self::Timeout`] states nothing about the far side.
+/// * A REFUSAL BEFORE DISPATCH IS NOT AN UNDONE COMMAND. A wiring failure
+///   refuses one effect. The command that reached the component committed
+///   already, and [`Self::RefusedBeforeDispatch`] describes the effect alone.
+/// * AN ATTEMPT THAT FAILED IN FLIGHT IS NOT A TIMEOUT. A deadline that never
+///   elapsed is as false a claim as the other two, one word earlier. That
+///   attempt is [`Self::EffectUncertain`] (owner ruling, `wamn-b2m6.3`).
+/// * A LOST RESPONSE IS NEITHER UNCERTAIN NOR DELIVERED. The far side acted and
+///   the answer proves it, so nothing is unknown. The guest received no
+///   response, so nothing was delivered. That is [`Self::ResponseLost`], and it
+///   is a word because its remedy is its own (owner ruling, `wamn-b2m6.3`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EffectOutcome {
+    /// The platform declined the effect and sent nothing.
+    RefusedBeforeDispatch,
+    /// The far side answered. A refusal inside that answer is still an answer.
+    Responded,
+    /// The request went out and the deadline elapsed with no answer.
+    Timeout,
+    /// The effect was abandoned before it settled.
+    Cancelled,
+    /// The platform sent an attempt and recorded no outcome for it.
+    ///
+    /// The same state the premium durable shelf contract in
+    /// `docs/exe-model.md` names, spelled the same way so the two do not drift
+    /// into separate vocabularies for one fact.
+    EffectUncertain,
+    /// The far side acted and its response did not arrive.
+    ///
+    /// The status line and headers prove the far side acted. The body did not
+    /// reach the guest. The remedy is to RE-READ the result, never to resend
+    /// the request, which is what separates this word from
+    /// [`Self::EffectUncertain`].
+    ResponseLost,
+}
+
+impl EffectOutcome {
+    /// The frozen attribute value one outcome is recorded as.
+    ///
+    /// A trace reader matches these six strings, so a rename breaks every
+    /// saved query written against them.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::RefusedBeforeDispatch => "refused-before-dispatch",
+            Self::Responded => "responded",
+            Self::Timeout => "timeout",
+            Self::Cancelled => "cancelled",
+            Self::EffectUncertain => "effect-uncertain",
+            Self::ResponseLost => "response-lost",
+        }
+    }
+}
+
+/// The span field one outcome is recorded under, beside [`EFFECT_OPERATION`].
+pub(crate) const EFFECT_OUTCOME: &str = "effect.outcome";
+
+/// Put one outcome on one effect span, whatever ends the effect.
+///
+/// A guard and not a plain call, because a dropped future records nothing. An
+/// effect abandoned before it settles leaves through `Drop`, and `Drop` is the
+/// only code that runs then. The guard therefore starts at
+/// [`EffectOutcome::Cancelled`] and the call site settles it once the effect
+/// returns. An effect span carries an outcome on every path out.
+///
+/// The guard holds its OWN clone of the span. `Instrument` drops the span it was
+/// given as soon as the effect ends, and this clone keeps the span open until
+/// the outcome is on it. So the guard has to outlive the instrumented future,
+/// which the call sites arrange by declaring it first.
+pub(crate) struct EffectOutcomeGuard {
+    span: tracing::Span,
+    outcome: EffectOutcome,
+}
+
+impl EffectOutcomeGuard {
+    pub(crate) fn new(span: &tracing::Span) -> Self {
+        Self {
+            span: span.clone(),
+            outcome: EffectOutcome::Cancelled,
+        }
+    }
+
+    /// Name what the effect actually did. Called once, after the effect returns.
+    pub(crate) fn settle(&mut self, outcome: EffectOutcome) {
+        self.outcome = outcome;
+    }
+}
+
+impl Drop for EffectOutcomeGuard {
+    fn drop(&mut self) {
+        self.span.record(EFFECT_OUTCOME, self.outcome.label());
+    }
 }
 
 /// [9.8] The duration histogram of each surface `wamn-0h0g.24.3` newly
@@ -275,7 +382,9 @@ pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_
 ///
 /// A surface that can source its wiring position calls [`record_wiring`] on the
 /// returned span; the macro declares those fields but never fills them, because
-/// only the call site knows whether it holds an invocation.
+/// only the call site knows whether it holds an invocation. `effect.outcome` is
+/// declared the same way and filled by an [`EffectOutcomeGuard`] the call site
+/// builds from the span before it runs the effect.
 ///
 /// The caller instruments the awaited effect with the returned span
 /// (`future.instrument(span).await`); entering it around a synchronous prelude
@@ -311,6 +420,7 @@ macro_rules! effect_span {
             wamn.component_digest = tracing::field::Empty,
             wamn.run_id = tracing::field::Empty,
             wamn.requirement = tracing::field::Empty,
+            effect.outcome = tracing::field::Empty,
         );
         $crate::plugins::effect_span::record_run(&span, $run);
         span
@@ -660,6 +770,125 @@ mod tests {
                 1,
             )],
         );
+    }
+
+    /// One effect span, opened and settled the way a surface settles it, read
+    /// back as the value `effect.outcome` carries.
+    fn observed_outcome(tracer: &'static str, settled: Option<EffectOutcome>) -> String {
+        let harness = span_proof::SpanHarness::install(tracer);
+        {
+            let span = effect_span!(
+                "wamn.outcome_test",
+                EffectIdentity {
+                    tenant: "tenant-a",
+                    project: "project-a",
+                    component: "component-a",
+                },
+                None,
+                effect.operation = "probe",
+            );
+            let mut guard = EffectOutcomeGuard::new(&span);
+            if let Some(outcome) = settled {
+                guard.settle(outcome);
+            }
+        }
+        harness
+            .attributes("wamn.outcome_test")
+            .into_iter()
+            .find(|(key, _)| key.as_str() == EFFECT_OUTCOME)
+            .expect("every effect span carries an outcome")
+            .1
+    }
+
+    /// An effect the platform declined reads as refused before dispatch, which
+    /// says the platform sent nothing.
+    #[test]
+    fn an_effect_the_platform_declined_records_refused_before_dispatch() {
+        assert_eq!(
+            observed_outcome(
+                "outcome-refused-test",
+                Some(EffectOutcome::RefusedBeforeDispatch)
+            ),
+            "refused-before-dispatch",
+        );
+    }
+
+    /// An effect the far side answered reads as responded, whatever that answer
+    /// said.
+    #[test]
+    fn an_effect_the_far_side_answered_records_responded() {
+        assert_eq!(
+            observed_outcome("outcome-responded-test", Some(EffectOutcome::Responded)),
+            "responded",
+        );
+    }
+
+    /// An effect whose deadline really elapsed reads as timeout, and a reader
+    /// learns nothing about the far side from it.
+    #[test]
+    fn an_effect_whose_deadline_elapsed_records_timeout() {
+        assert_eq!(
+            observed_outcome("outcome-timeout-test", Some(EffectOutcome::Timeout)),
+            "timeout",
+        );
+    }
+
+    /// An effect abandoned before it settled reads as cancelled. Nothing calls
+    /// `settle` on that path, so the guard's own `Drop` is what records it.
+    #[test]
+    fn an_effect_abandoned_before_it_settled_records_cancelled() {
+        assert_eq!(
+            observed_outcome("outcome-cancelled-test", None),
+            "cancelled"
+        );
+    }
+
+    /// An attempt the platform sent and holds no outcome for reads as
+    /// effect-uncertain, which is the state the durable shelf contract names.
+    #[test]
+    fn an_attempt_with_no_recorded_outcome_records_effect_uncertain() {
+        assert_eq!(
+            observed_outcome(
+                "outcome-uncertain-test",
+                Some(EffectOutcome::EffectUncertain)
+            ),
+            "effect-uncertain",
+        );
+    }
+
+    /// An answer the far side sent and the guest never received reads as
+    /// response-lost, the word whose remedy is to re-read.
+    #[test]
+    fn an_answer_that_never_reached_the_guest_records_response_lost() {
+        assert_eq!(
+            observed_outcome(
+                "outcome-response-lost-test",
+                Some(EffectOutcome::ResponseLost)
+            ),
+            "response-lost",
+        );
+    }
+
+    /// The six words are the whole set. None of them names a rollback, an undo
+    /// or a revert, because no effect observation states what a command did.
+    #[test]
+    fn no_outcome_word_claims_a_command_was_undone() {
+        for outcome in [
+            EffectOutcome::RefusedBeforeDispatch,
+            EffectOutcome::Responded,
+            EffectOutcome::Timeout,
+            EffectOutcome::Cancelled,
+            EffectOutcome::EffectUncertain,
+            EffectOutcome::ResponseLost,
+        ] {
+            let label = outcome.label();
+            for forbidden in ["rollback", "rolled", "undo", "undone", "revert"] {
+                assert!(
+                    !label.contains(forbidden),
+                    "{label} claims {forbidden}, which the platform does not know"
+                );
+            }
+        }
     }
 
     /// `published` is the server's clock. Unsynchronised, it can sit in this

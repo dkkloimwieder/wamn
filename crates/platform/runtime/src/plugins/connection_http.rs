@@ -27,8 +27,8 @@ use crate::connection_authority::{
     parse_http_connection_authority, resolve_http_request,
 };
 use crate::plugins::effect_span::{
-    EFFECT_OPERATION, EffectIdentity, EffectWiring, HTTP_EFFECT_DURATION_MS, effect_span,
-    record_effect_ms, record_wiring,
+    EFFECT_OPERATION, EffectIdentity, EffectOutcome, EffectOutcomeGuard, EffectWiring,
+    HTTP_EFFECT_DURATION_MS, effect_span, record_effect_ms, record_wiring,
 };
 use crate::release_manifest::ReleaseManifestWeld;
 
@@ -50,6 +50,14 @@ use bindings::wamn::connection::http::{self, ConnectionError, Header, Request, R
 pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
 const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
 const AUTHORITY_SNAPSHOT_UNAVAILABLE: &str = "connection-authority-unavailable";
+/// The transport detail for an HTTP client that never built. One of the three
+/// details this file mints itself, so [`http_outcome`] can place it before
+/// dispatch instead of guessing at a rendered error string.
+const HTTP_CLIENT_UNAVAILABLE: &str = "connection-client-unavailable";
+/// The transport detail for a response the far side sent and the host never
+/// finished reading. Minted for the same reason as the other two: only this
+/// file knows the status line already arrived.
+const RESPONSE_BODY_LOST: &str = "connection-response-lost";
 
 /// Host-attested identity of one component invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -675,9 +683,14 @@ async fn execute(
         }
         TransportDecision::Proxy { .. } => return Err(ConnectionError::Incompatible),
     }
-    let client = builder
-        .build()
-        .map_err(|error| ConnectionError::Transport(error.to_string()))?;
+    // A named detail, not the rendered error, for the same reason the authority
+    // snapshot uses one: this failure provably dispatched nothing, and
+    // `http_outcome` has no other way to tell it apart from a failure in flight.
+    // The rendered error stays host-side in the log.
+    let client = builder.build().map_err(|error| {
+        tracing::warn!(error = %error, "trusted HTTP client construction failed");
+        ConnectionError::Transport(HTTP_CLIENT_UNAVAILABLE.to_string())
+    })?;
     let mut outbound = client
         .request(method, decision.logical_url.as_ref())
         .headers(headers);
@@ -700,10 +713,16 @@ async fn execute(
             value: value.as_bytes().to_vec(),
         })
         .collect();
+    // The status line and headers are already in hand here, so the far side
+    // acted. Only the body was lost. A named detail carries that fact to
+    // `http_outcome`, which the rendered error cannot.
     let body = response
         .bytes()
         .await
-        .map_err(|error| ConnectionError::Transport(error.to_string()))?
+        .map_err(|error| {
+            tracing::warn!(error = %error, status, "trusted HTTP response body was lost");
+            ConnectionError::Transport(RESPONSE_BODY_LOST.to_string())
+        })?
         .to_vec();
     Ok(Response {
         status,
@@ -775,6 +794,50 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
     span
 }
 
+/// Which of the five outcomes one HTTP effect reached.
+///
+/// The match is exhaustive on purpose. A new `connection-error` case is then a
+/// compile error here, and whoever adds it decides what the platform knows
+/// about it instead of inheriting a wildcard.
+///
+/// `Transport` carries four different facts, and the wire enum names none of
+/// them. Three of them this file mints itself and therefore recognises:
+///
+/// * the authority read and the client that never built, which dispatched
+///   nothing, so both are refused before dispatch,
+/// * the response body the host never finished reading, which is
+///   [`EffectOutcome::ResponseLost`], because the status line proves the far
+///   side acted and the guest still got nothing.
+///
+/// The fourth is a rendered `reqwest` error from a request that failed in
+/// flight. It records [`EffectOutcome::EffectUncertain`], because the platform
+/// sent an attempt and holds no outcome for it. `Timeout` is wrong for it, since
+/// it names a deadline that never elapsed, and refused before dispatch is wrong
+/// too, since the request left (owner ruling, `wamn-b2m6.3`).
+fn http_outcome(result: &Result<Response, ConnectionError>) -> EffectOutcome {
+    match result {
+        Ok(_) => EffectOutcome::Responded,
+        Err(ConnectionError::Timeout) => EffectOutcome::Timeout,
+        Err(ConnectionError::Transport(detail))
+            if detail.as_str() == AUTHORITY_SNAPSHOT_UNAVAILABLE
+                || detail.as_str() == HTTP_CLIENT_UNAVAILABLE =>
+        {
+            EffectOutcome::RefusedBeforeDispatch
+        }
+        Err(ConnectionError::Transport(detail)) if detail.as_str() == RESPONSE_BODY_LOST => {
+            EffectOutcome::ResponseLost
+        }
+        Err(ConnectionError::Transport(_)) => EffectOutcome::EffectUncertain,
+        Err(
+            ConnectionError::Unbound
+            | ConnectionError::Incompatible
+            | ConnectionError::AuthorityDenied
+            | ConnectionError::AttestationInvalid
+            | ConnectionError::CredentialUnavailable,
+        ) => EffectOutcome::RefusedBeforeDispatch,
+    }
+}
+
 impl http::Host for ActiveCtx<'_> {
     async fn send(
         &mut self,
@@ -782,6 +845,9 @@ impl http::Host for ActiveCtx<'_> {
     ) -> wash_runtime::wasmtime::Result<Result<Response, ConnectionError>> {
         let plugin = plugin_of(self)?;
         let span = http_span(&plugin, self.component_id.as_ref());
+        // Declared before the effect so it outlives the instrumented future. A
+        // send dropped mid-flight records `cancelled` through this guard.
+        let mut observed = EffectOutcomeGuard::new(&span);
         let started = std::time::Instant::now();
         let result = plugin
             .send(self.component_id.as_ref(), &request)
@@ -794,16 +860,19 @@ impl http::Host for ActiveCtx<'_> {
             &plugin.project,
             started.elapsed(),
         );
+        let outcome = http_outcome(&result);
+        observed.settle(outcome);
         if let Err(error) = &result {
             let invocation = plugin.invocation(self.component_id.as_ref());
             tracing::warn!(
                 error = ?error,
+                effect.outcome = outcome.label(),
                 wiring_id = invocation.as_ref().map(|value| value.wiring_id.as_str()),
                 wiring_version = invocation.as_ref().map(|value| value.wiring_version),
                 node_id = invocation.as_ref().map(|value| value.node_id.as_str()),
                 occurrence = invocation.as_ref().map(|value| value.occurrence),
                 store_alias = request.requirement,
-                "trusted HTTP effect refused"
+                "trusted HTTP effect failed"
             );
         }
         Ok(result)
@@ -1264,6 +1333,146 @@ mod tests {
                 ("wamn.node_id", ""),
                 ("wamn.occurrence", "0"),
                 ("wamn.component_digest", ""),
+            ]),
+        );
+    }
+
+    /// One effect span, opened and settled the way `send` settles it.
+    fn observed_http_span(
+        plugin: &ConnectionHttp,
+        component_id: &str,
+        result: &Result<Response, ConnectionError>,
+    ) {
+        let span = http_span(plugin, component_id);
+        let mut observed = EffectOutcomeGuard::new(&span);
+        observed.settle(http_outcome(result));
+    }
+
+    /// THE TEST THAT WOULD HAVE CAUGHT THE OLD BEHAVIOUR. Every failure of this
+    /// surface rendered as one word, "refused", and the span carried no outcome
+    /// at all. A timeout then read as a refusal before dispatch, which tells a
+    /// reader the request never left and the far side did nothing with it. The
+    /// platform does not know that.
+    #[test]
+    fn a_timeout_never_reads_as_a_refusal_before_dispatch() {
+        assert_eq!(
+            http_outcome(&Err(ConnectionError::Timeout)),
+            EffectOutcome::Timeout,
+        );
+        assert_ne!(
+            http_outcome(&Err(ConnectionError::Timeout)),
+            http_outcome(&Err(ConnectionError::AttestationInvalid)),
+            "a timeout and a wiring refusal must not read alike",
+        );
+    }
+
+    /// A wiring failure refuses ONE effect, and so does every other refusal the
+    /// platform decides before dispatch. The command that reached this component
+    /// committed before the effect ran, and the observation claims nothing about
+    /// it: it says the platform declined to dispatch, and stops there.
+    #[test]
+    fn a_wiring_failure_names_the_refused_effect_and_not_the_command() {
+        for error in [
+            ConnectionError::Unbound,
+            ConnectionError::AttestationInvalid,
+            ConnectionError::AuthorityDenied,
+            ConnectionError::CredentialUnavailable,
+            ConnectionError::Incompatible,
+        ] {
+            let outcome = http_outcome(&Err(error));
+            assert_eq!(outcome, EffectOutcome::RefusedBeforeDispatch);
+            assert_eq!(outcome.label(), "refused-before-dispatch");
+        }
+    }
+
+    /// Two of the three transport details this file mints dispatched nothing,
+    /// so both are refusals. The authority read never reached a client, and the
+    /// client never built.
+    #[test]
+    fn the_two_details_that_dispatched_nothing_are_refused_before_dispatch() {
+        for detail in [AUTHORITY_SNAPSHOT_UNAVAILABLE, HTTP_CLIENT_UNAVAILABLE] {
+            assert_eq!(
+                http_outcome(&Err(ConnectionError::Transport(detail.to_owned()))),
+                EffectOutcome::RefusedBeforeDispatch,
+                "{detail} dispatched nothing",
+            );
+        }
+    }
+
+    /// THE TEST THAT WOULD HAVE CAUGHT THE MAPPING THE OWNER OVERTURNED
+    /// SECOND. A body lost after the status line arrived was recorded as
+    /// effect-uncertain, which claims an unknown. The far side acted and the
+    /// answer proves it. The guest received nothing, so it is not responded
+    /// either. The remedy is to re-read, not to resend.
+    #[test]
+    fn a_lost_response_never_reads_as_effect_uncertain() {
+        let lost = http_outcome(&Err(ConnectionError::Transport(
+            RESPONSE_BODY_LOST.to_owned(),
+        )));
+        assert_eq!(lost, EffectOutcome::ResponseLost);
+        assert_ne!(
+            lost,
+            EffectOutcome::EffectUncertain,
+            "the far side acted, so nothing about it is unknown",
+        );
+        assert_ne!(
+            lost,
+            EffectOutcome::Responded,
+            "the guest received no response",
+        );
+    }
+
+    /// THE TEST THAT WOULD HAVE CAUGHT THE MAPPING THE OWNER OVERTURNED. A
+    /// transport failure in flight was recorded as a timeout, which names a
+    /// deadline that never elapsed. The attempt went out and the platform holds
+    /// no outcome for it, which is effect-uncertain.
+    #[test]
+    fn a_transport_failure_in_flight_never_reads_as_a_timeout() {
+        let in_flight = http_outcome(&Err(ConnectionError::Transport(
+            "connection reset by peer".to_owned(),
+        )));
+        assert_eq!(in_flight, EffectOutcome::EffectUncertain);
+        assert_ne!(
+            in_flight,
+            EffectOutcome::Timeout,
+            "a failure in flight must not claim a deadline elapsed",
+        );
+        assert_ne!(
+            in_flight,
+            EffectOutcome::RefusedBeforeDispatch,
+            "a failure in flight must not claim the request never left",
+        );
+    }
+
+    /// A timed-out effect is one whole span value. `effect.outcome` is part of
+    /// the shape, so a reader filtering on it finds every effect this surface
+    /// ran and never a subset.
+    #[test]
+    fn a_timed_out_effect_span_carries_the_timeout_outcome() {
+        let plugin = offline_plugin();
+        let component_id = "component-store-7";
+        plugin
+            .bind_invocation(component_id, invocation())
+            .expect("the fresh store accepts its invocation");
+        let component_digest = digest('a');
+
+        let harness = SpanHarness::install("connection-http-outcome-test");
+        observed_http_span(&plugin, component_id, &Err(ConnectionError::Timeout));
+
+        assert_eq!(
+            harness.attributes("wamn.connection_http"),
+            expected_attributes(&[
+                ("effect.operation", "send"),
+                ("effect.outcome", "timeout"),
+                ("wamn.tenant", "tenant-a"),
+                ("wamn.project", "project-a"),
+                ("wamn.component", component_id),
+                ("wamn.package_id", "package_a"),
+                ("wamn.wiring_id", "orders"),
+                ("wamn.wiring_version", "3"),
+                ("wamn.node_id", "notify"),
+                ("wamn.occurrence", "2"),
+                ("wamn.component_digest", component_digest.as_str()),
             ]),
         );
     }
