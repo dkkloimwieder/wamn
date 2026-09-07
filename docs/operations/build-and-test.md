@@ -306,6 +306,19 @@ WAMN_RECEIVING_PG_URL="$RECEIVING_DATABASE_URL" cargo test \
   receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18 \
   --locked --offline -- --ignored --exact
 
+**Generate each package against its own database.** Applying all three to one
+database corrupts the base generation: `client_acme_receiving` adds
+`acme_inspection_required` and `acme_quality_status` to
+`receiving.purchase_order`, so introspecting afterwards writes those overlay
+columns into 14 `packages/receiving/generated/` files. Use three isolated
+databases: `receiving` alone, `wms` alone, and `receiving` plus its overlay.
+
+**Editing a `wamn.json` moves two pinned artifacts, not one.** The manifest
+sha256 lives in `generated/platform-policy/data-access.json`, and
+`verified_schema_state_id` in `generated/package-weld.json` is the hash of the
+whole introspected catalog, so an introspection change moves it as well.
+Regenerate after either kind of edit.
+
 # Two independent derivations must each equal the exact shipped path/byte set.
 WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
   cargo run -p wamn-schema-generator --example materialize_package \
@@ -379,6 +392,19 @@ cargo test -p wamn-schema-generator --test generation \
   generation_is_byte_stable_and_emits_both_projection_siblings \
   --locked --offline -- --exact
 cargo test -p wamn-schema-generator --test parity --locked --offline
+
+# apply-package runs its migrations as wamn_db_owner, and a bare postgres:18
+# carries neither that role nor a database it owns. Without these two steps the
+# gate fails first with `role "wamn_db_owner" does not exist` and then with
+# `permission denied for database wamn_receiving`. The test creates wamn_app and
+# wamn_scenario_author itself, so only these two are missing.
+docker exec "$RECEIVING_PG_CONTAINER" psql -h 127.0.0.1 -U postgres \
+  -d wamn_receiving -v ON_ERROR_STOP=1 \
+  -c "CREATE ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+      NOINHERIT NOREPLICATION NOBYPASSRLS"
+docker exec "$RECEIVING_PG_CONTAINER" psql -h 127.0.0.1 -U postgres \
+  -d wamn_receiving -v ON_ERROR_STOP=1 \
+  -c "ALTER DATABASE wamn_receiving OWNER TO wamn_db_owner"
 
 WAMN_CTL_PG_URL="$RECEIVING_DATABASE_URL" cargo test -p wamn-ctl \
   --test package_data_access_live --locked --offline -- \
