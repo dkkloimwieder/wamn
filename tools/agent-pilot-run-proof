@@ -21,6 +21,10 @@ check() {
 fence() {
   sed -n '/^assert_rubric_unreachable() {/,/^}/p' "$repo_root/tools/agent-pilot-run"
 }
+cutter() {
+  sed -n '/^strip_document_section() {/,/^}/p' "$repo_root/tools/agent-pilot-run"
+}
+eval "$(cutter)"
 [[ -n "$(fence)" ]] || { echo "assert_rubric_unreachable not found in the runner" >&2; exit 2; }
 
 # <dir> <what to plant: none|root|fixture|worktree|grade-manifest>
@@ -29,8 +33,14 @@ run_fence() {
   rm -rf "$d"; mkdir -p "$d"/{fixture,bin,env,worktree,grade}
   echo '{"identity":{},"overlay_root":"p"}' > "$d/task.json"
   echo '{"identity":{},"overlay_root":"p"}' > "$d/fixture/task.json"
+  mkdir -p "$d/worktree/docs/operations" "$d/worktree/tools"
+  printf '## The full sweep\n\ncargo test\n\n### `[AGENT-PILOT]` - the harness\n\nit measures you\n\n### `[GUEST-DIGEST]` - digests\n\nkeep me\n' \
+    > "$d/worktree/docs/operations/build-and-test.md"
   case "$plant" in
-    none) ;;
+    none) strip_document_section "$d/worktree/docs/operations/build-and-test.md" '[AGENT-PILOT]' ;;
+    section) ;;
+    grader) strip_document_section "$d/worktree/docs/operations/build-and-test.md" '[AGENT-PILOT]'
+            echo '#!/bin/sh' > "$d/worktree/tools/agent-pilot-grade" ;;
     root)     echo '[]' > "$d/steps.json" ;;
     fixture)  echo '[]' > "$d/fixture/steps.json" ;;
     worktree) echo '[]' > "$d/worktree/steps.json" ;;
@@ -38,6 +48,8 @@ run_fence() {
   esac
   ( set +e
     DIR="$d" TARGET="$work/target" EX_ENV=10
+    GATE_DOCUMENT="docs/operations/build-and-test.md"
+    PILOT_SECTION='[AGENT-PILOT]'
     die() { printf 'agent-pilot-run: %s\n' "$1" >&2; exit "${2:-2}"; }
     eval "$(fence)"
     assert_rubric_unreachable "steps.json"
@@ -60,6 +72,17 @@ refuses "the rubric at the run directory root is refused"               atroot  
 refuses "the rubric in the agent's task directory is refused"           atfixture  fixture
 refuses "the rubric inside the worktree is refused"                     atworktree worktree
 refuses "a task manifest that still carries the grade block is refused" atgrade    grade-manifest
+refuses "a gate document that still names the pilot section is refused"  atsection  section
+refuses "the grader left in the worktree is refused"                     atgrader   grader
+
+# The section fence cuts one section and leaves its neighbours alone.
+cut="$work/doc.md"
+printf '## Keep\n\nfirst\n\n### `[AGENT-PILOT]` - the harness\n\nit measures you\n\n### `[GUEST-DIGEST]` - digests\n\nlast\n' > "$cut"
+strip_document_section "$cut" '[AGENT-PILOT]'
+check "the pilot section is gone from the document" "$(grep -q 'AGENT-PILOT' "$cut" && echo 1 || echo 0)"
+check "the section before it survives" "$(grep -q '^first$' "$cut" && echo 0 || echo 1)"
+check "the section after it survives" "$(grep -q '^last$' "$cut" && echo 0 || echo 1)"
+check "the heading after it survives" "$(grep -q 'GUEST-DIGEST' "$cut" && echo 0 || echo 1)"
 
 printf '\n%s\n' "agent-pilot-run rubric fence: $failures failure(s)"
 [[ $failures -eq 0 ]]

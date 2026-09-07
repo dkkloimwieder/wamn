@@ -404,6 +404,28 @@ run_standup() {
   chmod 700 "$DIR/env"
 }
 
+# The gate document the agent needs, and the one section of it that describes
+# the measurement rather than the platform.
+readonly GATE_DOCUMENT="docs/operations/build-and-test.md"
+readonly PILOT_SECTION='[AGENT-PILOT]'
+
+# Remove one fenced section from a markdown document: its heading and every
+# line up to the next heading at the same level or above. Returns 1 when the
+# section is not there, so a caller can tell a cut from a no-op.
+strip_document_section() {
+  local file="$1" marker="$2"
+  [[ -f "$file" ]] || return 1
+  # The exit status says whether anything was cut, so a caller can tell a cut
+  # from a no-op and stage the file only when it changed.
+  awk -v marker="$marker" '
+    /^#+ / && index($0, marker) > 0 { skipping = 1; cut = 1; next }
+    skipping && /^#+ /             { skipping = 0 }
+    !skipping                      { print }
+    END                            { exit (cut ? 0 : 1) }
+  ' "$file" > "$file.fenced" || { rm -f "$file.fenced"; return 1; }
+  mv "$file.fenced" "$file"
+}
+
 # The rubric must be unreachable from every path the agent is handed. This is a
 # check, not a hope: it walks the exported values themselves, so a new export
 # that happens to contain the fixture fails the run instead of the measurement.
@@ -422,6 +444,15 @@ assert_rubric_unreachable() {
       jq -e 'has("grade")' "$manifest" >/dev/null 2>&1 && found="$found $manifest(grade)"
     done < <(find "$handed" -maxdepth 2 -name 'task.json' 2>/dev/null)
   done
+  if [[ -f "$DIR/worktree/$GATE_DOCUMENT" ]] \
+     && grep -q "^#\{1,3\} .*\[AGENT-PILOT\]" "$DIR/worktree/$GATE_DOCUMENT"; then
+    found="$found $GATE_DOCUMENT($PILOT_SECTION)"
+  fi
+  # The instrument itself. Both runs of series 020 read the grader out of the
+  # worktree, so its absence is asserted rather than assumed.
+  while IFS= read -r tool; do
+    [[ -n "$tool" ]] && found="$found $tool"
+  done < <(find "$DIR/worktree/tools" -maxdepth 1 -name 'agent-pilot-*' 2>/dev/null)
   if [[ -n "$found" ]]; then
     die "the grading rubric is reachable from a path the agent is handed:$found" "$EX_ENV"
   fi
@@ -464,7 +495,6 @@ verb_up() {
   jq 'del(.grade)' "$task_dir/task.json" > "$DIR/fixture/task.json"
   jq 'del(.grade)' "$task_dir/task.json" > "$DIR/task.json"
   read_manifest
-  assert_rubric_unreachable "$steps_name"
   : > "$DIR/verbs.jsonl"; : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
   : > "$DIR/env.log"
 
@@ -502,9 +532,17 @@ verb_up() {
   while IFS= read -r tool; do
     [[ -n "$tool" ]] && strip+=("$tool")
   done < <(git -C "$DIR/worktree" ls-files 'tools/agent-pilot-*')
-  if [[ ${#strip[@]} -gt 0 ]]; then
-    git -C "$DIR/worktree" rm -r --quiet "${strip[@]}" >> "$DIR/env.log" 2>&1 \
+  local staged=()
+  # The gate recipes stay; the paragraph that says the run is measured goes.
+  # The agent needs build-and-test.md, so this is a section fence, not a file.
+  if strip_document_section "$DIR/worktree/$GATE_DOCUMENT" "$PILOT_SECTION"; then
+    staged+=("$GATE_DOCUMENT")
+  fi
+  if [[ ${#strip[@]} -gt 0 || ${#staged[@]} -gt 0 ]]; then
+    [[ ${#strip[@]} -eq 0 ]] || git -C "$DIR/worktree" rm -r --quiet "${strip[@]}" >> "$DIR/env.log" 2>&1 \
       || die "could not remove the experiment from the run worktree" "$EX_ENV"
+    [[ ${#staged[@]} -eq 0 ]] || git -C "$DIR/worktree" add -- "${staged[@]}" >> "$DIR/env.log" 2>&1 \
+      || die "could not stage the fenced document section" "$EX_ENV"
     git -C "$DIR/worktree" -c user.name=pilot -c user.email=pilot@invalid \
       commit --no-verify --quiet -m "chore(pilot): the experiment is not part of the tree it measures" \
       >> "$DIR/env.log" 2>&1 \
@@ -513,6 +551,10 @@ verb_up() {
   fi
   [[ -z "$(git -C "$DIR/worktree" status --porcelain=v1 --untracked-files=all)" ]] \
     || die "the run worktree is not clean" "$EX_ENV"
+
+  # After the worktree exists and the baseline commit has removed the
+  # experiment, because half of what the fence checks lives in the worktree.
+  assert_rubric_unreachable "$steps_name"
 
   record_skills
   if [[ -s "$PILOT_HOME/skills-baseline.json" ]]; then
