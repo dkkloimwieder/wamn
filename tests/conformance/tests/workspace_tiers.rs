@@ -69,6 +69,7 @@ struct SourceInventory {
     root_workspace: WorkspaceInventory,
     component_workspaces: Vec<ComponentWorkspaceInventory>,
     component_workspace_split_reason: String,
+    package_component_source: String,
     non_cargo_inputs: Vec<String>,
 }
 
@@ -297,6 +298,46 @@ fn selected_plan_packages(argv: &[String]) -> Vec<String> {
         }
     }
     selected
+}
+
+/// The package half of every component inventory, derived the way
+/// `tools/build-components` derives it.
+///
+/// A package's own manifest names its components, so the tier lists and the
+/// per-workspace counts declare only the platform half. Pinning the package
+/// half here would put back the central edit that made a greenfield package
+/// impossible to author inside its own paths (wamn-10yt.10.39).
+fn package_components(root: &Path) -> BTreeSet<String> {
+    let mut derived = BTreeSet::new();
+    let Ok(entries) = fs::read_dir(root.join("packages")) else {
+        return derived;
+    };
+    for entry in entries.flatten() {
+        let manifest = entry.path().join("wamn.json");
+        let Ok(source) = fs::read_to_string(&manifest) else {
+            continue;
+        };
+        let document: serde_json::Value = serde_json::from_str(&source)
+            .unwrap_or_else(|error| panic!("failed to parse {}: {error}", manifest.display()));
+        let Some(components) = document
+            .get("components")
+            .and_then(serde_json::Value::as_object)
+        else {
+            continue;
+        };
+        for name in components.keys() {
+            derived.insert(name.replace('_', "-"));
+        }
+    }
+    derived
+}
+
+/// A tier's component packages: the platform half it declares, plus the package
+/// half the package manifests declare.
+fn tier_components(root: &Path, declared: &[String]) -> Vec<String> {
+    let mut all = declared.iter().cloned().collect::<BTreeSet<_>>();
+    all.extend(package_components(root));
+    all.into_iter().collect()
 }
 
 fn workspace_names(metadata: &CargoMetadata) -> BTreeSet<String> {
@@ -570,7 +611,7 @@ fn workspace_tier_helper_dry_run_matches_manifest() {
             component_packages_owned_by(
                 &roles,
                 workspace,
-                &manifest.tiers.product_components.component_packages,
+                &tier_components(&root, &manifest.tiers.product_components.component_packages),
             ),
             vec!["build", "--locked", "--target", "wasm32-wasip2"],
             root.join(cargo_manifest),
@@ -825,10 +866,19 @@ fn workspace_tier_inventory_matches_live_cargo_metadata() {
     {
         assert_eq!(declared.workspace, workspace);
         assert_eq!(declared.manifest, cargo_manifest);
+        // The declared count is the PLATFORM half. A package declares its own
+        // components, so this workspace may also hold as many of those as
+        // actually live in it, and adding a package must not move this number
+        // (wamn-10yt.10.39).
+        let live = workspace_names(&cargo_metadata(&root, cargo_manifest));
+        let derived_here = package_components(&root)
+            .into_iter()
+            .filter(|component| live.contains(component))
+            .count();
         assert_eq!(
-            workspace_names(&cargo_metadata(&root, cargo_manifest)).len(),
-            declared.package_count,
-            "{workspace} declared package count"
+            live.len(),
+            declared.package_count + derived_here,
+            "{workspace} declared platform package count plus its package components"
         );
     }
     // The split is a standing constraint, not an accident, so the contract has
@@ -895,7 +945,10 @@ fn workspace_tier_inventory_matches_live_cargo_metadata() {
     );
     assert_exact(
         "full_ci component coverage",
-        names(&manifest.tiers.full_ci.component_packages),
+        names(&tier_components(
+            &root,
+            &manifest.tiers.full_ci.component_packages,
+        )),
         component_names,
     );
     assert_exact(
@@ -944,7 +997,10 @@ fn workspace_tier_membership_matches_live_classification() {
         .collect();
     assert_exact(
         "product_components",
-        names(&manifest.tiers.product_components.component_packages),
+        names(&tier_components(
+            &root,
+            &manifest.tiers.product_components.component_packages,
+        )),
         expected_product_components,
     );
 

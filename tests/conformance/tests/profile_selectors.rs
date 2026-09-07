@@ -137,14 +137,49 @@ fn root_profile_packages(contract: &Value, metadata: &CargoMetadata, profile: &s
     selected
 }
 
-fn component_profile_packages(contract: &Value, profile: &str) -> Vec<String> {
+/// The package half of every component inventory, derived the way
+/// `tools/build-components` derives it.
+///
+/// A package's own manifest names its components, so a tier list declares only
+/// the platform half and this supplies the rest. Deriving it here rather than
+/// pinning it is the whole point: a new package must not need an edit to a
+/// central file, and a guard that pinned the old list would put that edit back
+/// (wamn-10yt.10.39).
+fn package_components(root: &Path) -> Vec<String> {
+    let mut derived = BTreeSet::new();
+    let packages = root.join("packages");
+    let Ok(entries) = fs::read_dir(&packages) else {
+        return Vec::new();
+    };
+    for entry in entries.flatten() {
+        let manifest = entry.path().join("wamn.json");
+        let Ok(source) = fs::read_to_string(&manifest) else {
+            continue;
+        };
+        let document: Value = serde_json::from_str(&source)
+            .unwrap_or_else(|error| panic!("failed to parse {}: {error}", manifest.display()));
+        let Some(components) = document.get("components").and_then(Value::as_object) else {
+            continue;
+        };
+        for name in components.keys() {
+            derived.insert(name.replace('_', "-"));
+        }
+    }
+    derived.into_iter().collect()
+}
+
+fn component_profile_packages(root: &Path, contract: &Value, profile: &str) -> Vec<String> {
     let pointer = if profile == "m1" {
         "/profiles/components/m1_inventory_tier"
     } else {
         "/profiles/components/proof_inventory_tier"
     };
     let tier = string_value(contract, pointer);
-    string_array(contract, &format!("/tiers/{tier}/component_packages"))
+    let mut packages = string_array(contract, &format!("/tiers/{tier}/component_packages"))
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    packages.extend(package_components(root));
+    packages.into_iter().collect()
 }
 
 fn set(values: &[String]) -> BTreeSet<String> {
@@ -215,10 +250,13 @@ fn virtualization_allowlist_matches_component_metadata() {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let product_components =
+    // The platform half is declared; the package half is derived, exactly as
+    // tools/build-components derives it.
+    let mut product_components =
         string_array(&contract, "/tiers/product_components/component_packages")
             .into_iter()
             .collect::<BTreeSet<_>>();
+    product_components.extend(package_components(&root));
 
     let artifacts = virtualization["artifacts"]
         .as_array()
@@ -299,9 +337,7 @@ fn profile_contract_matches_locked_metadata() {
     assert_exact_set(
         "m1 additions",
         &string_array(&contract, "/profiles/root/m1_additions"),
-        &[
-            "wamn-cdc-reader",
-        ],
+        &["wamn-cdc-reader"],
     );
     assert_exact_set(
         "m2 additions",
@@ -402,8 +438,8 @@ fn profile_contract_matches_locked_metadata() {
     );
     assert_eq!(set(&profiles["full"]), set(&root_members));
 
-    let component_m1 = component_profile_packages(&contract, "m1");
-    let component_proof = component_profile_packages(&contract, "proof");
+    let component_m1 = component_profile_packages(&root, &contract, "m1");
+    let component_proof = component_profile_packages(&root, &contract, "proof");
     assert_exact_set(
         "component m1",
         &component_m1,
@@ -687,7 +723,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         // One metadata read per component workspace, then one build leg per
         // workspace that owns a selected package. Every leg runs: the second
         // one is not described by the first one's failure.
-        let selected = component_profile_packages(&contract, profile);
+        let selected = component_profile_packages(&root, &contract, profile);
         let mut expected = COMPONENT_MANIFESTS
             .iter()
             .map(|manifest| expected_metadata_invocation(&root, &root.join(manifest)))
@@ -737,12 +773,34 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
             .expect("failed to read component virtualization contract"),
     )
     .expect("component virtualization contract must be JSON");
-    let artifacts = virtualization["artifacts"]
+    let declared = virtualization["artifacts"]
         .as_array()
         .expect("virtualization artifacts must be an array");
     let output_subdirectory = virtualization["output_subdirectory"]
         .as_str()
         .expect("virtualization output subdirectory must be a string");
+
+    // The contract declares the platform half. The package half is synthesized
+    // from the package manifests, exactly as tools/build-components synthesizes
+    // it, and the owning workspace is whichever one actually holds the crate.
+    let mut artifacts = declared.clone();
+    for component in package_components(&root) {
+        let owner = COMPONENT_MANIFESTS
+            .iter()
+            .find(|manifest| {
+                let metadata = parse_metadata(&cargo_metadata_output(&root, manifest), manifest);
+                names_for_ids(&metadata, &metadata.workspace_members).contains(&component)
+            })
+            .unwrap_or_else(|| panic!("no component workspace holds {component}"));
+        let file = format!("{}.wasm", component.replace('-', "_"));
+        artifacts.push(serde_json::json!({
+            "package": component,
+            "workspace_manifest": owner,
+            "raw_file": file,
+            "output_file": file,
+        }));
+    }
+    let artifacts = &artifacts;
 
     let scratch = scratch_directory("virtualization");
     let fake_cargo = write_fake_cargo(&scratch);
