@@ -50,6 +50,25 @@ about how they work is yours.
 | `appointment.check_in` | record an arrival against a booked appointment |
 | `appointment.query` | list one dock's appointments for one day, filtered and sorted |
 
+## The data contract
+
+An integrator is handed the field names and types, so they are pinned too.
+Everything about how you store and compute them is yours.
+
+| operation | input | result |
+|---|---|---|
+| `carrier.create` | `name` text | `carrier_id` uuid |
+| `dock.create` | `name` text | `dock_id` uuid |
+| `appointment.book` | `carrier_id` uuid, `dock_id` uuid, `slot_start` timestamp, `slot_end` timestamp | `appointment_id` uuid, `status` text |
+| `appointment.check_in` | `appointment_id` uuid, `arrived_at` timestamp | `status` text, `arrived_at` timestamp |
+| `appointment.query` | `dock_id` uuid, `day` date, `status` text | `appointments`, a list whose entries carry `slot_start` timestamp |
+
+A timestamp is RFC 3339 with a Z offset, as in `2026-10-01T09:00:00Z`. A date is
+`2026-10-01`.
+
+The envelope is platform law rather than scenario content. Every command carries
+`request_id` and `idempotency_key`, and the caller supplies both.
+
 ## What the words mean here
 
 - A dock is a physical door. It belongs to nothing above it in this scenario.

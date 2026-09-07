@@ -60,6 +60,13 @@ const HTTP_CLIENT_UNAVAILABLE: &str = "connection-client-unavailable";
 const RESPONSE_BODY_LOST: &str = "connection-response-lost";
 
 /// Host-attested identity of one component invocation.
+///
+/// `component` is the name the catalog admitted the executing component under,
+/// and `operation` is the node operation the router driver called on it. Both
+/// come from the driver, never from the guest. They are here because
+/// `component_digest` is a manifest key and no reader looks a component up by
+/// it, and because the capability method an effect span records says which host
+/// function ran, not which node operation raised it (`wamn-b2m6.7`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionInvocation {
     pub package_id: String,
@@ -68,6 +75,8 @@ pub struct ConnectionInvocation {
     pub node_id: String,
     pub occurrence: u32,
     pub component_digest: String,
+    pub component: String,
+    pub operation: String,
     pub closure: ConnectionExecutionClosure,
 }
 
@@ -761,14 +770,18 @@ fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<Connecti
 /// [9.1] The `wamn.connection_http` span over one guest HTTP effect: the shared
 /// identity vocabulary, plus the wiring position this component was invoked at.
 ///
-/// Four of those fields COPY what `wamn.component.invoke` already carries one
+/// Five of those fields COPY what `wamn.component.invoke` already carries one
 /// level up, so a reader filtering effect spans directly can say which wiring and
 /// which node raised one without walking parents (`wamn-0h0g.24.12`). The
 /// package and the occurrence appear on no parent span, and they are what
 /// separates two calls that name their wiring and node alike (`wamn-b2m6.2`).
-/// All six come from the [`ConnectionInvocation`] the router driver binds before
-/// the component runs — the same host-attested record [`ConnectionHttp::send`]
-/// authorizes against, never anything the guest sent.
+/// `wamn.component_name` appears on no parent span either, and it is the only
+/// key on this span that names the executing component the way a person does:
+/// `wamn.component` is the pooled instance scope and `wamn.component_digest` is
+/// a manifest key (`wamn-b2m6.7`).
+/// All eight come from the [`ConnectionInvocation`] the router driver binds
+/// before the component runs — the same host-attested record
+/// [`ConnectionHttp::send`] authorizes against, never anything the guest sent.
 ///
 /// A pooled instance with no invocation bound holds no such claim and records the
 /// wiring keys empty. That send is about to be refused as
@@ -795,6 +808,8 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
             node_id: &invocation.node_id,
             occurrence: invocation.occurrence,
             component_digest: &invocation.component_digest,
+            component_name: &invocation.component,
+            operation: &invocation.operation,
         }),
     );
     span
@@ -910,6 +925,8 @@ mod tests {
             node_id: "notify".to_string(),
             occurrence: 2,
             component_digest: digest('a'),
+            component: "notifier".to_string(),
+            operation: "orders:notify/dispatch@1.0.0".to_string(),
             closure: ConnectionExecutionClosure::Released,
         }
     }
@@ -1255,6 +1272,8 @@ mod tests {
                 ("wamn.node_id", "notify"),
                 ("wamn.occurrence", "2"),
                 ("wamn.component_digest", component_digest.as_str()),
+                ("wamn.component_name", "notifier"),
+                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
             ]),
         );
     }
@@ -1291,6 +1310,8 @@ mod tests {
                 ("wamn.node_id", "notify"),
                 ("wamn.occurrence", occurrence),
                 ("wamn.component_digest", component_digest.as_str()),
+                ("wamn.component_name", "notifier"),
+                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
             ])
         };
 
@@ -1315,9 +1336,9 @@ mod tests {
     }
 
     /// A pooled instance with no invocation bound holds no wiring claim — the
-    /// send it is about to serve is refused as `AttestationInvalid`. The six keys
-    /// are still emitted, empty, so "this effect was raised outside a node walk"
-    /// never reads as "the enrichment was dropped".
+    /// send it is about to serve is refused as `AttestationInvalid`. The eight
+    /// keys are still emitted, empty, so "this effect was raised outside a node
+    /// walk" never reads as "the enrichment was dropped".
     #[test]
     fn an_unbound_component_records_the_wiring_keys_empty() {
         let plugin = offline_plugin();
@@ -1339,6 +1360,8 @@ mod tests {
                 ("wamn.node_id", ""),
                 ("wamn.occurrence", "0"),
                 ("wamn.component_digest", ""),
+                ("wamn.component_name", ""),
+                ("wamn.operation", ""),
             ]),
         );
     }
@@ -1479,7 +1502,128 @@ mod tests {
                 ("wamn.node_id", "notify"),
                 ("wamn.occurrence", "2"),
                 ("wamn.component_digest", component_digest.as_str()),
+                ("wamn.component_name", "notifier"),
+                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
             ]),
+        );
+    }
+
+    /// THE TEST THAT WOULD HAVE CAUGHT THE GAP. An effect span could name the
+    /// executing component only by `wamn.component`, which is the pooled
+    /// instance scope, and by `wamn.component_digest`, which is a manifest key.
+    /// It named the call only by `effect.operation`, the capability method. So
+    /// nothing on the span answered "which component, running which node
+    /// operation". Both keys are part of the whole value, and the two operation
+    /// keys stand side by side here because they answer different questions.
+    #[test]
+    fn an_effect_span_names_the_executing_component_and_the_node_operation() {
+        let plugin = offline_plugin();
+        let component_id = "component-store-7";
+        plugin
+            .bind_invocation(component_id, invocation())
+            .expect("the fresh store accepts its invocation");
+        let component_digest = digest('a');
+
+        let harness = SpanHarness::install("connection-http-component-operation-test");
+        drop(http_span(&plugin, component_id));
+
+        let attributes = harness.attributes("wamn.connection_http");
+        assert_eq!(
+            attributes,
+            expected_attributes(&[
+                ("effect.operation", "send"),
+                ("wamn.tenant", "tenant-a"),
+                ("wamn.project", "project-a"),
+                ("wamn.component", component_id),
+                ("wamn.package_id", "package_a"),
+                ("wamn.wiring_id", "orders"),
+                ("wamn.wiring_version", "3"),
+                ("wamn.node_id", "notify"),
+                ("wamn.occurrence", "2"),
+                ("wamn.component_digest", component_digest.as_str()),
+                ("wamn.component_name", "notifier"),
+                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
+            ]),
+        );
+
+        let value = |key: &str| {
+            attributes
+                .iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, recorded)| recorded.clone())
+                .expect("the span carries the key")
+        };
+        assert_ne!(
+            value("effect.operation"),
+            value("wamn.operation"),
+            "the capability method is not the node operation",
+        );
+        assert_ne!(
+            value("wamn.component"),
+            value("wamn.component_name"),
+            "the pooled instance scope is not the component identity",
+        );
+    }
+
+    /// The SAME component at the SAME wiring position, entered at another node
+    /// operation. Every other coordinate is held fixed on purpose, so the
+    /// operation is the only thing that can separate the two recorded spans.
+    fn second_operation_invocation() -> ConnectionInvocation {
+        ConnectionInvocation {
+            operation: "orders:notify/escalate@1.0.0".to_string(),
+            ..invocation()
+        }
+    }
+
+    /// One pooled instance serves two operations of one component in turn. The
+    /// wiring position, the package, the occurrence and the digest are equal
+    /// across the pair, so before the operation reached the span the two effects
+    /// recorded byte-identical values and neither could be attributed.
+    #[test]
+    fn two_effects_under_different_node_operations_of_one_component_record_distinguishable_spans() {
+        let plugin = offline_plugin();
+        let component_id = "component-store-7";
+        let component_digest = digest('a');
+        let shared = |operation: &str| {
+            expected_attributes(&[
+                ("effect.operation", "send"),
+                ("wamn.tenant", "tenant-a"),
+                ("wamn.project", "project-a"),
+                ("wamn.component", component_id),
+                ("wamn.package_id", "package_a"),
+                ("wamn.wiring_id", "orders"),
+                ("wamn.wiring_version", "3"),
+                ("wamn.node_id", "notify"),
+                ("wamn.occurrence", "2"),
+                ("wamn.component_digest", component_digest.as_str()),
+                ("wamn.component_name", "notifier"),
+                ("wamn.operation", operation),
+            ])
+        };
+
+        let harness = SpanHarness::install("connection-http-two-operations-test");
+        plugin
+            .bind_invocation(component_id, invocation())
+            .expect("the fresh store accepts its first invocation");
+        drop(http_span(&plugin, component_id));
+        plugin.revoke_invocation(component_id);
+        plugin
+            .bind_invocation(component_id, second_operation_invocation())
+            .expect("revocation makes the store safe to bind again");
+        drop(http_span(&plugin, component_id));
+
+        let spans = harness.every_span("wamn.connection_http");
+        assert_eq!(
+            spans,
+            vec![
+                shared("orders:notify/dispatch@1.0.0"),
+                shared("orders:notify/escalate@1.0.0"),
+            ],
+            "each effect names the node operation that raised it",
+        );
+        assert_ne!(
+            spans[0], spans[1],
+            "two node operations of one component must not read alike",
         );
     }
 }

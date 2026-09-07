@@ -369,8 +369,9 @@ fn build_store(
 /// The `wamn.blobstore` span over one guest object-store effect.
 ///
 /// Carries the shared identity vocabulary plus the invocation this component
-/// was entered under: the package, the wiring position and the occurrence,
-/// copied from the host-attested invocation — never anything the guest sent. A
+/// was entered under: the package, the wiring position, the occurrence, the
+/// admitted component name and the node operation, copied from the
+/// host-attested invocation — never anything the guest sent. A
 /// pooled instance with no invocation bound records those keys empty, which says
 /// "about to be refused" where a missing field would look like lost
 /// instrumentation.
@@ -402,6 +403,8 @@ pub(super) fn blobstore_span(
             node_id: &invocation.node_id,
             occurrence: invocation.occurrence,
             component_digest: &invocation.component_digest,
+            component_name: &invocation.component,
+            operation: &invocation.operation,
         }),
     );
     span
@@ -462,6 +465,8 @@ mod tests {
             node_id: "archive".to_string(),
             occurrence: 1,
             component_digest: format!("sha256:{}", "a".repeat(64)),
+            component: "archiver".to_string(),
+            operation: "orders:archive/store@1.0.0".to_string(),
             closure: ConnectionExecutionClosure::Released,
         }
     }
@@ -822,6 +827,8 @@ mod tests {
                 ("wamn.node_id", "archive"),
                 ("wamn.occurrence", "1"),
                 ("wamn.component_digest", component_digest.as_str()),
+                ("wamn.component_name", "archiver"),
+                ("wamn.operation", "orders:archive/store@1.0.0"),
             ]),
         );
     }

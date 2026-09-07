@@ -1421,6 +1421,12 @@ impl RouterDriver {
                 node_id: call.node.clone(),
                 occurrence: call.occurrence,
                 component_digest: component.component_digest.clone(),
+                // The admitted component name, read off the catalog fact this
+                // node resolved to. The per-request pooled scope is an instance
+                // id and names no component a reader can look up, so an effect
+                // span takes its component identity from here (`wamn-b2m6.7`).
+                component: component.component.clone(),
+                operation: call.operation.clone(),
                 closure: connection_closure,
             },
             causation: causation.cloned(),
@@ -1594,9 +1600,20 @@ struct NodeAcquisition {
 }
 
 impl NodeAcquisition {
-    fn retarget(mut self, package_id: &str, component_digest: &str) -> Self {
-        self.invocation.package_id = package_id.to_owned();
-        self.invocation.component_digest = component_digest.to_owned();
+    /// Point one acquisition at the nested target it is about to enter.
+    ///
+    /// The target arrives as the catalog fact rather than as its parts, because
+    /// three of the four retargeted values are read off one fact and four bare
+    /// strings let a caller swap two of them with no type error.
+    ///
+    /// The component name and the operation move with the package and the
+    /// digest. A child that kept the parent's pair would raise its effects under
+    /// the caller's identity while naming its own package (`wamn-b2m6.7`).
+    fn retarget(mut self, target: &AdmittedComponent, operation: &str) -> Self {
+        self.invocation.package_id = target.scope.package_id.clone();
+        self.invocation.component_digest = target.component_digest.clone();
+        self.invocation.component = target.component.clone();
+        self.invocation.operation = operation.to_owned();
         self
     }
 }
@@ -1840,9 +1857,7 @@ impl NestedOperationHost {
             &target,
         )
         .await?;
-        let acquisition = bound
-            .acquisition
-            .retarget(&target.scope.package_id, &target.component_digest);
+        let acquisition = bound.acquisition.retarget(&target, &dependency.operation);
         child.bind_acquisition(&acquisition, bound.caller.as_ref())?;
         let span = tracing::info_span!(
             "wamn.component.invoke",
@@ -3143,6 +3158,8 @@ mod tests {
                     node_id: "base-command".to_owned(),
                     occurrence: 0,
                     component_digest: "sha256:overlay".to_owned(),
+                    component: "overlay".to_owned(),
+                    operation: "client-acme-receiving:receiving/record-receipt@1.0.0".to_owned(),
                     closure: ConnectionExecutionClosure::Released,
                 },
                 causation: Some(causation.clone()),
@@ -3151,11 +3168,24 @@ mod tests {
         };
 
         assert!(bound.caller.is_none(), "provenance is not caller identity");
-        let child = bound.acquisition.retarget("wamn_receiving", "sha256:base");
+        let mut target = component_with_operations(BTreeMap::new());
+        target.scope.package_id = "wamn_receiving".to_owned();
+        target.component = "receiving".to_owned();
+        target.component_digest = "sha256:base".to_owned();
+        let child = bound
+            .acquisition
+            .retarget(&target, "wamn-receiving:receiving/record-receipt@1.0.0");
         assert_eq!(child.causation.as_ref(), Some(&causation));
         assert_eq!(child.invocation.package_id, "wamn_receiving");
         assert_eq!(child.invocation.component_digest, "sha256:base");
         assert_eq!(child.invocation.wiring_id, "record-receipt");
+        // The child raises its effects under ITS OWN component and operation.
+        // The overlay's pair belongs to the caller (`wamn-b2m6.7`).
+        assert_eq!(child.invocation.component, "receiving");
+        assert_eq!(
+            child.invocation.operation,
+            "wamn-receiving:receiving/record-receipt@1.0.0"
+        );
     }
 
     #[tokio::test]
