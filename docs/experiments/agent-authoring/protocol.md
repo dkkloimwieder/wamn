@@ -436,3 +436,10 @@ Raw: <nnn>-<agent>-<task>/
 - Global skills: `rust-guidelines` is present via `CLAUDE.md:107` only if
   installed on the machine; the inventory is frozen across runs so arms compare
   like with like.
+- Machine settings and the active output style. Run 001 measured this rather
+  than assumed it: the driver inherited the machine's output style and used the
+  Bash tool 154 times and no other tool, not one `Read`, `Write` or `Edit`. An
+  arm that changes how an agent reaches for its tools is not the arm we think we
+  are running, so the runner records the settings files by digest beside the
+  skills, and every run report carries the output style it ran under. Compare
+  only runs whose settings digests match.

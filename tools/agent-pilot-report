@@ -66,6 +66,7 @@ jq -r --slurpfile checklist "$DIR/checklist.json" \
     ($run.commit + " · " + ($run.launch.model_id // "unknown model") +
      " · load " + $run.machine.load_at_launch +
      " · standup " + $run.standup +
+     " · output style " + (($run.launch.output_style // "unrecorded") | tostring) +
      " · run cap hit: " + (if $run.launch.reason == "run-cap" then "yes" else "no" end) +
      " · skills present: " + (($h["Q10.present"] // "see skills.json") | tostring)),
     "",
