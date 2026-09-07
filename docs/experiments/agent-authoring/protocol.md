@@ -309,6 +309,11 @@ Human items, scored from the worktree and the transcript:
    directory.
 5. After three valid T1 runs: the stall table (§8). Do not change the brief and
    the task in the same day.
+6. **A platform change restarts the series.** Runs compare only against runs on
+   the same platform, so a fix to something a run stalled on opens a new series
+   rather than continuing the old one. Series are numbered by decade: 001 to 009
+   is the first, 010 to 019 the second. A retired series keeps its runs and its
+   findings; it does not contribute to the current stall table.
 
 ## 7. Measurements
 
@@ -398,12 +403,24 @@ explains.
 A Claude instance may pre-tag the transcript against §7.3; the human grader owns
 the scores; the machine checks own PASS/FAIL.
 
+### 8a. Series
+
+| series | platform | runs | why it closed |
+|---|---|---|---|
+| 001–009 | `wamn-10yt.10.39` open: a package that ships a component could not be authored inside its own paths | 001 | the wall was fixed, so no later run is comparable to this one |
+| 010–019 | the component allowlist closes over the packages | opens on the fixed commit | — |
+
+Run 001 stands as the wall arm. Its finding is what the pilot exists to produce
+and it is unaffected by the two contaminations §11 records, because a blocker
+does not become less real for having been well documented.
+
 ## 10. Run report template
 
 ```
 # <nnn>-<agent>-<task>
 main commit · model id · load at launch · driver args · run cap hit? · skills present
 Outcome: PASS | FAIL (items) | INVALID-ENV
+Conduct: <one line on what the agent did with the rules the brief gave it>
 Q1 first green: <min> · total: <min>
 Q2 wamn dev runs: <n> · failed stages: {…}
 Q3 reads before first edit: design-doc n · code n · skill n · generated n · other n

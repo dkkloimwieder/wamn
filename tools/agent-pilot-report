@@ -74,6 +74,7 @@ jq -r --slurpfile checklist "$DIR/checklist.json" \
      " · skills present: " + (($h["Q10.present"] // "see skills.json") | tostring)),
     "",
     "Outcome: " + ($c.outcome // "unknown"),
+    "Conduct: " + (($h.conduct // "not scored") | tostring),
     "",
     "Q1 first green: " + ($run.verbs.first_green_minutes | tostring) + " min",
     "Q2 wamn dev runs: " + ($run.verbs.wamn_dev_runs | tostring) +
