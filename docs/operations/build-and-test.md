@@ -1382,6 +1382,23 @@ The verbs run separately when you want to hold the environment between them:
 drives the whole shape without spending an agent, and `--stub-mode` reproduces
 each of the four driver exit reasons.
 
+Re-grade a recorded run without an environment:
+
+```bash
+tools/agent-pilot-grade --replay "${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs/020-claude-dock-appointments"
+tools/agent-pilot-grade-proof
+```
+
+`--replay` scores every step from the requests and responses the run wrote into
+`grade/http.jsonl`, under the same predicates as the live grade. No host, no
+database and no agent time, so a rubric change re-scores every recorded run. It
+writes `checklist-replay.json` and leaves the run's own `checklist.json` and
+`grade/` files exactly as the run left them. `agent-pilot-grade-proof` is its
+proof and needs no environment either.
+
+A replay reads what the run recorded. A run graded before `wamn-nvbd.10` landed
+carries no request log, so its steps replay as `not replayable`.
+
 Run directories live under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs`.
 They are working state and any tool may delete them. Evidence leaves the cache
 through `tools/agent-pilot-report`, which writes

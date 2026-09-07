@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Proof for the --replay verb of tools/agent-pilot-grade. wamn-nvbd.10.
+#
+# No environment: no host, no database, no agent. The fixture is a synthetic
+# recorded run directory, built from scratch so every condition can be
+# violated on its own, which is the only way to know each one is load-bearing.
+set -euo pipefail
+
+repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+GRADE="$repo_root/tools/agent-pilot-grade"
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+failures=0
+
+check() {
+  if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"
+  else printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); fi
+}
+
+# A recorded run, rebuilt for each case. Four step kinds are represented,
+# because each one takes a different path through the replay.
+fixture() { # <dir>
+  local d=$1
+  rm -rf "$d"; mkdir -p "$d/grade" "$d/worktree/packages/dock"
+
+  cat > "$d/task.json" <<'JSON'
+{"task":"proof","identity":{"route_host":"proof.localhost"},"overlay_root":"packages/dock",
+ "grade":{"steps":"steps.json","checks":["claim-replay"],"fence_reports":[]}}
+JSON
+  cat > "$d/run.json" <<'JSON'
+{"commit":"0000000000000000000000000000000000000000","git":{"outside_allowed_paths":[]}}
+JSON
+  echo '{"name":"dock"}' > "$d/worktree/packages/dock/wamn.json"
+
+  cat > "$d/steps.json" <<'JSON'
+[
+ {"id":"create","must":true,"route":{"operation":"dock.create"},
+  "expect":{"status":200,"item":"value","present":["dock_id"]}},
+ {"id":"book","must":true,"route":{"operation":"appointment.book"},
+  "reuse":{"dock_id":"create.value.dock_id"},
+  "expect":{"status":200,"item":"value","present":["appointment_id"]}},
+ {"id":"book-replay","must":true,"proves":"claim-replay","route":{"operation":"appointment.book"},
+  "expect":{"status":200,"item":"value","equals":{"appointment_id":"book.value.appointment_id"}}},
+ {"id":"refused","must":true,"route":{"operation":"appointment.book"},
+  "expect":{"status":200,"item":"error","error_code":"slot_unavailable"}},
+ {"id":"exactly-one","must":true,"concurrent":["book","refused"],
+  "expect":{"exactly_one":{"error_code":"slot_unavailable"}}},
+ {"id":"count-rows","must":true,"sql":"select 1","expect":{"rows":"2"}}
+]
+JSON
+
+  # The loop log the run wrote. Twelve stages and a served release.
+  {
+    echo "run completed: Migrate,Introspect,Generate,Build,Virtualize,Apply,Acl,Admit,Gate,Publish,Release,Activate"
+    echo "run served: http://127.0.0.1:18080 host=proof.localhost"
+    echo "run holding"
+  } > "$d/grade/dev.out"
+
+  # The requests and responses the run recorded, one line per step.
+  python3 - "$d" <<'PY'
+import json, sys
+d = sys.argv[1]
+D = "11111111-1111-1111-1111-111111111111"
+A = "22222222-2222-2222-2222-222222222222"
+def ok(v):  return json.dumps([{"request_id": "x", "value": v}])
+def err(c): return json.dumps([{"request_id": "x", "error": {"code": c}}])
+rows = [
+    ("create",      "/dock/create",       ok({"dock_id": D})),
+    ("book",        "/appointment/book",  ok({"appointment_id": A})),
+    ("book-replay", "/appointment/book",  ok({"appointment_id": A})),
+    ("refused",     "/appointment/book",  err("slot_unavailable")),
+]
+with open(d + "/grade/http.jsonl", "w") as f:
+    for sid, path, payload in rows:
+        f.write(json.dumps({"id": sid, "path": path, "request": {},
+                            "status": "200", "response": payload}) + "\n")
+    f.write(json.dumps({"id": "count-rows", "sql": "select 1", "rows": "2"}) + "\n")
+PY
+
+  # The two arms of the contended pair, as the run left them.
+  echo '[{"value":{"appointment_id":"2222"}}]' > "$d/grade/exactly-one-book.out"
+  echo '[{"error":{"code":"slot_unavailable"}}]' > "$d/grade/exactly-one-refused.out"
+
+  echo '[]' > "$d/grade/results.json"
+  echo '{"teardown":{"verification_database_removed":true},"outcome":"PASS"}' > "$d/checklist.json"
+}
+
+verdict() { # <dir> <step id> -> true|false
+  jq -r --arg id "$2" '.steps[] | select(.id == $id) | .pass' "$1/checklist-replay.json"
+}
+evidence() { jq -r --arg id "$2" '.steps[] | select(.id == $id) | .evidence' "$1/checklist-replay.json"; }
+
+d="$work/run"
+
+# 1. A recorded directory grades end to end with nothing running.
+fixture "$d"
+"$GRADE" --replay "$d" > "$work/1.log" 2>&1 && rc=0 || rc=$?
+check "a recorded run grades with no environment (exit 0)" "$rc"
+check "the outcome is PASS" "$([[ "$(jq -r .outcome "$d/checklist-replay.json")" == PASS ]] && echo 0 || echo 1)"
+check "the loop verdict comes from the recorded log" \
+  "$([[ "$(jq -r '.loop.pass, .loop.stages' "$d/checklist-replay.json" | tr '\n' ' ')" == "true 12 " ]] && echo 0 || echo 1)"
+check "claim-replay is scored from what a step declares it proves" \
+  "$([[ "$(jq -r '.checks["claim-replay"]' "$d/checklist-replay.json")" == pass ]] && echo 0 || echo 1)"
+
+# 2. The record is not touched. This is the defect that destroyed three runs.
+fixture "$d"
+http_before=$(sha256sum "$d/grade/http.jsonl" | cut -d' ' -f1)
+list_before=$(sha256sum "$d/grade/results.json" | cut -d' ' -f1)
+book_before=$(sha256sum "$d/checklist.json" | cut -d' ' -f1)
+"$GRADE" --replay "$d" > /dev/null 2>&1 || true
+check "a replay leaves grade/http.jsonl byte-identical" \
+  "$([[ "$(sha256sum "$d/grade/http.jsonl" | cut -d' ' -f1)" == "$http_before" ]] && echo 0 || echo 1)"
+check "a replay leaves grade/results.json byte-identical" \
+  "$([[ "$(sha256sum "$d/grade/results.json" | cut -d' ' -f1)" == "$list_before" ]] && echo 0 || echo 1)"
+check "a replay leaves the recorded checklist.json byte-identical" \
+  "$([[ "$(sha256sum "$d/checklist.json" | cut -d' ' -f1)" == "$book_before" ]] && echo 0 || echo 1)"
+check "a replay writes checklist-replay.json instead" "$([[ -s "$d/checklist-replay.json" ]] && echo 0 || echo 1)"
+
+# 3. A route step is scored from the recorded response, not from anything else.
+fixture "$d"
+python3 - "$d" <<'PY'
+import json, sys
+p = sys.argv[1] + "/grade/http.jsonl"
+out = []
+for line in open(p):
+    r = json.loads(line)
+    if r["id"] == "book-replay":
+        r["response"] = json.dumps([{"request_id": "x",
+            "value": {"appointment_id": "33333333-3333-3333-3333-333333333333"}}])
+    out.append(json.dumps(r))
+open(p, "w").write("\n".join(out) + "\n")
+PY
+"$GRADE" --replay "$d" > /dev/null 2>&1 || true
+check "a changed recorded response changes the step verdict" \
+  "$([[ "$(verdict "$d" book-replay)" == false ]] && echo 0 || echo 1)"
+check "and the check that reads it turns over with it" \
+  "$([[ "$(jq -r '.checks["claim-replay"]' "$d/checklist-replay.json")" == fail ]] && echo 0 || echo 1)"
+
+# 4. A step with no recorded response is reported, never passed.
+fixture "$d"
+grep -v '"id": "book-replay"' "$d/grade/http.jsonl" > "$d/grade/t" && mv "$d/grade/t" "$d/grade/http.jsonl"
+"$GRADE" --replay "$d" > /dev/null 2>&1 || true
+check "a step the run never recorded fails" "$([[ "$(verdict "$d" book-replay)" == false ]] && echo 0 || echo 1)"
+check "and says so rather than blaming the response" \
+  "$([[ "$(evidence "$d" book-replay)" == "not replayable"* ]] && echo 0 || echo 1)"
+
+# 5. The contended pair is scored from the recorded arms.
+fixture "$d"
+echo '[{"value":{"appointment_id":"4444"}}]' > "$d/grade/exactly-one-refused.out"
+"$GRADE" --replay "$d" > /dev/null 2>&1 || true
+check "a contended pair with no refusal fails on the recorded arms" \
+  "$([[ "$(verdict "$d" exactly-one)" == false ]] && echo 0 || echo 1)"
+
+# 6. The sql step is scored from the row count the run recorded.
+fixture "$d"
+python3 - "$d" <<'PY'
+import json, sys
+p = sys.argv[1] + "/grade/http.jsonl"
+out = []
+for line in open(p):
+    r = json.loads(line)
+    if r["id"] == "count-rows":
+        r["rows"] = "5"
+    out.append(json.dumps(r))
+open(p, "w").write("\n".join(out) + "\n")
+PY
+"$GRADE" --replay "$d" > /dev/null 2>&1 || true
+check "a changed recorded row count changes the sql verdict" \
+  "$([[ "$(verdict "$d" count-rows)" == false ]] && echo 0 || echo 1)"
+
+# 7. A loop that served nothing skips the steps, exactly as the live grade does.
+fixture "$d"
+sed -i 's/^run served: .*$//' "$d/grade/dev.out"
+"$GRADE" --replay "$d" > /dev/null 2>&1 && rc=0 || rc=$?
+check "a run that served no release grades FAIL" "$([[ $rc -eq 30 ]] && echo 0 || echo 1)"
+check "and every step says the loop served no release" \
+  "$([[ "$(evidence "$d" create)" == "not run: the loop served no release" ]] && echo 0 || echo 1)"
+
+# 8. The stage count is read, not assumed. A run that served a release but
+# stopped short of twelve stages still fails the loop, and its steps are not
+# graded from the record as though the loop had passed.
+fixture "$d"
+sed -i 's/^run completed: .*$/run completed: Migrate,Introspect,Generate,Build,Virtualize,Apply,Acl,Admit,Gate,Publish,Release/' "$d/grade/dev.out"
+"$GRADE" --replay "$d" > /dev/null 2>&1 && rc=0 || rc=$?
+check "eleven stages with a served release still fails the loop" \
+  "$([[ "$(jq -r '.loop.pass, .loop.stages' "$d/checklist-replay.json" | tr '\n' ' ')" == "false 11 " ]] && echo 0 || echo 1)"
+check "and the run grades FAIL rather than scoring the record" \
+  "$([[ $rc -eq 30 && "$(jq -r .outcome "$d/checklist-replay.json")" == FAIL* ]] && echo 0 || echo 1)"
+
+printf '\n%s\n' "agent-pilot-grade --replay: $failures failure(s)"
+[[ $failures -eq 0 ]]

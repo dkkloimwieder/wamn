@@ -363,12 +363,19 @@ Generic. Writes `$RUN/checklist.json` and `$RUN/grade/*`.
      version suffixes (`docs/poc/poc-work-order.md:10-16`). Removed the day Gate
      fences it.
 5. SIGINT the held loop; assert no verification database remains.
-6. `--replay <dir>`: intended to run steps 2–4 against a fixture
-   `attachments.json`, a recorded `grade/http.jsonl` and a worktree snapshot,
-   with no environment. **IT DOES NOT DO THIS YET** (`wamn-nvbd.10`): it takes
-   the loop verdict from a `grade/checklist-input.json` no run writes, and it
-   still drives every step over HTTP against a live base URL. Measured against
-   all three recorded runs of series 010.
+6. `--replay <dir>`: runs steps 2 to 4 against a recorded run directory with no
+   environment (`wamn-nvbd.10`). The loop verdict comes from the `grade/dev.out`
+   the loop wrote. Route steps are scored from the responses in
+   `grade/http.jsonl`, the contended pair from the recorded arms, and an `sql`
+   step from the row count the run recorded, all under the predicates of the
+   live grade. The path and naming checks read the recorded worktree, and the
+   teardown answer comes from the run's own checklist, because only the live run
+   can ask the database that question. A replay writes `checklist-replay.json`
+   and never touches the record it grades. `tools/agent-pilot-grade-proof` is
+   the proof and needs no environment.
+
+   A run graded before this landed carries no request log, so its steps replay
+   as `not replayable`. Series 010 is in that state.
 7. `checklist.json`: `{loop, paths, steps:[{id,must,invariant,proves,pass,evidence}],
    checks:{…}, fences:{…}, human:{…:null}}`. Human fields (protocol §5) refuse
    `null` downstream. A named check reads the steps that DECLARE they prove it,

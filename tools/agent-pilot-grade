@@ -9,6 +9,15 @@
 #   agent-pilot-grade --run <nnn>
 #   agent-pilot-grade --replay <dir>
 #
+# --replay grades a recorded run directory and needs no environment. It scores
+# every step from the requests and responses the run wrote into
+# grade/http.jsonl, under the same predicates, so a rubric change re-scores
+# every recorded run for free. wamn-nvbd.10.
+#
+# A REPLAY NEVER WRITES OVER THE RECORD IT GRADES. It writes
+# checklist-replay.json beside the original checklist.json and leaves
+# grade/http.jsonl and grade/results.json exactly as the run left them.
+#
 # Exit codes: 0 ok · 2 usage · 10 environment · 30 a grading failure.
 set -euo pipefail
 umask 077
@@ -46,6 +55,16 @@ MANIFEST="$DIR/task.json"
 [[ -s "$MANIFEST" ]] || die "no task manifest at $MANIFEST" "$EX_ENV"
 mkdir -p "$DIR/grade"
 
+# Where this grade writes. A replay gets its own checklist and its own reuse
+# ledger, so grading a recorded run cannot destroy the recording.
+if [[ -n "$REPLAY" ]]; then
+  CHECKLIST="$DIR/checklist-replay.json"
+  RESULTS="$DIR/grade/replay-results.json"
+else
+  CHECKLIST="$DIR/checklist.json"
+  RESULTS="$DIR/grade/results.json"
+fi
+
 ROUTE_HOST="$(jq -r '.identity.route_host' "$MANIFEST")"
 OVERLAY_ROOT="$(jq -r '.overlay_root' "$MANIFEST")"
 # wamn-nvbd.9: the grading fixture lives in the RUN directory, not in the
@@ -72,9 +91,14 @@ trap cleanup EXIT
 # The grader runs the loop itself rather than trusting the agent's last run,
 # because a report that reproduces is the whole point of H-5.
 grade_loop() {
+  # A replay reads the verdict out of the log the loop itself wrote. The
+  # earlier version read grade/checklist-input.json, which no run writes, so
+  # every replay failed the loop and skipped every step.
   if [[ -n "$REPLAY" ]]; then
-    LOOP_PASS="$(jq -r '.loop.pass // false' "$DIR/grade/checklist-input.json" 2>/dev/null || echo false)"
-    BASE_URL="$(jq -r '.base_url // ""' "$DIR/grade/checklist-input.json" 2>/dev/null || echo "")"
+    [[ -s "$DIR/grade/dev.out" ]] || die "no recorded loop log at $DIR/grade/dev.out" "$EX_ENV"
+    LOOP_STAGES="$(sed -n 's/^run completed: //p' "$DIR/grade/dev.out" | tr ',' '\n' | grep -c . || true)"
+    BASE_URL="$(sed -n 's/^run served: \([^ ]*\) host=.*/\1/p' "$DIR/grade/dev.out" | head -1)"
+    if [[ "${LOOP_STAGES:-0}" -eq 12 && -n "$BASE_URL" ]]; then LOOP_PASS=true; else LOOP_PASS=false; fi
     return 0
   fi
   local target; target="$(ls -d "$PILOT_HOME"/target-* 2>/dev/null | head -1)"
@@ -102,8 +126,10 @@ grade_loop() {
 # ---- 2. paths --------------------------------------------------------------
 grade_paths() {
   OUTSIDE="$(jq -c '.git.outside_allowed_paths // []' "$DIR/run.json")"
+  # The tracker check reads the recorded worktree and needs no environment, so
+  # a replay runs it too and reaches the same verdict as the live grade.
   local tracker_touched=""
-  if [[ -z "$REPLAY" ]]; then
+  if [[ -d "$DIR/worktree" ]]; then
     tracker_touched="$(git -C "$DIR/worktree" diff --name-only "$COMMIT"..HEAD -- .beads .claude .codex 2>/dev/null || true)"
   fi
   if [[ "$OUTSIDE" == "[]" && -z "$tracker_touched" ]]; then PATHS_PASS=true; else PATHS_PASS=false; fi
@@ -157,7 +183,7 @@ resolve_body() {
     local from_step="${source%%.*}" path="${source#*.}"
     value="$(jq -r --arg id "$from_step" --arg p "$path" '
       [.[] | select(.id == $id)] | first | getpath($p | split("."))
-    ' "$DIR/grade/results.json")"
+    ' "$RESULTS")"
     body="$(jq -c --arg f "$field" --arg v "$value" '.[$f] = $v' <<< "$body")"
   done < <(jq -r '.reuse // {} | keys[]' <<< "$step")
   printf '%s' "$body"
@@ -179,9 +205,14 @@ fire_step() {
 }
 
 grade_steps() {
-  : > "$DIR/grade/http.jsonl"
-  : > "$DIR/grade/http.err"
-  echo '[]' > "$DIR/grade/results.json"
+  # Only a live grade writes the request log. Truncating it under --replay
+  # destroyed the recorded responses of three runs, which is the one thing a
+  # replay exists to read.
+  if [[ -z "$REPLAY" ]]; then
+    : > "$DIR/grade/http.jsonl"
+    : > "$DIR/grade/http.err"
+  fi
+  echo '[]' > "$RESULTS"
   STEP_RESULTS='[]'
 
   # No release, no steps. Driving routes against nothing would record a page of
@@ -195,7 +226,7 @@ grade_steps() {
     return 0
   fi
 
-  resolve_attachments
+  [[ -n "$REPLAY" ]] || resolve_attachments
 
   local step id must invariant proves operation path body response status payload verdict evidence
   while read -r step; do
@@ -215,8 +246,17 @@ grade_steps() {
       local sql expect_rows rows
       sql="$(jq -r .sql <<< "$step")"
       expect_rows="$(jq -r '.expect.rows // empty' <<< "$step")"
-      rows="$(psql "$(jq -r '.target_database_url // .project_database_url // empty' "$DIR/env/dev.json")" \
-                -Atqc "$sql" 2>>"$DIR/grade/http.err" | grep -c . || true)"
+      if [[ -n "$REPLAY" ]]; then
+        rows="$(jq -r --arg id "$id" 'select(.id == $id) | .rows // empty' "$DIR/grade/http.jsonl" 2>/dev/null | head -1)"
+        [[ -n "$rows" ]] || rows="unrecorded"
+      else
+        rows="$(psql "$(jq -r '.target_database_url // .project_database_url // empty' "$DIR/env/dev.json")" \
+                  -Atqc "$sql" 2>>"$DIR/grade/http.err" | grep -c . || true)"
+        # The row count joins the responses in the request log, so a later
+        # replay scores this step from the record like any other.
+        jq -cn --arg id "$id" --arg sql "$sql" --arg rows "$rows" '{id:$id, sql:$sql, rows:$rows}' \
+          >> "$DIR/grade/http.jsonl"
+      fi
       [[ "$rows" == "$expect_rows" ]] && verdict=true
       evidence="sql rows=$rows expected=$expect_rows"
 
@@ -224,21 +264,40 @@ grade_steps() {
       # Contention. Fired in parallel on purpose: exactly one must refuse, and
       # a sequential pair would pass whether or not the invariant holds.
       local code refusals=0 target
-      local -a pids=()
-      while read -r target; do
-        ( fire_step "$step" "$(route_path_for "$(jq -r --arg t "$target" '
-              [.[] | select(.id == $t)] | first | .route.operation' "$STEPS")")" \
-            "$(resolve_body "$(jq -c --arg t "$target" '[.[] | select(.id == $t)] | first' "$STEPS")")" \
-            "$id-$target" > "$DIR/grade/$id-$target.out" 2>&1 ) &
-        pids+=($!)
-      done < <(jq -r '.concurrent[]' <<< "$step")
-      wait "${pids[@]}" 2>/dev/null || true
       code="$(jq -r '.expect.exactly_one.error_code' <<< "$step")"
+      # The scoring half below already reads files the run wrote. Only the
+      # firing half needs a live release, so a replay skips it.
+      if [[ -z "$REPLAY" ]]; then
+        local -a pids=()
+        while read -r target; do
+          ( fire_step "$step" "$(route_path_for "$(jq -r --arg t "$target" '
+                [.[] | select(.id == $t)] | first | .route.operation' "$STEPS")")" \
+              "$(resolve_body "$(jq -c --arg t "$target" '[.[] | select(.id == $t)] | first' "$STEPS")")" \
+              "$id-$target" > "$DIR/grade/$id-$target.out" 2>&1 ) &
+          pids+=($!)
+        done < <(jq -r '.concurrent[]' <<< "$step")
+        wait "${pids[@]}" 2>/dev/null || true
+      fi
       while read -r target; do
         grep -q "\"$code\"" "$DIR/grade/$id-$target.out" 2>/dev/null && refusals=$((refusals + 1))
       done < <(jq -r '.concurrent[]' <<< "$step")
       [[ "$refusals" -eq 1 ]] && verdict=true
       evidence="concurrent refusals=$refusals expected=1 code=$code"
+
+    elif [[ -n "$REPLAY" ]]; then
+      # Score the bytes the run recorded, under the same predicates. This is
+      # the whole point of the verb: a rubric change re-scores every recorded
+      # run with no host, no database and no agent time.
+      local record
+      record="$(jq -c --arg id "$id" 'select(.id == $id)' "$DIR/grade/http.jsonl" 2>/dev/null | head -1)"
+      if [[ -z "$record" ]]; then
+        evidence="not replayable: the run recorded no response for $id"
+      else
+        path="$(jq -r '.path // ""' <<< "$record")"
+        status="$(jq -r '.status // ""' <<< "$record")"
+        payload="$(jq -r '.response // ""' <<< "$record")"
+        verdict_for_step "$step" "$status" "$payload"
+      fi
 
     else
       operation="$(jq -r '.route.operation' <<< "$step")"
@@ -263,7 +322,7 @@ grade_steps() {
       '. + [{id:$id, must:$must, invariant:$inv, proves:$proves, pass:$pass, evidence:$ev}]' <<< "$STEP_RESULTS")"
     jq -c --arg id "$id" --arg payload "${payload:-}" \
       '. + [{id:$id, value:(($payload | fromjson? // {}) | if type == "array" then .[0].value // {} else . end)}]' \
-      "$DIR/grade/results.json" > "$DIR/grade/results.tmp" && mv "$DIR/grade/results.tmp" "$DIR/grade/results.json"
+      "$RESULTS" > "$RESULTS.tmp" && mv "$RESULTS.tmp" "$RESULTS"
   done < <(jq -c '.[]' "$STEPS")
 }
 
@@ -320,7 +379,7 @@ verdict_for_step() {
     local mine theirs
     mine="$(jq -r --arg p "$path" 'getpath($p | split(".")) | tostring' <<< "$value")"
     theirs="$(jq -r --arg id "${other%%.*}" --arg p "${other#*.}" \
-      '[.[] | select(.id == $id)] | first | getpath($p | split(".")) | tostring' "$DIR/grade/results.json")"
+      '[.[] | select(.id == $id)] | first | getpath($p | split(".")) | tostring' "$RESULTS")"
     evidence="$evidence $path=$mine vs $theirs"
     [[ "$mine" == "$theirs" && -n "$mine" && "$mine" != "null" ]] || verdict=false
   done < <(jq -r '.expect.equals // {} | keys[]' <<< "$step")
@@ -420,6 +479,13 @@ run_checks() {
 # ---- 5. stop the held loop and prove the database went with it -------------
 verify_teardown() {
   cleanup; HELD_PID=""
+  # Whether the loop removed its verification database is a question only the
+  # live run can ask. A replay carries the answer that run recorded.
+  if [[ -n "$REPLAY" ]]; then
+    VERIFICATION_DB_REMOVED="$(jq -r '.teardown.verification_database_removed // false' \
+      "$DIR/checklist.json" 2>/dev/null || echo false)"
+    return 0
+  fi
   # The database to look for is the one the configuration NAMES, not a guessed
   # pattern. The standup creates it and the loop drops and recreates it per run,
   # so a leftover after the interrupt means the loop's cleanup did not run.
@@ -455,7 +521,7 @@ write_checklist() {
              E1:null, E2:null, E3:null, E4:null, E5:null, E6:null, E7:null,
              "H-1":null, "H-2":null, "H-3":null, "H-4":null, "H-5":null, "H-6":null,
              "S-1":null, "S-2":null, "S-3":null}}' \
-    > "$DIR/checklist.json"
+    > "$CHECKLIST"
 }
 
 # Any miss on the loop, the allow-list, or a must step is a run FAIL. Other
@@ -473,8 +539,8 @@ decide_outcome() {
   else
     OUTCOME="FAIL (items: ${failures[*]})"
   fi
-  jq --arg outcome "$OUTCOME" '.outcome = $outcome' "$DIR/checklist.json" \
-    > "$DIR/checklist.tmp" && mv "$DIR/checklist.tmp" "$DIR/checklist.json"
+  jq --arg outcome "$OUTCOME" '.outcome = $outcome' "$CHECKLIST" \
+    > "$CHECKLIST.tmp" && mv "$CHECKLIST.tmp" "$CHECKLIST"
   note "$OUTCOME"
 }
 
