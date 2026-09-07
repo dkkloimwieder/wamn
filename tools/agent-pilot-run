@@ -568,6 +568,10 @@ verb_up() {
   [[ -z "$(git -C "$DIR/worktree" status --porcelain=v1 --untracked-files=all)" ]] \
     || die "the run worktree is not clean" "$EX_ENV"
 
+  # The fence reads the built target directory, so its name is resolved before
+  # the build rather than inside it.
+  resolve_target "$commit"
+
   # After the worktree exists and the baseline commit has removed the
   # experiment, because half of what the fence checks lives in the worktree.
   assert_rubric_unreachable "$steps_name"
