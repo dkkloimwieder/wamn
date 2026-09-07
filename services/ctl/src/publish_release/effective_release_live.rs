@@ -214,6 +214,10 @@ async fn admit_components(
                     "wamn:node".to_owned(),
                     "wamn:postgres".to_owned(),
                 ]),
+                // Empty is the fail-closed answer, not a stub: this path reads
+                // no dependency closure, so the overlay's declared dependency
+                // on the base component carries that component's posture.
+                effect_free_operation_dependencies: BTreeSet::new(),
             },
         )
         .unwrap_or_else(|error| panic!("admit {}@{} component: {error}", input.id, input.version));

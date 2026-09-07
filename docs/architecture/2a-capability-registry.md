@@ -125,6 +125,21 @@ rows move with the pin. no_std guests are unaffected — `transform` imports onl
 3. `Posture::Effect` additionally requires the package in this component's
    `admitted_platform_packages` grant.
 4. `derive_effects` groups by posture row instead of the complement rule.
+5. `derive_effects` unions the posture of the declared operation dependencies
+   into the component's own, on the walk that already byte-verifies each one.
+
+## Posture is a closure fact
+
+The effect posture of an admitted component is its own imports union the
+posture of its declared operation dependencies. A component with an empty
+capability inventory is not effect-free when its closure reaches an effectful
+operation. Admission holds one component's bytes and reads no dependency
+closure, so a dependency the caller does not prove effect-free counts as an
+effect.
+
+A dependency contributes its package to the effect projection and no interface.
+The interface the wrapper imports is the dependency operation itself, and the
+projection excludes an operation dependency from the effect interfaces by rule.
 
 ## Denial arm
 
@@ -133,6 +148,8 @@ The gate's effect-free-case clause (`scenario-worker/src/store/admission.rs
 wiring carrying a non-empty `cases` array refuses with
 `EffectfulComponentReached`; effectful components still gate normally
 (validation + compatibility) — they are denied only the effect-free case path.
+A wrapper that imports nothing and calls an effectful operation is denied that
+path too, exactly as the component it calls is.
 
 ## Migration
 

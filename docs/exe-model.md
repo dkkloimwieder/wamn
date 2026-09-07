@@ -120,6 +120,27 @@ admission freezes it in `runs.durability_class`, and claims read only that carri
   redispatch.
 - There is no success assertion, continuation, bulk selection, successor attempt
   or silent re-execution.
+- A configured `durable` class does not imply protection the writer does not
+  supply. The class selects a protocol; it does not make an unprotected write
+  safe.
+
+### The three effect contracts
+
+The effect surface holds three contracts, and only three. None of them is a
+ledger.
+
+1. **The capability inventory.** What an admitted component may do. The posture
+   is the component's own imports union the posture of its declared operation
+   dependencies, derived at admission from the closure the validator already
+   walks. A component with an empty inventory is not effect-free if its closure
+   reaches an effectful operation.
+2. **The effect observation.** What the platform says happened. A span carries
+   the originating wiring position and the executing package, component and
+   operation, and an outcome that is one of refused before dispatch, responded,
+   timeout or cancelled.
+3. **The durable protocol.** The premium durable shelf contract above. It is
+   **shelved**: it is specified, it is not the default tier, and no work depends
+   on it today.
 
 ## Data, identity and generated APIs
 

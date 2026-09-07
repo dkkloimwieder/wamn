@@ -32,6 +32,15 @@ const HANDLER_SIGNATURE: &str =
 pub struct ComponentAdmissionRequest {
     pub declaration: ComponentDeclaration,
     pub admitted_platform_packages: BTreeSet<String>,
+    /// The declared operation dependencies the caller proved effect-free,
+    /// named by their exact operation import.
+    ///
+    /// A component's effect posture is its own imports union the posture of
+    /// the operations it declares a dependency on. A dependency absent from
+    /// this set carries an effect into the component that declares it.
+    /// Admission holds one component's bytes and reads no dependency closure,
+    /// so absence is a refusal, exactly as an unregistered import is.
+    pub effect_free_operation_dependencies: BTreeSet<String>,
 }
 
 /// Stable classification for a refused component admission.
@@ -201,6 +210,9 @@ pub fn validate_component_admission(
             ),
         ));
     }
+    // The same walk that byte-verifies each dependency also decides its
+    // posture, so the union costs no second traversal of the closure.
+    let mut effectful_dependencies: BTreeSet<&str> = BTreeSet::new();
     for dependency in &byte_dependency_imports {
         let item = component_type
             .get_import(raw, dependency)
@@ -213,6 +225,12 @@ pub fn validate_component_admission(
                     "operation dependency import {dependency:?} does not match {HANDLER_SIGNATURE}: {error}"
                 ),
             ));
+        }
+        if !request
+            .effect_free_operation_dependencies
+            .contains(dependency.as_str())
+        {
+            effectful_dependencies.insert(dependency.as_str());
         }
     }
     let policy_imports = wamn_component_policy::ComponentImports::new(
@@ -239,7 +257,7 @@ pub fn validate_component_admission(
         request.declaration,
         component_digest,
         imports,
-        derive_effects(&policy_imports),
+        derive_effects(&policy_imports, &effectful_dependencies),
     )
     .map_err(|source| {
         ComponentAdmissionError::new(
@@ -286,15 +304,30 @@ fn operation_signature_mismatch(
     )
 }
 
-/// Group the audited imports into the authority packages that leave the host.
+/// Group the audited imports into the authority packages that leave the host,
+/// union the posture of the declared operation dependencies.
 ///
 /// Called with the policy inventory after exact operation dependencies have
 /// been removed, so every remaining package is authority-free or an admitted
-/// platform capability.
+/// platform capability. `effectful_dependencies` carries the other half of the
+/// union: a wrapper with an empty capability inventory reaches an effect
+/// through the operations it calls, and an empty projection claims it pure.
+///
+/// A dependency contributes its PACKAGE and no interface. The interface this
+/// component imports is the dependency operation itself, and `wamn_catalog`
+/// excludes an operation-dependency import from the effect interfaces by rule.
+/// The package never collides with a capability package: an operation
+/// dependency is by construction an unregistered package.
 fn derive_effects(
     imports: &wamn_component_policy::ComponentImports,
+    effectful_dependencies: &BTreeSet<&str>,
 ) -> Vec<AdmittedComponentEffect> {
     let mut grouped: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
+    for dependency in effectful_dependencies.iter().copied() {
+        grouped
+            .entry(wamn_component_policy::import_pkg(dependency))
+            .or_default();
+    }
     for name in imports.iter() {
         // Posture comes from the registry row matched on package AND version.
         // Grouping stays package-grain because the persisted projection is
@@ -504,6 +537,7 @@ mod tests {
                 connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
+            effect_free_operation_dependencies: BTreeSet::new(),
         }
     }
 
@@ -687,6 +721,8 @@ mod tests {
             .get_mut(OPERATION)
             .expect("fixture operation exists")
             .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+        request.effect_free_operation_dependencies =
+            BTreeSet::from([DEPENDENCY_OPERATION.to_string()]);
 
         let component = validate_component_admission(&engine, &bytes, request)
             .expect("an exact operation dependency admits")
@@ -866,6 +902,77 @@ mod tests {
         assert_eq!(facts.component.imports.len(), 4);
         assert_eq!(facts.connections.len(), 1);
         assert_eq!(facts.connections[0].store_alias, "erp");
+    }
+
+    /// The defect this closes. A wrapper carries an EMPTY capability
+    /// inventory of its own and still reaches Postgres or HTTP through the
+    /// operation it calls. The gate's effect-free-case clause keys on
+    /// `jsonb_array_length(library.effects) > 0`
+    /// (`scenario-worker/src/store/admission.rs:181`), so a non-empty
+    /// projection is what denies that path.
+    #[test]
+    fn a_wrapper_reaching_an_effect_through_a_declared_dependency_is_not_effect_free() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let bytes = component_bytes(&format!("import {DEPENDENCY_OPERATION};"));
+        let mut request = request();
+        request
+            .declaration
+            .operations
+            .get_mut(OPERATION)
+            .expect("fixture operation exists")
+            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+
+        let component = validate_component_admission(&engine, &bytes, request)
+            .expect("a wrapper over an effectful dependency still admits")
+            .component;
+
+        // Guard the guard. The wrapper's own capability inventory is empty:
+        // the node types import is the ABI's own and leaves the host not at
+        // all, so the posture below comes from the dependency alone.
+        assert_eq!(
+            component.imports,
+            [
+                DEPENDENCY_OPERATION.to_string(),
+                NODE_TYPES_IMPORT.to_string()
+            ]
+        );
+        assert_eq!(
+            component.effects,
+            [AdmittedComponentEffect {
+                package: "wamn-receiving:receiving".to_string(),
+                interfaces: Vec::new(),
+            }]
+        );
+    }
+
+    /// The negative control. The rule is a UNION, not a ban on dependencies:
+    /// an ambient own import and a dependency proved effect-free both add
+    /// nothing, so the wrapper keeps the effect-free case path.
+    #[test]
+    fn a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let bytes = component_bytes(&format!(
+            "import wasi:clocks/monotonic-clock@0.2.12; import {DEPENDENCY_OPERATION};"
+        ));
+        let mut request = request();
+        request
+            .declaration
+            .operations
+            .get_mut(OPERATION)
+            .expect("fixture operation exists")
+            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
+        request.effect_free_operation_dependencies =
+            BTreeSet::from([DEPENDENCY_OPERATION.to_string()]);
+
+        let component = validate_component_admission(&engine, &bytes, request)
+            .expect("a wrapper over an effect-free dependency admits")
+            .component;
+
+        assert!(
+            component.effects.is_empty(),
+            "an effect-free closure must keep the effect-free case path: {:?}",
+            component.effects
+        );
     }
 
     /// Connection authority the environment could never bind is refused at
