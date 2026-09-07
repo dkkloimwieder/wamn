@@ -1,13 +1,18 @@
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
-use std::fs;
 use std::path::{Path, PathBuf};
-
-const PACKAGE_ROLES: &str = "architecture/package-roles.json";
+use wamn_proof_conformance::package_inventory;
 
 // (package, root module, F.1 outcome)
 // (package, root module)
+//
+// This map covers the PLATFORM half of the package inventory. A package
+// declares its own components and their rows are derived, so listing them here
+// as well would put back the central edit that made a greenfield package
+// impossible to author inside its own paths (wamn-10yt.10.39). The derived half
+// is added to both sides below, so the inventory still has to be covered
+// exactly.
 const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-authoring-model", "crates/authoring/model/src/lib.rs"),
     ("wamn-catalog", "crates/catalog/model/src/lib.rs"),
@@ -106,16 +111,10 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
         "wamn-receiving-data-access",
         "components/data/receiving-data/src/lib.rs",
     ),
-    ("receiving", "components/application/receiving/src/lib.rs"),
-    (
-        "client-acme-receiving",
-        "components/application/client-acme-receiving/src/lib.rs",
-    ),
     (
         "wamn-client-acme-receiving-data-access",
         "components/data/client-acme-receiving-data/src/lib.rs",
     ),
-    ("wms", "components/application/wms/src/lib.rs"),
     (
         "wamn-wms-data-access",
         "components/data/wms-data/src/lib.rs",
@@ -163,12 +162,6 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn read(root: &Path, path: &str) -> String {
-    let absolute = root.join(path);
-    fs::read_to_string(&absolute)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", absolute.display()))
-}
-
 fn manifest_path(module: &str) -> String {
     let parent = Path::new(module)
         .parent()
@@ -199,14 +192,21 @@ fn workspace(module: &str) -> &'static str {
 #[test]
 fn retained_root_map_exactly_covers_the_package_inventory() {
     let root = repository_root();
-    let roles: PackageRoles = serde_json::from_str(&read(&root, PACKAGE_ROLES))
+    let roles: PackageRoles = serde_json::from_value(package_inventory::package_roles(&root))
         .expect("package-role inventory must parse");
     let actual = roles
         .packages
         .into_iter()
         .map(|package| (package.workspace, package.name, package.manifest_path))
         .collect::<BTreeSet<_>>();
-    let expected = RETAINED_ROOTS
+    // The derived half is added to the expected side the same way it is added
+    // to the inventory, so a package's component is covered without being
+    // written down twice.
+    let derived = package_inventory::derived_components(&root)
+        .into_iter()
+        .map(|component| (component.workspace, component.name, component.manifest_path))
+        .collect::<BTreeSet<_>>();
+    let mut expected = RETAINED_ROOTS
         .iter()
         .map(|&(package, module)| {
             (
@@ -216,11 +216,17 @@ fn retained_root_map_exactly_covers_the_package_inventory() {
             )
         })
         .collect::<BTreeSet<_>>();
-
-    assert_eq!(actual, expected, "retained-root outcome coverage drifted");
     assert_eq!(
         expected.len(),
         RETAINED_ROOTS.len(),
         "duplicate package root"
+    );
+    expected.extend(derived.iter().cloned());
+
+    assert_eq!(actual, expected, "retained-root outcome coverage drifted");
+    assert_eq!(
+        expected.len(),
+        RETAINED_ROOTS.len() + derived.len(),
+        "a derived package component is also written down by hand"
     );
 }

@@ -5,6 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
+use wamn_proof_conformance::package_inventory;
 
 const ROOT_WORKSPACE: &str = "root";
 const ROOT_MANIFEST: &str = "Cargo.toml";
@@ -308,28 +309,14 @@ fn selected_plan_packages(argv: &[String]) -> Vec<String> {
 /// half here would put back the central edit that made a greenfield package
 /// impossible to author inside its own paths (wamn-10yt.10.39).
 fn package_components(root: &Path) -> BTreeSet<String> {
-    let mut derived = BTreeSet::new();
-    let Ok(entries) = fs::read_dir(root.join("packages")) else {
-        return derived;
-    };
-    for entry in entries.flatten() {
-        let manifest = entry.path().join("wamn.json");
-        let Ok(source) = fs::read_to_string(&manifest) else {
-            continue;
-        };
-        let document: serde_json::Value = serde_json::from_str(&source)
-            .unwrap_or_else(|error| panic!("failed to parse {}: {error}", manifest.display()));
-        let Some(components) = document
-            .get("components")
-            .and_then(serde_json::Value::as_object)
-        else {
-            continue;
-        };
-        for name in components.keys() {
-            derived.insert(name.replace('_', "-"));
-        }
-    }
-    derived
+    package_inventory::component_names(root)
+}
+
+/// The package-role inventory: the platform half the file declares, plus the
+/// package half the package manifests declare.
+fn package_roles(root: &Path) -> PackageRoleManifest {
+    serde_json::from_value(package_inventory::package_roles(root))
+        .unwrap_or_else(|error| panic!("failed to parse {PACKAGE_ROLES_MANIFEST}: {error}"))
 }
 
 /// A tier's component packages: the platform half it declares, plus the package
@@ -524,7 +511,7 @@ fn package_target_kinds(metadata: &CargoMetadata, package_name: &str) -> BTreeSe
 fn workspace_tier_helper_list_matches_manifest() {
     let root = repository_root();
     let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
-    let roles: PackageRoleManifest = read_json(&root, PACKAGE_ROLES_MANIFEST);
+    let roles = package_roles(&root);
     let summaries: Vec<HelperTierSummary> =
         helper_json(helper_output(&root, &["list"]), "workspace tier list");
     let summary_by_name = summaries
@@ -584,7 +571,7 @@ fn workspace_tier_helper_list_matches_manifest() {
 fn workspace_tier_helper_dry_run_matches_manifest() {
     let root = repository_root();
     let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
-    let roles: PackageRoleManifest = read_json(&root, PACKAGE_ROLES_MANIFEST);
+    let roles = package_roles(&root);
     let mut cases = vec![
         (
             "fast_developer_native",
@@ -838,7 +825,7 @@ fn workspace_tier_helper_full_plans_cover_both_workspaces() {
 fn workspace_tier_inventory_matches_live_cargo_metadata() {
     let root = repository_root();
     let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
-    let roles: PackageRoleManifest = read_json(&root, PACKAGE_ROLES_MANIFEST);
+    let roles = package_roles(&root);
     let root_metadata = cargo_metadata(&root, ROOT_MANIFEST);
     let component_metadata = component_metadata(&root);
     let root_names = workspace_names(&root_metadata);
@@ -967,7 +954,7 @@ fn workspace_tier_inventory_matches_live_cargo_metadata() {
 fn workspace_tier_membership_matches_live_classification() {
     let root = repository_root();
     let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
-    let roles: PackageRoleManifest = read_json(&root, PACKAGE_ROLES_MANIFEST);
+    let roles = package_roles(&root);
     let root_metadata = cargo_metadata(&root, ROOT_MANIFEST);
     let component_metadata = component_metadata(&root);
 
@@ -1033,7 +1020,10 @@ fn workspace_tier_membership_matches_live_classification() {
     );
     assert_exact(
         "deployed_system_proof component packages",
-        names(&manifest.tiers.deployed_system_proof.component_packages),
+        names(&tier_components(
+            &root,
+            &manifest.tiers.deployed_system_proof.component_packages,
+        )),
         component_member_names(&component_metadata),
     );
 
@@ -1054,9 +1044,10 @@ fn workspace_tier_membership_matches_live_classification() {
         names(&manifest.tiers.release.root_packages),
         expected_release_root,
     );
+    let release_components = tier_components(&root, &manifest.tiers.release.component_packages);
     assert_exact(
         "release component packages",
-        names(&manifest.tiers.release.component_packages),
+        names(&release_components),
         expected_release_components,
     );
     for package in &manifest.tiers.release.root_packages {
@@ -1065,7 +1056,7 @@ fn workspace_tier_membership_matches_live_classification() {
             "release root package {package} has no executable target"
         );
     }
-    for package in &manifest.tiers.release.component_packages {
+    for package in &release_components {
         let (_, owner) = component_metadata
             .iter()
             .find(|(_, workspace)| workspace_names(workspace).contains(package))
@@ -1198,6 +1189,11 @@ fn bare_cargo_commands_select_exact_defaults_and_workspace_remains_exhaustive() 
     // JSON and passes while both are wrong. `contains` is a substring test, so
     // it also has to match a whole token — "6" is a substring of "16"
     // (wamn-0h0g.15.137).
+    //
+    // The number a component workspace states is its PLATFORM half, because a
+    // package declares its own components and the prose must not have to be
+    // rewritten to author one (wamn-10yt.10.39). It is still measured: the live
+    // member count less the package components this workspace actually holds.
     let mut counted = vec![(".".to_owned(), default_member_names(&root_metadata).len())];
     for ((_, cargo_manifest), (_, owner)) in COMPONENT_WORKSPACES.iter().zip(&component_metadata) {
         counted.push((
@@ -1206,7 +1202,8 @@ fn bare_cargo_commands_select_exact_defaults_and_workspace_remains_exhaustive() 
                 .expect("a Cargo manifest always has a workspace directory")
                 .to_string_lossy()
                 .into_owned(),
-            workspace_names(owner).len(),
+            workspace_names(owner).len()
+                - package_inventory::derived_component_count(&root, cargo_manifest),
         ));
     }
     for (working_directory, package_count) in counted {

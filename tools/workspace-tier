@@ -87,6 +87,41 @@ wamn_list() {
     '{name: $tier} + .tiers[$tier]' "$WAMN_TIER_MANIFEST"
 }
 
+# Every crate name one component workspace holds, read from the crates' own
+# manifests.
+#
+# Planning must not run Cargo: this helper is proved against a fake Cargo that
+# refuses every call, and the plan has to exist before Cargo is executed. So the
+# owning workspace of a derived package component is resolved from the tree
+# instead. The component workspaces nest, so every OTHER declared workspace
+# directory is pruned rather than assuming where a package component lives
+# (wamn-10yt.10.39).
+wamn_workspace_crate_names() {
+  local -r workspace_manifest="$1"
+  local -a search=("$WAMN_REPOSITORY_ROOT/$(dirname -- "$workspace_manifest")")
+  local other
+  while IFS= read -r other; do
+    if [[ "$other" != "$workspace_manifest" ]]; then
+      search+=(-path "$WAMN_REPOSITORY_ROOT/$(dirname -- "$other")" -prune -o)
+    fi
+  done < <(
+    jq -er '.source_inventory.component_workspaces[].manifest' "$WAMN_TIER_MANIFEST"
+  )
+
+  find "${search[@]}" -name Cargo.toml -print0 |
+    while IFS= read -r -d '' crate_manifest; do
+      awk '
+        /^\[/ { in_package = ($0 ~ /^\[package\]/) }
+        in_package && /^name[[:space:]]*=/ {
+          sub(/^[^=]*=[[:space:]]*"/, "")
+          sub(/".*$/, "")
+          print
+          exit
+        }
+      ' "$crate_manifest"
+    done
+}
+
 declare WAMN_WORKING_DIRECTORY
 declare WAMN_CARGO_MANIFEST
 declare WAMN_QUALIFICATION
@@ -184,12 +219,21 @@ wamn_load_plan() {
         fi
       } | tr '_' '-' | sort -u | jq -Rn '[inputs | select(length > 0)]'
     )" || wamn_fail 65 'could not derive the package component set'
+    # The classification source carries the platform half only, so the owner of
+    # a derived component is read off the tree instead.
+    local owned_package_components
+    owned_package_components="$(
+      wamn_workspace_crate_names "$manifest_relative" \
+        | jq -Rn --argjson declared "$package_components" \
+            '[inputs | select(. as $name | $declared | index($name) != null)]'
+    )" || wamn_fail 65 "could not resolve the package components $workspace holds"
     selection_filter+=(--arg workspace "$workspace"
       --argjson package_components "$package_components"
+      --argjson owned_package_components "$owned_package_components"
       --slurpfile roles "$WAMN_PACKAGE_ROLES")
-    selection_program='[$roles[0].packages[]
-                        | select(.workspace == $workspace)
-                        | .name] as $owned
+    selection_program='([$roles[0].packages[]
+                         | select(.workspace == $workspace)
+                         | .name] + $owned_package_components) as $owned
                        | [((.tiers[$tier][$key] + $package_components) | unique)[]
                           | select(. as $package
                                    | $owned | index($package) != null)]'
