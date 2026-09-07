@@ -11,24 +11,6 @@
       "workspace_manifest": "components/Cargo.toml",
       "raw_file": "blob_put.wasm",
       "output_file": "blob_put.wasm"
-    },
-    {
-      "package": "client-acme-receiving",
-      "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "client_acme_receiving.wasm",
-      "output_file": "client_acme_receiving.wasm"
-    },
-    {
-      "package": "receiving",
-      "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "receiving.wasm",
-      "output_file": "receiving.wasm"
-    },
-    {
-      "package": "wms",
-      "workspace_manifest": "components/Cargo.toml",
-      "raw_file": "wms.wasm",
-      "output_file": "wms.wasm"
     }
   ]
 }

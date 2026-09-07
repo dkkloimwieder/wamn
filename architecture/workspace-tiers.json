@@ -16,7 +16,7 @@
       {
         "workspace": "components",
         "manifest": "components/Cargo.toml",
-        "package_count": 20
+        "package_count": 17
       },
       {
         "workspace": "components-no-std",
@@ -25,7 +25,8 @@
       }
     ],
     "component_workspace_split_reason": "Cargo feature unification is additive-only and applies to every member of one invocation. Members of components/Cargo.toml reach serde_json/std through boon, jmespath and schemars, which have no feature knob, so a no_std guest supplying its own panic_handler fails with E0152 duplicate lang item panic_impl while it shares that invocation. Isolation is a second workspace, not a feature flag (wamn-0h0g.11.56, wamn-1yj4).",
-    "non_cargo_inputs": []
+    "non_cargo_inputs": [],
+    "package_component_source": "packages/*/wamn.json `components` keys, kebab-cased. Every list below declares the PLATFORM half only; tools/build-components adds the package half by reading the package manifests, so adding a package adds its component without editing this file."
   },
   "tiers": {
     "fast_developer_native": {
@@ -68,14 +69,11 @@
       "root_packages": [],
       "component_packages": [
         "blob-put",
-        "client-acme-receiving",
         "http-request",
         "http-route",
         "label-render",
         "materializer",
-        "receiving",
-        "transform",
-        "wms"
+        "transform"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Build these explicit component package selectors with --target wasm32-wasip2, one Cargo invocation per component workspace that owns a selected package. Then post-link normalize only the tools/component-virtualization.json allowlist into its separate virtualized profile directory; undeclared artifacts remain raw. Root-workspace path dependencies are resolved by Cargo."
@@ -134,14 +132,12 @@
       "component_packages": [
         "blob-put",
         "busyloop",
-        "client-acme-receiving",
         "connection-http-standard",
         "http-request",
         "http-route",
         "label-render",
         "label-template",
         "materializer",
-        "receiving",
         "sockprobe",
         "sqlx-command",
         "std-virtualization-probe",
@@ -154,8 +150,7 @@
         "wamn-postgres-sqlx",
         "wamn-postgres-statements",
         "wamn-receiving-data-access",
-        "wamn-wms-data-access",
-        "wms"
+        "wamn-wms-data-access"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all 24 component packages through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
@@ -269,8 +264,8 @@
       "m1_inventory_tier": "product_components",
       "proof_inventory_tier": "full_ci",
       "expected_package_counts": {
-        "m1": 9,
-        "proof": 24
+        "m1": 6,
+        "proof": 21
       }
     }
   },

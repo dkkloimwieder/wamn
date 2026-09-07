@@ -70,6 +70,7 @@ readonly WAMN_REPOSITORY_ROOT="$(
 )"
 readonly WAMN_TIER_MANIFEST="$WAMN_REPOSITORY_ROOT/architecture/workspace-tiers.json"
 readonly WAMN_VIRTUALIZATION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-virtualization.json"
+readonly WAMN_PACKAGE_ROOT="$WAMN_REPOSITORY_ROOT/packages"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
@@ -141,6 +142,34 @@ readonly WAMN_MANIFEST_LIST
 mapfile -t WAMN_MANIFESTS <<<"$WAMN_MANIFEST_LIST"
 readonly WAMN_MANIFESTS
 
+# The package half of every component inventory, derived rather than listed.
+#
+# This is an allowlist and not discovery, and it stays that way: nothing builds
+# unless something declares it. What changed is WHO declares the package half.
+# A package's own manifest names its components, so adding a package adds its
+# component, and no central file has to be edited to author one. Before this,
+# four rows across two files had to move and neither file belongs to any
+# package, which made a greenfield package impossible to author inside its own
+# paths (wamn-10yt.10.39).
+#
+# The platform half is still listed in architecture/workspace-tiers.json and
+# tools/component-virtualization.json, because a platform component has no
+# package to declare it.
+declare WAMN_PACKAGE_COMPONENTS
+WAMN_PACKAGE_COMPONENTS="$(
+  {
+    if [[ -d "$WAMN_PACKAGE_ROOT" ]]; then
+      for wamn_package_manifest in "$WAMN_PACKAGE_ROOT"/*/wamn.json; do
+        [[ -r "$wamn_package_manifest" ]] || continue
+        jq -er '(.components // {}) | keys[]' "$wamn_package_manifest" || {
+          wamn_fail 65 "cannot read components from $wamn_package_manifest"
+        }
+      done
+    fi
+  } | tr '_' '-' | sort -u | jq -Rn '[inputs | select(length > 0)]'
+)" || wamn_fail 65 'could not derive the package component set'
+readonly WAMN_PACKAGE_COMPONENTS
+
 declare -a WAMN_METADATA=()
 declare WAMN_WORKSPACE_METADATA
 for manifest in "${WAMN_MANIFESTS[@]}"; do
@@ -155,7 +184,8 @@ readonly WAMN_METADATA
 
 declare WAMN_PLAN
 WAMN_PLAN="$(
-  printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s --arg profile "$WAMN_PROFILE" '
+  printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s --arg profile "$WAMN_PROFILE" \
+    --argjson package_components "$WAMN_PACKAGE_COMPONENTS" '
     .[0] as $contract
     | .[1:] as $metadata
     | $contract.source_inventory.component_workspaces as $workspaces
@@ -168,16 +198,28 @@ WAMN_PLAN="$(
        then $profiles.m1_inventory_tier
        else $profiles.proof_inventory_tier
        end) as $tier
-    | $contract.tiers[$tier].component_packages as $packages
+    | $contract.tiers[$tier].component_packages as $declared
+    | (($declared + $package_components) | unique) as $packages
     | select($contract.schema_version == "0.1")
     | select($workspaces | length == ($membership | length))
+    # The declared count is the PLATFORM half. Each workspace may also hold
+    # package components, and those are counted from what it actually contains,
+    # so a new package needs no edit here.
     | select([range($workspaces | length) as $index
+              | ($package_components
+                 | map(select(. as $component
+                              | $membership[$index] | index($component) != null))
+                 | length) as $derived_here
               | select(($membership[$index] | length)
-                       != $workspaces[$index].package_count)] | length == 0)
+                       != ($workspaces[$index].package_count + $derived_here))]
+             | length == 0)
     | select($members | length == (unique | length))
-    | select($packages | length == $profiles.expected_package_counts[$profile])
-    | select($packages | length == (unique | length))
-    | select(($contract.tiers[$profiles.proof_inventory_tier].component_packages | sort)
+    | select($declared | length == $profiles.expected_package_counts[$profile])
+    | select($declared | length == ($declared | unique | length))
+    # Every live member is either declared by the platform or declared by a
+    # package. Nothing undeclared builds; that fence did not move.
+    | select(((($contract.tiers[$profiles.proof_inventory_tier].component_packages
+                + $package_components) | unique) | sort)
              == ($members | sort))
     | [range($workspaces | length) as $index
        | {manifest: $workspaces[$index].manifest,
@@ -211,6 +253,7 @@ WAMN_VIRTUALIZATION_PLAN="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s \
     --slurpfile tier "$WAMN_TIER_MANIFEST" \
     --slurpfile virtualization "$WAMN_VIRTUALIZATION_MANIFEST" \
+    --argjson package_components "$WAMN_PACKAGE_COMPONENTS" \
     --arg profile "$WAMN_PROFILE" '
     def basename:
       type == "string"
@@ -232,7 +275,8 @@ WAMN_VIRTUALIZATION_PLAN="$(
        then $contract.profiles.components.m1_inventory_tier
        else $contract.profiles.components.proof_inventory_tier
        end) as $tier_name
-    | $contract.tiers[$tier_name].component_packages as $selected
+    | (($contract.tiers[$tier_name].component_packages + $package_components)
+       | unique) as $selected
     | select(($virtual | keys | sort)
              == (["artifacts", "output_subdirectory", "profile", "tool"] | sort))
     | select(($virtual.tool | keys | sort) == ["manifest", "package"])
@@ -244,29 +288,44 @@ WAMN_VIRTUALIZATION_PLAN="$(
     | [range($workspaces | length) as $index
        | {manifest: $workspaces[$index].manifest,
           metadata: $metadata[$index]}] as $owners
-    | select([$virtual.artifacts[]
+    # The package half of the allowlist, synthesized from the package manifests
+    # rather than listed. The owning workspace is whichever one actually holds
+    # the crate, so nothing here hardcodes where a package component lives, and
+    # a component a package names but no workspace contains is simply absent
+    # from the plan and fails the count check below.
+    | [$package_components[] as $component
+       | [$owners[] | select([.metadata.packages[] | select(.name == $component)] | length == 1)]
+         as $holders
+       | select($holders | length == 1)
+       | {package: $component,
+          workspace_manifest: $holders[0].manifest,
+          raw_file: (($component | gsub("-"; "_")) + ".wasm"),
+          output_file: (($component | gsub("-"; "_")) + ".wasm")}] as $derived_artifacts
+    | ($virtual.artifacts + $derived_artifacts) as $all_artifacts
+    | select([$all_artifacts[]
               | select((keys | sort)
                        != ["output_file", "package", "raw_file", "workspace_manifest"])]
              | length == 0)
-    | select($virtual.artifacts | length > 0)
-    | select(($virtual.artifacts | map(.package) | length)
-             == ($virtual.artifacts | map(.package) | unique | length))
-    | select(($virtual.artifacts | map(.workspace_manifest + "\u0000" + .raw_file) | length)
-             == ($virtual.artifacts
+    | select($all_artifacts | length > 0)
+    | select(($all_artifacts | map(.package) | length)
+             == ($all_artifacts | map(.package) | unique | length))
+    | select(($all_artifacts | map(.workspace_manifest + "\u0000" + .raw_file) | length)
+             == ($all_artifacts
                  | map(.workspace_manifest + "\u0000" + .raw_file) | unique | length))
-    | select(($virtual.artifacts | map(.output_file) | length)
-             == ($virtual.artifacts | map(.output_file) | unique | length))
-    | select([$virtual.artifacts[] as $artifact
+    | select(($all_artifacts | map(.output_file) | length)
+             == ($all_artifacts | map(.output_file) | unique | length))
+    | select([$all_artifacts[] as $artifact
               | select(($artifact.package | type != "string" or length == 0)
                        or ($artifact.workspace_manifest | relative_path | not)
                        or ($artifact.raw_file | basename | not)
                        or ($artifact.output_file | basename | not)
                        or ($artifact.raw_file | endswith(".wasm") | not)
                        or ($artifact.output_file | endswith(".wasm") | not)
-                       or ($contract.tiers.product_components.component_packages
+                       or ((($contract.tiers.product_components.component_packages
+                             + $package_components) | unique)
                            | index($artifact.package) == null))]
              | length == 0)
-    | [$virtual.artifacts[] as $artifact
+    | [$all_artifacts[] as $artifact
        | [$owners[] | select(.manifest == $artifact.workspace_manifest)] as $matching_owners
        | select($matching_owners | length == 1)
        | $matching_owners[0] as $owner
@@ -283,7 +342,7 @@ WAMN_VIRTUALIZATION_PLAN="$(
                 + "/wasm32-wasip2/release/" + $artifact.raw_file),
           output: ($owner.metadata.target_directory + "/"
                    + $virtual.output_subdirectory + "/" + $artifact.output_file)}] as $artifacts
-    | select($artifacts | length == ($virtual.artifacts | length))
+    | select($artifacts | length == ($all_artifacts | length))
     | select([$artifacts[] | select(.raw == .output)] | length == 0)
     | {profile: $virtual.profile,
        tool: $virtual.tool,

@@ -163,15 +163,34 @@ wamn_load_plan() {
 
   # A tier names every component package it covers, regardless of which
   # component workspace owns it; the classification source resolves the owner.
+  #
+  # The tier list is the PLATFORM half. A package declares its own components,
+  # so the package half is derived here the same way tools/build-components
+  # derives it, and a new package is swept without an edit to this file or to
+  # the tier manifest (wamn-10yt.10.39).
   local -a selection_filter=(--arg tier "$tier" --arg key "$selection_key")
   local selection_program='.tiers[$tier][$key]'
   if [[ "$workspace_family" == 'components' ]]; then
+    local package_components
+    package_components="$(
+      {
+        if [[ -d "$WAMN_REPOSITORY_ROOT/packages" ]]; then
+          for wamn_package_manifest in "$WAMN_REPOSITORY_ROOT"/packages/*/wamn.json; do
+            [[ -r "$wamn_package_manifest" ]] || continue
+            jq -er '(.components // {}) | keys[]' "$wamn_package_manifest" || {
+              wamn_fail 65 "cannot read components from $wamn_package_manifest"
+            }
+          done
+        fi
+      } | tr '_' '-' | sort -u | jq -Rn '[inputs | select(length > 0)]'
+    )" || wamn_fail 65 'could not derive the package component set'
     selection_filter+=(--arg workspace "$workspace"
+      --argjson package_components "$package_components"
       --slurpfile roles "$WAMN_PACKAGE_ROLES")
     selection_program='[$roles[0].packages[]
                         | select(.workspace == $workspace)
                         | .name] as $owned
-                       | [.tiers[$tier][$key][]
+                       | [((.tiers[$tier][$key] + $package_components) | unique)[]
                           | select(. as $package
                                    | $owned | index($package) != null)]'
   fi
