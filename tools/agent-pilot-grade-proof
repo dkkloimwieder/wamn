@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Proof for the --replay verb of tools/agent-pilot-grade. wamn-nvbd.10.
+# Proof for the --replay and --placement verbs of tools/agent-pilot-grade.
+# wamn-nvbd.10 and wamn-nvbd.11.
 #
 # No environment: no host, no database, no agent. The fixture is a synthetic
 # recorded run directory, built from scratch so every condition can be
@@ -186,5 +187,193 @@ check "eleven stages with a served release still fails the loop" \
 check "and the run grades FAIL rather than scoring the record" \
   "$([[ $rc -eq 30 && "$(jq -r .outcome "$d/checklist-replay.json")" == FAIL* ]] && echo 0 || echo 1)"
 
-printf '\n%s\n' "agent-pilot-grade --replay: $failures failure(s)"
+# ---------------------------------------------------------------------------
+# PLACEMENT. The grader places the fixture's values at the paths the package
+# published, exactly as it resolves a route path from the package's own
+# attachments. Two legal authoring choices publish two shapes, so both are
+# built here and neither is the grader's default.
+# ---------------------------------------------------------------------------
+
+# A package tree carrying published contracts and nothing else. Placement reads
+# the contracts and the fixture, so this needs no responses and no release.
+placement_fixture() { # <dir>
+  local d=$1
+  rm -rf "$d"; mkdir -p "$d/grade" "$d/worktree/packages/dock/generated/contracts"
+
+  cat > "$d/task.json" <<'JSON'
+{"task":"placement","identity":{"route_host":"proof.localhost"},"overlay_root":"packages/dock",
+ "grade":{"steps":"steps.json","checks":[],"fence_reports":[]}}
+JSON
+  echo '{"commit":"0000000000000000000000000000000000000000"}' > "$d/run.json"
+  echo '{"name":"dock"}' > "$d/worktree/packages/dock/wamn.json"
+}
+
+# One published contract pair for one operation.
+contract() { # <dir> <domain> <action> <input json> <result json>
+  local root="$1/worktree/packages/dock/generated/contracts/$2"
+  mkdir -p "$root"
+  printf '%s' "$4" > "$root/$3.input.json"
+  printf '%s' "$5" > "$root/$3.result.json"
+}
+
+# The custom-command shape: dotted paths, nested under a value object.
+NESTED_CREATE='{"fields":[{"path":"request_id","type":"text","nullable":false},
+  {"path":"value.idempotency_key","type":"text","nullable":false},
+  {"path":"value.name","type":"text","nullable":false}]}'
+NESTED_CREATE_RESULT='{"class":"one","fields":[{"path":"carrier_id","type":"uuid","nullable":false}]}'
+
+# The same operation authored flat. Legal, and a different wire body.
+FLAT_CREATE='{"fields":[{"path":"request_id","type":"text","nullable":false},
+  {"path":"idempotency_key","type":"text","nullable":false},
+  {"path":"name","type":"text","nullable":false}]}'
+
+# The model CRUD shape. It lists no fields array at all: the envelope keys are
+# top-level members carrying a type and a required flag, and the domain fields
+# it accepts are named in writable_fields.
+CRUD_CREATE='{"request_id":{"type":"string","required":true},
+  "idempotency_key":{"type":"text","required":true},
+  "canonical_command":{"over":"writable_fields","payload":"canonical_compact_json","changed":"idempotency_conflict"},
+  "server_owned_fields":{"fields":["id","row_version"],"if_supplied":"invalid_input"},
+  "writable_fields":[{"field":"name","type":"text","omitted":"postgres_default","explicit_null":"invalid_input"}]}'
+
+# A projection. It declares no idempotency key, so the grader supplies none.
+FLAT_QUERY='{"fields":[{"path":"request_id","type":"text","nullable":false},
+  {"path":"dock_id","type":"uuid","nullable":false},
+  {"path":"day","type":"text","nullable":false}]}'
+NESTED_QUERY_RESULT='{"class":"one","fields":[{"path":"dock_id","type":"uuid","nullable":false},
+  {"path":"appointments[].appointment_id","type":"uuid","nullable":false},
+  {"path":"appointments[].slot_start","type":"timestamptz","nullable":false}]}'
+
+one_create_step() { # <dir>
+  cat > "$1/steps.json" <<'JSON'
+[{"id":"create-carrier","must":true,"invariant":"DOCK-0","route":{"operation":"carrier.create"},
+  "body":{"name":"Northbound Freight"},
+  "expect":{"status":200,"item":"value","present":["carrier_id"]}}]
+JSON
+}
+
+placed() { # <dir> <step id> -> the body the grader would send
+  "$GRADE" --placement "$1" 2>/dev/null | jq -c --arg id "$2" 'select(.id == $id) | .body // empty'
+}
+refusal() { "$GRADE" --placement "$1" 2>/dev/null | jq -r --arg id "$2" 'select(.id == $id) | .evidence'; }
+
+p="$work/place"
+
+# 9. The nested shape. The fixture's flat body reaches value.name, and both
+# envelope fields reach the paths the contract declares for them.
+placement_fixture "$p"; one_create_step "$p"
+contract "$p" carrier create "$NESTED_CREATE" "$NESTED_CREATE_RESULT"
+check "a nested contract puts the fixture value at value.name" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '.value.name')" == "Northbound Freight" ]] && echo 0 || echo 1)"
+check "and request_id where the nested contract declares it" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '.request_id')" == "create-carrier" ]] && echo 0 || echo 1)"
+check "and the idempotency key the platform owns at value.idempotency_key" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '.value.idempotency_key')" != "null" ]] && echo 0 || echo 1)"
+check "and nothing at the top level the contract did not declare" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '[keys[]] | join(",")')" == "request_id,value" ]] && echo 0 || echo 1)"
+
+# 10. The same fixture, the same step, a flat contract. THIS IS THE CASE A
+# FLAT-ONLY GRADER PASSES AND A NESTED-ONLY GRADER FAILS, and the pair is the
+# whole point: neither shape is the grader's default.
+placement_fixture "$p"; one_create_step "$p"
+contract "$p" carrier create "$FLAT_CREATE" "$NESTED_CREATE_RESULT"
+check "a flat contract puts the same fixture value at the top level" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '.name')" == "Northbound Freight" ]] && echo 0 || echo 1)"
+check "and the idempotency key beside it" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '.idempotency_key')" != "null" ]] && echo 0 || echo 1)"
+
+# 11. The model CRUD shape, which lists no fields array at all.
+placement_fixture "$p"; one_create_step "$p"
+contract "$p" carrier create "$CRUD_CREATE" "$NESTED_CREATE_RESULT"
+check "a writable_fields contract places the value at the writable field" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '.name')" == "Northbound Freight" ]] && echo 0 || echo 1)"
+check "and supplies the idempotency key it declares" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '.idempotency_key')" != "null" ]] && echo 0 || echo 1)"
+check "and sends nothing for server_owned_fields or canonical_command" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '[keys[]] | sort | join(",")')" == "idempotency_key,name,request_id" ]] && echo 0 || echo 1)"
+
+# 12. A projection declares no idempotency key, so the grader supplies none.
+placement_fixture "$p"
+cat > "$p/steps.json" <<'JSON'
+[{"id":"list","must":true,"invariant":"DOCK-6","route":{"operation":"appointment.query"},
+  "body":{"day":"2026-10-01"},"reuse":{"dock_id":"create-dock.value.dock_id"},
+  "expect":{"status":200,"item":"value","sorted_by":{"path":"appointments","field":"slot_start"}}}]
+JSON
+contract "$p" appointment query "$FLAT_QUERY" "$NESTED_QUERY_RESULT"
+check "a projection is sent no idempotency key" \
+  "$([[ "$(placed "$p" list | jq -r 'has("idempotency_key")')" == false ]] && echo 0 || echo 1)"
+
+# 13. A fixture that names its own key keeps it. A replay case and a
+# changed-body case reuse the first call's key on purpose.
+placement_fixture "$p"
+cat > "$p/steps.json" <<'JSON'
+[{"id":"book-replay","must":true,"invariant":"DOCK-2","route":{"operation":"carrier.create"},
+  "body":{"name":"Northbound Freight","idempotency_key":"dock-gate-book-1"},
+  "expect":{"status":200,"item":"value","present":["carrier_id"]}}]
+JSON
+contract "$p" carrier create "$NESTED_CREATE" "$NESTED_CREATE_RESULT"
+check "a fixture that names its own idempotency key keeps it" \
+  "$([[ "$(placed "$p" book-replay | jq -r '.value.idempotency_key')" == "dock-gate-book-1" ]] && echo 0 || echo 1)"
+
+# 14. A field the contract does not declare fails the step, and the line names
+# the field, the operation and every path the contract does declare. A reader
+# of the checklist alone can fix the fixture from it.
+placement_fixture "$p"; one_create_step "$p"
+contract "$p" carrier create \
+  '{"fields":[{"path":"request_id","type":"text","nullable":false},{"path":"carrier_name","type":"text","nullable":false}]}' \
+  "$NESTED_CREATE_RESULT"
+check "a field naming no declared path refuses to shape the step" \
+  "$([[ "$(placed "$p" create-carrier)" == "" ]] && echo 0 || echo 1)"
+check "and the evidence names the field, the operation and the declared paths" \
+  "$([[ "$(refusal "$p" create-carrier)" == \
+        "fixture field name matches no declared path for carrier.create. the contract declares carrier_name, request_id" ]] \
+     && echo 0 || echo 1)"
+
+# 15. An operation with no published contract at all is refused, not guessed.
+placement_fixture "$p"; one_create_step "$p"
+check "an operation with no published input contract is refused" \
+  "$([[ "$(refusal "$p" create-carrier)" == "no published input contract for carrier.create"* ]] && echo 0 || echo 1)"
+
+# 16. One package, two shapes. The grader reads each operation's own contract,
+# so a package that nests its commands and flattens its projection works.
+placement_fixture "$p"
+cat > "$p/steps.json" <<'JSON'
+[{"id":"create-carrier","must":true,"invariant":"DOCK-0","route":{"operation":"carrier.create"},
+  "body":{"name":"Northbound Freight"},
+  "expect":{"status":200,"item":"value","present":["carrier_id"]}},
+ {"id":"list","must":true,"invariant":"DOCK-6","route":{"operation":"appointment.query"},
+  "body":{"day":"2026-10-01","dock_id":"11111111-1111-1111-1111-111111111111"},
+  "expect":{"status":200,"item":"value","sorted_by":{"path":"appointments","field":"slot_start"}}}]
+JSON
+contract "$p" carrier create "$NESTED_CREATE" "$NESTED_CREATE_RESULT"
+contract "$p" appointment query "$FLAT_QUERY" "$NESTED_QUERY_RESULT"
+check "a nested command and a flat projection are each shaped by their own contract" \
+  "$([[ "$(placed "$p" create-carrier | jq -r '.value.name')" == "Northbound Freight" \
+        && "$(placed "$p" list | jq -r '.day')" == "2026-10-01" ]] && echo 0 || echo 1)"
+
+# 17. A reuse clause lands at the declared path, and its VALUE is read from the
+# earlier step's result by name, not by the fixture's spelling of the path.
+placement_fixture "$p"
+cat > "$p/steps.json" <<'JSON'
+[{"id":"create-carrier","must":true,"invariant":"DOCK-0","route":{"operation":"carrier.create"},
+  "body":{"name":"Northbound Freight"},
+  "expect":{"status":200,"item":"value","present":["carrier_id"]}},
+ {"id":"book","must":true,"invariant":"DOCK-2","route":{"operation":"appointment.book"},
+  "body":{"slot_start":"2026-10-01T09:00:00Z"},
+  "reuse":{"carrier_id":"create-carrier.value.carrier_id"},
+  "expect":{"status":200,"item":"value","present":["appointment_id"]}}]
+JSON
+contract "$p" carrier create "$NESTED_CREATE" "$NESTED_CREATE_RESULT"
+contract "$p" appointment book \
+  '{"fields":[{"path":"request_id","type":"text","nullable":false},
+    {"path":"value.idempotency_key","type":"text","nullable":false},
+    {"path":"value.carrier_id","type":"uuid","nullable":false},
+    {"path":"value.slot_start","type":"timestamptz","nullable":false}]}' \
+  '{"class":"one","fields":[{"path":"appointment_id","type":"uuid","nullable":false}]}'
+printf '%s\n' '{"id":"create-carrier","response":"[{\"request_id\":\"x\",\"value\":{\"carrier_id\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}}]"}' \
+  > "$p/grade/http.jsonl"
+check "a reused value lands at the path the second contract declares" \
+  "$([[ "$(placed "$p" book | jq -r '.value.carrier_id')" == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" ]] && echo 0 || echo 1)"
+
+printf '\n%s\n' "agent-pilot-grade --replay and --placement: $failures failure(s)"
 [[ $failures -eq 0 ]]

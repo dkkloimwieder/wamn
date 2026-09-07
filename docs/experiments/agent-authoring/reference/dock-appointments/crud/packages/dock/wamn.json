@@ -1,0 +1,1560 @@
+{
+  "package": {
+    "id": "wamn_dock",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "dock_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "appointment": {
+      "schema": "receiving",
+      "table": "appointment",
+      "owner": "wamn_dock",
+      "server_owned_fields": [
+        "id",
+        "status",
+        "arrived_at",
+        "created_at"
+      ],
+      "enum_fields": {
+        "status": [
+          "scheduled",
+          "arrived",
+          "departed"
+        ]
+      },
+      "operations": {}
+    },
+    "carrier": {
+      "schema": "receiving",
+      "table": "carrier",
+      "owner": "wamn_dock",
+      "server_owned_fields": [
+        "id",
+        "created_at"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    },
+    "dock": {
+      "schema": "receiving",
+      "table": "dock",
+      "owner": "wamn_dock",
+      "server_owned_fields": [
+        "id",
+        "created_at"
+      ],
+      "enum_fields": {},
+      "operations": {}
+    }
+  },
+  "internal_relations": {
+    "appointment_book_command": {
+      "schema": "receiving",
+      "table": "appointment_book_command",
+      "cdc": "excluded"
+    },
+    "appointment_check_in_command": {
+      "schema": "receiving",
+      "table": "appointment_check_in_command",
+      "cdc": "excluded"
+    },
+    "carrier_create_command": {
+      "schema": "receiving",
+      "table": "carrier_create_command",
+      "cdc": "excluded"
+    },
+    "dock_create_command": {
+      "schema": "receiving",
+      "table": "dock_create_command",
+      "cdc": "excluded"
+    }
+  },
+  "custom_operations": {
+    "carrier.create": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "carrier.create",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "carrier_create_command",
+        "identities": {
+          "carrier_id": "carrier_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "item_semantics": "per_input",
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "idempotency_key",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "name",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "carrier_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "canonicalization": {
+        "payload": "canonical_compact_json",
+        "uuid": "lowercase_hyphenated",
+        "timestamptz": "utc_rfc3339_six_fractional_digits",
+        "numeric": "postgresql_lexical_scale_preserved",
+        "excluded_fields": [
+          "request_id",
+          "idempotency_key"
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {},
+        "invalid_input": {
+          "required": [
+            "field"
+          ],
+          "optional": [
+            "minimum",
+            "maximum",
+            "observed"
+          ]
+        },
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "carrier",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [
+            "id",
+            "name"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "carrier_create_command",
+          "select_fields": [
+            "idempotency_key",
+            "canonical_command",
+            "carrier_id",
+            "finalized"
+          ],
+          "insert_fields": [
+            "idempotency_key",
+            "canonical_command"
+          ],
+          "update_fields": [
+            "finalized"
+          ],
+          "lock": false,
+          "constraints": [
+            "carrier_create_command_idempotency_key_pkey"
+          ]
+        }
+      ],
+      "statements": {
+        "find_replay": {
+          "path": "command/carrier_create/find_replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "carrier_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "finalized",
+              "type": "boolean",
+              "nullable": true
+            }
+          ]
+        },
+        "claim_command": {
+          "path": "command/carrier_create/claim_command.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "carrier_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "insert_carrier": {
+          "path": "command/carrier_create/insert_carrier.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "carrier_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "finalize_command": {
+          "path": "command/carrier_create/finalize_command.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "carrier_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "finalized",
+              "type": "boolean",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "dock.create": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "dock.create",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "dock_create_command",
+        "identities": {
+          "dock_id": "dock_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "item_semantics": "per_input",
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "idempotency_key",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "name",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "dock_id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "canonicalization": {
+        "payload": "canonical_compact_json",
+        "uuid": "lowercase_hyphenated",
+        "timestamptz": "utc_rfc3339_six_fractional_digits",
+        "numeric": "postgresql_lexical_scale_preserved",
+        "excluded_fields": [
+          "request_id",
+          "idempotency_key"
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {},
+        "invalid_input": {
+          "required": [
+            "field"
+          ],
+          "optional": [
+            "minimum",
+            "maximum",
+            "observed"
+          ]
+        },
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "dock",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [
+            "id",
+            "name"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "dock_create_command",
+          "select_fields": [
+            "idempotency_key",
+            "canonical_command",
+            "dock_id",
+            "finalized"
+          ],
+          "insert_fields": [
+            "idempotency_key",
+            "canonical_command"
+          ],
+          "update_fields": [
+            "finalized"
+          ],
+          "lock": false,
+          "constraints": [
+            "dock_create_command_idempotency_key_pkey"
+          ]
+        }
+      ],
+      "statements": {
+        "find_replay": {
+          "path": "command/dock_create/find_replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "finalized",
+              "type": "boolean",
+              "nullable": true
+            }
+          ]
+        },
+        "claim_command": {
+          "path": "command/dock_create/claim_command.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "insert_dock": {
+          "path": "command/dock_create/insert_dock.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "name",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "finalize_command": {
+          "path": "command/dock_create/finalize_command.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "finalized",
+              "type": "boolean",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "appointment.book": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "appointment.book",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "appointment_book_command",
+        "identities": {
+          "appointment_id": "appointment_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "item_semantics": "per_input",
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "idempotency_key",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "carrier_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "dock_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "slot_start",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "path": "slot_end",
+            "type": "timestamptz",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "appointment_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "scheduled",
+              "arrived",
+              "departed"
+            ]
+          }
+        ]
+      },
+      "canonicalization": {
+        "payload": "canonical_compact_json",
+        "uuid": "lowercase_hyphenated",
+        "timestamptz": "utc_rfc3339_six_fractional_digits",
+        "numeric": "postgresql_lexical_scale_preserved",
+        "excluded_fields": [
+          "request_id",
+          "idempotency_key"
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "carrier_not_found",
+        "dock_not_found",
+        "slot_unavailable",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {},
+        "invalid_input": {
+          "required": [
+            "field"
+          ],
+          "optional": [
+            "minimum",
+            "maximum",
+            "observed"
+          ]
+        },
+        "carrier_not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "dock_not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "slot_unavailable": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "appointment",
+          "select_fields": [
+            "id",
+            "dock_id",
+            "slot_start",
+            "slot_end",
+            "status"
+          ],
+          "insert_fields": [
+            "id",
+            "carrier_id",
+            "dock_id",
+            "slot_start",
+            "slot_end"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "appointment_book_command",
+          "select_fields": [
+            "idempotency_key",
+            "canonical_command",
+            "appointment_id",
+            "status"
+          ],
+          "insert_fields": [
+            "idempotency_key",
+            "canonical_command"
+          ],
+          "update_fields": [
+            "status"
+          ],
+          "lock": false,
+          "constraints": [
+            "appointment_book_command_idempotency_key_pkey"
+          ]
+        },
+        {
+          "schema": "receiving",
+          "table": "carrier",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "dock",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": true,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "find_replay": {
+          "path": "command/appointment_book/find_replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "appointment_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": true
+            }
+          ]
+        },
+        "claim_command": {
+          "path": "command/appointment_book/claim_command.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "appointment_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "lock_dock": {
+          "path": "command/appointment_book/lock_dock.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "load_carrier": {
+          "path": "command/appointment_book/load_carrier.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "carrier_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "find_overlap": {
+          "path": "command/appointment_book/find_overlap.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "slot_start",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "slot_end",
+              "type": "timestamptz",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "insert_appointment": {
+          "path": "command/appointment_book/insert_appointment.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "appointment_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "carrier_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "slot_start",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "slot_end",
+              "type": "timestamptz",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        },
+        "finalize_command": {
+          "path": "command/appointment_book/finalize_command.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "appointment_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "appointment.check_in": {
+      "kind": "command",
+      "visibility": "public",
+      "permission": "appointment.check_in",
+      "connection": "postgres",
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "claim": {
+        "table": "appointment_check_in_command",
+        "identities": {
+          "check_in_id": "check_in_id"
+        },
+        "claim": "claim_command",
+        "replay": "find_replay",
+        "finalize": "finalize_command"
+      },
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "item_semantics": "per_input",
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "idempotency_key",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "appointment_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "arrived_at",
+            "type": "timestamptz",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "check_in_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "appointment_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "scheduled",
+              "arrived",
+              "departed"
+            ]
+          },
+          {
+            "path": "arrived_at",
+            "type": "timestamptz",
+            "nullable": false
+          }
+        ]
+      },
+      "canonicalization": {
+        "payload": "canonical_compact_json",
+        "uuid": "lowercase_hyphenated",
+        "timestamptz": "utc_rfc3339_six_fractional_digits",
+        "numeric": "postgresql_lexical_scale_preserved",
+        "excluded_fields": [
+          "request_id",
+          "idempotency_key"
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "not_found",
+        "appointment_not_scheduled",
+        "idempotency_conflict",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {},
+        "invalid_input": {
+          "required": [
+            "field"
+          ],
+          "optional": [
+            "minimum",
+            "maximum",
+            "observed"
+          ]
+        },
+        "not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "appointment_not_scheduled": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "idempotency_conflict": {
+          "required": [
+            "field"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "appointment",
+          "select_fields": [
+            "id",
+            "status",
+            "arrived_at"
+          ],
+          "insert_fields": [],
+          "update_fields": [
+            "status",
+            "arrived_at"
+          ],
+          "lock": true,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "appointment_check_in_command",
+          "select_fields": [
+            "idempotency_key",
+            "canonical_command",
+            "check_in_id",
+            "status",
+            "arrived_at"
+          ],
+          "insert_fields": [
+            "idempotency_key",
+            "canonical_command"
+          ],
+          "update_fields": [
+            "status",
+            "arrived_at"
+          ],
+          "lock": false,
+          "constraints": [
+            "appointment_check_in_command_idempotency_key_pkey"
+          ]
+        }
+      ],
+      "statements": {
+        "find_replay": {
+          "path": "command/appointment_check_in/find_replay.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "check_in_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "arrived_at",
+              "type": "timestamptz",
+              "nullable": true
+            }
+          ]
+        },
+        "claim_command": {
+          "path": "command/appointment_check_in/claim_command.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "check_in_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "lock_appointment": {
+          "path": "command/appointment_check_in/lock_appointment.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "appointment_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        },
+        "record_arrival": {
+          "path": "command/appointment_check_in/record_arrival.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "appointment_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "arrived_at",
+              "type": "timestamptz",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "arrived_at",
+              "type": "timestamptz",
+              "nullable": false
+            }
+          ]
+        },
+        "finalize_command": {
+          "path": "command/appointment_check_in/finalize_command.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "idempotency_key",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "canonical_command",
+              "type": "bytes",
+              "nullable": false
+            },
+            {
+              "name": "check_in_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "arrived_at",
+              "type": "timestamptz",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "arrived_at",
+              "type": "timestamptz",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "appointment.query": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "appointment.query",
+      "connection": "postgres",
+      "input": {
+        "raw_body_maximum": 1048576,
+        "envelope": {
+          "minimum": 1,
+          "maximum": 100,
+          "invalid": "invalid_input"
+        },
+        "item_semantics": "per_input",
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "dock_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "day",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "scheduled",
+              "arrived",
+              "departed"
+            ]
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "dock_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "day",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "scheduled",
+              "arrived",
+              "departed"
+            ]
+          },
+          {
+            "path": "appointments[].appointment_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "appointments[].carrier_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "appointments[].dock_id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "appointments[].slot_start",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "path": "appointments[].slot_end",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "path": "appointments[].status",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "scheduled",
+              "arrived",
+              "departed"
+            ]
+          },
+          {
+            "path": "appointments[].arrived_at",
+            "type": "timestamptz",
+            "nullable": true
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "dock_not_found",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {},
+        "invalid_input": {
+          "required": [
+            "field"
+          ],
+          "optional": [
+            "minimum",
+            "maximum",
+            "observed"
+          ]
+        },
+        "dock_not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        }
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "appointment",
+          "select_fields": [
+            "id",
+            "carrier_id",
+            "dock_id",
+            "slot_start",
+            "slot_end",
+            "status",
+            "arrived_at"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "dock",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "load_dock": {
+          "path": "query/load_dock.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        },
+        "appointment_query": {
+          "path": "query/appointment_query.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "day_start",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "day_end",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "carrier_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "dock_id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "slot_start",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "slot_end",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "status",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "arrived_at",
+              "type": "timestamptz",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    }
+  },
+  "connections": {
+    "postgres": {
+      "interface": "wamn:postgres@0.1.0"
+    }
+  },
+  "components": {
+    "dock": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

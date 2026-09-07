@@ -8,6 +8,7 @@
 #
 #   agent-pilot-grade --run <nnn>
 #   agent-pilot-grade --replay <dir>
+#   agent-pilot-grade --placement <dir>
 #
 # --replay grades a recorded run directory and needs no environment. It scores
 # every step from the requests and responses the run wrote into
@@ -17,6 +18,10 @@
 # A REPLAY NEVER WRITES OVER THE RECORD IT GRADES. It writes
 # checklist-replay.json beside the original checklist.json and leaves
 # grade/http.jsonl and grade/results.json exactly as the run left them.
+#
+# --placement prints the request body the grader builds for each route step and
+# stops. It sends nothing and needs no environment, so the placement rule can be
+# proven against a package tree alone. wamn-nvbd.11.
 #
 # Exit codes: 0 ok · 2 usage · 10 environment · 30 a grading failure.
 set -euo pipefail
@@ -28,21 +33,24 @@ readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
 die() { printf 'agent-pilot-grade: %s\n' "$1" >&2; exit "${2:-$EX_USAGE}"; }
 note() { printf '[grade] %s\n' "$*" >&2; }
 
-RUN=""; REPLAY=""
+RUN=""; REPLAY=""; PLACEMENT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run) RUN="${2:-}"; shift 2 ;;
     --replay) REPLAY="${2:-}"; shift 2 ;;
+    --placement) PLACEMENT="${2:-}"; shift 2 ;;
     *) die "unknown flag $1" ;;
   esac
 done
 
 TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-if [[ -n "$REPLAY" ]]; then
+if [[ -n "$PLACEMENT" ]]; then
+  DIR="$(cd "$PLACEMENT" && pwd -P)" || die "--placement $PLACEMENT is not a directory"
+elif [[ -n "$REPLAY" ]]; then
   DIR="$(cd "$REPLAY" && pwd -P)" || die "--replay $REPLAY is not a directory"
 else
-  [[ -n "$RUN" ]] || die "--run or --replay is required"
+  [[ -n "$RUN" ]] || die "--run, --replay or --placement is required"
   matches=()
   for candidate in "$PILOT_HOME"/runs/"$RUN"-*; do
     [[ -d "$candidate" ]] && matches+=("$candidate")
@@ -57,7 +65,11 @@ mkdir -p "$DIR/grade"
 
 # Where this grade writes. A replay gets its own checklist and its own reuse
 # ledger, so grading a recorded run cannot destroy the recording.
-if [[ -n "$REPLAY" ]]; then
+if [[ -n "$PLACEMENT" ]]; then
+  # Placement writes no checklist. It answers one question and prints it.
+  CHECKLIST=""
+  RESULTS="$DIR/grade/placement-results.json"
+elif [[ -n "$REPLAY" ]]; then
   CHECKLIST="$DIR/checklist-replay.json"
   RESULTS="$DIR/grade/replay-results.json"
 else
@@ -86,7 +98,7 @@ STEPS_NAME="$(jq -r '.grade.steps // "steps.json"' "$GRADE_MANIFEST")"
 STEPS="$GRADING/$STEPS_NAME"
 [[ -s "$STEPS" ]] || STEPS="$DIR/$STEPS_NAME"
 [[ -s "$STEPS" ]] || STEPS="$DIR/fixture/$STEPS_NAME"
-COMMIT="$(jq -r '.commit' "$DIR/run.json")"
+COMMIT="$(jq -r '.commit // ""' "$DIR/run.json" 2>/dev/null || true)"
 
 HELD_PID=""
 cleanup() {
@@ -192,28 +204,146 @@ bearer_token() {
   jq -r '.stringData.token' "$DIR/env/route-caller-pat.json"
 }
 
+# ---- the shape the agent published -----------------------------------------
+# THE GRADER ADAPTS. It already resolves a route path from the agent's own
+# attachments rather than pinning one. The wire SHAPE is the same kind of fact.
+#
+# Two legal authoring choices publish two different shapes for one operation.
+# A custom operation lists dotted field paths, flat or nested under a value
+# object. A model CRUD operation names its envelope keys at the top level and
+# lists the domain fields it accepts under writable_fields. The fixture names
+# DOMAIN fields only, so the grader reads the published input contract and
+# places each value at the path that contract declares for that name.
+#
+# The envelope is platform law, and the grader supplies it. request_id and
+# idempotency_key go at the paths the contract declares for them, exactly like
+# a domain field.
+contract_file() {
+  local operation="$1" kind="$2"
+  [[ -n "$operation" ]] || { echo ""; return; }
+  find "$DIR/worktree/$OVERLAY_ROOT" -type f \
+    -path "*/contracts/${operation%%.*}/${operation#*.}.$kind.json" 2>/dev/null | head -1
+}
+
+# Every path an input contract declares, one per line.
+#
+#   fields          a custom operation, whose paths are dotted and may nest
+#   writable_fields a model CRUD operation, whose paths are all top level. Its
+#                   envelope keys are the top-level members that carry both a
+#                   type and a required flag, which is what separates
+#                   request_id, id and idempotency_key from server_owned_fields
+#                   and the pagination block.
+declared_input_paths() {
+  jq -r '
+    if (.fields | type) == "array" then .fields[] | .path
+    else
+      ( to_entries[]
+        | select((.value | type) == "object")
+        | select((.value | has("type")) and (.value | has("required")))
+        | .key ),
+      ( .writable_fields // [] | .[] | .field )
+    end' "$1" 2>/dev/null
+}
+
+declared_result_paths() { jq -r '.fields[]? | .path' "$1" 2>/dev/null; }
+
+# A field NAME is the last dotted segment of a declared path, with the list
+# marker removed. The map answers name to path. Where two paths carry one name
+# the shorter wins, so a top-level dock_id beats appointments[].dock_id.
+name_path_map() {
+  jq -Rn '
+    reduce inputs as $path ({};
+      ($path | gsub("\\[\\]"; "") | split(".")) as $parts
+      | ($parts | last) as $name
+      | if (has($name) | not)
+           or (($parts | length) < (.[$name] | gsub("\\[\\]"; "") | split(".") | length))
+        then .[$name] = $path else . end)'
+}
+
+input_map_for() {
+  local contract; contract="$(contract_file "$1" input)"
+  [[ -n "$contract" ]] || { echo ""; return; }
+  declared_input_paths "$contract" | name_path_map
+}
+
+result_map_for() {
+  local contract; contract="$(contract_file "$1" result)"
+  [[ -n "$contract" ]] || { echo '{}'; return; }
+  declared_result_paths "$contract" | name_path_map
+}
+
+# A reuse clause names a step and a field, like create-dock.value.dock_id. The
+# last segment is a NAME, so it is resolved against that step's published
+# result contract exactly as a body field is resolved against an input one.
+read_result() {
+  local from_step="$1" path="$2" operation declared resolved="$2"
+  operation="$(jq -r --arg id "$from_step" \
+    '[.[] | select(.id == $id)] | first | .route.operation // ""' "$STEPS")"
+  declared="$(jq -rn --argjson m "$(result_map_for "$operation")" --arg n "${path##*.}" \
+    '$m[$n] // ""')"
+  [[ -z "$declared" ]] || resolved="${path%.*}.$declared"
+  jq -r --arg id "$from_step" --arg p "$resolved" \
+    '[.[] | select(.id == $id)] | first | getpath($p | split(".")) // ""' "$RESULTS"
+}
+
 # A reuse clause pulls a value a previous step returned, so a create can feed
 # the check-in that follows it without the fixture knowing any id in advance.
+#
+# On success the shaped body is printed and the status is zero. On failure the
+# reason is printed instead and the status is one, so the caller records the
+# reason as the step's evidence. Both travel on stdout because the caller reads
+# this through a command substitution, which no variable escapes.
 resolve_body() {
-  local step="$1" body
-  body="$(jq -c '.body // {}' <<< "$step")"
+  local step="$1" operation="$2" request_id="$3"
+  local map; map="$(input_map_for "$operation")"
+  if [[ -z "$map" ]]; then
+    printf 'no published input contract for %s under %s' "$operation" "$OVERLAY_ROOT"
+    return 1
+  fi
+
+  # Every value this step sends, by field NAME. The fixture body first, then
+  # each reuse clause, then the two fields the platform owns.
+  local values; values="$(jq -c '.body // {}' <<< "$step")"
   local field source value
   while read -r field; do
     [[ -n "$field" ]] || continue
     source="$(jq -r --arg f "$field" '.reuse[$f]' <<< "$step")"
-    local from_step="${source%%.*}" path="${source#*.}"
-    value="$(jq -r --arg id "$from_step" --arg p "$path" '
-      [.[] | select(.id == $id)] | first | getpath($p | split("."))
-    ' "$RESULTS")"
-    body="$(jq -c --arg f "$field" --arg v "$value" '.[$f] = $v' <<< "$body")"
+    value="$(read_result "${source%%.*}" "${source#*.}")"
+    values="$(jq -c --arg f "$field" --arg v "$value" '.[$f] = $v' <<< "$values")"
   done < <(jq -r '.reuse // {} | keys[]' <<< "$step")
-  printf '%s' "$body"
+
+  values="$(jq -c --arg rid "$request_id" '.request_id = $rid' <<< "$values")"
+  # A command declares an idempotency key and a projection does not. A fixture
+  # that names its own key KEEPS it, because a replay case and a changed-body
+  # case reuse the first call's key on purpose.
+  if [[ "$(jq -rn --argjson m "$map" '$m | has("idempotency_key")')" == true \
+        && "$(jq -r 'has("idempotency_key")' <<< "$values")" == false ]]; then
+    values="$(jq -c --arg k "$(jq -r .id <<< "$step")" '.idempotency_key = $k' <<< "$values")"
+  fi
+
+  # A name the contract does not declare is a fixture defect, and the line says
+  # so in full: the name looked for, the operation looked in, and every path
+  # that operation does declare. A reader of the checklist alone can fix the
+  # fixture from it without opening either document.
+  local missing
+  missing="$(jq -r --argjson m "$map" \
+    '[keys[] | . as $name | select($m | has($name) | not)] | join(", ")' <<< "$values")"
+  if [[ -n "$missing" ]]; then
+    local declared
+    declared="$(jq -rn --argjson m "$map" '[$m[]] | sort | join(", ")')"
+    printf 'fixture field %s matches no declared path for %s. the contract declares %s' \
+      "$missing" "$operation" "$declared"
+    return 1
+  fi
+
+  jq -c --argjson m "$map" '
+    to_entries | reduce .[] as $entry ({}; setpath($m[$entry.key] | split("."); $entry.value))' \
+    <<< "$values"
 }
 
 fire_step() {
-  local step="$1" path="$2" body="$3" request_id="$4"
-  local envelope; envelope="$(jq -cn --arg rid "$request_id" --argjson body "$body" \
-    '[{request_id:$rid} + $body]')"
+  local step="$1" path="$2" body="$3"
+  local envelope; envelope="$(jq -cn --argjson body "$body" '[$body]')"
   # A transport failure is a step result, not a grader crash. Without this the
   # first unreachable route takes the whole run down under set -e.
   curl --silent --show-error --max-time 60 \
@@ -290,14 +420,22 @@ grade_steps() {
       # firing half needs a live release, so a replay skips it.
       if [[ -z "$REPLAY" ]]; then
         local -a pids=()
+        local arm arm_operation arm_body
         while read -r target; do
-          ( fire_step "$step" "$(route_path_for "$(jq -r --arg t "$target" '
-                [.[] | select(.id == $t)] | first | .route.operation' "$STEPS")")" \
-              "$(resolve_body "$(jq -c --arg t "$target" '[.[] | select(.id == $t)] | first' "$STEPS")")" \
-              "$id-$target" > "$DIR/grade/$id-$target.out" 2>&1 ) &
-          pids+=($!)
+          arm="$(jq -c --arg t "$target" '[.[] | select(.id == $t)] | first' "$STEPS")"
+          arm_operation="$(jq -r '.route.operation' <<< "$arm")"
+          # An arm whose body cannot be shaped writes the reason where the
+          # scoring half looks, so a shape defect reads as a shape defect
+          # rather than as a missing refusal.
+          if arm_body="$(resolve_body "$arm" "$arm_operation" "$id-$target")"; then
+            ( fire_step "$arm" "$(route_path_for "$arm_operation")" "$arm_body" \
+                > "$DIR/grade/$id-$target.out" 2>&1 ) &
+            pids+=($!)
+          else
+            printf '%s\n' "$arm_body" > "$DIR/grade/$id-$target.out"
+          fi
         done < <(jq -r '.concurrent[]' <<< "$step")
-        wait "${pids[@]}" 2>/dev/null || true
+        [[ ${#pids[@]} -eq 0 ]] || wait "${pids[@]}" 2>/dev/null || true
       fi
       while read -r target; do
         grep -q "\"$code\"" "$DIR/grade/$id-$target.out" 2>/dev/null && refusals=$((refusals + 1))
@@ -317,7 +455,7 @@ grade_steps() {
         path="$(jq -r '.path // ""' <<< "$record")"
         status="$(jq -r '.status // ""' <<< "$record")"
         payload="$(jq -r '.response // ""' <<< "$record")"
-        verdict_for_step "$step" "$status" "$payload"
+        verdict_for_step "$step" "$status" "$payload" "$(jq -r '.route.operation // ""' <<< "$step")"
       fi
 
     else
@@ -325,16 +463,17 @@ grade_steps() {
       path="$(route_path_for "$operation")"
       if [[ -z "$path" ]]; then
         evidence="no attachment publishes operation $operation"
+      elif ! body="$(resolve_body "$step" "$operation" "$id")"; then
+        evidence="$body"
       else
-        body="$(resolve_body "$step")"
-        response="$(fire_step "$step" "$path" "$body" "$id")"
+        response="$(fire_step "$step" "$path" "$body")"
         status="$(tail -1 <<< "$response")"
         payload="$(sed '$d' <<< "$response")"
         jq -cn --arg id "$id" --arg path "$path" --argjson body "$body" \
                --arg status "$status" --arg payload "$payload" \
                '{id:$id, path:$path, request:$body, status:$status, response:$payload}' \
           >> "$DIR/grade/http.jsonl"
-        verdict_for_step "$step" "$status" "$payload"
+        verdict_for_step "$step" "$status" "$payload" "$operation"
       fi
     fi
 
@@ -347,8 +486,17 @@ grade_steps() {
   done < <(jq -c '.[]' "$STEPS")
 }
 
+# The result is read the same way the request is shaped. An expect naming
+# appointment_id finds it whether the contract publishes it flat or nested, and
+# a name the contract does not declare is read where the fixture named it.
+RESULT_MAP='{}'
+result_path() {
+  jq -rn --argjson m "$RESULT_MAP" --arg p "$1" '$m[$p] // $p'
+}
+
 verdict_for_step() {
-  local step="$1" status="$2" payload="$3"
+  local step="$1" status="$2" payload="$3" operation="${4:-}"
+  RESULT_MAP="$(result_map_for "$operation")"
   local want_status item want_code
   want_status="$(jq -r '.expect.status // 200' <<< "$step")"
   item="$(jq -r '.expect.item // "value"' <<< "$step")"
@@ -373,21 +521,23 @@ verdict_for_step() {
   # present: the path exists and is not empty. This is what a create asserts:
   # the identity it minted is addressable, which is the only thing about a
   # create that a later step can build on.
-  local path
+  local path at
   while read -r path; do
     [[ -n "$path" ]] || continue
-    local got; got="$(jq -r --arg p "$path" 'getpath($p | split(".")) // "" | tostring' <<< "$value")"
-    evidence="$evidence present:$path=${got:-<empty>}"
+    at="$(result_path "$path")"
+    local got; got="$(jq -r --arg p "$at" 'getpath($p | split(".")) // "" | tostring' <<< "$value")"
+    evidence="$evidence present:$at=${got:-<empty>}"
     [[ -n "$got" && "$got" != "null" ]] || verdict=false
   done < <(jq -r '.expect.present // [] | .[]' <<< "$step")
 
   # value: the path equals a literal the fixture pinned.
   while read -r path; do
     [[ -n "$path" ]] || continue
+    at="$(result_path "$path")"
     local want mine
     want="$(jq -r --arg p "$path" '.expect.value[$p] | tostring' <<< "$step")"
-    mine="$(jq -r --arg p "$path" 'getpath($p | split(".")) | tostring' <<< "$value")"
-    evidence="$evidence $path=$mine want=$want"
+    mine="$(jq -r --arg p "$at" 'getpath($p | split(".")) | tostring' <<< "$value")"
+    evidence="$evidence $at=$mine want=$want"
     [[ "$mine" == "$want" ]] || verdict=false
   done < <(jq -r '.expect.value // {} | keys[]' <<< "$step")
 
@@ -396,19 +546,19 @@ verdict_for_step() {
   local other
   while read -r path; do
     [[ -n "$path" ]] || continue
+    at="$(result_path "$path")"
     other="$(jq -r --arg p "$path" '.expect.equals[$p]' <<< "$step")"
     local mine theirs
-    mine="$(jq -r --arg p "$path" 'getpath($p | split(".")) | tostring' <<< "$value")"
-    theirs="$(jq -r --arg id "${other%%.*}" --arg p "${other#*.}" \
-      '[.[] | select(.id == $id)] | first | getpath($p | split(".")) | tostring' "$RESULTS")"
-    evidence="$evidence $path=$mine vs $theirs"
+    mine="$(jq -r --arg p "$at" 'getpath($p | split(".")) | tostring' <<< "$value")"
+    theirs="$(read_result "${other%%.*}" "${other#*.}")"
+    evidence="$evidence $at=$mine vs $theirs"
     [[ "$mine" == "$theirs" && -n "$mine" && "$mine" != "null" ]] || verdict=false
   done < <(jq -r '.expect.equals // {} | keys[]' <<< "$step")
 
   # count: the array at the path has exactly this many entries.
   if jq -e '.expect | has("count")' <<< "$step" >/dev/null; then
     local cpath want got
-    cpath="$(jq -r '.expect.count.path' <<< "$step")"
+    cpath="$(result_path "$(jq -r '.expect.count.path' <<< "$step")")"
     want="$(jq -r '.expect.count.is' <<< "$step")"
     got="$(jq -r --arg p "$cpath" 'getpath($p | split(".")) | length' <<< "$value")"
     evidence="$evidence count:$cpath=$got want=$want"
@@ -417,11 +567,19 @@ verdict_for_step() {
 
   # sorted_by: the array at the path is ordered by the named field. An order
   # assertion cannot name the ids, because the agent minted them.
+  #
+  # The list itself is found through the entry field. A contract that declares
+  # appointments[].slot_start names both the list and the field in one path, so
+  # the fixture's own path is used only when the contract declares no list.
   if jq -e '.expect | has("sorted_by")' <<< "$step" >/dev/null; then
-    local spath field direction ordered
+    local spath field direction ordered declared
     spath="$(jq -r '.expect.sorted_by.path' <<< "$step")"
     field="$(jq -r '.expect.sorted_by.field' <<< "$step")"
     direction="$(jq -r '.expect.sorted_by.direction // "asc"' <<< "$step")"
+    declared="$(jq -rn --argjson m "$RESULT_MAP" --arg f "$field" '$m[$f] // ""')"
+    if [[ "$declared" == *"[]"* ]]; then
+      spath="$(jq -rn --arg d "$declared" '$d | split("[]")[0] | rtrimstr(".")')"
+    fi
     ordered="$(jq -r --arg p "$spath" --arg f "$field" --arg d "$direction" '
       (getpath($p | split(".")) // []) as $rows
       | ($rows | map(.[$f])) as $keys
@@ -564,6 +722,39 @@ decide_outcome() {
     > "$CHECKLIST.tmp" && mv "$CHECKLIST.tmp" "$CHECKLIST"
   note "$OUTCOME"
 }
+
+# ---- 7. placement, on its own ----------------------------------------------
+# The request body for every route step, and nothing else. Placement reads only
+# the package's published contracts and the fixture, so the rule is provable
+# with no host, no database and no agent. A run that recorded its responses
+# feeds the reuse clauses; without one they resolve to empty.
+grade_placement() {
+  echo '[]' > "$RESULTS"
+  local step id operation body value
+  while read -r step; do
+    id="$(jq -r .id <<< "$step")"
+    operation="$(jq -r '.route.operation // ""' <<< "$step")"
+    if [[ -n "$operation" ]]; then
+      if body="$(resolve_body "$step" "$operation" "$id")"; then
+        jq -cn --arg id "$id" --arg op "$operation" --argjson body "$body" \
+          '{id:$id, operation:$op, ok:true, body:$body}'
+      else
+        jq -cn --arg id "$id" --arg op "$operation" --arg ev "$body" \
+          '{id:$id, operation:$op, ok:false, evidence:$ev}'
+      fi
+    fi
+    value="$( { jq -r --arg id "$id" 'select(.id == $id) | .response // ""' \
+      "$DIR/grade/http.jsonl" 2>/dev/null || true; } | head -1)"
+    jq -c --arg id "$id" --arg payload "$value" \
+      '. + [{id:$id, value:(($payload | fromjson? // {}) | if type == "array" then .[0].value // {} else . end)}]' \
+      "$RESULTS" > "$RESULTS.tmp" && mv "$RESULTS.tmp" "$RESULTS"
+  done < <(jq -c '.[]' "$STEPS")
+}
+
+if [[ -n "$PLACEMENT" ]]; then
+  grade_placement
+  exit 0
+fi
 
 grade_loop
 grade_paths
