@@ -849,12 +849,39 @@ verb_down() {
 
   # A host or a held loop left behind is residue, not a leak to ignore: it holds
   # the ports the next run preflights.
-  local stray
-  # pgrep matches its own invoking shell, so collect first and exclude this one.
+  #
+  # KILL THE GROUP, NOT THE PROCESS. A held loop spawns a host and children of
+  # its own, so a signal to the leader alone leaves them holding the ports. A
+  # failed arm held the environment that way and the next run refused.
+  local stray pgid own_pgid
+  own_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+  local -a groups=()
+  while read -r stray; do
+    [[ -n "$stray" && "$stray" != "$$" ]] || continue
+    pgid="$(ps -o pgid= -p "$stray" 2>/dev/null | tr -d ' ')"
+    # Never signal our own group: that is this script and its caller.
+    [[ -n "$pgid" && "$pgid" != "$own_pgid" ]] || continue
+    groups+=("$pgid")
+  done < <(pgrep -f "$DIR/worktree|$DIR/env" 2>/dev/null | grep -v "^$$\$" || true)
+
+  if [[ ${#groups[@]} -gt 0 ]]; then
+    local unique; unique="$(printf '%s\n' "${groups[@]}" | sort -u)"
+    for pgid in $unique; do
+      kill -TERM -- "-$pgid" 2>/dev/null || true
+    done
+    local waited=0
+    while (( waited < 20 )) && pgrep -f "$DIR/worktree|$DIR/env" 2>/dev/null | grep -qv "^$$\$"; do
+      sleep 1; waited=$((waited + 1))
+    done
+    for pgid in $unique; do
+      kill -KILL -- "-$pgid" 2>/dev/null || true
+    done
+  fi
+
+  # Residue is what SURVIVED the group kill, so the line means something.
   while read -r stray; do
     [[ -n "$stray" && "$stray" != "$$" ]] || continue
     residue+=("process $stray")
-    kill -TERM "$stray" 2>/dev/null || true
   done < <(pgrep -f "$DIR/worktree|$DIR/env" 2>/dev/null | grep -v "^$$\$" || true)
 
   local compose="$TREE/test-support/infrastructure/std-virtualization.compose.yaml"

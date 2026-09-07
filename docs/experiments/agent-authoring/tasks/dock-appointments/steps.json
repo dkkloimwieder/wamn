@@ -148,7 +148,7 @@
     },
     "body": {
       "idempotency_key": "dock-gate-overlap-b",
-      "slot_start": "2026-10-01T11:30:00Z",
+      "slot_start": "2026-10-01T11:30:00.000000Z",
       "slot_end": "2026-10-01T12:30:00Z"
     },
     "reuse": {
