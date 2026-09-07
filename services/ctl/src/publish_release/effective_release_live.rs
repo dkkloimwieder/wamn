@@ -4,14 +4,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{ComponentDeclaration, PackageCoordinate, ServingAttachment};
+use wamn_catalog::{AdmittedComponent, ComponentDeclaration, PackageCoordinate, ServingAttachment};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
 use super::{
     MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest, ReleaseWiringTarget,
-    mint_release_manifest_with_package_manifests, read_package_manifests,
-    resolve_route_host_overlay, sha256, validate_package_weld,
+    mint_release_manifest_with_package_manifests, proven_effect_free_operation_dependencies,
+    read_package_manifests, resolve_route_host_overlay, sha256, validate_package_weld,
 };
 use crate::apply_package::{self, ApplyPackageArgs};
 use crate::author_wiring::{self, AuthorWiringRequest};
@@ -184,6 +184,10 @@ async fn admit_components(
 ) -> BTreeMap<String, String> {
     let engine = wamn_runtime::build_engine(&[]).expect("build the production admission engine");
     let mut digests = BTreeMap::new();
+    // The proof admits packages in dependency order, base before overlay, so
+    // the fact a dependency resolves to is already in hand when the component
+    // that declares the dependency reaches admission.
+    let mut component_facts: BTreeMap<(String, String), Vec<AdmittedComponent>> = BTreeMap::new();
     for input in inputs {
         let mut declaration: serde_json::Value = serde_json::from_slice(
             &std::fs::read(&input.component_declaration).unwrap_or_else(|error| {
@@ -205,6 +209,8 @@ async fn admit_components(
                 input.version
             );
         }
+        let effect_free_operation_dependencies =
+            proven_effect_free_operation_dependencies(&declaration, &component_facts);
         let facts = validate_component_admission(
             &engine,
             &bytes,
@@ -214,10 +220,7 @@ async fn admit_components(
                     "wamn:node".to_owned(),
                     "wamn:postgres".to_owned(),
                 ]),
-                // Empty is the fail-closed answer, not a stub: this path reads
-                // no dependency closure, so the overlay's declared dependency
-                // on the base component carries that component's posture.
-                effect_free_operation_dependencies: BTreeSet::new(),
+                effect_free_operation_dependencies,
             },
         )
         .unwrap_or_else(|error| panic!("admit {}@{} component: {error}", input.id, input.version));
@@ -242,7 +245,18 @@ async fn admit_components(
             .commit()
             .await
             .expect("commit the byte-admitted component fact");
-        digests.insert(input.id.to_owned(), facts.component.component_digest);
+        digests.insert(
+            input.id.to_owned(),
+            facts.component.component_digest.clone(),
+        );
+        let scope = (
+            facts.component.scope.package_id.clone(),
+            facts.component.scope.package_version.clone(),
+        );
+        component_facts
+            .entry(scope)
+            .or_default()
+            .push(facts.component);
     }
     digests
 }

@@ -375,9 +375,11 @@ pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmi
                 .admitted_platform_packages
                 .into_iter()
                 .collect::<BTreeSet<_>>(),
-            // Empty is the fail-closed answer, not a stub: this path reads no
-            // dependency closure, so every declared operation dependency
-            // carries its effect into the component that declares it.
+            // Empty is the fail-closed answer, not a stub. A dependency's
+            // posture lives in its admitted catalog row, and this function
+            // reads local paths only. `run` opens the project database after
+            // admission returns, so no admitted fact is in reach here and
+            // every declared operation dependency stays effectful.
             effect_free_operation_dependencies: BTreeSet::new(),
         },
     )

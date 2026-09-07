@@ -1697,6 +1697,36 @@ fn resolve_component_dependency<'a>(
     Ok(component)
 }
 
+/// Name the declared operation dependencies an admitted fact proves effect-free.
+///
+/// `ComponentAdmissionRequest::effect_free_operation_dependencies` is
+/// fail-closed, so a caller that names nothing leaves every dependency
+/// effectful. This is the proof a caller holding the admitted facts can supply.
+///
+/// One lookup answers the whole closure. A dependency's own admitted row
+/// carries the effect projection of everything that dependency reaches, because
+/// admission computed that row under this same rule, so an empty effects array
+/// is the complete proof. A dependency the facts do not resolve exactly proves
+/// nothing and stays out of the set. The exact-resolution refusal belongs to
+/// `resolve_component_dependency_closure`, which walks the same facts when the
+/// release is minted.
+pub fn proven_effect_free_operation_dependencies(
+    declaration: &wamn_catalog::ComponentDeclaration,
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+) -> BTreeSet<String> {
+    let mut proven = BTreeSet::new();
+    for operation in declaration.operations.values() {
+        for dependency in &operation.dependencies {
+            if resolve_component_dependency(dependency, component_facts)
+                .is_ok_and(|component| component.effects.is_empty())
+            {
+                proven.insert(dependency.operation.clone());
+            }
+        }
+    }
+    proven
+}
+
 fn validate_component_dependency_cycles<'a>(
     components: impl Iterator<Item = &'a AdmittedComponent>,
 ) -> Result<(), MintManifestError> {
@@ -2949,6 +2979,93 @@ mod tests {
             .expect_err("an exact component dependency cycle was accepted");
         assert_eq!(error.kind(), MintManifestErrorKind::OperationDependency);
         assert!(error.detail().contains("cycle"));
+    }
+
+    /// The one operation dependency declared in the tree, read from the
+    /// package that declares it. `client_acme_receiving` wraps
+    /// `wamn_receiving`'s `record-receipt`, which is the live instance of the
+    /// defect the proven-pure set closes.
+    fn repository_overlay_dependency() -> (
+        wamn_catalog::ComponentDeclaration,
+        wamn_catalog::ComponentOperationDependency,
+    ) {
+        let mut document: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../packages/client_acme_receiving/publication/components/client_acme_receiving.json.in"
+        ))
+        .expect("the repository component declaration parses as JSON");
+        document["scope"]["tenant-id"] = serde_json::json!("tenant-a");
+        let declaration: wamn_catalog::ComponentDeclaration = serde_json::from_value(document)
+            .expect("the repository component declaration is structurally valid");
+        let mut declared = declaration
+            .operations
+            .values()
+            .flat_map(|operation| operation.dependencies.iter());
+        let dependency = declared
+            .next()
+            .expect("the repository overlay declares an operation dependency")
+            .clone();
+        assert!(
+            declared.next().is_none(),
+            "the repository overlay declares exactly one operation dependency"
+        );
+        (declaration, dependency)
+    }
+
+    /// The admitted fact the declared dependency resolves to, carrying the
+    /// effect projection under test.
+    fn dependency_facts(
+        dependency: &wamn_catalog::ComponentOperationDependency,
+        effects: Vec<AdmittedComponentEffect>,
+    ) -> BTreeMap<(String, String), Vec<AdmittedComponent>> {
+        let mut admitted = closure_component("receiving", Some(dependency.operation.as_str()));
+        admitted.scope.package_id = dependency.package.clone();
+        admitted.scope.package_version = dependency.version.clone();
+        admitted.component_digest = dependency.digest.clone();
+        admitted.effects = effects;
+        BTreeMap::from([(
+            (dependency.package.clone(), dependency.version.clone()),
+            vec![admitted],
+        )])
+    }
+
+    /// The case the caller wiring exists to serve. The dependency's admitted
+    /// row carries an empty effects array, so the caller proves the dependency
+    /// effect-free and admission keeps the effect-free case path. The
+    /// admission half of that proof is
+    /// `a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path`
+    /// in `wamn_runtime::component_admission`.
+    #[test]
+    fn a_dependency_admitted_with_no_effects_is_proven_pure_and_keeps_the_effect_free_case_path() {
+        let (declaration, dependency) = repository_overlay_dependency();
+        let facts = dependency_facts(&dependency, Vec::new());
+
+        let proven = proven_effect_free_operation_dependencies(&declaration, &facts);
+
+        assert_eq!(proven, BTreeSet::from([dependency.operation]));
+    }
+
+    /// The negative control, and the state of the tree today. The same
+    /// declaration and the same lookup, except the dependency's admitted row
+    /// carries the effect it really holds. The caller proves nothing, so the
+    /// wrapper takes the dependency package into its own projection and loses
+    /// the effect-free case path.
+    #[test]
+    fn a_dependency_admitted_with_one_effect_is_not_proven_pure_and_loses_that_path() {
+        let (declaration, dependency) = repository_overlay_dependency();
+        let facts = dependency_facts(
+            &dependency,
+            vec![AdmittedComponentEffect {
+                package: "wamn:postgres".to_owned(),
+                interfaces: vec!["client".to_owned()],
+            }],
+        );
+
+        let proven = proven_effect_free_operation_dependencies(&declaration, &facts);
+
+        assert!(
+            proven.is_empty(),
+            "an effectful dependency was proven pure: {proven:?}"
+        );
     }
 
     #[test]
