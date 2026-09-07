@@ -13,6 +13,7 @@ mod claim_law_live;
 pub mod dashproof;
 mod hot_route_trace;
 mod measurement_schema;
+pub mod membershipproof;
 pub mod provisionbench;
 pub mod readerbench;
 #[cfg(test)]

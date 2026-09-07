@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] --evidence-dir DIR
+usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--membershipproof] --evidence-dir DIR
 
 Without --apply, print the immutable plan and exit.
 
@@ -14,6 +14,8 @@ Without --apply, print the immutable plan and exit.
   --throughput         After the steady request, sweep concurrency 1..64 across the
                        route, a no-DB route and the statement direct (implies
                        --measure-startup); evidence under throughput/
+  --membershipproof    Prove human membership through deployed HTTP, then stop;
+                       cannot combine with startup or throughput measurement
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-receiving-journey. Every Kubernetes and Helm
@@ -25,17 +27,23 @@ EOF
 apply=false
 measure_startup=false
 throughput=false
+membershipproof=false
 evidence_dir=
 while (($#)); do
   case "$1" in
     --apply) apply=true; shift ;;
     --measure-startup) measure_startup=true; shift ;;
     --throughput) throughput=true; measure_startup=true; shift ;;
+    --membershipproof) membershipproof=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+if [[ "$membershipproof" == true && "$measure_startup" == true ]]; then
+  echo "--membershipproof cannot combine with --measure-startup or --throughput" >&2
+  exit 2
+fi
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/.." && pwd)
@@ -148,6 +156,7 @@ route_host=receiving.localhost
 run_id=$$
 host_tag=receiving-${short_head}-${run_id}-release
 host_image=wamn-host:${host_tag}
+gates_image=wamn-gates:${host_tag}
 postgres_container=wamn-receiving-pg18-${short_head}-${run_id}
 registry_container=wamn-receiving-registry-${short_head}-${run_id}
 nats_container=wamn-receiving-nats-${short_head}-${run_id}
@@ -159,7 +168,9 @@ if [[ "$apply" != true ]]; then
   printf '  cluster/context: %s / %s\n' "$cluster" "$context"
   printf '  namespace: %s\n' "$namespace"
   printf '  route host: %s (setup overlay only)\n' "$route_host"
-  if [[ "$throughput" == true ]]; then
+  if [[ "$membershipproof" == true ]]; then
+    printf '  order: Dockerfile host + gates -> production mint/attest -> operator 2.8.0 -> deployed HTTP membershipproof Job -> exact teardown\n'
+  elif [[ "$throughput" == true ]]; then
     printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> throughput sweep (route, no-DB route, direct statement; c=1..64) -> exact teardown\n'
   elif [[ "$measure_startup" == true ]]; then
     printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> exact teardown\n'
@@ -258,6 +269,7 @@ nats_owned=false
 reader_owned=false
 reader_pid=
 host_image_owned=false
+gates_image_owned=false
 run_complete=false
 
 cleanup() {
@@ -363,6 +375,11 @@ cleanup() {
     record_command docker rm --force --volumes "$nats_container"
     docker rm --force --volumes "$nats_container" >/dev/null 2>&1 || cleanup_failed=true
   fi
+  if [[ "$gates_image_owned" == true ]] &&
+     docker image inspect "$gates_image" >/dev/null 2>&1; then
+    record_command docker image rm "$gates_image"
+    docker image rm "$gates_image" >/dev/null 2>&1 || cleanup_failed=true
+  fi
   if [[ "$host_image_owned" == true ]] &&
      docker image inspect "$host_image" >/dev/null 2>&1; then
     record_command docker image rm "$host_image"
@@ -384,6 +401,10 @@ cleanup() {
   if docker image inspect "$host_image" >/dev/null 2>&1; then
     cleanup_failed=true
   fi
+  if [[ "$membershipproof" == true ]] &&
+     docker image inspect "$gates_image" >/dev/null 2>&1; then
+    cleanup_failed=true
+  fi
   record_command rm -rf -- "$work_dir"
   rm -rf -- "$work_dir" || cleanup_failed=true
   [[ ! -e "$work_dir" ]] || cleanup_failed=true
@@ -400,9 +421,15 @@ cleanup() {
       >"$evidence_dir/cleanup.receipt"
     [[ $status -ne 0 ]] || status=1
   fi
+  if [[ "$membershipproof" == true ]]; then
+    printf 'gates_image=%s\n' "$gates_image" >>"$evidence_dir/cleanup.receipt"
+  fi
 
   if [[ $status -eq 0 && "$run_complete" == true && "$cleanup_failed" == false ]]; then
-    if [[ "$measure_startup" == true ]]; then
+    if [[ "$membershipproof" == true ]]; then
+      printf 'RECEIVING MEMBERSHIP PROOF PASS source=%s namespace=%s rerun=human-membership-http,production-ctl,exact-cleanup\n' \
+        "$head" "$namespace" >"$evidence_dir/membershipproof-journey.receipt"
+    elif [[ "$measure_startup" == true ]]; then
       printf 'RECEIVING STARTUP MEASUREMENT PASS source=%s namespace=%s\n' \
         "$head" "$namespace" >"$evidence_dir/startup-measurement.receipt"
     else
@@ -443,6 +470,11 @@ if docker image inspect "$host_image" >/dev/null 2>&1; then
   echo "refusing pre-existing host image: $host_image" >&2
   exit 2
 fi
+if [[ "$membershipproof" == true ]] &&
+   docker image inspect "$gates_image" >/dev/null 2>&1; then
+  echo "refusing pre-existing gates image: $gates_image" >&2
+  exit 2
+fi
 
 awk '
   /^    extraPortMappings:/ { skipping = 1; next }
@@ -463,8 +495,10 @@ run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
 # two-stage Dockerfile has always built the host with --release; only this path
 # did not -- the guest-profile defect of 4-instantiate.md, one layer down. The
 # tools the journey runs on this machine stay debug.
-run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo build --locked --release -p wamn-host
+if [[ "$membershipproof" != true ]]; then
+  run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo build --locked --release -p wamn-host
+fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker
 
@@ -495,6 +529,18 @@ for component in "${app_components[@]}"; do
     >>"$evidence_dir/component-bytes.sha256"
 done
 
+if [[ "$membershipproof" == true ]]; then
+  # Both deployed binaries come from the standard image build, serially sharing
+  # its build cache. The gates stage inherits the same production host layers.
+  host_image_owned=true
+  run docker build --platform=linux/amd64 --provenance=false \
+    --file "$repo_root/Dockerfile" --target host --tag "$host_image" \
+    --label "wamn.dev/source-head=$head" --label wamn.dev/build-profile=release "$repo_root"
+  gates_image_owned=true
+  run docker build --platform=linux/amd64 --provenance=false \
+    --file "$repo_root/Dockerfile" --target gates --tag "$gates_image" \
+    --label "wamn.dev/source-head=$head" --label wamn.dev/build-profile=release "$repo_root"
+else
 host_context=$work_dir/host-image
 mkdir -- "$host_context"
 install -m 0755 "$cargo_target_dir/release/wamn-host" "$host_context/wamn-host"
@@ -510,11 +556,21 @@ EOF
 host_image_owned=true
 run docker build --platform=linux/amd64 --provenance=false \
   --file "$host_context/Dockerfile" --tag "$host_image" "$host_context"
+fi
 docker image inspect "$host_image" >"$evidence_dir/host-image.json"
 jq -e --arg head "$head" '
   .[0].Config.Labels["wamn.dev/source-head"] == $head and
   .[0].Config.Labels["wamn.dev/build-profile"] == "release"
 ' >/dev/null "$evidence_dir/host-image.json"
+if [[ "$membershipproof" == true ]]; then
+  docker image inspect "$gates_image" >"$evidence_dir/gates-image.json"
+  jq -e --arg head "$head" --slurpfile host "$evidence_dir/host-image.json" '
+    .[0].Config.Labels["wamn.dev/source-head"] == $head and
+    .[0].Config.Labels["wamn.dev/build-profile"] == "release" and
+    .[0].RootFS.Layers[0:($host[0][0].RootFS.Layers | length)] ==
+      $host[0][0].RootFS.Layers
+  ' >/dev/null "$evidence_dir/gates-image.json"
+fi
 
 cluster_owned=true
 run kind create cluster --name "$cluster" --config "$kind_config" \
@@ -554,6 +610,31 @@ while IFS= read -r node; do
     >>"$evidence_dir/host-image-nodes.jsonl"
 done < <(kind get nodes --name "$cluster" | sort)
 read -r host_runtime_digest host_config_id <<<"$first_image_tuple"
+if [[ "$membershipproof" == true ]]; then
+  run kind load docker-image "$gates_image" --name "$cluster"
+  : >"$evidence_dir/gates-image-nodes.jsonl"
+  first_gates_image_tuple=
+  while IFS= read -r node; do
+    inspect=$(docker exec "$node" crictl inspecti -o json "$gates_image")
+    runtime_digest=$(jq -er '
+      [.status.repoDigests[]? |
+       capture("@(?<digest>sha256:[0-9a-f]{64})$").digest] | unique |
+      if length == 1 then .[0] else error("runtime digest missing or ambiguous") end
+    ' <<<"$inspect")
+    config_id=$(jq -er '.status.id | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$inspect")
+    tuple="$runtime_digest $config_id"
+    if [[ -z "$first_gates_image_tuple" ]]; then
+      first_gates_image_tuple=$tuple
+    elif [[ "$first_gates_image_tuple" != "$tuple" ]]; then
+      echo "gates image tuple differs across kind nodes" >&2
+      exit 1
+    fi
+    jq -cn --arg node "$node" --arg digest "$runtime_digest" --arg config "$config_id" \
+      '{node:$node,runtime_digest:$digest,config_id:$config}' \
+      >>"$evidence_dir/gates-image-nodes.jsonl"
+  done < <(kind get nodes --name "$cluster" | sort)
+  read -r gates_runtime_digest gates_config_id <<<"$first_gates_image_tuple"
+fi
 
 registry_username=wamn-receiving-journey
 registry_password=$(openssl rand -hex 32)
@@ -795,7 +876,7 @@ cdc_role_sql=$work_dir/cdc-role.sql
 cdc_sql=$work_dir/cdc.sql
 cdc_secret=$work_dir/cdc-reader.json
 registry_reader_secret=$work_dir/registry-reader.json
-if [[ "$measure_startup" != true ]]; then
+if [[ "$measure_startup" != true && "$membershipproof" != true ]]; then
 cdc_password=$(openssl rand -hex 32)
 run_sensitive enable-cdc-project-env "$ctl" enable-cdc-project-env \
   --org "$app_org" --project "$app_project" --env "$app_environment" --schema "$app_schema" \
@@ -1017,7 +1098,9 @@ host_template_replicas=3
 # then scales to one outside Helm. The renderer is handed the first and never
 # sees the second, which is what makes the split hold after the lift.
 host_render_replicas=3
-if [[ "$measure_startup" == true ]]; then
+if [[ "$membershipproof" == true ]]; then
+  host_render_replicas=1
+elif [[ "$measure_startup" == true ]]; then
   host_render_replicas=0
 fi
 host_replicas=$host_render_replicas
@@ -1309,6 +1392,117 @@ jq -e --slurpfile service "$evidence_dir/flow-http-service.json" \
    any($pods[0].items[];
      .metadata.name == $selected_hosts[0].hostname and .status.podIP == $address)))
 ' >/dev/null "$evidence_dir/flow-http-endpointslices.json"
+
+if [[ "$membershipproof" == true ]]; then
+  # URLs stay in the private scratch directory and an ephemeral Secret. Neither
+  # the recorded Job nor its Pod carries credential-bearing environment values.
+  membership_secret=$work_dir/membershipproof-secret.json
+  jq -n --arg namespace "$namespace" --arg system_url "$system_url" \
+    --arg project_url "$project_url" '
+    {apiVersion:"v1",kind:"Secret",type:"Opaque",
+     metadata:{name:"membershipproof-fixture",namespace:$namespace},
+     stringData:{"system-url":$system_url,"project-url":$project_url}}
+  ' >"$membership_secret"
+  chmod 0600 "$membership_secret"
+  run "${kube[@]}" create -f "$membership_secret"
+
+  membership_manifest=$work_dir/membershipproof-job.yaml
+  cat >"$membership_manifest" <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: membershipproof
+  namespace: $namespace
+spec:
+  activeDeadlineSeconds: 660
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: membershipproof
+          image: $gates_image
+          imagePullPolicy: Never
+          command: ["/usr/local/bin/wamn-gates", "membershipproof"]
+          args:
+            - --endpoint-url
+            - http://flow-http.$namespace.svc.cluster.local
+            - --host
+            - $route_host
+            - --org
+            - $app_org
+            - --project
+            - $app_project
+            - --env
+            - $app_environment
+            - --tenant
+            - $app_tenant
+          env:
+            - name: WAMN_SYSTEM_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: membershipproof-fixture
+                  key: system-url
+            - name: WAMN_PROJECT_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: membershipproof-fixture
+                  key: project-url
+            - name: WAMN_CTL_BIN
+              value: /usr/local/bin/wamn-ctl
+EOF
+  cp "$membership_manifest" "$evidence_dir/membershipproof-job.yaml"
+  record_command /usr/local/bin/wamn-gates membershipproof \
+    --endpoint-url "http://flow-http.$namespace.svc.cluster.local" \
+    --host "$route_host" --org "$app_org" --project "$app_project" \
+    --env "$app_environment" --tenant "$app_tenant" \
+    '<admin URLs supplied by ephemeral Secret; ctl=/usr/local/bin/wamn-ctl>'
+  run "${kube[@]}" apply -f "$membership_manifest"
+  run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
+    job/membershipproof --timeout=720s
+  "${kube[@]}" -n "$namespace" get job membershipproof -o json \
+    >"$evidence_dir/membershipproof-job.json"
+  "${kube[@]}" -n "$namespace" get pods -l job-name=membershipproof -o json \
+    >"$evidence_dir/membershipproof-pod.json"
+  "${kube[@]}" -n "$namespace" logs job/membershipproof \
+    >"$evidence_dir/membershipproof.log"
+  jq -e '.status.succeeded == 1 and (.status.failed // 0) == 0 and
+    any(.status.conditions[]?; .type == "Complete" and .status == "True")' \
+    >/dev/null "$evidence_dir/membershipproof-job.json"
+  jq -e --arg image "$gates_image" --arg image_id "$gates_runtime_digest" \
+    --slurpfile job "$evidence_dir/membershipproof-job.json" '
+    (.items | length == 1) and (.items[0] as $pod |
+      $pod.status.phase == "Succeeded" and
+      any($pod.metadata.ownerReferences[]?;
+        .uid == $job[0].metadata.uid and .kind == "Job" and .controller == true) and
+      ($pod.spec.containers | length == 1) and
+      $pod.spec.containers[0].name == "membershipproof" and
+      $pod.spec.containers[0].image == $image and
+      $pod.spec.containers[0].command == ["/usr/local/bin/wamn-gates", "membershipproof"] and
+      ($pod.status.containerStatuses | length == 1) and
+      $pod.status.containerStatuses[0].name == "membershipproof" and
+      $pod.status.containerStatuses[0].state.terminated.exitCode == 0 and
+      (($pod.status.containerStatuses[0].imageID // "") | endswith($image_id)))
+  ' >/dev/null "$evidence_dir/membershipproof-pod.json"
+  jq -Rse '
+    split("\n") | map(select(startswith("MEMBERSHIP_PROOF "))) == [
+      "MEMBERSHIP_PROOF case=absent_membership status=401 result=pass",
+      "MEMBERSHIP_PROOF case=granted status=200 result=pass",
+      "MEMBERSHIP_PROOF case=repeated_grant status=200 result=pass",
+      "MEMBERSHIP_PROOF case=role_removed status=403 result=pass",
+      "MEMBERSHIP_PROOF case=role_restored status=200 result=pass",
+      "MEMBERSHIP_PROOF case=revoked status=401 result=pass",
+      "MEMBERSHIP_PROOF case=repeated_revoke status=401 result=pass",
+      "MEMBERSHIP_PROOF result=pass cases=7 cleanup=pass"
+    ]
+  ' >/dev/null "$evidence_dir/membershipproof.log"
+  sed -n '/^MEMBERSHIP_PROOF /p' "$evidence_dir/membershipproof.log" \
+    >"$evidence_dir/membershipproof.receipt"
+  run "${kube[@]}" -n "$namespace" delete secret membershipproof-fixture
+  run_complete=true
+  exit 0
+fi
 
 if [[ "$measure_startup" == true ]]; then
   # Measured recovery after a host restart is 89 s; the ceiling is where a

@@ -1184,6 +1184,34 @@ wamn-ctl revoke-project-env-membership --org acme --project receiving --env dev 
 Both commands read the administrator URL from `WAMN_SYSTEM_ADMIN_URL`.
 They create no users, roles, or tokens.
 
+### `[MEMBERSHIP-HTTP]` — deployed human membership
+
+This gate sends real HTTP requests through the operator-managed Receiving host
+(`wamn-ctc8.19`). It uses the existing `wamn-gates membershipproof` command.
+The journey builds both standard Dockerfile stages, `host` and `gates`, and
+loads their unique tags into its disposable cluster.
+It never addresses the frozen `wamn` cluster.
+
+```bash
+mkdir -p docs/operations/evidence
+tools/receiving-cluster-journey-run --membershipproof --apply \
+  --evidence-dir docs/operations/evidence/ctc8-19-membership-http
+```
+
+Start from a clean worktree. Use a new evidence directory for each run.
+The proof mints one human PAT through the identity authority and grants
+membership through the production CLI.
+It requires seven responses: missing membership 401, grant 200, repeated grant
+200, role removal 403, restored role 200, revocation 401, and repeated
+revocation 401.
+Each successful response must contain the expected purchase order and request
+identifier. The proof never retries an authorization transition.
+
+The journey retains the proof receipt, Job and Pod states, and image identities.
+It deletes its disposable cluster, databases, and images through its existing
+cleanup path. It performs no startup measurement or CDC materializer proof in
+this mode.
+
 ### `[WAMN-DEV-LIVE]` — clean twelve-stage product command and cleanup
 
 This gate runs the literal `wamn dev` product command through all twelve
