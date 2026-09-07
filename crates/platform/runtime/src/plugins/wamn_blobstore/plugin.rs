@@ -26,10 +26,13 @@ use super::store::BoundContainer;
 use wamn_catalog::ServingManifest;
 
 use crate::plugins::connection_http::{
-    ConnectionExecutionClosure, ConnectionInvocation, authorize_release_closure,
+    ConnectionExecutionClosure, ConnectionInvocation, authorize_candidate_closure,
+    authorize_release_closure,
 };
 use crate::plugins::wamn_credentials::WamnCredentials;
-use crate::plugins::wamn_postgres::{ConnectionEffectLookup, WamnPostgres};
+use crate::plugins::wamn_postgres::{
+    CandidateConnectionBinding, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
+};
 use crate::release_manifest::ReleaseManifestWeld;
 
 /// Plugin id, as the host registry knows it.
@@ -105,6 +108,39 @@ fn release_coordinates(
         // instead of picking whichever arm looks closer, because guessing here
         // decides which binding authorizes.
         _ => Err(BindingError::Unauthorized),
+    }
+}
+
+/// Authorize one invocation's execution closure against the snapshot the
+/// connection authority returned.
+///
+/// A RELEASED closure must be carried by the mounted manifest. A CANDIDATE
+/// closure must agree with the wiring hash, component and interface version
+/// frozen at admission, and the snapshot must equal the frozen binding row.
+///
+/// Both rules come from the HTTP capability and are called, not copied. The
+/// blobstore applied the released rule alone and let every candidate closure
+/// through with no closure check at all (`wamn-b2m6.6`). One spelling of each
+/// rule now authorizes both surfaces.
+///
+/// Pure and separate from the plugin, so the decision gating every effect can
+/// be asserted without a database or an object store. It returns the reason it
+/// refused and the caller logs it, which keeps every refusal named.
+fn authorize_closure(
+    invocation: &ConnectionInvocation,
+    released_manifest: Option<&ServingManifest>,
+    candidate_binding: Option<&CandidateConnectionBinding>,
+    snapshot: &ConnectionEffectSnapshot,
+) -> Result<(), &'static str> {
+    match (released_manifest, candidate_binding) {
+        (Some(manifest), None) => authorize_release_closure(manifest, invocation, snapshot)
+            .map_err(|_| "the release closure does not carry this component and wiring"),
+        (None, Some(binding)) => authorize_candidate_closure(invocation, snapshot, binding)
+            .map_err(|_| "the candidate closure disagrees with the frozen wiring or binding"),
+        // A closure with neither authorization input, or with both, is a
+        // caller mismatch. It refuses rather than authorizing under whichever
+        // input is present.
+        _ => Err("closure kind disagrees with the authorization inputs"),
     }
 }
 
@@ -216,6 +252,19 @@ impl WamnBlobstore {
             ),
             ConnectionExecutionClosure::Candidate { .. } => None,
         };
+        // The binding frozen at candidate admission for exactly this component
+        // and alias. The authority query is narrowed to it, and the snapshot is
+        // compared against it once the row comes back. A candidate closure
+        // refuses here when the frozen world holds no row for it, before any
+        // query runs.
+        let candidate_binding = match &invocation.closure {
+            ConnectionExecutionClosure::Released => None,
+            ConnectionExecutionClosure::Candidate { binding_world, .. } => Some(
+                binding_world
+                    .binding(&invocation.component_digest, store_alias)
+                    .ok_or_else(|| refused("the frozen world holds no binding for this alias"))?,
+            ),
+        };
         let (effective_release_id, environment) =
             release_coordinates(&invocation, released_manifest, &self.tenant).map_err(|_| {
                 refused("release coordinates: tenant, package or closure kind disagree with the manifest")
@@ -235,7 +284,7 @@ impl WamnBlobstore {
                     node_id: &invocation.node_id,
                     component_digest: &invocation.component_digest,
                     store_alias,
-                    candidate_binding: None,
+                    candidate_binding,
                 },
             )
             .await
@@ -258,10 +307,8 @@ impl WamnBlobstore {
                 );
                 BindingError::Unauthorized
             })?;
-        if let Some(manifest) = released_manifest {
-            authorize_release_closure(manifest, &invocation, &snapshot)
-                .map_err(|_| refused("the release closure does not carry this component and wiring"))?;
-        }
+        authorize_closure(&invocation, released_manifest, candidate_binding, &snapshot)
+            .map_err(refused)?;
         let bound = binding::resolve(&snapshot).map_err(|error| {
             tracing::warn!(store_alias, component_id, error = %error, "blobstore binding refused: the binding does not resolve");
             error
@@ -398,7 +445,9 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingRelease,
+        ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
+        SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingComponentOperation,
+        ServingRelease, ServingWiring,
     };
 
     use super::*;
@@ -417,7 +466,7 @@ mod tests {
         }
     }
 
-    fn candidate() -> ConnectionInvocation {
+    fn candidate_with(binding_world: Arc<CandidateBindingWorld>) -> ConnectionInvocation {
         ConnectionInvocation {
             closure: ConnectionExecutionClosure::Candidate {
                 effective_release_id: 9,
@@ -425,13 +474,17 @@ mod tests {
                 wiring_hash: format!("sha256:{}", "b".repeat(64)),
                 component: "archiver".to_string(),
                 interface_version: "0.1.0".to_string(),
-                binding_world: Arc::new(
-                    CandidateBindingWorld::from_json(serde_json::json!([]))
-                        .expect("an empty candidate binding world decodes"),
-                ),
+                binding_world,
             },
             ..released()
         }
+    }
+
+    fn candidate() -> ConnectionInvocation {
+        candidate_with(Arc::new(
+            CandidateBindingWorld::from_json(serde_json::json!([]))
+                .expect("an empty candidate binding world decodes"),
+        ))
     }
 
     fn manifest(tenant: &str, package: &str) -> ServingManifest {
@@ -519,6 +572,204 @@ mod tests {
         assert_eq!(
             release_coordinates(&candidate(), Some(&manifest), "tenant-a"),
             Err(BindingError::Unauthorized)
+        );
+    }
+
+    /// The store alias the candidate fixtures freeze a binding for.
+    const CANDIDATE_ALIAS: &str = "cold-store";
+
+    /// The binding world private admission froze, in its persisted JSON shape,
+    /// carrying one row for this component and alias.
+    fn frozen_world() -> CandidateBindingWorld {
+        CandidateBindingWorld::from_json(serde_json::json!([{
+            "component-digest": format!("sha256:{}", "a".repeat(64)),
+            "store-alias": CANDIDATE_ALIAS,
+            "requirement-hash": format!("sha256:{}", "c".repeat(64)),
+            "instance-id": "cold-store-instance",
+            "instance-revision": 2,
+            "requirement-type": "blobstore",
+            "contract": "wasmcloud:blobstore",
+            "validation-hash": format!("sha256:{}", "d".repeat(64)),
+            "generation": 7,
+            "definition-hash": format!("sha256:{}", "e".repeat(64)),
+            "credential-set-handle": "cold-store-v7",
+        }]))
+        .expect("the frozen binding row is complete and canonical")
+    }
+
+    /// The one row the frozen world carries, found the way `container_for`
+    /// finds it.
+    fn frozen_binding(world: &CandidateBindingWorld) -> &CandidateConnectionBinding {
+        world
+            .binding(&released().component_digest, CANDIDATE_ALIAS)
+            .expect("the frozen world carries a binding for this component and alias")
+    }
+
+    /// An authority snapshot that agrees with the candidate closure and equals
+    /// the frozen row in every field the frozen row names.
+    fn matching_snapshot(binding: &CandidateConnectionBinding) -> ConnectionEffectSnapshot {
+        ConnectionEffectSnapshot {
+            wiring_hash: format!("sha256:{}", "b".repeat(64)),
+            component: Some("archiver".to_string()),
+            interface_version: Some("0.1.0".to_string()),
+            operation: Some("package-a:orders/archive@1.0.0".to_string()),
+            registered_operation: Some("package-a:orders/archive@1.0.0".to_string()),
+            requirement_json: None,
+            requirement_hash: Some(binding.requirement_hash.clone()),
+            node_permitted: true,
+            binding_active: true,
+            binding_valid: true,
+            instance_id: Some(binding.instance_id.clone()),
+            validation_hash: Some(binding.validation_hash.clone()),
+            requirement_type: Some(binding.requirement_type.clone()),
+            contract: Some(binding.contract.clone()),
+            instance_enabled: true,
+            active_generation: Some(binding.generation),
+            instance_revision: Some(binding.instance_revision),
+            generation: Some(binding.generation),
+            definition: None,
+            definition_hash: Some(binding.definition_hash.clone()),
+            credential_handle: Some(binding.credential_set_handle.clone()),
+        }
+    }
+
+    /// A manifest that carries the released fixture's component and wiring, so
+    /// the released arm can be proven to ADMIT as well as to refuse.
+    fn carrying_manifest(snapshot: &ConnectionEffectSnapshot) -> ServingManifest {
+        let invocation = released();
+        let mut manifest = manifest("tenant-a", "package_a");
+        manifest.components = BTreeSet::from([ServingComponent {
+            package_id: invocation.package_id.clone(),
+            component: snapshot
+                .component
+                .clone()
+                .expect("the fixture snapshot names a component"),
+            interface_version: snapshot
+                .interface_version
+                .clone()
+                .expect("the fixture snapshot names an interface version"),
+            digest: ArtifactHash::parse(invocation.component_digest)
+                .expect("the fixture digest is canonical"),
+            operations: BTreeMap::from([(
+                snapshot
+                    .operation
+                    .clone()
+                    .expect("the fixture snapshot names an operation"),
+                ServingComponentOperation {
+                    registered_operation: snapshot.registered_operation.clone(),
+                    dependencies: Vec::new(),
+                    statements: BTreeMap::new(),
+                },
+            )]),
+        }]);
+        manifest.wirings = BTreeSet::from([ServingWiring {
+            package_id: invocation.package_id,
+            wiring_id: invocation.wiring_id,
+            wiring_version: invocation.wiring_version,
+            graph_hash: DefinitionHash::parse(snapshot.wiring_hash.clone())
+                .expect("the fixture wiring hash is canonical"),
+        }]);
+        manifest
+    }
+
+    /// THE DEFECT (`wamn-b2m6.6`). A candidate closure whose authority snapshot
+    /// disagrees with the binding frozen at admission is refused.
+    ///
+    /// The blobstore ran NO closure check on a candidate. It passed
+    /// `candidate_binding: None` to the authority and authorized only when a
+    /// released manifest was mounted, so a snapshot naming another credential,
+    /// another instance or another generation reached `binding::resolve` and
+    /// the effect went out. The HTTP surface refused the same snapshot.
+    #[test]
+    fn a_candidate_snapshot_that_disagrees_with_the_frozen_binding_refuses() {
+        let world = Arc::new(frozen_world());
+        let binding = frozen_binding(&world);
+        let invocation = candidate_with(Arc::clone(&world));
+        let mut snapshot = matching_snapshot(binding);
+        snapshot.credential_handle = Some("cold-store-v8".to_string());
+
+        assert_eq!(
+            authorize_closure(&invocation, None, Some(binding), &snapshot),
+            Err("the candidate closure disagrees with the frozen wiring or binding"),
+        );
+    }
+
+    /// A snapshot taken from another wiring is refused even when it equals the
+    /// frozen binding row, because the frozen closure names the wiring too.
+    #[test]
+    fn a_candidate_snapshot_from_another_wiring_refuses() {
+        let world = Arc::new(frozen_world());
+        let binding = frozen_binding(&world);
+        let invocation = candidate_with(Arc::clone(&world));
+        let mut snapshot = matching_snapshot(binding);
+        snapshot.wiring_hash = format!("sha256:{}", "f".repeat(64));
+
+        assert_eq!(
+            authorize_closure(&invocation, None, Some(binding), &snapshot),
+            Err("the candidate closure disagrees with the frozen wiring or binding"),
+        );
+    }
+
+    /// The rule admits the run it was frozen for. A check that refuses every
+    /// candidate satisfies the two tests above and breaks the surface.
+    #[test]
+    fn a_candidate_snapshot_that_matches_the_frozen_binding_is_admitted() {
+        let world = Arc::new(frozen_world());
+        let binding = frozen_binding(&world);
+        let invocation = candidate_with(Arc::clone(&world));
+        let snapshot = matching_snapshot(binding);
+
+        assert_eq!(
+            authorize_closure(&invocation, None, Some(binding), &snapshot),
+            Ok(())
+        );
+    }
+
+    /// A candidate closure whose frozen world holds no binding for the alias
+    /// has nothing to authorize against, so it refuses. `container_for` refuses
+    /// on the same missing row before it queries the authority, which is what
+    /// the HTTP surface does.
+    #[test]
+    fn a_candidate_closure_with_no_frozen_binding_refuses() {
+        let world = frozen_world();
+        assert!(
+            world
+                .binding(&released().component_digest, "hot-store")
+                .is_none()
+        );
+        let snapshot = matching_snapshot(frozen_binding(&world));
+
+        assert_eq!(
+            authorize_closure(&candidate(), None, None, &snapshot),
+            Err("closure kind disagrees with the authorization inputs"),
+        );
+    }
+
+    /// The released path is unchanged: a manifest that carries the component
+    /// and the wiring admits.
+    #[test]
+    fn a_released_closure_the_manifest_carries_is_admitted() {
+        let world = frozen_world();
+        let snapshot = matching_snapshot(frozen_binding(&world));
+        let manifest = carrying_manifest(&snapshot);
+
+        assert_eq!(
+            authorize_closure(&released(), Some(&manifest), None, &snapshot),
+            Ok(())
+        );
+    }
+
+    /// And a manifest that carries neither still refuses, so the released arm
+    /// applies the released rule rather than passing everything through.
+    #[test]
+    fn a_released_closure_the_manifest_does_not_carry_refuses() {
+        let world = frozen_world();
+        let snapshot = matching_snapshot(frozen_binding(&world));
+        let manifest = manifest("tenant-a", "package_a");
+
+        assert_eq!(
+            authorize_closure(&released(), Some(&manifest), None, &snapshot),
+            Err("the release closure does not carry this component and wiring"),
         );
     }
 

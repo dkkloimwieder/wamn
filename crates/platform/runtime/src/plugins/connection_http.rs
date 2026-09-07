@@ -442,7 +442,13 @@ pub(crate) fn authorize_release_closure(
     Ok(())
 }
 
-fn authorize_candidate_closure(
+/// Require the snapshot to carry the wiring hash, component and interface
+/// version frozen at candidate admission, and to equal the frozen binding row.
+///
+/// Shared with the blobstore capability for the reason
+/// [`authorize_release_closure`] gives. Two spellings of the candidate rule can
+/// disagree, and the wrong one authorizes an effect.
+pub(crate) fn authorize_candidate_closure(
     invocation: &ConnectionInvocation,
     snapshot: &ConnectionEffectSnapshot,
     binding: &super::wamn_postgres::CandidateConnectionBinding,
