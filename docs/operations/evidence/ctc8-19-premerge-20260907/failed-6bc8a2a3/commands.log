@@ -1,0 +1,61 @@
+2026-09-07T22:12:12Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/tools/build-components m1 
+2026-09-07T22:13:15Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker 
+2026-09-07T22:14:12Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/Dockerfile --target host --tag wamn-host:receiving-6bc8a2a3e584-581017-release --label wamn.dev/source-head=6bc8a2a3e584ce8acf41b91b197d34291e8e08c0 --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907 
+2026-09-07T22:19:46Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/Dockerfile --target gates --tag wamn-gates:receiving-6bc8a2a3e584-581017-release --label wamn.dev/source-head=6bc8a2a3e584ce8acf41b91b197d34291e8e08c0 --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907 
+2026-09-07T22:33:13Z kind create cluster --name wamn-receiving-journey --config /tmp/tmp.EgjYTXDIb6/kind-config.yaml --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig 
+2026-09-07T22:33:36Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-07T22:33:49Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey create namespace wamn-receiving-journey 
+2026-09-07T22:33:50Z kind load docker-image wamn-host:receiving-6bc8a2a3e584-581017-release --name wamn-receiving-journey 
+2026-09-07T22:33:55Z kind load docker-image wamn-gates:receiving-6bc8a2a3e584-581017-release --name wamn-receiving-journey 
+2026-09-07T22:34:05Z htpasswd \<credential-bearing\ arguments\ redacted\> 
+2026-09-07T22:34:05Z postgres \<credential-bearing\ arguments\ redacted\> 
+2026-09-07T22:34:05Z docker run --detach --name wamn-receiving-registry-6bc8a2a3e584-581017 --network kind --env REGISTRY_AUTH=htpasswd --env REGISTRY_AUTH_HTPASSWD_REALM=WAMN\ Receiving\ cluster\ journey --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd --volume /tmp/tmp.EgjYTXDIb6/htpasswd:/auth/htpasswd:ro registry:2 
+2026-09-07T22:34:06Z docker run --detach --name wamn-receiving-nats-6bc8a2a3e584-581017 --network kind nats:2.10-alpine --jetstream --store_dir /data --http_port 8222 
+2026-09-07T22:34:08Z cargo test production_two_package_release_serves_all_thirteen_pat_routes \<journey\ document\ with\ disposable\ PostgreSQL\ and\ OCI\ inputs\ redacted\> 
+2026-09-07T22:34:43Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/route-caller-pat-kube.json 
+2026-09-07T22:34:43Z env WASH_REG_USER=\<redacted\> WASH_REG_PASSWORD=\<redacted\> wash push --insecure --allow-latest --output json 172.28.0.9:5000/wamn/flow-http:receiving-6bc8a2a3e584-581017-release /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/target/wasm32-wasip2/release/http_route.wasm 
+2026-09-07T22:34:43Z env WASH_REG_USER=\<redacted\> WASH_REG_PASSWORD=\<redacted\> wash push --insecure --allow-latest --output json 172.28.0.9:5000/wamn/materializer:receiving-6bc8a2a3e584-581017-release /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/target/wasm32-wasip2/release/materializer.wasm 
+2026-09-07T22:34:43Z print-release-env \<credential-bearing\ arguments\ redacted\> 
+2026-09-07T22:34:44Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/host-secrets/guest-sql.json 
+2026-09-07T22:34:44Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/host-secrets/executor-platform.json 
+2026-09-07T22:34:44Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/host-secrets/identity-reader.json 
+2026-09-07T22:34:44Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/host-secrets/http-admitter.json 
+2026-09-07T22:34:44Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/host-secrets/event-materializer.json 
+2026-09-07T22:34:44Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey create secret generic wamn-registry-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=\<redacted\> --dry-run=client -o yaml 
+2026-09-07T22:34:44Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/registry-pull.yaml 
+2026-09-07T22:34:44Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/deploy/infra/cert-manager.yaml 
+2026-09-07T22:34:45Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n cert-manager wait --for=condition=Available deployment --all --timeout=240s 
+2026-09-07T22:34:56Z helm upgrade --install --create-namespace --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --kube-context kind-wamn-receiving-journey --namespace wamn-system wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 -f /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/deploy/infra/values-wamn.yaml -f /tmp/tmp.EgjYTXDIb6/operator-values.yaml --wait --timeout 5m 
+2026-09-07T22:35:19Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-system get deployment runtime-operator -o json 
+2026-09-07T22:35:19Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/runtime-operator-events-rbac.yaml 
+2026-09-07T22:35:19Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get role wamn-runtime-operator-events -o json 
+2026-09-07T22:35:19Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get rolebinding wamn-runtime-operator-events -o json 
+2026-09-07T22:35:19Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/deploy/infra/tempo.yaml 
+2026-09-07T22:35:19Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/deploy/infra/otel-collector.yaml 
+2026-09-07T22:35:19Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-system wait --for=condition=Available deployment/tempo deployment/otel-collector --timeout=120s 
+2026-09-07T22:35:26Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/wasmcloud-ca-copy.json 
+2026-09-07T22:35:26Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/identity-auth-plan-20260907/deploy/infra/wasmcloud-ca-issuer.yaml 
+2026-09-07T22:35:26Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s 
+2026-09-07T22:35:26Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/host-environment-certs.yaml 
+2026-09-07T22:35:26Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Ready certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s 
+2026-09-07T22:35:26Z helm upgrade --install --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --kube-context kind-wamn-receiving-journey --namespace wamn-receiving-journey wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 -f /tmp/tmp.EgjYTXDIb6/host-base.yaml -f /tmp/tmp.EgjYTXDIb6/host-overlay.yaml --wait --timeout 5m 
+2026-09-07T22:35:39Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey rollout status deployment/hostgroup-default --timeout=240s 
+2026-09-07T22:35:39Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/flow-http.yaml 
+2026-09-07T22:35:39Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Ready workloaddeployment/flow-http --timeout=240s 
+2026-09-07T22:35:40Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey create -f /tmp/tmp.EgjYTXDIb6/membershipproof-secret.json 
+2026-09-07T22:35:40Z /usr/local/bin/wamn-gates membershipproof --endpoint-url http://flow-http.wamn-receiving-journey.svc.cluster.local --host receiving.localhost --org acme --project receiving --env dev --tenant receiving-route-auth \<admin\ URLs\ supplied\ by\ ephemeral\ Secret\;\ ctl=/usr/local/bin/wamn-ctl\> 
+2026-09-07T22:35:40Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.EgjYTXDIb6/membershipproof-job.yaml 
+2026-09-07T22:35:40Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Complete job/membershipproof --timeout=720s 
+2026-09-07T22:41:06Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get deployment hostgroup-default -o json 
+2026-09-07T22:41:06Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get pods -o json 
+2026-09-07T22:41:06Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get events -o json 
+2026-09-07T22:41:06Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get secrets -o name 
+2026-09-07T22:41:06Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get jobs -o json 
+2026-09-07T22:41:07Z kubectl --kubeconfig /tmp/tmp.EgjYTXDIb6/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey logs job/membershipproof --all-containers --tail=-1 
+2026-09-07T22:41:07Z kind delete cluster --name wamn-receiving-journey 
+2026-09-07T22:41:08Z docker rm --force --volumes wamn-receiving-pg18-6bc8a2a3e584-581017 
+2026-09-07T22:41:08Z docker rm --force --volumes wamn-receiving-registry-6bc8a2a3e584-581017 
+2026-09-07T22:41:08Z docker rm --force --volumes wamn-receiving-nats-6bc8a2a3e584-581017 
+2026-09-07T22:41:09Z docker image rm wamn-gates:receiving-6bc8a2a3e584-581017-release 
+2026-09-07T22:41:09Z docker image rm wamn-host:receiving-6bc8a2a3e584-581017-release 
+2026-09-07T22:41:09Z rm -rf -- /tmp/tmp.EgjYTXDIb6 

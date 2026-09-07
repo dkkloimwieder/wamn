@@ -1212,6 +1212,9 @@ It deletes its disposable cluster, databases, and images through its existing
 cleanup path. It performs no startup measurement or CDC materializer proof in
 this mode.
 
+The [2026-09-07 evidence](evidence/ctc8-19-premerge-20260907/README.md) preserves
+both deployed runs and the workspace sweep at their recorded source commits.
+
 ### `[WAMN-DEV-LIVE]` — clean twelve-stage product command and cleanup
 
 This gate runs the literal `wamn dev` product command through all twelve
