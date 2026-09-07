@@ -114,8 +114,16 @@ grade_loop() {
     if [[ "${LOOP_STAGES:-0}" -eq 12 && -n "$BASE_URL" ]]; then LOOP_PASS=true; else LOOP_PASS=false; fi
     return 0
   fi
-  local target; target="$(ls -d "$PILOT_HOME"/target-* 2>/dev/null | head -1)"
-  [[ -x "$target/debug/wamn" ]] || die "no built wamn under $PILOT_HOME" "$EX_ENV"
+  # THE RUN'S OWN TARGET, NAMED BY THE RUN. This picked the first target
+  # directory alphabetically, which was right while only one existed. With
+  # several, run 031 was graded by run 020's binary: the agent declared
+  # idempotent_by correctly and a binary from two platform changes earlier
+  # refused the field as unknown. A grade is worthless if it is not the run's
+  # own binary, so a run that does not name one refuses rather than guesses.
+  local target; target="$(jq -r '.build.target // ""' "$DIR/run.json")"
+  [[ -n "$target" ]] \
+    || die "run.json names no build target; this run predates the fix and cannot be graded live" "$EX_ENV"
+  [[ -x "$target/debug/wamn" ]] || die "the run's own wamn is missing at $target/debug/wamn" "$EX_ENV"
 
   ( cd "$DIR/worktree" && "$target/debug/wamn" dev \
       --config "$DIR/env/dev.json" --overlay-root "$DIR/worktree/$OVERLAY_ROOT" --hold ) \

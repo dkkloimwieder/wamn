@@ -427,6 +427,15 @@ run_standup() {
 readonly GATE_DOCUMENT="docs/operations/build-and-test.md"
 readonly PILOT_SECTION='[AGENT-PILOT]'
 
+# Documents that describe the instrument rather than the platform. Run 031 read
+# the tooling spec out of its own worktree and learned the run directory
+# layout, that steps.json is the grading fixture, and what the grader checks.
+# The agent needs none of them, so they leave with the rest of the experiment.
+readonly HARNESS_DOCUMENTS=(
+  "docs/poc/agent-authoring-tooling-spec.md"
+  "docs/poc/deterministic-testing-spec.md"
+)
+
 # Remove one fenced section from a markdown document: its heading and every
 # line up to the next heading at the same level or above. Returns 1 when the
 # section is not there, so a caller can tell a cut from a no-op.
@@ -466,6 +475,11 @@ assert_rubric_unreachable() {
      && grep -q "^#\{1,3\} .*\[AGENT-PILOT\]" "$DIR/worktree/$GATE_DOCUMENT"; then
     found="$found $GATE_DOCUMENT($PILOT_SECTION)"
   fi
+  # The documents that describe the instrument, for the same reason.
+  local harness_document
+  for harness_document in "${HARNESS_DOCUMENTS[@]}"; do
+    [[ -f "$DIR/worktree/$harness_document" ]] && found="$found $harness_document"
+  done
   # The instrument itself. Both runs of series 020 read the grader out of the
   # worktree, so its absence is asserted rather than assumed.
   while IFS= read -r tool; do
@@ -545,6 +559,10 @@ verb_up() {
   # scripts from the worktree costs the agent nothing it needs.
   local strip=()
   [[ -d "$DIR/worktree/docs/experiments" ]] && strip+=(docs/experiments)
+  local harness_document
+  for harness_document in "${HARNESS_DOCUMENTS[@]}"; do
+    [[ -f "$DIR/worktree/$harness_document" ]] && strip+=("$harness_document")
+  done
   while IFS= read -r tool; do
     [[ -n "$tool" ]] && strip+=("$tool")
   done < <(git -C "$DIR/worktree" ls-files 'tools/agent-pilot-*')
@@ -619,9 +637,10 @@ write_run_json() {
     --arg load "$(cut -d' ' -f1-3 /proc/loadavg)" --argjson cores "$(nproc)" \
     --argjson cached "$BUILD_CACHED" --argjson build_seconds "$BUILD_SECONDS" \
     --argjson baseline_stages "${BASELINE_STAGES:-0}" \
+    --arg target "$TARGET" \
     '{run:$run, commit:$commit, task:$task, agent:$agent, standup:$standup,
       machine:{load_at_launch:$load, cores:$cores},
-      build:{cached:$cached, seconds:$build_seconds},
+      build:{cached:$cached, seconds:$build_seconds, target:$target},
       up:{ok:true, baseline_stages:$baseline_stages},
       launch:null, verbs:null, git:null, down:null}' \
     > "$DIR/run.json"
