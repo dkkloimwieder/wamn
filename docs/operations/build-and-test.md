@@ -1492,12 +1492,25 @@ volumes, and the validated scratch path.
 
 `[WAMN-DEV-LIVE]` proves the twelve-stage loop but mints its whole environment
 inside the proof and throws it away with the scratch directory, so the loop was
-provable and not startable (`wamn-10yt.10.30`). `wamn-dev-env` runs the same
+provable and not startable (`wamn-10yt.10.30`). `wamn dev up` runs the same
 standup module the gate runs — `services/ctl/src/dev/environment.rs`, whose
 only job is to build the arguments the platform verbs take — writes the strict
 `dev.json`, and then holds the authoring Gate open on a nameable port for as
 long as it runs. It is not a gate: it emits no receipt, and its evidence is that
 `wamn dev` starts against what it left behind.
+
+**The standup is `wamn dev up` in the `wamn` binary.** It was a separate
+`wamn-dev-env` binary until `wamn-10yt.10.32` moved the flags, the standup
+module and the spawned Gate into the product command;
+`tests/integration/src/bin/wamn-dev-env.rs` is now a compatibility shim that
+parses the same arguments and hands them straight over, and its own doc comment
+says to delete it with this recipe. This recipe no longer builds or calls it,
+so nothing here keeps it alive — retiring the shim itself is `wamn-10yt.24`.
+
+**Not every verb lives in `wamn`.** `wamn` carries `dev` and `dev up` and
+nothing else. The operations verbs — `apply-package`,
+`reconcile-package-data-access` and the rest of the provisioning surface — are
+subcommands of the separate `wamn-ctl` binary.
 
 Point it only at disposable services. Standup resets the control store, so every
 run is a fresh start; never point it at shared infrastructure or the frozen
@@ -1549,8 +1562,6 @@ RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
   cargo build -p wamn-host --locked --offline
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
-  cargo build -p wamn-proof-integration --bin wamn-dev-env --locked --offline
-RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
   cargo build -p wamn-scenario-worker --locked --offline
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
   cargo build --manifest-path "$WAMN_DEV_ENV_TREE/components/Cargo.toml" \
@@ -1558,11 +1569,13 @@ RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
 WAMN_DEV_ENV_FLOW_HTTP="$WAMN_DEV_ENV_TARGET/wasm32-wasip2/debug/http_route.wasm"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-host"
-test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-dev-env"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-scenario-worker"
 # The spawned Gate binds a FIXED port, so the recipe refuses rather than
-# colliding: `wamn dev up` defaults to 127.0.0.1:8088.
-test -z "$(ss -Hltn 'sport = :8088')"
+# colliding. `wamn dev up --gate-bind` names it and defaults to
+# 127.0.0.1:8088; override the variable to run a second environment beside
+# this one.
+WAMN_DEV_ENV_GATE_PORT="${WAMN_DEV_ENV_GATE_PORT:-8088}"
+test -z "$(ss -Hltn "sport = :${WAMN_DEV_ENV_GATE_PORT}")"
 test -s "$WAMN_DEV_ENV_FLOW_HTTP"
 
 printf '%s\n' "$WAMN_DEV_ENV_PASSWORD" \
@@ -1603,9 +1616,10 @@ WASH_REG_PASSWORD="$WAMN_DEV_ENV_PASSWORD" \
   wash push "$WAMN_DEV_ENV_FLOW_HTTP_IMAGE" "$WAMN_DEV_ENV_FLOW_HTTP" --insecure
 unset WAMN_DEV_ENV_PASSWORD
 
-"$WAMN_DEV_ENV_TARGET/debug/wamn-dev-env" \
+"$WAMN_DEV_ENV_TARGET/debug/wamn" dev up \
   --system-database-url "postgresql://postgres:probe@127.0.0.1:${WAMN_DEV_ENV_PG_PORT}/postgres" \
   --root "$WAMN_DEV_ENV_DIR" \
+  --gate-bind "127.0.0.1:${WAMN_DEV_ENV_GATE_PORT}" \
   --nats-url "nats://127.0.0.1:${WAMN_DEV_ENV_NATS_PORT}" \
   --tempo-query-url "http://127.0.0.1:${WAMN_DEV_ENV_TEMPO_PORT}" \
   --otel-exporter-otlp-endpoint "http://127.0.0.1:${WAMN_DEV_ENV_OTLP_PORT}" \
@@ -1659,6 +1673,14 @@ re-entrant on a fresh cluster,** so two people can run it at once by exporting
 a second set. The Gate port is the one that is not negotiable per-process:
 `wamn dev up --gate-bind` names it, the configuration written outlives the
 process that wrote it, and a stray listener there is a hard failure.
+
+**Which binary carries which command.** `wamn` carries exactly two: `wamn dev`
+and `wamn dev up`. `wamn-receiving` is the operator terminal. `wamn-host` and
+`wamn-scenario-worker` are servers the loop supervises and spawns, never typed
+by hand. The operations verbs — `apply-package`,
+`reconcile-package-data-access` and the rest of the provisioning surface — are
+subcommands of `wamn-ctl`, a different binary, and typing one after `wamn` gets
+an unrecognized-subcommand error.
 
 **Two target directories, on purpose.** The workspace binaries build into the
 tree's own `target/`. `components/Cargo.toml` is a SEPARATE workspace, so
@@ -1911,6 +1933,38 @@ SQL
 
 Seed AFTER the run, not before: the loop drops and re-clones the target at the
 start of every run, so rows inserted first are gone by the time it serves.
+
+#### 6b. The bindings the run just emitted
+
+Generate writes a Rust client beside each package's contracts
+(`wamn-10yt.45`). It is a generated artifact like any other, so it is part of
+the set materialization owns and refuses to find anything else in:
+
+```
+packages/receiving/generated/client/{location,purchase_order,receipt,receiving}.rs
+packages/client_acme_receiving/generated/client/{purchase_order,quality,receiving}.rs
+```
+
+Each module carries its model's field descriptors, a request and a result type
+per operation, the operation's grant and its typed refusals, a `*_route()`
+returning the method and template the RELEASE publishes, and an invoke function
+over `wamn-client`. No base URL and no host: those are the caller's deployment
+config, which is why this recipe reads them from `run served` and the PAT file.
+
+`wamn-receiving` is built from those files. It declares them with `#[path]`
+rather than copying route strings, so an operation the release republishes
+elsewhere moves in the client by regeneration alone. Rebuilding the frontend
+after a run is therefore just:
+
+```bash
+RUSTC_WRAPPER= cargo build -p wamn-receiving-tui --bin wamn-receiving --locked --offline
+```
+
+Generate is skipped when no authored byte under any package root changed, and
+the digest excludes `generated/` — so a skipped Generate leaves the previous
+bindings in place, which is correct, because a skipped Generate also means the
+release did not change. A run that skips prints `run skipped: unchanged
+generate` on its own line, and a run that regenerates does not.
 
 #### 7. Terminal 3 — the operator terminal
 
