@@ -74,6 +74,17 @@ const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
     WHERE identity.pats.token_prefix = $1";
+const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
+    p.display_name, p.status, identity.pats.token_hash, \
+    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable \
+    FROM identity.pats JOIN identity.principals p \
+        ON p.id = identity.pats.principal_id \
+    WHERE identity.pats.token_prefix = $1 AND CASE p.kind \
+        WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
+            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = $5) \
+        WHEN 'human' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
+            WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4) \
+        ELSE false END";
 const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
@@ -785,11 +796,15 @@ pub async fn revoke_project_env_membership(
 /// handles are bound to the connection they were prepared on, so this type must
 /// be used only with the client it was prepared from; a different connection
 /// would refuse the statement name.
+///
+/// Route authentication uses [`Self::authenticate_route_pat`] to read both
+/// the PAT and its project role or environment membership in one statement.
 #[derive(Clone, Debug)]
 pub struct PreparedIdentityReads {
     pat_by_prefix: Statement,
     project_roles: Statement,
     project_env_membership: Statement,
+    route_pat: Statement,
 }
 
 impl PreparedIdentityReads {
@@ -808,6 +823,10 @@ impl PreparedIdentityReads {
                 .prepare(SELECT_PROJECT_ENV_MEMBERSHIP_SQL)
                 .await
                 .map_err(database_error)?,
+            route_pat: client
+                .prepare(SELECT_ROUTE_PAT_SQL)
+                .await
+                .map_err(database_error)?,
         })
     }
 
@@ -823,6 +842,34 @@ impl PreparedIdentityReads {
         };
         let row = client
             .query_opt(&self.pat_by_prefix, &[&prefix])
+            .await
+            .map_err(database_error)?;
+        decide_pat(row, token)
+    }
+
+    /// Authenticate a route PAT and its system scope in one round trip.
+    ///
+    /// Services need the required project role. Humans need explicit membership
+    /// in the exact project environment. The caller must still enforce the
+    /// configured service identity and read tenant permissions.
+    pub async fn authenticate_route_pat(
+        &self,
+        client: &(impl GenericClient + Sync),
+        token: &str,
+        org: &str,
+        project: &str,
+        env: &str,
+        required_role: &str,
+    ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
+        let Some(prefix) = lookup_prefix(PAT_TOKEN_PREFIX, token) else {
+            return Ok(None);
+        };
+        let org = checked_scope_segment("org", org)?;
+        let project = checked_scope_segment("project", project)?;
+        let env = checked_scope_segment("env", env)?;
+        let role = canonical_role(required_role)?;
+        let row = client
+            .query_opt(&self.route_pat, &[&prefix, &org, &project, &env, &role])
             .await
             .map_err(database_error)?;
         decide_pat(row, token)

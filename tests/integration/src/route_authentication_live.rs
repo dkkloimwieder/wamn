@@ -655,13 +655,15 @@ async fn prove_human_environment_membership(
     admin.batch_execute(
         "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
          VALUES ('other-org', 'pooled', 'route-auth-pg18'); \
-         INSERT INTO registry.projects (org, id) VALUES ('other-org', 'receiving'); \
+         INSERT INTO registry.projects (org, id) \
+         VALUES ('other-org', 'receiving'), ('acme', 'other'); \
          INSERT INTO registry.env_policies \
            (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
          VALUES ('other-org', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
          INSERT INTO registry.project_envs (org, project, env, secret_name, secret_namespace, instance_suffix) \
          VALUES ('acme', 'receiving', 'prod', 'membership-prod', 'wamn-system', 'member01'), \
-                ('other-org', 'receiving', 'dev', 'membership-other', 'wamn-system', 'member02');"
+                ('other-org', 'receiving', 'dev', 'membership-other', 'wamn-system', 'member02'), \
+                ('acme', 'other', 'dev', 'membership-project', 'wamn-system', 'member03');"
     ).await?;
     project
         .execute(
@@ -712,6 +714,14 @@ async fn prove_human_environment_membership(
             "membership in {org}/{PROJECT}/{env} authorized a different environment"
         );
     }
+    let mut other_project = membership(ORG, ENVIRONMENT, human.id().as_str());
+    other_project.project = OTHER_PROJECT.to_owned();
+    project_env_membership::grant(other_project).await?;
+    assert_eq!(
+        invoke(route_auth, weld, Some(&authorization), &mut admissions).await,
+        Err(unauthorized.clone()),
+        "membership in another project authorized this route"
+    );
     let mut forbidden_writer = membership(ORG, ENVIRONMENT, human.id().as_str());
     forbidden_writer.system_database_url = identity_url.to_owned();
     project_env_membership::grant(forbidden_writer)
@@ -755,6 +765,54 @@ async fn prove_human_environment_membership(
         !caller.permits("other-tenant-operation"),
         "another tenant's role leaked"
     );
+
+    let expired = issue_pat(
+        admin,
+        human.id(),
+        "expired member",
+        Duration::from_secs(3600),
+    )
+    .await?;
+    admin
+        .execute(
+            "UPDATE identity.pats SET created_at = now() - interval '2 hours', \
+         expires_at = now() - interval '1 hour' WHERE token_prefix = $1",
+            &[&expired.record().prefix()],
+        )
+        .await?;
+    let revoked = issue_pat(
+        admin,
+        human.id(),
+        "revoked member",
+        Duration::from_secs(3600),
+    )
+    .await?;
+    let revoked_authorization = format!("Bearer {}", revoked.token());
+    assert!(
+        route_auth
+            .authenticate_authorization_for_test(ATTACHMENT_ID, Some(&revoked_authorization))
+            .await
+            .expect("authenticate human before PAT revocation")
+            .is_some()
+    );
+    revoke_pat(admin, revoked.record().prefix()).await?;
+    for (label, invalid) in [
+        ("forged human PAT", flip_last_hex_digit(token.token())),
+        ("expired human PAT", expired.token().to_owned()),
+        ("revoked human PAT", revoked.token().to_owned()),
+    ] {
+        assert_eq!(
+            invoke(
+                route_auth,
+                weld,
+                Some(&format!("Bearer {invalid}")),
+                &mut admissions
+            )
+            .await,
+            Err(unauthorized.clone()),
+            "{label} passed with valid environment membership"
+        );
+    }
 
     project_env_membership::grant(membership(ORG, ENVIRONMENT, other.id().as_str())).await?;
     let other_token =
@@ -933,6 +991,16 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     let revoked = issue_pat_for_subject(&admin, &route.principal_subject, "revoked")
         .await
         .expect("mint revocable PAT");
+    assert!(
+        route_auth
+            .authenticate_authorization_for_test(
+                ATTACHMENT_ID,
+                Some(&format!("Bearer {}", revoked.0))
+            )
+            .await
+            .expect("authenticate service before PAT revocation")
+            .is_some()
+    );
     revoke_pat(admin.as_ref(), &revoked.1)
         .await
         .expect("revoke PAT");
@@ -949,19 +1017,6 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     let wrong_environment = issue_scoped_token(&admin, PROJECT, OTHER_ENVIRONMENT)
         .await
         .expect("mint wrong-environment PAT");
-    let missing_role = issue_pat_for_subject(&admin, &route.principal_subject, "missing-role")
-        .await
-        .expect("mint missing-role PAT");
-    admin
-        .execute(
-            "DELETE FROM identity.project_roles WHERE principal_id = \
-               (SELECT id FROM identity.principals WHERE kind = 'service' AND subject = $1) \
-               AND org = $2 AND project = $3 AND role = $4",
-            &[&route.principal_subject, &ORG, &PROJECT, &ROUTE_CALLER_ROLE],
-        )
-        .await
-        .expect("remove the route-caller role");
-
     let unauthorized = Refusal::Authentication(401, "unauthorized".to_owned());
     for (label, authorization) in [
         ("absent", None),
@@ -974,7 +1029,6 @@ async fn production_route_caller_authentication_and_operation_authorization() {
             "wrong-environment",
             Some(format!("Bearer {wrong_environment}")),
         ),
-        ("missing-role", Some(format!("Bearer {}", missing_role.0))),
     ] {
         assert_eq!(
             invoke(
@@ -999,6 +1053,33 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     .await
     .expect("resolve route caller")
     .expect("route caller remains stored");
+    admin
+        .execute(
+            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid \
+             AND org = $2 AND project = $3 AND role = $4",
+            &[&principal.id().as_str(), &ORG, &PROJECT, &ROUTE_CALLER_ROLE],
+        )
+        .await
+        .expect("remove the route-caller role");
+    assert_eq!(
+        invoke(&route_auth, &weld, Some(&valid), &mut router_admissions).await,
+        Err(unauthorized.clone()),
+        "role removal must refuse an otherwise valid PAT on the next request"
+    );
+    for (org, project, role) in [
+        ("other-org", PROJECT, ROUTE_CALLER_ROLE),
+        (ORG, OTHER_PROJECT, ROUTE_CALLER_ROLE),
+        (ORG, PROJECT, "project-author"),
+    ] {
+        assign_project_role(admin.as_ref(), principal.id(), org, project, role)
+            .await
+            .expect("assign a role that cannot authorize this route");
+        assert_eq!(
+            invoke(&route_auth, &weld, Some(&valid), &mut router_admissions).await,
+            Err(unauthorized.clone()),
+            "the role {org}/{project}/{role} authorized the wrong route"
+        );
+    }
     assign_project_role(
         admin.as_ref(),
         principal.id(),
@@ -1008,6 +1089,18 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     )
     .await
     .expect("restore route-caller role");
+    disable_principal(admin.as_ref(), principal.id())
+        .await
+        .expect("disable the configured service principal");
+    assert_eq!(
+        invoke(&route_auth, &weld, Some(&valid), &mut router_admissions).await,
+        Err(unauthorized),
+        "a disabled service passed with a valid PAT and project role"
+    );
+    admin.execute(
+        "UPDATE identity.principals SET status = 'active', disabled_at = NULL WHERE id = $1::text::uuid",
+        &[&principal.id().as_str()],
+    ).await.expect("restore the service principal for permission proofs");
     project
         .execute(
             "DELETE FROM app_system.permissions \

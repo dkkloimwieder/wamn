@@ -1,10 +1,12 @@
 //! Optional real-PostgreSQL proof for the platform identity core.
 
+use std::time::Duration;
+
 use wamn_platform_identity::{
     IdentityErrorKind, PreparedIdentityReads, Principal, PrincipalKind, PrincipalStatus,
     assign_project_role, create_human, create_service, disable_principal,
-    grant_project_env_membership, has_project_env_membership, project_roles, resolve_principal,
-    resolve_subject, revoke_project_env_membership,
+    grant_project_env_membership, has_project_env_membership, issue_pat, project_roles,
+    resolve_principal, resolve_subject, revoke_project_env_membership,
 };
 
 const SYSTEM_SCHEMA: &str = include_str!("../../../../deploy/sql/system-schema.sql");
@@ -143,6 +145,30 @@ async fn project_environment_membership_round_trip(
     let reads = PreparedIdentityReads::prepare(client)
         .await
         .expect("prepare identity queries");
+    let human_token = issue_pat(
+        client,
+        human.id(),
+        "route member",
+        Duration::from_secs(3600),
+    )
+    .await
+    .expect("issue the human route PAT");
+    let service_token = issue_pat(
+        client,
+        service.id(),
+        "route service",
+        Duration::from_secs(3600),
+    )
+    .await
+    .expect("issue the service route PAT");
+    for token in [human_token.token(), service_token.token()] {
+        assert!(
+            route_principal_id(&reads, client, token, "acme", "receiving", "dev")
+                .await
+                .is_none(),
+            "a valid PAT without its kind's authority passed"
+        );
+    }
     let other_human = create_human(client, "other@example.com", "Other Human")
         .await
         .expect("create another human");
@@ -179,6 +205,47 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("prepared query observes new grant")
     );
+    assert_eq!(
+        route_principal_id(
+            &reads,
+            client,
+            human_token.token(),
+            "acme",
+            "receiving",
+            "dev"
+        )
+        .await,
+        Some(human.id().as_str().to_owned()),
+        "human membership must not require a project management role"
+    );
+    assign_project_role(client, service.id(), "acme", "receiving", "route-caller")
+        .await
+        .expect("assign the service route role");
+    assert_eq!(
+        route_principal_id(
+            &reads,
+            client,
+            service_token.token(),
+            "acme",
+            "receiving",
+            "dev"
+        )
+        .await,
+        Some(service.id().as_str().to_owned()),
+        "a service needs its role, not a human membership"
+    );
+    for (org, project, env) in [
+        ("other", "receiving", "dev"),
+        ("acme", "inventory", "dev"),
+        ("acme", "receiving", "prod"),
+    ] {
+        assert!(
+            route_principal_id(&reads, client, human_token.token(), org, project, env)
+                .await
+                .is_none(),
+            "the prepared PAT query accepted another environment"
+        );
+    }
     let other_memberships = [
         (&other_human, "acme", "receiving", "dev"),
         (human, "other", "receiving", "dev"),
@@ -243,6 +310,19 @@ async fn project_environment_membership_round_trip(
             .expect("prepared query observes revocation immediately")
     );
     assert!(
+        route_principal_id(
+            &reads,
+            client,
+            human_token.token(),
+            "acme",
+            "receiving",
+            "dev"
+        )
+        .await
+        .is_none(),
+        "the prepared PAT query must observe membership revocation"
+    );
+    assert!(
         !revoke_project_env_membership(client, human.id(), "acme", "receiving", "dev")
             .await
             .expect("repeat revocation harmlessly")
@@ -291,4 +371,19 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("principal deletion removes its membership")
     );
+}
+
+async fn route_principal_id(
+    reads: &PreparedIdentityReads,
+    client: &tokio_postgres::Client,
+    token: &str,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Option<String> {
+    reads
+        .authenticate_route_pat(client, token, org, project, env, "route-caller")
+        .await
+        .expect("read route PAT and scope in one statement")
+        .map(|authenticated| authenticated.principal().id().as_str().to_owned())
 }
