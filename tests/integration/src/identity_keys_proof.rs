@@ -109,11 +109,14 @@ async fn exercise(args: IdentityKeysProofArgs) -> anyhow::Result<()> {
     let mut held = Vec::new();
     for cache in &caches {
         for kid in &expected {
-            let started = Instant::now();
             let evidence = cache
                 .key(kid)
                 .await
                 .map_err(|_| anyhow!("expected public key was refused by production cache"))?;
+            // Internal dispatch is later than the pre-call observation, so
+            // only post-return time supplies this observer's upper bound.
+            // Deterministic cache tests prove exact request-start aging.
+            let observed = Instant::now();
             ensure!(
                 evidence.issuer() == args.issuer,
                 "key evidence lost exact issuer attribution"
@@ -123,7 +126,7 @@ async fn exercise(args: IdentityKeysProofArgs) -> anyhow::Result<()> {
                 "cache returned a different public key"
             );
             ensure!(
-                evidence.is_fresh() && evidence.deadline() <= started + Duration::from_secs(300),
+                evidence.is_fresh() && evidence.deadline() <= observed + Duration::from_secs(300),
                 "key evidence exceeded its bounded freshness window"
             );
             let deadline = evidence.deadline();
