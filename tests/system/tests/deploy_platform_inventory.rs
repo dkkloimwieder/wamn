@@ -512,7 +512,6 @@ fn the_identity_chart_requires_operator_inputs_and_renders_its_https_boundary() 
     }
     for (key, expected) in [
         ("automountServiceAccountToken", "false"),
-        ("args", "[serve]"),
         ("containerPort", "8443"),
         ("scheme", "HTTPS"),
         ("path", "/healthz"),
@@ -527,6 +526,16 @@ fn the_identity_chart_requires_operator_inputs_and_renders_its_https_boundary() 
             "identity Deployment {key}"
         );
     }
+    let args_index = deployment
+        .iter()
+        .position(|line| line.trim() == "args:")
+        .expect("identity Deployment argument list");
+    let args: Vec<&str> = deployment[args_index + 1..]
+        .iter()
+        .take_while(|line| indent(line) > indent(deployment[args_index]))
+        .map(|line| line.trim().strip_prefix("- ").expect("argument list item"))
+        .collect();
+    assert_eq!(args, ["serve"], "unconfigured identity Deployment args");
     let environment: BTreeSet<&str> = deployment
         .iter()
         .filter_map(|line| {
