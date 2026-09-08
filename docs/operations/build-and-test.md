@@ -1640,6 +1640,399 @@ if [[ "$WAMN_DEV_ENV_SCRATCH" == "$WAMN_DEV_ENV_HOME"/wamn-dev-env.* ]]; then
 fi
 ```
 
+### `[RECEIVING-TUI]` — using the environment the loop serves
+
+Not a gate. It is the whole path from a clean checkout to an operator holding
+the Receiving terminal against a release `wamn dev` is serving right now, and
+it is also the answer to "I ran the loop; what do I do with it" — where the URL
+comes from, where the operator credential lands, how to call the routes with or
+without the terminal, and why promotion to a durable environment is a separate
+act (`wamn-10yt.5.6`, `wamn-10yt.46`).
+
+`[WAMN-DEV-ENVIRONMENT]` stands the environment up and stops there. This one
+runs `wamn dev up`, holds one loop run open with `--hold`, and drives
+`wamn-receiving` against it. Every step below was executed in this order and
+the outputs quoted are the ones the run printed.
+
+**Every port is a variable with a default, and the whole recipe is
+re-entrant on a fresh cluster,** so two people can run it at once by exporting
+a second set. The Gate port is the one that is not negotiable per-process:
+`wamn dev up --gate-bind` names it, the configuration written outlives the
+process that wrote it, and a stray listener there is a hard failure.
+
+**Two target directories, on purpose.** The workspace binaries build into the
+tree's own `target/`. `components/Cargo.toml` is a SEPARATE workspace, so
+`http_route.wasm` lands under `components/target/`, not `target/`, and the
+push below names that path. The loop's own Build stage runs
+`tools/build-components`, which uses the same two directories, so a run costs
+one component build and not two.
+
+#### 1. Ports, names and paths
+
+```bash
+set -euo pipefail
+umask 077
+
+WAMN_TUI_TREE="$(pwd -P)"
+test "$(git -C "$WAMN_TUI_TREE" rev-parse --show-toplevel)" = "$WAMN_TUI_TREE"
+test -f "$WAMN_TUI_TREE/packages/receiving/wamn.json"
+command -v wash >/dev/null
+
+WAMN_TUI_ROOT="${WAMN_TUI_ROOT:-${TMPDIR:-/tmp}/wamn-receiving-tui}"
+WAMN_TUI_PROJECT="${WAMN_TUI_PROJECT:-wamn-receiving-tui}"
+WAMN_TUI_PG_PORT="${WAMN_TUI_PG_PORT:-54344}"
+WAMN_TUI_STD_REGISTRY_PORT="${WAMN_TUI_STD_REGISTRY_PORT:-5007}"
+WAMN_TUI_REGISTRY_PORT="${WAMN_TUI_REGISTRY_PORT:-5008}"
+WAMN_TUI_NATS_PORT="${WAMN_TUI_NATS_PORT:-4228}"
+WAMN_TUI_TEMPO_PORT="${WAMN_TUI_TEMPO_PORT:-3205}"
+WAMN_TUI_OTLP_PORT="${WAMN_TUI_OTLP_PORT:-4323}"
+WAMN_TUI_GATE_PORT="${WAMN_TUI_GATE_PORT:-8092}"
+
+WAMN_TUI_COMPOSE="$WAMN_TUI_TREE/test-support/infrastructure/std-virtualization.compose.yaml"
+WAMN_TUI_TARGET="$WAMN_TUI_TREE/target"
+WAMN_TUI_FLOW_HTTP="$WAMN_TUI_TREE/components/target/wasm32-wasip2/debug/http_route.wasm"
+WAMN_TUI_AUTHORITY="127.0.0.1:${WAMN_TUI_REGISTRY_PORT}"
+WAMN_TUI_USERNAME=wamn-receiving-tui
+WAMN_TUI_HTPASSWD="$WAMN_TUI_ROOT/htpasswd"
+WAMN_TUI_DOCKER_AUTH="$WAMN_TUI_ROOT/.dockerconfigjson"
+WAMN_TUI_FLOW_HTTP_IMAGE="$WAMN_TUI_AUTHORITY/wamn/flow-http:dev"
+WAMN_TUI_ENV_DIR="$WAMN_TUI_ROOT/environment"
+WAMN_TUI_UP_LOG="$WAMN_TUI_ROOT/dev-up.log"
+WAMN_TUI_RUN_LOG="$WAMN_TUI_ROOT/dev-run.log"
+
+mkdir -p "$WAMN_TUI_ROOT"
+chmod 700 "$WAMN_TUI_ROOT"
+# The Gate binds this exact port. A stray listener is a hard failure, not a
+# fallback to an ephemeral one.
+test -z "$(ss -Hltn "sport = :${WAMN_TUI_GATE_PORT}")"
+```
+
+`$WAMN_TUI_ROOT` holds minted PATs and password-bearing URLs, which is why it
+is mode 0700 and why nothing below prints its contents. `[WAMN-DEV-ENVIRONMENT]`
+keeps its scratch under `$XDG_CACHE_HOME` because a cold `CARGO_TARGET_DIR`
+there is several gigabytes and `/tmp` is a tmpfs on this machine. That reason
+does not apply here — the builds go to the tree's own `target/`, and what lands
+in `$WAMN_TUI_ROOT` is one configuration document, a handful of Secrets, some
+SQL, and the Wasmtime cache.
+
+#### 2. Build
+
+Debug, locked, offline. Four commands, because `--bin` selects across every
+`-p` given to one invocation and the components live in another workspace.
+
+```bash
+RUSTC_WRAPPER= cargo build -p wamn-ctl --bin wamn --locked --offline
+RUSTC_WRAPPER= cargo build -p wamn-host -p wamn-scenario-worker --locked --offline
+RUSTC_WRAPPER= cargo build -p wamn-receiving-tui --bin wamn-receiving --locked --offline
+RUSTC_WRAPPER= cargo build --manifest-path "$WAMN_TUI_TREE/components/Cargo.toml" \
+  -p http-route --target wasm32-wasip2 --locked --offline
+
+test -x "$WAMN_TUI_TARGET/debug/wamn"
+test -x "$WAMN_TUI_TARGET/debug/wamn-host"
+test -x "$WAMN_TUI_TARGET/debug/wamn-scenario-worker"
+test -x "$WAMN_TUI_TARGET/debug/wamn-receiving"
+test -s "$WAMN_TUI_FLOW_HTTP"
+```
+
+#### 3. Substrate
+
+Disposable PostgreSQL 18, an authenticated loopback registry, NATS and Tempo.
+Point this only at throwaway services; never at shared infrastructure or the
+frozen cluster.
+
+```bash
+WAMN_TUI_PASSWORD="$(openssl rand -hex 32)"
+printf '%s\n' "$WAMN_TUI_PASSWORD" \
+  | docker run --rm -i --entrypoint htpasswd httpd:2-alpine \
+      -Bni "$WAMN_TUI_USERNAME" >"$WAMN_TUI_HTPASSWD"
+jq -n --arg authority "$WAMN_TUI_AUTHORITY" \
+  --arg username "$WAMN_TUI_USERNAME" \
+  --arg password "$WAMN_TUI_PASSWORD" \
+  '{auths:{($authority):{username:$username,password:$password}}}' \
+  >"$WAMN_TUI_DOCKER_AUTH"
+
+export WAMN_STD_VIRT_PG_PORT="$WAMN_TUI_PG_PORT"
+export WAMN_STD_VIRT_REGISTRY_PORT="$WAMN_TUI_STD_REGISTRY_PORT"
+export WAMN_ROUTE_REGISTRY_PORT="$WAMN_TUI_REGISTRY_PORT"
+export WAMN_ROUTE_REGISTRY_HTPASSWD="$WAMN_TUI_HTPASSWD"
+export WAMN_RECEIVING_DEV_NATS_PORT="$WAMN_TUI_NATS_PORT"
+export WAMN_RECEIVING_DEV_TEMPO_PORT="$WAMN_TUI_TEMPO_PORT"
+export WAMN_RECEIVING_DEV_OTLP_PORT="$WAMN_TUI_OTLP_PORT"
+docker compose --profile receiving-route -p "$WAMN_TUI_PROJECT" \
+  -f "$WAMN_TUI_COMPOSE" up --detach --wait --wait-timeout 90 \
+  receiving-route-postgres authenticated-registry receiving-dev-nats receiving-dev-tempo
+
+# Tempo reports healthy to Compose before /ready answers; loop on /ready.
+for _ in $(seq 1 60); do
+  curl --fail --silent "http://127.0.0.1:${WAMN_TUI_TEMPO_PORT}/ready" >/dev/null && break
+  sleep 1
+done
+curl --fail --silent "http://127.0.0.1:${WAMN_TUI_TEMPO_PORT}/ready" >/dev/null
+PGPASSWORD=probe psql \
+  "postgresql://postgres@127.0.0.1:${WAMN_TUI_PG_PORT}/postgres" -Atqc 'select 1' >/dev/null
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "http://${WAMN_TUI_AUTHORITY}/v2/")" = 401
+
+WASH_REG_USER="$WAMN_TUI_USERNAME" WASH_REG_PASSWORD="$WAMN_TUI_PASSWORD" \
+  wash push "$WAMN_TUI_FLOW_HTTP_IMAGE" "$WAMN_TUI_FLOW_HTTP" --insecure
+unset WAMN_TUI_PASSWORD
+```
+
+#### 4. Terminal 1 — `wamn dev up`
+
+```bash
+"$WAMN_TUI_TARGET/debug/wamn" dev up \
+  --system-database-url "postgresql://postgres:probe@127.0.0.1:${WAMN_TUI_PG_PORT}/postgres" \
+  --root "$WAMN_TUI_ENV_DIR" \
+  --scenario-worker-binary "$WAMN_TUI_TARGET/debug/wamn-scenario-worker" \
+  --gate-bind "127.0.0.1:${WAMN_TUI_GATE_PORT}" \
+  --nats-url "nats://127.0.0.1:${WAMN_TUI_NATS_PORT}" \
+  --tempo-query-url "http://127.0.0.1:${WAMN_TUI_TEMPO_PORT}" \
+  --otel-exporter-otlp-endpoint "http://127.0.0.1:${WAMN_TUI_OTLP_PORT}" \
+  --component-artifact-base "${WAMN_TUI_AUTHORITY}/wamn/components" \
+  --release-artifact-base "${WAMN_TUI_AUTHORITY}/wamn/releases" \
+  --registry-auth-file "$WAMN_TUI_DOCKER_AUTH" \
+  --route-host receiving.localhost \
+  --flow-http-workload-image "$WAMN_TUI_FLOW_HTTP_IMAGE" \
+  --host-binary "$WAMN_TUI_TARGET/debug/wamn-host" \
+  --package "$WAMN_TUI_TREE/packages/receiving" \
+  --overlay-root "$WAMN_TUI_TREE/packages/client_acme_receiving" \
+  2>&1 | tee "$WAMN_TUI_UP_LOG"
+```
+
+It provisions, spawns the Gate, and holds. After about forty lines of
+provisioning it prints, verbatim:
+
+```
+environment ready
+  gate:   http://127.0.0.1:8092/authoring
+  config: /tmp/wamn-receiving-tui/environment/dev.json
+
+run the loop from the repository root, in another terminal:
+  wamn dev --config /tmp/wamn-receiving-tui/environment/dev.json --overlay-root …/packages/client_acme_receiving --tui
+
+this process holds the Gate; stop it with Ctrl-C when the loop is done
+```
+
+**Where the credentials land, exactly.** Two PATs are minted, and they are not
+interchangeable.
+
+- The **operator** credential — the one a client presents on a published route
+  — is `$WAMN_TUI_ENV_DIR/route-caller-pat.json`, at `.stringData.token`. It is
+  **not** in `dev.json` at all.
+- `dev.json` carries `gate_bearer_token`, and that is the **management-author**
+  PAT the loop presents to the authoring Gate. Handing it to the operator
+  client is a different principal with a different project role.
+
+Both files are Kubernetes `Secret` documents, mode 0700 directory, never
+printed. The provisioning log names each as it writes it (`wrote
+…/route-caller-pat.json (route-caller PAT Secret; kubectl apply)`); the
+`environment ready` summary block does not repeat them, so read the path from
+here rather than from the summary.
+
+#### 5. Terminal 2 — one run, held
+
+`wamn dev` runs from a dirty worktree by design and recreates its target
+database before every run, so nothing here needs a clean checkout
+(`wamn-10yt.43`). `--hold` keeps the activated release reachable until the
+process is interrupted.
+
+```bash
+"$WAMN_TUI_TARGET/debug/wamn" dev \
+  --config "$WAMN_TUI_ENV_DIR/dev.json" \
+  --overlay-root "$WAMN_TUI_TREE/packages/client_acme_receiving" \
+  --hold 2>&1 | tee "$WAMN_TUI_RUN_LOG"
+```
+
+Four lines are printed before the hold begins, and a scripted caller reads them
+by shape:
+
+```
+run completed: migrate,introspect,generate,build,virtualize,apply,acl,admit,gate,publish,release,activate
+run stage-ms: prepare=1523ms migrate=1177ms introspect=501ms generate=632ms build=89942ms virtualize=57187ms apply=654ms acl=451ms admit=12375ms gate=379ms publish=1595ms release=1101ms activate=23134ms
+run served: http://127.0.0.1:37085 host=receiving.localhost
+run holding
+```
+
+`run served` is the only place the base URL exists: the host binds
+`127.0.0.1:0` and the kernel picks the port, so it differs every run and
+nothing else records it. A second run may add `run skipped: unchanged generate`
+when no authored byte changed, and `run pin stale: …` when the run built past
+an authored base pin; neither changes the shape of `completed` or `served`.
+The timings above are one cold run on an eight-core machine — Build and
+Virtualize dominate, and both fall to near zero once the component target is
+warm.
+
+Read the endpoint and the operator PAT out in the third terminal:
+
+```bash
+WAMN_TUI_BASE_URL="$(awk '/^run served: /{print $3}' "$WAMN_TUI_RUN_LOG")"
+WAMN_TUI_ROUTE_HOST="$(awk '/^run served: /{sub(/^host=/,"",$4); print $4}' "$WAMN_TUI_RUN_LOG")"
+WAMN_TUI_OPERATOR_PAT="$(jq -r .stringData.token "$WAMN_TUI_ENV_DIR/route-caller-pat.json")"
+test -n "$WAMN_TUI_BASE_URL" && test -n "$WAMN_TUI_ROUTE_HOST"
+```
+
+#### 6. Seed the two purchase orders
+
+A run clones a pristine template, so the target database holds the package's
+schema and no business rows. The Receiving package publishes no operation that
+creates a purchase order — `purchase_order` has `get`, `query` and `update`
+only — so the fixture is inserted directly, exactly as the route journey seeds
+it. `target_database_url` in `dev.json` is the admin URL of the database the
+run just built.
+
+```bash
+psql "$(jq -r .target_database_url "$WAMN_TUI_ENV_DIR/dev.json")" -v ON_ERROR_STOP=1 -q <<'SQL'
+INSERT INTO receiving.item (id, item_number) VALUES
+  ('00000000-0000-0000-0000-000000000101', 'ITEM-101');
+INSERT INTO receiving.location (id, location_code) VALUES
+  ('00000000-0000-0000-0000-000000000201', 'DOCK-1'),
+  ('00000000-0000-0000-0000-000000000202', 'DOCK-2');
+INSERT INTO receiving.purchase_order
+  (id, purchase_order_number, supplier_id, status, row_version, created_at, updated_at)
+VALUES
+  ('00000000-0000-0000-0000-000000000301', 'PO-301',
+   '00000000-0000-0000-0000-000000000401', 'open', 1,
+   '2026-08-31T12:00:00.000000Z', '2026-08-31T12:00:00.000000Z'),
+  ('00000000-0000-0000-0000-000000000302', 'PO-302',
+   '00000000-0000-0000-0000-000000000402', 'open', 1,
+   '2026-08-31T12:01:00.000000Z', '2026-08-31T12:01:00.000000Z');
+INSERT INTO receiving.purchase_order_line
+  (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity)
+VALUES
+  ('00000000-0000-0000-0000-000000000501',
+   '00000000-0000-0000-0000-000000000301', 1,
+   '00000000-0000-0000-0000-000000000101', 5.0000, 0.0000),
+  ('00000000-0000-0000-0000-000000000502',
+   '00000000-0000-0000-0000-000000000302', 1,
+   '00000000-0000-0000-0000-000000000101', 7.0000, 0.0000);
+SQL
+```
+
+Seed AFTER the run, not before: the loop drops and re-clones the target at the
+start of every run, so rows inserted first are gone by the time it serves.
+
+#### 7. Terminal 3 — the operator terminal
+
+`wamn-receiving` takes the whole deployment from three environment variables
+and compiles none of it in.
+
+```bash
+WAMN_BASE_URL="$WAMN_TUI_BASE_URL" \
+WAMN_HOST="$WAMN_TUI_ROUTE_HOST" \
+WAMN_TOKEN="$WAMN_TUI_OPERATOR_PAT" \
+  "$WAMN_TUI_TARGET/debug/wamn-receiving"
+```
+
+It opens on the purchase-order list, which it has already loaded:
+
+```
+purchase_order_number status row_version
+>PO-301               open   1
+PO-302                open   1
+
+2 rows  complete
+```
+
+Keys, in the order one receipt needs them:
+
+| key | list screen | receipt screen |
+| --- | --- | --- |
+| `Up` / `Down` | move the highlight | move the highlighted line |
+| `Enter` | open the highlighted order's receipt | — |
+| digits and `.` | — | type into the focused entry |
+| `Backspace` | — | delete from the quantity |
+| `Tab` | — | move focus between quantity and reference |
+| `Ctrl-L` | — | cycle the receiving location |
+| `Ctrl-S` | — | send the receipt |
+| `Esc` | quit | back to the list |
+| `q` | quit | types a character; use `Esc` or `Ctrl-Q` |
+| `Ctrl-C` / `Ctrl-Q` | quit | quit |
+
+A character follows the FOCUS and not its own shape, because a receipt
+reference carries digits too. One worked receipt — `Down`, `Enter`, `3`, `Tab`,
+`GRN-TUI-1`, `Ctrl-L`, `Ctrl-S` — clears the entry, returns to the list, and
+leaves the verdict on the status line:
+
+```
+ok  recorded receipt 667e925b-1fcd-4dda-af2a-0d8cde5119e3
+```
+
+A success SPENDS the entry on purpose: quantities left on screen after a
+recorded receipt are how the same receipt gets submitted twice.
+
+#### 8. Testing the served environment without the terminal
+
+The same three values drive `curl`. The route host is a header, not DNS.
+
+```bash
+curl --silent --show-error --fail-with-body \
+  -H "Host: $WAMN_TUI_ROUTE_HOST" \
+  -H "Authorization: Bearer $WAMN_TUI_OPERATOR_PAT" \
+  -H 'Content-Type: application/json' \
+  --data '[{"request_id":"probe-1"}]' \
+  "$WAMN_TUI_BASE_URL/purchase_order/query" | jq .
+```
+
+**Three envelope facts that a client gets wrong once each.** All three were
+measured against this served release, and each one fails silently or refuses
+before any operation runs:
+
+- A `page` result spells its rows **`item`** and its continuation
+  **`next_cursor`**. A `bounded_list` result spells its rows **`rows`** and has
+  no continuation. Reading `rows` off a page finds nothing and renders an empty
+  list with no error.
+- `int64` is a JSON **string** (`"row_version":"1"`); `int32` is a JSON number
+  (`"line_number":1`). A 64-bit integer does not survive every JSON reader, so
+  the platform carries it lexically.
+- `numeric` is a JSON **string** on the way in as well as out. The
+  canonicalization is `postgresql_lexical_scale_preserved` and scale is the
+  reason: a JSON number cannot carry `5.0000`. The published wiring's input
+  schema spells `value.line[].quantity` `{"type": "string"}`, and a number is
+  refused at ingress with `{"error":{"code":"schema-invalid"}}`.
+
+The overlay publishes its own routes beside the base ones — `/purchase_order/get`
+is the base package's and `/acme/purchase_order/get` is the overlay's — so a
+client that derived a path from an operation name would call the wrong one.
+
+#### 9. Promotion is a separate act, taken after commit
+
+Nothing this loop serves outlives the session. The target database is
+disposable, the registry is the session's own, and the committed-source
+refusals that guard provenance are therefore inert:
+`refuses_dirty_source` in `services/ctl/src/dev.rs` fires only when the stage
+sits on the committed-source boundary AND the target is durable. Point a run at
+a durable target and every one of those refusals returns — the condition is the
+target, not the stage — so a dirty worktree stops at the first such stage by
+name. Committing is what makes promotion possible; it is not something the loop
+does, and there is no `--promote`.
+
+#### 10. Teardown, and the trap the next standup hits
+
+Quit the client, stop the loop with Ctrl-C, stop `wamn dev up` with Ctrl-C,
+then remove the services BY THIS PROJECT NAME and the scratch path.
+
+```bash
+docker compose --profile receiving-route -p "$WAMN_TUI_PROJECT" \
+  -f "$WAMN_TUI_COMPOSE" down --volumes --remove-orphans
+rm -rf -- "$WAMN_TUI_ROOT"
+```
+
+**A second `wamn dev up` against a PostgreSQL cluster that already held one
+refuses.** Roles are cluster-global and outlive the database they were minted
+for, so the previous standup's generation member is still there and now carries
+a direct `CONNECT` grant on two databases. The refusal reads:
+
+```
+app stable-role generation member does not carry exactly one direct database CONNECT grant
+```
+
+It is raised by `provision_project_env.rs` and it is correct — an ambiguous
+generation member is exactly what it is there to catch. **Take the cluster
+down and stand a fresh one up**; do not try to reuse the roles. `down
+--volumes` above is what makes the next standup clean, and dropping only the
+database is not enough.
+
 ### `[AGENT-PILOT]` — the agent-authoring experiment harness
 
 Not a gate. It measures whether a coding agent can author a wamn package from a
