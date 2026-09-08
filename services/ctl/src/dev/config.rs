@@ -32,6 +32,8 @@ const DOCUMENT_KEY: &str = "$";
 pub(super) const VERIFICATION_DATABASE_URL: &str = "verification_database_url";
 const TARGET_DATABASE_URL: &str = "target_database_url";
 const TARGET_PRIVILEGES_FILE: &str = "target_privileges_file";
+const TARGET_TEMPLATE_DATABASE: &str = "target_template_database";
+const TARGET_DATABASE_ACL_FILE: &str = "target_database_acl_file";
 const SYSTEM_DATABASE_URL: &str = "system_database_url";
 const IDENTITY_DATABASE_URL: &str = "identity_database_url";
 const GUEST_DATABASE_URL: &str = "guest_database_url";
@@ -78,6 +80,8 @@ struct DevConfigDocument {
     verification_database_url: String,
     target_database_url: String,
     target_privileges_file: PathBuf,
+    target_template_database: String,
+    target_database_acl_file: PathBuf,
     system_database_url: String,
     identity_database_url: String,
     guest_database_url: String,
@@ -528,6 +532,8 @@ pub struct DevConfig {
     verification_database_url: Box<str>,
     target_database_url: Box<str>,
     target_privileges_file: PathBuf,
+    target_template_database: Box<str>,
+    target_database_acl_file: PathBuf,
     system_database_url: Box<str>,
     identity_database_url: Box<str>,
     guest_database_url: Box<str>,
@@ -567,6 +573,8 @@ impl fmt::Debug for DevConfig {
                 &self.sanitized_endpoint(TARGET_DATABASE_URL),
             )
             .field(TARGET_PRIVILEGES_FILE, &self.target_privileges_file)
+            .field(TARGET_TEMPLATE_DATABASE, &self.target_template_database)
+            .field(TARGET_DATABASE_ACL_FILE, &self.target_database_acl_file)
             .field(
                 SYSTEM_DATABASE_URL,
                 &self.sanitized_endpoint(SYSTEM_DATABASE_URL),
@@ -655,6 +663,24 @@ impl DevConfig {
     /// environment was provisioned with.
     pub fn target_privileges_file(&self) -> &Path {
         &self.target_privileges_file
+    }
+
+    /// Pristine template database `wamn dev up` prepared for this target.
+    ///
+    /// It carries everything a drop destroys except the database-level ACL:
+    /// the platform floor, the run plane and the workload grants. A run clones
+    /// it, so a run starts from a database that is pristine by construction
+    /// rather than by a replay this module got right.
+    pub fn target_template_database(&self) -> &str {
+        &self.target_template_database
+    }
+
+    /// Database-level ACL `wamn dev up` captured from the healthy target.
+    ///
+    /// `CREATE DATABASE ... TEMPLATE` copies objects and their ACLs, and does
+    /// not copy the ACL of the database itself. This file is that one thing.
+    pub fn target_database_acl_file(&self) -> &Path {
+        &self.target_database_acl_file
     }
 
     /// System PostgreSQL URL holding control and identity facts.
@@ -821,6 +847,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         verification_database_url,
         target_database_url,
         target_privileges_file,
+        target_template_database,
+        target_database_acl_file,
         system_database_url,
         identity_database_url,
         guest_database_url,
@@ -880,6 +908,10 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let release_artifact_base = nonempty_string(release_artifact_base, RELEASE_ARTIFACT_BASE)?;
     let registry_auth_file = nonempty_path(registry_auth_file, REGISTRY_AUTH_FILE)?;
     let target_privileges_file = nonempty_path(target_privileges_file, TARGET_PRIVILEGES_FILE)?;
+    let target_template_database =
+        nonempty_string(target_template_database, TARGET_TEMPLATE_DATABASE)?;
+    let target_database_acl_file =
+        nonempty_path(target_database_acl_file, TARGET_DATABASE_ACL_FILE)?;
     let gate_url = nonempty_string(gate_url, GATE_URL)?;
     let gate_bearer_token = nonempty_string(gate_bearer_token, GATE_BEARER_TOKEN)?;
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
@@ -1007,6 +1039,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         verification_database_url,
         target_database_url,
         target_privileges_file,
+        target_template_database,
+        target_database_acl_file,
         system_database_url,
         identity_database_url,
         guest_database_url,
@@ -1682,6 +1716,8 @@ mod tests {
             (VERIFICATION_DATABASE_URL): format!("postgresql://verify:verify-secret@{}/verification", addresses[0]),
             (TARGET_DATABASE_URL): format!("postgresql://target:target-secret@{}/target", addresses[1]),
             (TARGET_PRIVILEGES_FILE): "/run/wamn-dev/privileges.sql",
+            (TARGET_TEMPLATE_DATABASE): "target--template",
+            (TARGET_DATABASE_ACL_FILE): "/run/wamn-dev/database-acl.sql",
             (SYSTEM_DATABASE_URL): format!("postgresql://system:system-secret@{}/system", addresses[2]),
             (IDENTITY_DATABASE_URL): format!("postgresql://identity:identity-secret@{}/system", addresses[3]),
             (GUEST_DATABASE_URL): format!("postgresql://guest:guest-secret@{}/target", addresses[4]),

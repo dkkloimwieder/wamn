@@ -139,6 +139,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     let config = write_dev_config(
         &args.root,
         &args.system_database_url,
+        &environment.template,
         &environment.route,
         &environment.credentials,
         &environment.verification,
