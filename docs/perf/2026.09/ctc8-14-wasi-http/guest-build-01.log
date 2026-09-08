@@ -1,0 +1,38 @@
+     Locking 400 packages to latest Rust 1.98.0 compatible versions
+      Adding generic-array v0.14.7 (available: v0.14.9)
+      Adding wasi v0.13.3+wasi-0.2.2 (available: v0.14.7+wasi-0.2.4)
+   Compiling zmij v1.0.23
+   Compiling serde_core v1.0.229
+   Compiling wit-bindgen-rt v0.33.0
+   Compiling bitflags v2.13.1
+   Compiling serde_json v1.0.151
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling wasi v0.13.3+wasi-0.2.2
+   Compiling ctc8-14-wasi-http-guest v0.0.0 (/home/kaalin/.cache/wamn-lanes/ctc8-14-wasi-http-20260907/tools/probes/ctc8-14-wasi-http/guest)
+    Finished `dev` profile [unoptimized] target(s) in 3.39s
+	Command being timed: "cargo build --offline --manifest-path tools/probes/ctc8-14-wasi-http/Cargo.toml -p ctc8-14-wasi-http-guest --target wasm32-wasip2"
+	User time (seconds): 0.98
+	System time (seconds): 0.72
+	Percent of CPU this job got: 49%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.46
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 157492
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 14
+	Minor (reclaiming a frame) page faults: 198985
+	Voluntary context switches: 1569
+	Involuntary context switches: 267
+	Swaps: 0
+	File system inputs: 1112
+	File system outputs: 10368
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+
+exit_code=0
