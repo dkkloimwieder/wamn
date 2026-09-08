@@ -35,6 +35,7 @@ use super::read::{
     DevGateOutcome, DevGateVerdict, DevReadHandle, DevReadPublisher, DevRuntimeEndpoint,
     dev_read_channel,
 };
+use super::target_database;
 use super::verification_world::RUN_SCHEMA;
 use super::watch::GitSource;
 use super::{DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
@@ -1319,18 +1320,18 @@ impl DevStageRunner for ProductionDevStageRunner {
     }
 
     async fn prepare_run(&mut self) -> Result<(), Self::Error> {
-        // DORMANT. The per-run recreate is written and unreachable, because it
-        // cannot yet restore what it destroys: a drop takes the platform floor,
-        // the run plane and the workload CONNECT grants with it, and only the
-        // first of the four has an artifact to replay. It is switched on again
-        // when `wamn dev up` emits the recorded bootstrap artifact, on
-        // wamn-10yt.43. Until then the target persists between runs and is
-        // disposable at the session, which is what the scratch directory
-        // already made it.
-        //
-        // The stop-the-host-first step below belongs to the recreate and moves
-        // with it. See target_database::recreate.
-        Ok(())
+        // The previous run's host still holds connections to this database, and
+        // both DROP DATABASE WITH FORCE and CREATE DATABASE ... TEMPLATE refuse
+        // or disconnect under a live session. The host is stopped first, so the
+        // drop finds nothing to kill.
+        if self.activation.is_some() {
+            self.shutdown().await?;
+        }
+        target_database::recreate(&self.config)
+            .await
+            .map_err(|source| {
+                ProductionDevStageError::owner("recreate the target database", source.into())
+            })
     }
 
     async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {

@@ -19,17 +19,19 @@
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
 use reqwest::Url;
 use serde_json::Value;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
     management_admitter_generation_role, sql as provision_sql,
 };
+use wamn_pg_core::Identifier;
 
 use crate::dev::activation::DevActivationIdentity;
 use crate::provision_org::{self, ProvisionOrgArgs, TemplateArg};
@@ -63,6 +65,8 @@ pub struct DevEnvironmentInputs {
     reason = "carries minted PATs and password-bearing URLs; no derived formatter may print them"
 )]
 pub struct DevEnvironment {
+    /// Pristine clone source for every run's target database.
+    pub template: String,
     pub route: ProvisionedRoute,
     pub credentials: JourneyCredentials,
     pub verification: DevVerificationGate,
@@ -110,10 +114,17 @@ pub async fn provision(
     let credentials =
         prepare_journey_credentials(system_url, &route.database_url, root, root, "wamn-system")
             .await?;
+    // The template is taken HERE, while the project database is provisioned and
+    // still pristine: the loop applies package migrations, the standup does not.
+    // A clone of this is what every run starts from.
     let identity = dev_activation_identity();
+    let template =
+        prepare_target_template(admin, system_url, &route.database_url, root, &identity).await?;
+
     let verification = prepare_dev_verification_gate(system_url, admin, &identity).await?;
 
     Ok(DevEnvironment {
+        template,
         route,
         credentials,
         verification,
@@ -409,6 +420,117 @@ pub async fn provision_journey_control(system_url: &str, admin: &Client) -> anyh
     })
     .await
     .context("stamp the journey org and environment policies through provision-org")
+}
+
+/// Snapshot the pristine project database and capture its database-level ACL.
+///
+/// `CREATE DATABASE ... TEMPLATE` copies every object and every object-level
+/// privilege. It does not copy the ACL of the database itself, so that one
+/// thing is read from the live database here, while it is healthy, and written
+/// as SQL the loop replays after each clone.
+///
+/// Reading the ACL beats deriving it. A derived set would be this module's
+/// opinion of what the standup granted; `datacl` is what it actually granted.
+pub async fn prepare_target_template(
+    admin: &Client,
+    system_url: &str,
+    target_url: &str,
+    root: &Path,
+    identity: &DevActivationIdentity,
+) -> anyhow::Result<String> {
+    let target = PostgresConfig::from_str(target_url)
+        .context("parse the target database URL")?
+        .get_dbname()
+        .context("the target database URL names no database")?
+        .to_owned();
+    let template = format!("{target}--template");
+
+    let acl = render_database_acl(admin, &target).await?;
+    std::fs::write(root.join("database-acl.sql"), &acl)
+        .context("write the captured database-level ACL")?;
+
+    // CREATE DATABASE ... TEMPLATE refuses while another session is connected to
+    // the source, so the copy is taken before the Gate opens.
+    admin
+        .batch_execute(&format!(
+            "DROP DATABASE IF EXISTS {} WITH (FORCE)",
+            Identifier::new(template.clone())?.quoted()
+        ))
+        .await
+        .context("drop a previous target template")?;
+    admin
+        .batch_execute(&format!(
+            "CREATE DATABASE {} TEMPLATE {}",
+            Identifier::new(template.clone())?.quoted(),
+            Identifier::new(target.clone())?.quoted()
+        ))
+        .await
+        .context("snapshot the pristine target database as a template")?;
+
+    // The fingerprint is stamped ON the template, so it cannot be separated
+    // from the thing it describes. A run compares it before it drops anything.
+    let system_database = super::target_database::database_name(system_url)
+        .context("the system database URL names no database")?;
+    let fingerprint =
+        super::target_database::template_fingerprint(&target, &system_database, identity);
+    admin
+        .batch_execute(&format!(
+            "COMMENT ON DATABASE {} IS {}",
+            Identifier::new(template.clone())?.quoted(),
+            wamn_pg_core::quote_literal(&fingerprint)
+        ))
+        .await
+        .context("stamp the template with its standup fingerprint")?;
+    Ok(template)
+}
+
+/// Render the database-level ACL of `database` as replayable SQL.
+async fn render_database_acl(admin: &Client, database: &str) -> anyhow::Result<String> {
+    let rows = admin
+        .query(
+            "SELECT grantee::regrole::text AS grantee,
+                    privilege_type,
+                    is_grantable
+               FROM pg_catalog.pg_database d,
+                    LATERAL pg_catalog.aclexplode(d.datacl)
+              WHERE d.datname = $1
+              ORDER BY 1, 2",
+            &[&database],
+        )
+        .await
+        .context("read the database-level ACL")?;
+    let owner: String = admin
+        .query_one(
+            "SELECT pg_catalog.pg_get_userbyid(datdba)::text
+               FROM pg_catalog.pg_database WHERE datname = $1",
+            &[&database],
+        )
+        .await
+        .context("read the database owner")?
+        .get(0);
+
+    let quoted = Identifier::new(database.to_owned())?.quoted();
+    let mut sql = format!(
+        "ALTER DATABASE {quoted} OWNER TO {};\n         REVOKE ALL ON DATABASE {quoted} FROM PUBLIC;\n",
+        Identifier::new(owner)?.quoted()
+    );
+    for row in rows {
+        let grantee: Option<String> = row.get("grantee");
+        let privilege: String = row.get("privilege_type");
+        let grantable: bool = row.get("is_grantable");
+        // A NULL grantee is PUBLIC, which the blanket REVOKE above already
+        // settled and which this loop must not hand back.
+        let Some(grantee) = grantee else { continue };
+        if grantee == "-" {
+            continue;
+        }
+        sql.push_str(&format!(
+            "GRANT {privilege} ON DATABASE {quoted} TO {}{};\n",
+            Identifier::new(grantee)?.quoted(),
+            if grantable { " WITH GRANT OPTION" } else { "" }
+        ));
+    }
+    Ok(sql)
 }
 
 pub async fn install_journey_platform_floor(project: &Client) -> anyhow::Result<()> {
@@ -833,6 +955,7 @@ pub async fn clean_dev_verification_gate_roles(
 pub fn write_dev_config(
     root: &Path,
     system_url: &str,
+    template: &str,
     route: &ProvisionedRoute,
     credentials: &JourneyCredentials,
     verification: &DevVerificationGate,
@@ -852,6 +975,11 @@ pub fn write_dev_config(
         // per-database privilege with it. This is the file it replays, and it
         // is the file provision_route already applied, not a second copy.
         "target_privileges_file": root.join("privileges.sql"),
+        // The loop clones this template instead of re-provisioning. It carries
+        // everything a drop destroys except the database-level ACL, which is
+        // the file beside it.
+        "target_template_database": template,
+        "target_database_acl_file": root.join("database-acl.sql"),
         "system_database_url": system_url,
         "identity_database_url": credentials.identity_reader.as_str(),
         "guest_database_url": credentials.guest_sql.as_str(),

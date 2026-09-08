@@ -3226,6 +3226,7 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
     let config = write_dev_config(
         root,
         &system_url,
+        &environment.template,
         &environment.route,
         &environment.credentials,
         &environment.verification,

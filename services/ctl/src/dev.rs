@@ -409,6 +409,7 @@ pub struct DevRunReceipt {
     completed: Box<[DevStage]>,
     skipped: Box<[DevStage]>,
     timings: Box<[(DevStage, Duration)]>,
+    prepared: Duration,
 }
 
 impl DevRunReceipt {
@@ -432,6 +433,15 @@ impl DevRunReceipt {
     /// as the stage bought nothing.
     pub fn timings(&self) -> &[(DevStage, Duration)] {
         &self.timings
+    }
+
+    /// Wall time spent preparing the target before the first stage.
+    ///
+    /// It sits outside the stage timings because it is not a stage: it is what
+    /// the run pays to start from a target that holds nothing an earlier run
+    /// left behind.
+    pub const fn prepared(&self) -> Duration {
+        self.prepared
     }
 }
 
@@ -571,11 +581,13 @@ where
 {
     let first = from.position();
     runner.reset(from);
+    let preparing = Instant::now();
     if let Err(error) = runner.prepare_run().await {
         let failure = runner.classify_error(&error);
         runner.stage_failed(from, failure);
         return Err(DevRunError::stage_failed(from, error));
     }
+    let prepared = preparing.elapsed();
     let mut completed = Vec::with_capacity(DEV_STAGE_ORDER.len() - first);
     let mut skipped = Vec::new();
     let mut timings = Vec::with_capacity(DEV_STAGE_ORDER.len() - first);
@@ -638,6 +650,7 @@ where
         completed: completed.into_boxed_slice(),
         skipped: skipped.into_boxed_slice(),
         timings: timings.into_boxed_slice(),
+        prepared,
     })
 }
 

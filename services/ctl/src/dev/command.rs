@@ -541,7 +541,10 @@ pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
         .map(|(stage, elapsed)| format!("{}={}ms", stage.as_str(), elapsed.as_millis()))
         .collect::<Vec<_>>()
         .join(" ");
-    println!("{prefix} stage-ms: {timings}");
+    println!(
+        "{prefix} stage-ms: prepare={}ms {timings}",
+        receipt.prepared().as_millis()
+    );
 }
 
 #[cfg(test)]

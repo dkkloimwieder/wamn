@@ -8,22 +8,21 @@
 //!
 //! WHY THIS IS NOT THE VERIFICATION LIFECYCLE WITH A RENAME. A verification
 //! database is usable the moment it exists. A target database is not. Apply
-//! needs the environment the standup built, and a drop takes all of it.
+//! needs the environment the standup built, and a drop takes all of it: the
+//! platform floor, the run plane and the workload grants.
 //!
-//! The recreate therefore replays the four things `wamn dev up` applies to the
-//! project database, THROUGH THE SAME FUNCTIONS, so there is one provisioning
-//! path and not a second copy of it:
+//! SO THE RUN DOES NOT REBUILD IT, IT CLONES IT. `wamn dev up` leaves a pristine
+//! TEMPLATE database behind, and a run is `CREATE DATABASE target TEMPLATE
+//! <name>`. Freshness is then a property of the copy rather than of a replay
+//! this module got right, and there is no second provisioning path to drift
+//! from the first.
 //!
-//!   1. the privilege SQL the standup emitted, read from where it emitted it
-//!   2. the platform floor, `catalog-schema.sql` and `app-schema.sql`
-//!   3. the run plane reconciler
-//!   4. the workload credential grants, generation A
-//!
-//! Roles are cluster-level and survive the drop. Everything inside the database
-//! does not. The floor is `include_str!` compiled into this binary, so replaying
-//! it cannot drift against an artifact on disk. The privilege SQL is read rather
-//! than derived, because a privilege set this module computed would not be the
-//! set the environment was provisioned with.
+//! THE ONE THING A CLONE DOES NOT CARRY is the ACL of the database itself.
+//! `CREATE DATABASE` copies every object and every object-level privilege, and
+//! no database-level grant. So ownership, the PUBLIC revoke and the workload
+//! CONNECT grants are re-issued from SQL `wamn dev up` captured off the healthy
+//! database. Captured, never derived: a set this module computed would be its
+//! opinion of what the standup granted rather than what it granted.
 //!
 //! THE DATABASE KEEPS ITS NAME. The environment row in the system database
 //! points at one database name, so recreating under the same name keeps the
@@ -44,12 +43,10 @@ use std::str::FromStr;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
 use wamn_pg_core::Identifier;
 
+use super::activation::DevActivationIdentity;
 use super::config::{DevConfig, POSTGRES_SYSTEM_DATABASES};
-use super::environment;
 
 const MAINTENANCE_DATABASE: &str = "postgres";
-/// The namespace `wamn dev up` uses for the host secrets it writes.
-const HOST_SECRET_NAMESPACE: &str = "wamn-system";
 const STALE_STANDUP_REMEDY: &str =
     "run wamn dev up to provision the environment and emit its privilege SQL";
 
@@ -62,10 +59,9 @@ pub enum TargetDatabaseErrorKind {
     LeaseFailed,
     DropFailed,
     CreateFailed,
-    PrivilegesFailed,
-    FloorFailed,
-    RunPlaneFailed,
-    CredentialsFailed,
+    TemplateMissing,
+    TemplateForeign,
+    AclFailed,
 }
 
 impl TargetDatabaseErrorKind {
@@ -78,10 +74,9 @@ impl TargetDatabaseErrorKind {
             Self::LeaseFailed => "dev-target-database-lease-failed",
             Self::DropFailed => "dev-target-database-drop-failed",
             Self::CreateFailed => "dev-target-database-create-failed",
-            Self::PrivilegesFailed => "dev-target-database-privileges-failed",
-            Self::FloorFailed => "dev-target-database-floor-failed",
-            Self::RunPlaneFailed => "dev-target-database-run-plane-failed",
-            Self::CredentialsFailed => "dev-target-database-credentials-failed",
+            Self::TemplateMissing => "dev-target-database-template-missing",
+            Self::TemplateForeign => "dev-target-database-template-foreign",
+            Self::AclFailed => "dev-target-database-acl-failed",
         }
     }
 }
@@ -188,25 +183,68 @@ impl TargetSpec {
     }
 }
 
-/// Read the privilege SQL `wamn dev up` emitted for the target database.
+/// Fingerprint of the standup a template belongs to.
+///
+/// A template is only pristine FOR THE ENVIRONMENT IT WAS TAKEN FROM. Point
+/// `dev.json` at another database or another tenant and the clone would be
+/// someone else's provisioned state, so the run refuses instead.
+///
+/// Database NAMES and identity, never the URLs: a rotated credential does not
+/// make a template stale, and a hash of a URL would say it did.
+pub fn template_fingerprint(
+    target_database: &str,
+    system_database: &str,
+    identity: &DevActivationIdentity,
+) -> String {
+    let fields = serde_json::json!({
+        "target_database": target_database,
+        "system_database": system_database,
+        "org": identity.org,
+        "project": identity.project,
+        "environment": identity.environment,
+        "tenant": identity.tenant,
+        "catalog": identity.catalog,
+        "schema": identity.schema,
+    });
+    wamn_execution_contract::canonical_json_sha256(&fields)
+}
+
+/// The database name inside a PostgreSQL URL, for fingerprinting.
+pub fn database_name(url: &str) -> Option<String> {
+    PostgresConfig::from_str(url)
+        .ok()?
+        .get_dbname()
+        .map(str::to_owned)
+}
+
+/// Read the database-level ACL `wamn dev up` captured from the healthy target.
 ///
 /// A missing file is a stale standup, not a lifecycle failure: the environment
 /// was never provisioned, or it was provisioned somewhere this `dev.json` no
 /// longer names.
-fn read_privileges(path: &Path) -> Result<String, TargetDatabaseError> {
+fn read_database_acl(path: &Path) -> Result<String, TargetDatabaseError> {
     std::fs::read_to_string(path).map_err(|source| {
         TargetDatabaseError::new(TargetDatabaseErrorKind::StaleStandup, STALE_STANDUP_REMEDY)
             .with_source(source)
     })
 }
 
-/// Drop the target database, create it empty, and replay its privileges.
+/// Drop the target database and clone it back from the pristine template.
 ///
 /// Every statement is issued on a maintenance connection to `postgres`, because
-/// a session connected to the target cannot drop it.
+/// a session connected to the target cannot drop it, and `CREATE DATABASE`
+/// cannot run inside the database it creates.
 pub async fn recreate(config: &DevConfig) -> Result<(), TargetDatabaseError> {
     let spec = TargetSpec::from_config(config)?;
-    let privileges = read_privileges(config.target_privileges_file())?;
+    let template =
+        Identifier::new(config.target_template_database().to_owned()).map_err(|source| {
+            TargetDatabaseError::new(
+                TargetDatabaseErrorKind::InvalidConfiguration,
+                "set target_template_database to a database name PostgreSQL can quote",
+            )
+            .with_source(source)
+        })?;
+    let acl = read_database_acl(config.target_database_acl_file())?;
 
     let (client, connection) = spec.maintenance.connect(NoTls).await.map_err(|source| {
         TargetDatabaseError::new(
@@ -219,55 +257,30 @@ pub async fn recreate(config: &DevConfig) -> Result<(), TargetDatabaseError> {
         let _ = connection.await;
     });
 
-    let result = recreate_with_client(&client, &spec, &privileges).await;
+    let system_database = database_name(config.system_database_url()).ok_or_else(|| {
+        TargetDatabaseError::new(
+            TargetDatabaseErrorKind::InvalidConfiguration,
+            "set system_database_url to a PostgreSQL URL with an explicit database",
+        )
+    })?;
+    let fingerprint = template_fingerprint(
+        spec.database.as_str(),
+        &system_database,
+        config.activation_identity(),
+    );
+
+    let result = recreate_with_client(&client, &spec, &template, &fingerprint, &acl).await;
     drop(client);
     handle.abort();
-    result?;
-
-    // The run plane and the workload grants live inside the database, so both
-    // went with the drop. Reconcilers, not SQL files: they are the same calls
-    // the standup makes, so there is one path and not a second copy.
-    environment::reconcile_journey_run_plane(
-        config.system_database_url(),
-        config.target_database_url(),
-    )
-    .await
-    .map_err(|source| {
-        TargetDatabaseError::new(
-            TargetDatabaseErrorKind::RunPlaneFailed,
-            "reconcile the run plane into the recreated target database",
-        )
-        .with_source(SourceError(source))
-    })?;
-
-    // Generation A, the generation the standup pinned. Re-preparing it re-grants
-    // inside the database without rotating a credential, so the URLs dev.json
-    // already carries stay valid.
-    let root = config.target_privileges_file().parent().ok_or_else(|| {
-        TargetDatabaseError::new(TargetDatabaseErrorKind::StaleStandup, STALE_STANDUP_REMEDY)
-    })?;
-    environment::prepare_journey_credentials(
-        config.system_database_url(),
-        config.target_database_url(),
-        root,
-        root,
-        HOST_SECRET_NAMESPACE,
-    )
-    .await
-    .map_err(|source| {
-        TargetDatabaseError::new(
-            TargetDatabaseErrorKind::CredentialsFailed,
-            "re-grant the workload credentials in the recreated target database",
-        )
-        .with_source(SourceError(source))
-    })?;
-    Ok(())
+    result
 }
 
 async fn recreate_with_client(
     client: &Client,
     spec: &TargetSpec,
-    privileges: &str,
+    template: &Identifier,
+    fingerprint: &str,
+    acl: &str,
 ) -> Result<(), TargetDatabaseError> {
     // The lease is session-scoped and keyed by the database name, so two dev
     // loops pointed at one target refuse rather than drop each other's database
@@ -293,7 +306,7 @@ async fn recreate_with_client(
         ));
     }
 
-    let outcome = replace_database(client, spec, privileges).await;
+    let outcome = replace_database(client, spec, template, fingerprint, acl).await;
 
     let released: bool = client
         .query_one(
@@ -322,8 +335,53 @@ async fn recreate_with_client(
 async fn replace_database(
     client: &Client,
     spec: &TargetSpec,
-    privileges: &str,
+    template: &Identifier,
+    fingerprint: &str,
+    acl: &str,
 ) -> Result<(), TargetDatabaseError> {
+    // A missing template is a stale standup and not a lifecycle failure. It is
+    // checked before the drop, so a run that cannot restore the database never
+    // destroys it.
+    let present: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)",
+            &[&template.as_str()],
+        )
+        .await
+        .map(|row| row.get(0))
+        .map_err(|source| {
+            TargetDatabaseError::new(TargetDatabaseErrorKind::StaleStandup, STALE_STANDUP_REMEDY)
+                .with_source(source)
+        })?;
+    if !present {
+        return Err(TargetDatabaseError::new(
+            TargetDatabaseErrorKind::TemplateMissing,
+            STALE_STANDUP_REMEDY,
+        ));
+    }
+
+    // The template is pristine only for the standup it was taken from. Both
+    // checks run BEFORE the drop, so a run that cannot restore the database
+    // never destroys it.
+    let stamped: Option<String> = client
+        .query_one(
+            "SELECT pg_catalog.shobj_description(oid, 'pg_database')
+               FROM pg_catalog.pg_database WHERE datname = $1",
+            &[&template.as_str()],
+        )
+        .await
+        .map(|row| row.get(0))
+        .map_err(|source| {
+            TargetDatabaseError::new(TargetDatabaseErrorKind::StaleStandup, STALE_STANDUP_REMEDY)
+                .with_source(source)
+        })?;
+    if stamped.as_deref() != Some(fingerprint) {
+        return Err(TargetDatabaseError::new(
+            TargetDatabaseErrorKind::TemplateForeign,
+            STALE_STANDUP_REMEDY,
+        ));
+    }
+
     client
         .batch_execute(&format!(
             "DROP DATABASE IF EXISTS {} WITH (FORCE)",
@@ -337,8 +395,16 @@ async fn replace_database(
             )
             .with_source(source)
         })?;
+    // The whole provisioned state arrives here: schemas, tables, functions and
+    // every object-level privilege. A clone of a pristine template is pristine,
+    // so freshness is a property of the copy rather than of a replay this
+    // module got right.
     client
-        .batch_execute(&format!("CREATE DATABASE {}", spec.database.quoted()))
+        .batch_execute(&format!(
+            "CREATE DATABASE {} TEMPLATE {}",
+            spec.database.quoted(),
+            template.quoted()
+        ))
         .await
         .map_err(|source| {
             TargetDatabaseError::new(
@@ -347,81 +413,14 @@ async fn replace_database(
             )
             .with_source(source)
         })?;
-    client
-        .batch_execute(&format!(
-            "REVOKE CONNECT ON DATABASE {} FROM PUBLIC",
-            spec.database.quoted()
-        ))
-        .await
-        .map_err(|source| {
-            TargetDatabaseError::new(
-                TargetDatabaseErrorKind::CreateFailed,
-                "grant the target credential authority to revoke PUBLIC CONNECT on its disposable database",
-            )
-            .with_source(source)
-        })?;
-    // Privileges are per database and went with the drop. Roles are
-    // cluster-level and did not, so this replays privileges only.
-    let target = {
-        let mut target = spec.maintenance.clone();
-        target.dbname(spec.database.as_str());
-        target
-    };
-    let (target_client, connection) = target.connect(NoTls).await.map_err(|source| {
+    // CREATE DATABASE copies objects and not the ACL of the database itself, so
+    // ownership, the PUBLIC revoke and the workload CONNECT grants are the one
+    // thing to re-issue.
+    client.batch_execute(acl).await.map_err(|source| {
         TargetDatabaseError::new(
-            TargetDatabaseErrorKind::PrivilegesFailed,
-            "make the recreated target database reachable with the target credential",
+            TargetDatabaseErrorKind::AclFailed,
+            "re-emit the environment database ACL with wamn dev up",
         )
         .with_source(source)
-    })?;
-    let handle = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    let applied = target_client
-        .batch_execute(privileges)
-        .await
-        .map_err(|source| {
-            TargetDatabaseError::new(
-                TargetDatabaseErrorKind::PrivilegesFailed,
-                "re-emit the environment privilege SQL with wamn dev up",
-            )
-            .with_source(source)
-        });
-    // The floor goes in on the same connection, before it is dropped. Apply
-    // reads catalog.packages, and the drop took the whole schema with it.
-    let floored = match applied {
-        Ok(()) => environment::install_journey_platform_floor(&target_client)
-            .await
-            .map_err(|source| {
-                TargetDatabaseError::new(
-                    TargetDatabaseErrorKind::FloorFailed,
-                    "install the platform floor into the recreated target database",
-                )
-                .with_source(SourceError(source))
-            }),
-        Err(error) => Err(error),
-    };
-    drop(target_client);
-    handle.abort();
-    floored
-}
-
-/// Carry an `anyhow::Error` as a `std::error::Error` source.
-///
-/// The standup functions return `anyhow::Error`, which is not itself an
-/// `Error`. Wrapping preserves the whole chain rather than flattening it to a
-/// string at the boundary.
-#[derive(Debug)]
-struct SourceError(anyhow::Error);
-
-impl fmt::Display for SourceError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, formatter)
-    }
-}
-
-impl Error for SourceError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        self.0.source()
-    }
+    })
 }
