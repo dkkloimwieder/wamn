@@ -728,10 +728,13 @@ write_checklist() {
     --argjson paths "$(jq -n --argjson pass "$PATHS_PASS" --argjson outside "$OUTSIDE" \
                         --arg tracker "$TRACKER_TOUCHED" '{pass:$pass, outside:$outside, tracker:$tracker}')" \
     --argjson steps "$STEP_RESULTS" \
+    --argjson contract "$(jq -n --arg state "${CONTRACT_STATE:-not-checked}" \
+                           --argjson misses "${CONTRACT_MISSES:-0}" \
+                           '{state:$state, deviations:$misses}')" \
     --argjson checks "$CHECKS" \
     --argjson fences "$FENCES" \
     --argjson teardown "$VERIFICATION_DB_REMOVED" \
-    '{loop:$loop, paths:$paths, steps:$steps, checks:$checks, fences:$fences,
+    '{loop:$loop, paths:$paths, contract:$contract, steps:$steps, checks:$checks, fences:$fences,
       teardown:{verification_database_removed:$teardown},
       human:{Q3:null, Q7:null, Q8:null, Q9:null, "Q10.activated":null, Q11:null,
              E1:null, E2:null, E3:null, E4:null, E5:null, E6:null, E7:null,
@@ -937,6 +940,29 @@ grade_contract() {
   note "the brief's data contract holds against $OVERLAY_ROOT"
 }
 
+# The contract check REPORTS on the live path and never gates it. A field name
+# the package declares otherwise is a deviation from what the agent was handed,
+# and naming it in one line beats nine steps producing nine refusals. It is a
+# different property from behaviour, so the steps still run and the checklist
+# carries both: the cause and the effect.
+report_contract() {
+  CONTRACT_MISSES=0
+  CONTRACT_STATE="not-checked"
+  [[ -s "$BRIEF" ]] || { note "no brief to check the contract against"; return 0; }
+  [[ -d "$DIR/worktree/$OVERLAY_ROOT" ]] || return 0
+  if grade_contract > "$DIR/grade/contract.jsonl" 2>>"$DIR/grade/http.err"; then
+    CONTRACT_STATE="holds"
+  else
+    CONTRACT_STATE="deviates"
+    CONTRACT_MISSES="$(jq -s '[.[] | select(.ok == false)] | length' \
+      "$DIR/grade/contract.jsonl" 2>/dev/null || echo 0)"
+    local first
+    first="$(jq -rs '[.[] | select(.ok == false)] | first
+      | "\(.operation // .scalar).\(.field // .key)"' "$DIR/grade/contract.jsonl" 2>/dev/null)"
+    note "contract mismatch on $first; $CONTRACT_MISSES deviation(s) from the brief"
+  fi
+}
+
 if [[ -n "$CONTRACT" ]]; then
   grade_contract || exit "$?"
   exit 0
@@ -949,6 +975,7 @@ fi
 
 grade_loop
 grade_paths
+report_contract
 grade_steps
 report_fences
 run_checks

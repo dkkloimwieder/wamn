@@ -517,5 +517,27 @@ check "and says which entry it could not read" \
   "$([[ "$(asserted "$b" | jq -r 'select(.ok == false) | .evidence' | head -1)" == \
         'the entry a name in text is not a `name` type pair' ]] && echo 0 || echo 1)"
 
+# The contract check REPORTS on a graded run and never gates it. The cause and
+# the effect belong in one checklist, so a deviation must not decide the outcome.
+fixture "$d"
+contract "$d" carrier create '{"fields":[{"path":"request_id"},{"path":"value.name","type":"text"}]}' \
+  '{"fields":[{"path":"value.carrier_id","type":"uuid"}]}'
+brief "$d" '| `carrier.create` | `arrival_time` text | `carrier_id` uuid |'
+"$GRADE" --replay "$d" > /dev/null 2>&1 || true
+check "a graded run records a contract deviation" \
+  "$([[ "$(jq -r '.contract.state' "$d/checklist-replay.json")" == deviates ]] && echo 0 || echo 1)"
+check "and counts it" \
+  "$([[ "$(jq -r '.contract.deviations' "$d/checklist-replay.json")" -ge 1 ]] && echo 0 || echo 1)"
+check "and the steps still decide the outcome" \
+  "$([[ "$(jq -r .outcome "$d/checklist-replay.json")" == PASS ]] && echo 0 || echo 1)"
+
+fixture "$d"
+contract "$d" carrier create '{"fields":[{"path":"request_id"},{"path":"value.name","type":"text"}]}' \
+  '{"fields":[{"path":"value.carrier_id","type":"uuid"}]}'
+brief "$d" '| `carrier.create` | `name` text | `carrier_id` uuid |'
+"$GRADE" --replay "$d" > /dev/null 2>&1 || true
+check "a brief the package satisfies records that it holds" \
+  "$([[ "$(jq -r '.contract.state' "$d/checklist-replay.json")" == holds ]] && echo 0 || echo 1)"
+
 printf '\n%s\n' "agent-pilot-grade --replay, --placement and --contract: $failures failure(s)"
 [[ $failures -eq 0 ]]
