@@ -1,0 +1,41 @@
+ M .beads/interactions.jsonl
+ M .beads/issues.jsonl
+ M docs/perf/2026.09/ctc8-12-fresh-auth/before-001.log
+ M docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/commands.log
+ M packages/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json
+ M packages/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json
+ M packages/client_acme_receiving/generated/platform-policy/data-access.json
+ M packages/client_acme_receiving/generated/source-map/receiving_record_receipt.json
+ M packages/client_acme_receiving/wamn.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/after-001.log
+?? docs/perf/2026.09/ctc8-12-fresh-auth/after-001/
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/exit
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/cleanup.receipt
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/component-bytes.sha256
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/failure-capture-errors.log
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/failure-events.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/failure-host-deployment.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/failure-jobs.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/failure-pods.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/failure-secret-names.txt
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/host-image-nodes.jsonl
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/host-image.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/nodes.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-001/journey/production-route.log
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-002.log
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-002/
+?? docs/perf/2026.09/ctc8-12-fresh-auth/before-summary.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/comparison.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/load-memory.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/machine-cpu.json
+?? docs/perf/2026.09/ctc8-12-fresh-auth/machine-kernel.txt
+?? docs/perf/2026.09/ctc8-12-fresh-auth/membership-001.log
+?? docs/perf/2026.09/ctc8-12-fresh-auth/membership-001/
+?? docs/perf/2026.09/ctc8-12-fresh-auth/membership.sh
+?? docs/perf/2026.09/ctc8-12-fresh-auth/quality-001.log
+?? docs/perf/2026.09/ctc8-12-fresh-auth/quality-001/
+?? docs/perf/2026.09/ctc8-12-fresh-auth/quality-002.log
+?? docs/perf/2026.09/ctc8-12-fresh-auth/quality-002/
+?? docs/perf/2026.09/ctc8-12-fresh-auth/reducer-tests.log
+?? docs/perf/2026.09/ctc8-12-fresh-auth/trace-summary.jq
+?? docs/perf/2026.09/ctc8-12-fresh-auth/trace-summary.json

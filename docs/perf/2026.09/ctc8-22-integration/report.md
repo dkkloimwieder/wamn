@@ -33,3 +33,9 @@ The workspace reports 160 test summaries. Some passing tests explicitly skip the
 The focused run uses the [unchanged capture script](quality.sh), with one fresh PostgreSQL 18 server per stateful suite. Identity, PAT, route authentication, nested permissions, HTTP connections, and blobstore candidates pass. The capture records [exit 0](quality-001/exit) and [container cleanup](quality-001/cleanup.log).
 
 No benchmark or deployed-cluster rerun occurred during integration. The [existing deployed membership proof](../ctc8-12-fresh-auth/membership-001/journey/membershipproof.receipt) remains attributed to `a9e23b54`, not the integration commit.
+
+## Main preservation
+
+Main advanced from `e9b315ac` to `ac335eac` by fast-forward. The [merge receipt](merge-001/result) records unchanged contents for all 3,246 files that were modified or untracked before that step. Git staged only 3,244 files that already matched the incoming commit exactly.
+
+The remaining two edited files were Beads exports. Their contents also stayed unchanged during the fast-forward. The [before](merge-001/before.status) and [after](merge-001/after.status) records preserve the checkout state. No commit was rewritten, and no push occurred.
