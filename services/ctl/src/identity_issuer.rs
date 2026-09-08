@@ -4,6 +4,7 @@
 //! does not install the Secret or access session signing keys. Retirement
 //! requires a live session on the replacement generation.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -16,8 +17,8 @@ use tokio_postgres::{Client, Config, GenericClient, NoTls, Row};
 use url::Url;
 use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::identity_issuer::{
-    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES,
-    identity_issuer_generation_role, parse_identity_issuer_url,
+    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_READ_COLUMNS, IDENTITY_ISSUER_ROLE,
+    IDENTITY_ISSUER_TABLES, identity_issuer_generation_role, parse_identity_issuer_url,
     prepare_identity_issuer_generation_sql, retire_identity_issuer_generation_sql,
     validate_identity_issuer,
 };
@@ -235,6 +236,7 @@ enum Grants {
     None,
     Generation,
     Stable,
+    StableBeforePrepare,
 }
 
 async fn exact_grants(
@@ -245,10 +247,30 @@ async fn exact_grants(
     let rows = client
         .query(sql::role_database_acl_inventory_sql(), &[&role])
         .await?;
+    let schemas: BTreeSet<_> = std::iter::once("identity")
+        .chain(
+            IDENTITY_ISSUER_READ_COLUMNS
+                .iter()
+                .map(|(schema, _, _)| *schema),
+        )
+        .collect();
+    // The foundation shipped exactly identity USAGE plus key-table CRUD.
+    // Recognize that complete old surface only at preparation preflight;
+    // a partial upgrade or any extra grant remains unexpected drift.
+    let foundation = matches!(expected, Grants::StableBeforePrepare)
+        && rows.len() == 1 + IDENTITY_ISSUER_TABLES.len() * 4;
     let count = match expected {
         Grants::None => 0,
         Grants::Generation => 1,
-        Grants::Stable => 9,
+        Grants::StableBeforePrepare if foundation => 1 + IDENTITY_ISSUER_TABLES.len() * 4,
+        Grants::Stable | Grants::StableBeforePrepare => {
+            schemas.len()
+                + IDENTITY_ISSUER_TABLES.len() * 4
+                + IDENTITY_ISSUER_READ_COLUMNS
+                    .iter()
+                    .map(|(_, _, columns)| columns.len())
+                    .sum::<usize>()
+        }
     };
     anyhow::ensure!(
         rows.len() == count
@@ -265,15 +287,30 @@ async fn exact_grants(
                                 && object == IDENTITY_ISSUER_DATABASE
                                 && privilege == "CONNECT"
                         }
-                        Grants::Stable => {
-                            schema == "identity"
-                                && (kind == "schema"
-                                    && object == "identity"
-                                    && privilege == "USAGE"
-                                    || kind == "relation"
-                                        && IDENTITY_ISSUER_TABLES.contains(&object)
-                                        && ["SELECT", "INSERT", "UPDATE", "DELETE"]
-                                            .contains(&privilege))
+                        Grants::Stable | Grants::StableBeforePrepare => {
+                            kind == "schema"
+                                && if foundation {
+                                    schema == "identity"
+                                } else {
+                                    schemas.contains(schema)
+                                }
+                                && object == schema
+                                && privilege == "USAGE"
+                                || kind == "relation"
+                                    && schema == "identity"
+                                    && IDENTITY_ISSUER_TABLES.contains(&object)
+                                    && ["SELECT", "INSERT", "UPDATE", "DELETE"].contains(&privilege)
+                                || !foundation
+                                    && kind == "column"
+                                    && privilege == "SELECT"
+                                    && IDENTITY_ISSUER_READ_COLUMNS.iter().any(
+                                        |(expected_schema, table, columns)| {
+                                            schema == *expected_schema
+                                                && columns.iter().any(|column| {
+                                                    object == format!("{table}.{column}")
+                                                })
+                                        },
+                                    )
                         }
                     }
             }),
@@ -295,7 +332,7 @@ async fn exact_grants(
     Ok(())
 }
 
-async fn stable(client: &(impl GenericClient + Sync)) -> anyhow::Result<()> {
+async fn stable(client: &(impl GenericClient + Sync), before_prepare: bool) -> anyhow::Result<()> {
     if let Some(row) = state(client, IDENTITY_ISSUER_ROLE).await? {
         let members: Vec<String> = row.get("member_roles");
         anyhow::ensure!(
@@ -320,7 +357,16 @@ async fn stable(client: &(impl GenericClient + Sync)) -> anyhow::Result<()> {
                 }),
             "identity stable role has unexpected attributes or memberships"
         );
-        exact_grants(client, IDENTITY_ISSUER_ROLE, Grants::Stable).await?;
+        exact_grants(
+            client,
+            IDENTITY_ISSUER_ROLE,
+            if before_prepare {
+                Grants::StableBeforePrepare
+            } else {
+                Grants::Stable
+            },
+        )
+        .await?;
         for member in members {
             exact_grants(client, &member, Grants::Generation).await?;
         }
@@ -356,7 +402,7 @@ async fn prepare(
     let other_role = identity_issuer_generation_role(&args.issuer, generation.other())?;
     let transaction = admin.transaction().await?;
     public_floor(&transaction).await?;
-    stable(&transaction).await?;
+    stable(&transaction, true).await?;
     let target = state(&transaction, &role).await?;
     let other = state(&transaction, &other_role).await?;
     anyhow::ensure!(
@@ -389,6 +435,8 @@ async fn prepare(
         )?)
         .await
         .map_err(|_| anyhow::anyhow!("prepare identity database credential failed"))?;
+    // The accepted old surface must have converged completely before commit.
+    stable(&transaction, false).await?;
     transaction.commit().await?;
     let publish = async {
         let mut connection_config = config.clone();
@@ -400,7 +448,7 @@ async fn prepare(
         let observed = observed.context("authenticate prepared identity credential")?;
         anyhow::ensure!(observed.get::<_, String>(0) == role && observed.get::<_, String>(1) == IDENTITY_ISSUER_DATABASE,
             "prepared identity credential authenticated with an unexpected scope");
-        stable(admin).await?;
+        stable(admin, false).await?;
         let prepared = state(admin, &role).await?.context("prepared identity credential disappeared")?;
         anyhow::ensure!(active(&prepared) && prepared.get::<_, Option<String>>("valid_until").as_deref() == Some(expires_at.as_str()),
             "prepared identity credential has an unexpected state");
@@ -458,7 +506,7 @@ async fn retire(
     let replacement_role = identity_issuer_generation_role(issuer, generation.other())?;
     let transaction = admin.transaction().await?;
     public_floor(&transaction).await?;
-    stable(&transaction).await?;
+    stable(&transaction, false).await?;
     let old = state(&transaction, &role)
         .await?
         .context("identity credential does not exist")?;

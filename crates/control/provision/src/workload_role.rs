@@ -54,6 +54,10 @@ const EVENT_MATERIALIZER_GENERATION_PREFIX: &str = "wamn_materializer";
 pub const REGISTRY_READER_ROLE: &str = "wamn_registry_reader";
 /// Stable NOLOGIN role used by control-identity reader generations.
 pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
+/// Stable NOLOGIN role for the identity service's environment role reads.
+pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
+/// Keep the 40-hex scope digest and A/B suffix within PostgreSQL's 63 bytes.
+const SESSION_ROLE_READER_GENERATION_PREFIX: &str = "wamn_session_roles";
 
 /// The shared NOLOGIN group role every non-guest tenant-floor arm targets
 /// (`wamn-0h0g.22.17`).
@@ -93,6 +97,8 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// and `identity.project_roles` — one
 /// family for both is how one role gets widened to the union. Only the
 /// families land here; the grants, Secrets and consumers are those two beads.
+/// `wamn-ctc8.15.2` adds a dedicated project-environment session role reader;
+/// it carries no runtime authority class and no operation-permission read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
     EffectWriter,
@@ -107,6 +113,7 @@ pub enum WorkloadRoleFamily {
     EventMaterializer,
     RegistryReader,
     IdentityReader,
+    SessionRoleReader,
 }
 
 impl WorkloadRoleFamily {
@@ -116,7 +123,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::EffectWriter,
         Self::ControlAuthor,
         Self::ManagementAdmitter,
@@ -129,6 +136,7 @@ impl WorkloadRoleFamily {
         Self::EventMaterializer,
         Self::RegistryReader,
         Self::IdentityReader,
+        Self::SessionRoleReader,
     ];
 
     /// Stable NOLOGIN ACL role inherited by this family's generations.
@@ -146,6 +154,7 @@ impl WorkloadRoleFamily {
             Self::EventMaterializer => EVENT_MATERIALIZER_ROLE,
             Self::RegistryReader => REGISTRY_READER_ROLE,
             Self::IdentityReader => IDENTITY_READER_ROLE,
+            Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
         }
     }
 
@@ -155,7 +164,8 @@ impl WorkloadRoleFamily {
     /// fits the PostgreSQL identifier cap once the scope digest and generation
     /// suffix are appended. `ManagementAdmitter` (`wamn-0h0g.13.62`),
     /// `ExecutorPlatform` and `EventMaterializer` (`wamn-0fqa`) do not, so each
-    /// carries its own shorter frozen prefix. `RegistryReader` and
+    /// carries its own shorter frozen prefix. `SessionRoleReader` also needs
+    /// a shorter prefix. `RegistryReader` and
     /// `IdentityReader` (`wamn-0h0g.13.63`) are the first families to fit
     /// EXACTLY: their 20-byte role names mint 63-byte logins, the largest
     /// PostgreSQL stores untruncated, so they take the wildcard arm and the
@@ -165,6 +175,7 @@ impl WorkloadRoleFamily {
             Self::ManagementAdmitter => MANAGEMENT_ADMITTER_GENERATION_PREFIX,
             Self::ExecutorPlatform => EXECUTOR_PLATFORM_GENERATION_PREFIX,
             Self::EventMaterializer => EVENT_MATERIALIZER_GENERATION_PREFIX,
+            Self::SessionRoleReader => SESSION_ROLE_READER_GENERATION_PREFIX,
             _ => self.acl_role(),
         }
     }
@@ -178,6 +189,7 @@ impl WorkloadRoleFamily {
             | Self::ServiceReader
             | Self::ExecutorPlatform
             | Self::HttpAdmitter
+            | Self::SessionRoleReader
             | Self::EventMaterializer => WorkloadRoleScopeKind::ProjectEnvironment,
             // Scope follows the RESOURCE PLANE, not the consumer's home: these
             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
@@ -211,7 +223,7 @@ impl WorkloadRoleFamily {
     ///   its four ledgers through PER-RELATION arms naming it directly in
     ///   `deploy/sql/run-state.sql` instead — not through this group.
     ///
-    /// Everything else — the seven families whose credentials reach a
+    /// Everything else — the eight families whose credentials reach a
     /// project-environment or tenant database, are not the guest, and are not
     /// under that guard — is a member. `EventMaterializer` exercises that edge
     /// through its two catalog reads. `ServiceReader` remains the empty-surface
@@ -272,7 +284,7 @@ impl WorkloadRoleFamily {
 
     /// Which body this family's credential Secret carries.
     ///
-    /// A closed three-value vocabulary of SHAPES, not a per-family list: an
+    /// A closed vocabulary of SHAPES, not a per-family list: an
     /// admitted family lands on the plain single-`url` Secret every consumer
     /// already mounts through `secretKeyRef … key: url`, with no edit here.
     pub fn secret_body_kind(self) -> WorkloadSecretBodyKind {
@@ -282,6 +294,8 @@ impl WorkloadRoleFamily {
             // The guest credential IS the tenant authority, so its Secret
             // carries the tenant key that keys every governed predicate.
             Self::App => WorkloadSecretBodyKind::TenantUrl,
+            // The credential and trusted target coordinates publish atomically.
+            Self::SessionRoleReader => WorkloadSecretBodyKind::SessionTarget,
             _ => WorkloadSecretBodyKind::Url,
         }
     }
@@ -314,6 +328,7 @@ impl WorkloadRoleFamily {
             Self::EventMaterializer => b"wamn.event-materializer.scope.v0.1",
             Self::RegistryReader => b"wamn.registry-reader.scope.v0.1",
             Self::IdentityReader => b"wamn.identity-reader.scope.v0.1",
+            Self::SessionRoleReader => b"wamn.session-role-reader.scope.v0.1",
         }
     }
 }
@@ -351,6 +366,8 @@ pub enum WorkloadSecretBodyKind {
     TenantUrl,
     /// The frozen effect-writer `credential.json` document.
     EffectWriterCredential,
+    /// One validated environment target and credential in `target.json`.
+    SessionTarget,
 }
 
 /// The three admitted provisioning scope shapes.
@@ -648,8 +665,8 @@ mod tests {
     }
 
     /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
-    /// `wamn-0h0g.13.63`: ten to twelve).
-    const FAMILIES: [WorkloadRoleFamily; 12] = [
+    /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen).
+    const FAMILIES: [WorkloadRoleFamily; 13] = [
         WorkloadRoleFamily::EffectWriter,
         WorkloadRoleFamily::ControlAuthor,
         WorkloadRoleFamily::ManagementAdmitter,
@@ -662,11 +679,12 @@ mod tests {
         WorkloadRoleFamily::EventMaterializer,
         WorkloadRoleFamily::RegistryReader,
         WorkloadRoleFamily::IdentityReader,
+        WorkloadRoleFamily::SessionRoleReader,
     ];
 
     #[test]
     fn family_set_and_scope_classes_are_closed() {
-        // A thirteenth variant fails to compile here as well as in the
+        // A fourteenth variant fails to compile here as well as in the
         // implementation, so the pinned vocabulary cannot silently grow.
         for (index, family) in FAMILIES.into_iter().enumerate() {
             let pinned = match family {
@@ -682,6 +700,7 @@ mod tests {
                 WorkloadRoleFamily::EventMaterializer => 9,
                 WorkloadRoleFamily::RegistryReader => 10,
                 WorkloadRoleFamily::IdentityReader => 11,
+                WorkloadRoleFamily::SessionRoleReader => 12,
             };
             assert_eq!(index, pinned, "{family:?}");
         }
@@ -700,6 +719,7 @@ mod tests {
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Control,
                 WorkloadRoleScopeKind::Control,
+                WorkloadRoleScopeKind::ProjectEnvironment,
             ],
         );
         assert_eq!(
@@ -717,6 +737,7 @@ mod tests {
                 "wamn_event_materializer",
                 "wamn_registry_reader",
                 "wamn_identity_reader",
+                "wamn_session_role_reader",
             ],
         );
     }
@@ -841,6 +862,15 @@ mod tests {
                     project: "p",
                     environment: "dev",
                     database: "control",
+                },
+            ),
+            (
+                WorkloadRoleFamily::SessionRoleReader,
+                WorkloadRoleScope::ProjectEnvironment {
+                    org: "o",
+                    project: "p",
+                    environment: "dev",
+                    database: "db",
                 },
             ),
         ];

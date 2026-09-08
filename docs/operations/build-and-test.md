@@ -1221,7 +1221,8 @@ both deployed runs and the workspace sweep at their recorded source commits.
 
 This foundation gate covers `wamn-ctc8.15.1`.
 The separate `wamn-identity` service exposes HTTPS JWKS and health routes.
-It does not expose `/session`, `/authoring`, or host execution.
+With no session targets, it does not expose `/session`.
+It never exposes `/authoring` or host execution.
 Signing keys stay in the system database under a dedicated identity credential.
 The gate observes public keys only and receives no database credential.
 
@@ -1334,6 +1335,194 @@ Its public key remains available for 930 seconds after that cutoff.
 The `retire` command removes expired generations.
 The `remove --kid` command removes a compromised key immediately and selects no replacement.
 Neither command creates a session record.
+
+### `[IDENTITY-SESSION]` human PAT exchange
+
+This gate covers `wamn-ctc8.15.2` on the separate identity service.
+Configured audiences enable `POST /session` for human personal access tokens (PATs).
+Each exchange checks the full PAT, exact environment membership, and current database instance.
+It reads that environment's active user and roles.
+The service signs a token without creating a session record.
+These commands define the required checks, not a recorded passing result.
+
+#### Deterministic checks
+
+Run the target, credential, request, response, CLI, and chart checks:
+
+```bash
+cargo test --locked --offline -p wamn-control-provision --lib session_
+cargo test --locked --offline -p wamn-control-provision --test session_target
+cargo test --locked --offline -p wamn-ctl --lib session_reader
+cargo test --locked --offline -p wamn-ctl --test session_audience_live \
+  compiled_session_reader_refuses_invalid_tenants_before_io
+cargo test --locked --offline -p wamn-identity --lib
+cargo test --locked --offline -p wamn-proof-integration --lib identity_session_proof::tests
+cargo test --locked --offline -p wamn-proof-system --test deploy_platform_inventory
+```
+
+The chart check requires Helm.
+Keep the `[IDENTITY-JWKS]` token and public-key cache checks in the same validation set.
+
+#### Disposable database checks
+
+Each command requires a separate, fresh PostgreSQL 18 server and its administrator URL.
+Never use a shared server.
+These fixtures replace schemas, create databases, and change cluster-wide roles and public connection privileges.
+The role-reader and issuer grant suites also require `psql`.
+For the first command, create `wamn_session_role_reader_proof` and set `WAMN_OWNED_READER_PG18_URL` to its URL.
+For each remaining command, create `wamn_system` on a new server and replace `WAMN_OWNED_SYSTEM_PG18_URL`.
+
+```bash
+WAMN_SESSION_ROLE_READER_PG_URL="$WAMN_OWNED_READER_PG18_URL" \
+WAMN_SESSION_ROLE_READER_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-control-provision \
+  --test session_role_reader_live -- --include-ignored --nocapture --test-threads=1
+WAMN_IDENTITY_ISSUER_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_IDENTITY_ISSUER_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-control-provision \
+  --test identity_issuer_live -- --include-ignored --nocapture --test-threads=1
+WAMN_IDENTITY_ISSUER_CLI_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_IDENTITY_ISSUER_CLI_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-ctl \
+  --test identity_issuer_live -- --include-ignored --nocapture --test-threads=1
+WAMN_SESSION_AUDIENCE_CLI_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_SESSION_AUDIENCE_CLI_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-ctl \
+  --test session_audience_live -- --include-ignored --nocapture --test-threads=1
+WAMN_SESSION_EXCHANGE_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_SESSION_EXCHANGE_ALLOW_SCHEMA_RESET=1 \
+WAMN_SESSION_EXCHANGE_CTL_BIN="$PWD/target/debug/wamn-ctl" \
+  cargo test --locked --offline -p wamn-identity \
+  --test session_exchange -- --include-ignored --nocapture --test-threads=1
+```
+
+Before the exchange suite, build its actual retirement CLI in the same worktree:
+
+```bash
+cargo build --locked --offline -p wamn-ctl --bin wamn-ctl
+```
+
+The CLI fixture creates `wamn-db-sessioncli--receiving--dev--k3m9x2p7` and `wamn-db-sessioncli--receiving--dev--p7x2m9k3`.
+The exchange fixture creates three databases with suffix `s3ss10n2`:
+`wamn-db-acme--receiving--dev--s3ss10n2`, `wamn-db-acme--receiving--prod--s3ss10n2`, and `wamn-db-other--receiving--dev--s3ss10n2`.
+The grant checks cover the exact added columns, denied authority, and A/B credential lifecycle.
+The CLI check covers bound Secret output, publication rollback, and retirement with a live replacement connection.
+The HTTPS check covers changed membership, PAT status, tenant status, roles, and database incarnation on the next exchange.
+It also checks malformed input, original validation time, bounded database waits, and unchanged persisted rows.
+
+#### Deployed exchange gate
+
+Run the deployed gate from a clean worktree with a new evidence directory:
+
+```bash
+tools/identity-jwks-journey-run --session-exchange --apply \
+  --evidence-dir docs/perf/2026.09/ctc8-15-2-session-exchange/deployed-001
+```
+
+The runner builds the canonical `identity` and `gates` images.
+It installs the actual chart on its own kind cluster.
+It uses its own PostgreSQL 18 server and temporary test certificate authority.
+All five foundation JWKS stages run before session targets are configured.
+The session stages provision three audience Secrets through the actual CLI and mint fixture PATs through the production identity library.
+The first Job checks signed development claims.
+It rejects missing production membership, missing other-organization membership, and a service PAT.
+After membership removal, the second Job checks refusal on the next exchange.
+The observer receives only its PAT cases and public certificate authority, without database or signing credentials.
+Its receipt ends with `IDENTITY_SESSION result=pass cases=<n> host_admission=not_proven` only after its checks pass.
+Evidence excludes raw PATs, signing keys, and database credentials.
+The runner removes only its own cluster, images, and temporary credentials.
+This gate does not prove host session admission, fresh-only operation enforcement, or the two-host proof in `wamn-ctc8.15.3`.
+
+#### Session target rollout
+
+Keep the foundation issuer, signing-key, serving-certificate, and public database privilege prerequisites above.
+Existing issuer credentials require convergence to the expanded column grants defined by `IDENTITY_ISSUER_READ_COLUMNS` before exchanges are enabled.
+The updated `provision-identity-issuer` command accepts the exact foundation grants during preparation and checks the expanded grants before commit.
+Those reads cover principals, PAT verification fields, exact environment memberships, and registry environment instances.
+The two signing-key tables retain their existing grants.
+Do not widen host or authoring Gate credentials.
+
+If issuer generation A is active, prepare generation B with the updated CLI:
+
+```bash
+wamn-ctl provision-identity-issuer --issuer "$WAMN_IDENTITY_ISSUER" \
+  --prepare-generation b --emit-secret /secure/identity-db.json
+```
+
+Apply the replacement issuer Secret and follow the foundation service restart and issuer retirement procedure above.
+
+Register and provision the project environment before preparing its session reader credential.
+Grant the human explicit environment membership and provide that database's active tenant user and roles before exchange.
+Supply `WAMN_SYSTEM_ADMIN_URL` and `WAMN_TARGET_ADMIN_DATABASE_URL` through the provisioning process's protected environment.
+The target administrator URL must name the exact physical database derived from the stored registry instance suffix.
+Keep administrator URLs out of command arguments, logs, and deployment values.
+Set `WAMN_SESSION_TENANT` to the explicit trusted tenant identifier for that database.
+Tenant identifiers use the existing text rule, which accepts `t1`.
+They are not inferred from the caller or registry.
+
+```bash
+wamn-ctl provision-project-env --org "$WAMN_ORG" --project "$WAMN_PROJECT" \
+  --env "$WAMN_ENV" --tenant "$WAMN_SESSION_TENANT" --namespace wamn-system \
+  --prepare-session-role-reader-generation a \
+  --emit-session-role-reader-secret /secure/session-target.json
+kubectl --context "$WAMN_CONTEXT" -n wamn-system apply -f /secure/session-target.json
+```
+
+The CLI emits a mode-0600 Secret file containing `stringData["target.json"]` through atomic publication.
+That document binds the organization, project, environment, stored instance suffix, tenant, physical database, and dedicated reader generation URL.
+Its audience is `urn:wamn:project-env:<org>:<project>:<env>:<instance_suffix>`.
+The `SessionRoleReader` credential reads only `users(tenant_id,id,status)` and `user_roles(tenant_id,user_id,role_name)` in `app_system`.
+It cannot write roles or read signing keys.
+
+Set `WAMN_SESSION_TARGET_SECRET` to the emitted Secret name.
+Mount each prepared target Secret explicitly in the identity chart:
+
+```bash
+helm upgrade --install wamn-identity deploy/platform/identity \
+  --kube-context "$WAMN_CONTEXT" --namespace wamn-system \
+  -f deploy/platform/values-identity-default.yaml \
+  --set-string issuer="$WAMN_IDENTITY_ISSUER" \
+  --set-string tlsSecret="$WAMN_IDENTITY_TLS_SECRET" \
+  --set-string "sessionTargetSecrets[0]=$WAMN_SESSION_TARGET_SECRET"
+```
+
+Repeat the indexed `sessionTargetSecrets` entry for each distinct audience.
+All configured organizations share the same exact HTTPS issuer URL.
+The service reads mounted files at startup and has no Kubernetes discovery authority.
+An empty `sessionTargetSecrets` list disables `/session`.
+Keep signing credentials and target Secrets out of host and authoring Gate deployments.
+
+#### Reader credential rotation
+
+The service retains one scoped database connection for each active configured environment.
+It opens that connection only after valid PAT, membership, and current-instance checks.
+Each exchange still reads the environment's user and roles afresh.
+Restart identity after replacing its reader credential Secret so it reads the new target file.
+Do not mount both generation documents for the same audience.
+
+If reader generation A is active, prepare and install generation B:
+
+```bash
+wamn-ctl provision-project-env --org "$WAMN_ORG" --project "$WAMN_PROJECT" \
+  --env "$WAMN_ENV" --tenant "$WAMN_SESSION_TENANT" --namespace wamn-system \
+  --prepare-session-role-reader-generation b \
+  --emit-session-role-reader-secret /secure/session-target.json
+kubectl --context "$WAMN_CONTEXT" -n wamn-system apply -f /secure/session-target.json
+kubectl --context "$WAMN_CONTEXT" -n wamn-system rollout restart deployment/wamn-identity
+kubectl --context "$WAMN_CONTEXT" -n wamn-system rollout status deployment/wamn-identity --timeout=180s
+```
+
+Before retirement, complete one successful human PAT exchange for the rotated audience through the replacement identity process.
+Keep that process running while the provisioner retires A:
+
+```bash
+wamn-ctl provision-project-env --org "$WAMN_ORG" --project "$WAMN_PROJECT" \
+  --env "$WAMN_ENV" --tenant "$WAMN_SESSION_TENANT" \
+  --retire-session-role-reader-generation a
+```
+
+The existing retirement rule requires a live replacement database connection and drains the old generation's connections.
+An idle restart alone does not satisfy that rule.
 
 ### `[WAMN-DEV-LIVE]` — clean twelve-stage product command and cleanup
 

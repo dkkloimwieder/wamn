@@ -16,8 +16,37 @@ use crate::CredentialGeneration;
 pub const IDENTITY_ISSUER_ROLE: &str = "wamn_identity_issuer";
 /// Exact database served by the identity authority.
 pub const IDENTITY_ISSUER_DATABASE: &str = "wamn_system";
-/// The only tables accessible to the signing authority in this foundation.
+/// The only tables the signing authority may mutate.
 pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_state"];
+/// Fresh PAT, membership and current environment-incarnation inputs to exchange.
+pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 4] = [
+    (
+        "identity",
+        "principals",
+        &["id", "kind", "subject", "display_name", "status"],
+    ),
+    (
+        "identity",
+        "pats",
+        &[
+            "principal_id",
+            "token_prefix",
+            "token_hash",
+            "revoked_at",
+            "expires_at",
+        ],
+    ),
+    (
+        "identity",
+        "project_env_memberships",
+        &["principal_id", "org", "project", "env"],
+    ),
+    (
+        "registry",
+        "project_envs",
+        &["org", "project", "env", "instance_suffix"],
+    ),
+];
 
 /// Which input predicate refused an identity credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,18 +249,31 @@ pub fn parse_identity_issuer_url(
     ))
 }
 
-/// Create the stable role and grant only schema use and key-table mutations.
+/// Grant key-table mutations and the fresh system inputs required by exchange.
 ///
 /// The driver must first refuse unexpected grants, ownership, or memberships.
 /// Live tests exercise the resulting permissions, not the SQL text.
 pub fn grant_identity_issuer_surface_sql() -> String {
-    format!(
-        "{} GRANT USAGE ON SCHEMA identity TO {role}; \
+    let role = quote_ident(IDENTITY_ISSUER_ROLE);
+    let mut sql = format!(
+        "{} GRANT USAGE ON SCHEMA identity, registry TO {role}; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON \
            identity.session_keys, identity.session_signing_state TO {role};",
         crate::sql::ensure_acl_role_sql(IDENTITY_ISSUER_ROLE),
-        role = quote_ident(IDENTITY_ISSUER_ROLE),
-    )
+    );
+    for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {
+        let columns = columns
+            .iter()
+            .map(|column| quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        sql.push_str(&format!(
+            " GRANT SELECT ({columns}) ON TABLE {schema}.{table} TO {role};",
+            schema = quote_ident(schema),
+            table = quote_ident(table),
+        ));
+    }
+    sql
 }
 
 /// Prepare an inactive login after the driver checks its exact role state.

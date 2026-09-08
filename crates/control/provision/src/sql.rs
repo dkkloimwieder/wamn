@@ -10,7 +10,7 @@
 use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
 use crate::workload_role::{
     EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, MANAGEMENT_ADMITTER_ROLE,
-    PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
+    PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
 };
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
@@ -837,6 +837,41 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
     sql
 }
 
+/// Converge the session role reader onto six columns and no execution authority.
+///
+/// Apply after the project schemas exist. The existing platform RLS arm admits
+/// these reads; consumers must bind the target tenant explicitly. Revoke column
+/// ACLs as well as table ACLs so replay removes a widened read or write.
+pub fn grant_session_role_reader_surface_sql() -> String {
+    let role = quote_ident(SESSION_ROLE_READER_ROLE);
+    format!(
+        "{ensure} \
+         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
+         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
+         DO $session_column_acl$ DECLARE target record; BEGIN \
+           FOR target IN \
+             SELECT n.nspname, c.relname, a.attname \
+               FROM pg_catalog.pg_attribute a \
+               JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+              WHERE n.nspname IN ('catalog', 'app_system', 'wamn_run', 'wamn_authority') \
+                AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
+                AND a.attnum > 0 AND NOT a.attisdropped AND a.attacl IS NOT NULL \
+           LOOP \
+             EXECUTE format('REVOKE ALL PRIVILEGES (%I) ON TABLE %I.%I FROM %I', \
+               target.attname, target.nspname, target.relname, {role_literal}); \
+           END LOOP; \
+         END $session_column_acl$; \
+         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
+         GRANT USAGE ON SCHEMA app_system TO {role}; \
+         GRANT SELECT (tenant_id, id, status) ON TABLE app_system.users TO {role}; \
+         GRANT SELECT (tenant_id, user_id, role_name) ON TABLE app_system.user_roles TO {role};",
+        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
+        role_literal = quote_literal(SESSION_ROLE_READER_ROLE),
+    )
+}
+
 /// Converge the stable executor-platform role to its exact claim surface
 /// (`wamn-0h0g.22.37`).
 ///
@@ -1119,6 +1154,7 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
             Some(grant_executor_platform_surface_sql("wamn_run"))
         }
         WorkloadRoleFamily::HttpAdmitter => Some(grant_http_admitter_surface_sql("wamn_run")),
+        WorkloadRoleFamily::SessionRoleReader => Some(grant_session_role_reader_surface_sql()),
         WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
         WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
         WorkloadRoleFamily::EventMaterializer => {

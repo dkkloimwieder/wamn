@@ -13,6 +13,7 @@ mod claim_law_live;
 pub mod dashproof;
 mod hot_route_trace;
 pub mod identity_keys_proof;
+pub mod identity_session_proof;
 mod measurement_schema;
 pub mod membershipproof;
 pub mod provisionbench;

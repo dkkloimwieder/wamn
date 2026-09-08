@@ -175,7 +175,7 @@ struct FamilyReach {
     routines: &'static [&'static str],
 }
 
-/// The nine families whose credentials reach a project-environment database.
+/// The ten families whose credentials reach a project-environment database.
 ///
 /// `ControlAuthor`, `RegistryReader` and `IdentityReader` are absent because
 /// their scope is [`WorkloadRoleScopeKind::Control`]: their credentials reach
@@ -183,7 +183,7 @@ struct FamilyReach {
 /// different plane. `wamn_scenario_author` is absent because it is a host group,
 /// not a [`WorkloadRoleFamily`] — it has no generation lifecycle to mint a
 /// principal from.
-const MATRIX: [FamilyReach; 9] = [
+const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
@@ -292,6 +292,14 @@ const MATRIX: [FamilyReach; 9] = [
             "catalog.connection_requirements|SELECT|table",
             "catalog.effective_release_packages|SELECT|table",
             "catalog.wirings|SELECT|table",
+        ],
+        routines: &[],
+    },
+    FamilyReach {
+        family: WorkloadRoleFamily::SessionRoleReader,
+        relations: &[
+            "app_system.user_roles|SELECT|column",
+            "app_system.users|SELECT|column",
         ],
         routines: &[],
     },
@@ -861,6 +869,11 @@ fn the_http_admitter_family_is_refused_the_other_families_operations() {
 }
 
 #[test]
+fn the_session_role_reader_is_refused_the_other_families_operations() {
+    assert_family_row(WorkloadRoleFamily::SessionRoleReader);
+}
+
+#[test]
 fn the_dispatch_reader_family_is_refused_the_other_families_operations() {
     assert_family_row(WorkloadRoleFamily::DispatchReader);
 }
@@ -950,12 +963,14 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
 /// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 5] = [
+const CONTAINED_PAIRS: [(&str, &str); 7] = [
     ("app", "event-materializer"),
     ("app", "http-admitter"),
     ("app", "retention"),
+    ("app", "session-role-reader"),
     ("effect-writer", "dispatch-reader"),
     ("executor-platform", "dispatch-reader"),
+    ("http-admitter", "session-role-reader"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -1428,7 +1443,7 @@ fn the_run_plane_guards_are_still_public_execute() {
 /// admitting or demoting a family costs one deliberate edit here.
 ///
 /// Sorted, because the arm compares against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
     "wamn_dispatch_reader",
     "wamn_event_materializer",
     "wamn_executor_platform",
@@ -1436,11 +1451,12 @@ const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_management_admitter",
     "wamn_run_retention",
     "wamn_service_reader",
+    "wamn_session_role_reader",
 ];
 
 /// THE MEMBER SET OF `wamn_platform`, FROM `pg_auth_members`.
 ///
-/// It is exactly the seven derived workload families. `wamn_scenario_author`
+/// It is exactly the eight derived workload families. `wamn_scenario_author`
 /// has no exception: it has no production credential or project-plane read.
 #[test]
 fn the_platform_group_members_are_exactly_the_derived_families() {

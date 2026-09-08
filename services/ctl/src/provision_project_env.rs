@@ -74,6 +74,7 @@ use tokio_postgres::{Config as PgConfig, GenericClient, NoTls};
 use url::Url;
 
 use wamn_control_provision::SystemReader;
+use wamn_control_provision::session_target::{SessionTarget, validate_session_tenant_id};
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EffectWriterCredentialScope,
@@ -187,7 +188,12 @@ pub struct ProvisionProjectEnvArgs {
     /// Explicit target project-database admin URL for the generation actions that
     /// address the project-env database (effect-writer, management-admitter).
     /// Provisioning authority only: never persisted or emitted.
-    #[arg(long, value_name = "URL")]
+    #[arg(
+        long,
+        env = "WAMN_TARGET_ADMIN_DATABASE_URL",
+        hide_env_values = true,
+        value_name = "URL"
+    )]
     pub target_admin_database_url: Option<String>,
 
     /// The workload-generation actions and their credential Secrets, DERIVED
@@ -1117,6 +1123,9 @@ async fn run_workload_action(
         environment,
         tenant,
     } = identity;
+    if family == WorkloadRoleFamily::SessionRoleReader {
+        validate_session_tenant_id(tenant)?;
+    }
     let triple = Triple::new(org, project, environment);
     let system_url = args
         .system_database_url
@@ -1127,7 +1136,7 @@ async fn run_workload_action(
     // already names; every other family addresses the project environment's own
     // database, whose instance suffix is READ from the registry rather than
     // typed. One derivation over the scope grain, not a branch per family.
-    let (admin_url, database, admin_config) = if family.scope_kind()
+    let (admin_url, database, admin_config, instance) = if family.scope_kind()
         == WorkloadRoleScopeKind::Control
     {
         anyhow::ensure!(
@@ -1139,7 +1148,7 @@ async fn run_workload_action(
             .get_dbname()
             .expect("named_database_config requires a database name")
             .to_string();
-        (system_url, database, config)
+        (system_url, database, config, None)
     } else {
         let instance = read_project_env_instance(system_url, &triple).await?;
         let database = project_env_database_name(org, project, environment, &instance);
@@ -1147,7 +1156,7 @@ async fn run_workload_action(
             format!("{label} generation actions require --target-admin-database-url")
         })?;
         let config = exact_project_database_config(admin_url, &database)?;
-        (admin_url, database, config)
+        (admin_url, database, config, Some(instance))
     };
     let lifecycle = workload_lifecycle(family, identity, &database);
 
@@ -1228,6 +1237,20 @@ async fn run_workload_action(
                                     ["wamn.io/predecessor-database-role"] = json!(predecessor_role);
                             }
                             secret
+                        }
+                        WorkloadSecretBodyKind::SessionTarget => {
+                            let target = SessionTarget::new(
+                                &triple,
+                                instance.as_deref().expect("session readers use project-environment scope"),
+                                tenant,
+                                &credential_url,
+                            )?;
+                            render_workload_secret_manifest(
+                                family,
+                                &triple,
+                                &args.namespace,
+                                WorkloadSecretBody::SessionTarget(&target),
+                            )
                         }
                     };
                     write_secret_json(secret_path, &secret)
@@ -1966,6 +1989,7 @@ fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
         WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
         WorkloadRoleFamily::RegistryReader => Some(StableGrantSet::RegistryReader),
         WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
+        WorkloadRoleFamily::SessionRoleReader => Some(StableGrantSet::SessionRoleReader),
         WorkloadRoleFamily::Retention => Some(StableGrantSet::Retention),
         WorkloadRoleFamily::DispatchReader => Some(StableGrantSet::DispatchReader),
         // `wamn-0h0g.22.37`: both families acquired authority, so both acquire
@@ -1987,6 +2011,7 @@ enum StableGrantSet {
     ManagementAdmitter,
     RegistryReader,
     IdentityReader,
+    SessionRoleReader,
     Retention,
     DispatchReader,
     ExecutorPlatform,
@@ -2025,6 +2050,12 @@ impl StableGrantSet {
                 SystemReader::Identity,
                 "identity",
                 &sql::IDENTITY_READER_RELATIONS,
+                role,
+                database,
+                required_database,
+                inventory,
+            ),
+            Self::SessionRoleReader => verify_session_role_reader_acl_role_inventory(
                 role,
                 database,
                 required_database,
@@ -2491,6 +2522,46 @@ fn acl_tuples(inventory: &[RoleAcl]) -> BTreeSet<(String, String, String, String
             )
         })
         .collect()
+}
+
+/// Check the reader's two column-scoped reads and no other direct grants.
+fn verify_session_role_reader_acl_role_inventory(
+    role: &str,
+    database: &str,
+    required_database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if inventory.is_empty() {
+        anyhow::ensure!(
+            database != required_database,
+            "stable role {role:?} has no session-role reader ACL in required database {database:?}"
+        );
+        return Ok(());
+    }
+    let mut expected = BTreeSet::from([(
+        "schema".to_string(),
+        "app_system".to_string(),
+        "app_system".to_string(),
+        "USAGE".to_string(),
+    )]);
+    for (relation, columns) in [
+        ("users", ["tenant_id", "id", "status"]),
+        ("user_roles", ["tenant_id", "user_id", "role_name"]),
+    ] {
+        for column in columns {
+            expected.insert((
+                "column".to_string(),
+                "app_system".to_string(),
+                format!("{relation}.{column}"),
+                "SELECT".to_string(),
+            ));
+        }
+    }
+    anyhow::ensure!(
+        inventory.iter().all(|acl| !acl.grantable) && acl_tuples(inventory) == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact session-role reader grant set"
+    );
+    Ok(())
 }
 
 /// THE EXECUTOR-PLATFORM DENIAL MATRIX (`wamn-0h0g.22.37`).
@@ -4418,7 +4489,8 @@ mod tests {
                 WorkloadRoleFamily::HttpAdmitter,
                 WorkloadRoleFamily::EventMaterializer,
                 WorkloadRoleFamily::RegistryReader,
-                WorkloadRoleFamily::IdentityReader
+                WorkloadRoleFamily::IdentityReader,
+                WorkloadRoleFamily::SessionRoleReader,
             ],
             "a family acquired a grant set without acquiring authority"
         );
@@ -4437,6 +4509,7 @@ mod tests {
             WorkloadRoleFamily::EventMaterializer,
             WorkloadRoleFamily::RegistryReader,
             WorkloadRoleFamily::IdentityReader,
+            WorkloadRoleFamily::SessionRoleReader,
         ] {
             assert!(sql::stable_surface_sql(family).is_some(), "{family:?}");
         }
@@ -4450,6 +4523,7 @@ mod tests {
                     | WorkloadRoleFamily::EventMaterializer
                     | WorkloadRoleFamily::RegistryReader
                     | WorkloadRoleFamily::IdentityReader
+                    | WorkloadRoleFamily::SessionRoleReader
             ) {
                 assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
             }
@@ -4655,6 +4729,58 @@ mod tests {
             privilege: privilege.to_string(),
             grantable: false,
         }
+    }
+
+    #[test]
+    fn session_reader_acl_inventory_refuses_missing_and_wider_grants() {
+        let mut exact = vec![role_acl("schema", "app_system", "app_system", "USAGE")];
+        for column in [
+            "users.tenant_id",
+            "users.id",
+            "users.status",
+            "user_roles.tenant_id",
+            "user_roles.user_id",
+            "user_roles.role_name",
+        ] {
+            exact.push(role_acl("column", "app_system", column, "SELECT"));
+        }
+        let verify = |rows: &[RoleAcl]| {
+            verify_session_role_reader_acl_role_inventory(
+                "wamn_session_role_reader",
+                "project-db",
+                "project-db",
+                rows,
+            )
+        };
+        assert!(verify(&exact).is_ok());
+        for index in 0..exact.len() {
+            let mut missing = exact.clone();
+            missing.remove(index);
+            assert!(verify(&missing).is_err());
+        }
+        for extra in [
+            role_acl("relation", "app_system", "users", "SELECT"),
+            role_acl("column", "app_system", "users.email", "SELECT"),
+            role_acl("column", "app_system", "users.status", "UPDATE"),
+            role_acl("relation", "app_system", "permissions", "SELECT"),
+            role_acl("schema", "catalog", "catalog", "USAGE"),
+        ] {
+            let mut widened = exact.clone();
+            widened.push(extra);
+            assert!(verify(&widened).is_err());
+        }
+        let mut grantable = exact.clone();
+        grantable[0].grantable = true;
+        assert!(verify(&grantable).is_err());
+        assert!(
+            verify_session_role_reader_acl_role_inventory(
+                "wamn_session_role_reader",
+                "other-db",
+                "project-db",
+                &[],
+            )
+            .is_ok()
+        );
     }
 
     #[test]

@@ -159,6 +159,104 @@ async fn inactive(admin: &Client, generation: CredentialGeneration) -> anyhow::R
     Ok(())
 }
 
+async fn stable_acl(admin: &Client) -> anyhow::Result<Vec<String>> {
+    Ok(admin
+        .query(
+            sql::role_database_acl_inventory_sql(),
+            &[&IDENTITY_ISSUER_ROLE],
+        )
+        .await?
+        .iter()
+        .map(|row| {
+            format!(
+                "{}|{}|{}|{}|{}",
+                row.get::<_, String>("object_kind"),
+                row.get::<_, String>("schema_name"),
+                row.get::<_, String>("object_name"),
+                row.get::<_, String>("privilege_type"),
+                row.get::<_, bool>("is_grantable")
+            )
+        })
+        .collect())
+}
+
+/// Keep A connected while the real CLI upgrades the exact foundation ACL for B.
+async fn upgrade_foundation_surface(
+    admin: &Client,
+    admin_url: &str,
+    b_path: &Path,
+) -> anyhow::Result<()> {
+    let current = stable_acl(admin).await?;
+    anyhow::ensure!(
+        current.len() == 28,
+        "current issuer must hold exactly the approved expanded ACL"
+    );
+    // Reproduce the installed foundation's actual privileges, not its SQL text.
+    admin.batch_execute(
+        "REVOKE SELECT (id,kind,subject,display_name,status) ON identity.principals FROM wamn_identity_issuer; \
+         REVOKE SELECT (principal_id,token_prefix,token_hash,revoked_at,expires_at) ON identity.pats FROM wamn_identity_issuer; \
+         REVOKE SELECT (principal_id,org,project,env) ON identity.project_env_memberships FROM wamn_identity_issuer; \
+         REVOKE SELECT (org,project,env,instance_suffix) ON registry.project_envs FROM wamn_identity_issuer; \
+         REVOKE USAGE ON SCHEMA registry FROM wamn_identity_issuer;"
+    ).await?;
+    let foundation = stable_acl(admin).await?;
+    anyhow::ensure!(
+        foundation
+            == [
+                "relation|identity|session_keys|DELETE|false",
+                "relation|identity|session_keys|INSERT|false",
+                "relation|identity|session_keys|SELECT|false",
+                "relation|identity|session_keys|UPDATE|false",
+                "relation|identity|session_signing_state|DELETE|false",
+                "relation|identity|session_signing_state|INSERT|false",
+                "relation|identity|session_signing_state|SELECT|false",
+                "relation|identity|session_signing_state|UPDATE|false",
+                "schema|identity|identity|USAGE|false",
+            ],
+        "foundation fixture must have exactly its nine original privilege rows"
+    );
+
+    // A recognized old surface is not permission to converge arbitrary drift.
+    for (grant, revoke) in [
+        (
+            "GRANT SELECT ON identity.project_roles TO wamn_identity_issuer;",
+            "REVOKE SELECT ON identity.project_roles FROM wamn_identity_issuer;",
+        ),
+        (
+            "GRANT SELECT (id) ON identity.principals TO wamn_identity_issuer;",
+            "REVOKE SELECT (id) ON identity.principals FROM wamn_identity_issuer;",
+        ),
+    ] {
+        admin.batch_execute(grant).await?;
+        let drifted = stable_acl(admin).await?;
+        refusal(
+            &cli(admin_url, "--prepare-generation", "b", Some(b_path)).await?,
+            "identity role has unexpected direct privileges",
+        )?;
+        anyhow::ensure!(
+            !b_path.exists(),
+            "refused foundation upgrade published a Secret"
+        );
+        anyhow::ensure!(
+            stable_acl(admin).await? == drifted,
+            "refused foundation upgrade modified its ACL"
+        );
+        inactive(admin, CredentialGeneration::B).await?;
+        admin.batch_execute(revoke).await?;
+        anyhow::ensure!(
+            stable_acl(admin).await? == foundation,
+            "foundation control was not restored exactly"
+        );
+    }
+
+    success(&cli(admin_url, "--prepare-generation", "b", Some(b_path)).await?)?;
+    anyhow::ensure!(
+        stable_acl(admin).await? == current,
+        "foundation issuer upgrade must restore exactly the approved current ACL and no extras"
+    );
+    Ok(())
+}
+
 async fn reset(admin: &Client) -> anyhow::Result<()> {
     for generation in [CredentialGeneration::A, CredentialGeneration::B] {
         let role = identity_issuer_generation_role(ISSUER, generation)?;
@@ -280,13 +378,30 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
     fs::remove_file(&marker)?;
     fs::remove_dir(&broken_path)?;
 
-    success(&cli(admin_url, "--prepare-generation", "b", Some(&b_path)).await?)?;
+    upgrade_foundation_surface(admin, admin_url, &b_path).await?;
+    a.query("SELECT token_hash FROM identity.pats", &[])
+        .await
+        .context("existing A inherits the approved upgraded read surface")?;
     let b_url = secret_url(&b_path, CredentialGeneration::B)?;
     refusal(
         &cli(admin_url, "--retire-generation", "a", None).await?,
         "live session",
     )?;
     let b = connect(&b_url).await?;
+    b.query(
+        "SELECT id,kind,subject,display_name,status FROM identity.principals",
+        &[],
+    )
+    .await
+    .context("replacement B reads the approved principal columns")?;
+    let denied = b
+        .query("SELECT * FROM identity.project_roles", &[])
+        .await
+        .expect_err("replacement B must not gain unrelated project-role authority");
+    anyhow::ensure!(
+        denied.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+        "replacement B's unrelated read must be refused by the database ACL"
+    );
     refusal(
         &cli(admin_url, "--abort-generation", "b", None).await?,
         "in-use identity credential",

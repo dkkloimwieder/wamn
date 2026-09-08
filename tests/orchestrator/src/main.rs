@@ -11,7 +11,7 @@
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
 use wamn_proof_integration::{
-    dashproof, identity_keys_proof, membershipproof, readerbench, retention,
+    dashproof, identity_keys_proof, identity_session_proof, membershipproof, readerbench, retention,
 };
 use wamn_proof_system::traceproof;
 
@@ -35,6 +35,12 @@ enum Command {
     /// Prove public JWKS and cache evidence through deployed identity HTTPS.
     #[command(name = "identity-jwks")]
     IdentityJwks(identity_keys_proof::IdentityKeysProofArgs),
+    /// Prove fresh PAT exchange and signed environment claims through HTTPS.
+    #[command(name = "identity-session")]
+    IdentitySession(identity_session_proof::IdentitySessionProofArgs),
+    /// Mint private credentials only inside an explicitly armed disposable fixture.
+    #[command(name = "identity-session-fixture")]
+    IdentitySessionFixture(identity_session_proof::IdentitySessionFixtureArgs),
     /// Prove fresh human membership through a deployed Receiving HTTP route.
     Membershipproof(membershipproof::MembershipProofArgs),
     /// Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
@@ -66,6 +72,8 @@ async fn async_main() -> anyhow::Result<()> {
 
     let result = match cli.command {
         Command::IdentityJwks(args) => identity_keys_proof::run(args).await,
+        Command::IdentitySession(args) => identity_session_proof::run(args).await,
+        Command::IdentitySessionFixture(args) => identity_session_proof::fixture(args).await,
         Command::Membershipproof(args) => membershipproof::run(args).await,
         Command::Retention(args) => retention::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,

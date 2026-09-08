@@ -29,7 +29,12 @@ spec:
         - name: identity
           image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: [serve]
+          args:
+            - serve
+            {{- range $index, $secret := .Values.sessionTargetSecrets }}
+            - --session-target
+            - {{ printf "/var/run/wamn-identity/targets/%d/target.json" $index | quote }}
+            {{- end }}
           env:
             - name: WAMN_IDENTITY_BIND
               value: "0.0.0.0:8443"
@@ -57,6 +62,11 @@ spec:
             - name: serving-tls
               mountPath: /var/run/wamn-identity/tls
               readOnly: true
+            {{- range $index, $secret := .Values.sessionTargetSecrets }}
+            - name: {{ printf "session-target-%d" $index }}
+              mountPath: {{ printf "/var/run/wamn-identity/targets/%d" $index | quote }}
+              readOnly: true
+            {{- end }}
           resources:
 {{ toYaml .Values.resources | indent 12 }}
       volumes:
@@ -70,3 +80,13 @@ spec:
                 path: tls.crt
               - key: tls.key
                 path: tls.key
+        {{- range $index, $secret := .Values.sessionTargetSecrets }}
+        - name: {{ printf "session-target-%d" $index }}
+          secret:
+            secretName: {{ required "Each sessionTargetSecrets entry must name a prepared Secret." $secret | quote }}
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: target.json
+                path: target.json
+        {{- end }}

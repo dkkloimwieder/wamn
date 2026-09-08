@@ -183,6 +183,46 @@ Session activation remains blocked until those proofs and the fresh-only operati
 - Session tokens are not persisted server-side and never logged; the client
   holds its token in memory while using it.
 
+### Exchange rulings, 2026-09-08
+
+The owner approved the exchange choices in `wamn-ctc8.29` through `.31`.
+These rulings clarify §§3 and 5 and preserve the §8 proof list.
+
+The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.
+It includes the current registry instance suffix, not only the environment name.
+The service refuses a target whose registry coordinates no longer match.
+The existing registry does not guarantee that a suffix never repeats across all historical instances.
+
+One configured issuer serves the explicitly provisioned organizations in a platform installation.
+The provisioning CLI binds each audience to its organization, tenant, physical database, and dedicated read credential.
+The service reads these bindings from mounted Secrets.
+The HTTP request supplies only the audience, never an organization override, tenant, database URL, or roles.
+The principal must hold current membership in that exact organization and project-environment.
+The global principal record has no separate home-organization field.
+The wrong-organization proof tests absent exact membership, not a home organization inferred from PAT text.
+
+The issuer reads only the approved principal, PAT, membership, and registry columns in the system database.
+A dedicated `SessionRoleReader` reads active users and their role assignments in the selected environment.
+It adds no tenant writes, permission reads, catalog reads, or execution grants.
+The role query includes the trusted tenant and authenticated principal explicitly.
+The service takes roles only from that environment and refuses an empty role set.
+
+WAMN supplies the initial login path through human PAT authentication.
+Credential authentication remains separate from minting for an authenticated canonical principal.
+Deferred `wamn-117` owns external login providers, including customer providers and outsourced login.
+That work must map approved external identities to the same principals, environment memberships, and session profile.
+This increment adds no unused provider framework, alternate principal store, session store, or revocation feed.
+The accepted 900-second lifetime, 30-second tolerance, and 300-second key freshness limit remain unchanged.
+Future upstream disablement and configurable limits belong to the federation design.
+
+The owner approved retained readers in `wamn-ctc8.32`.
+The service opens one scoped connection for each active configured environment and retains it between exchanges.
+It reads current users and roles on every exchange, without a role cache.
+Unused environments hold no connection.
+Credential rotation retains the existing rule that the replacement generation must have a live service connection before retirement.
+After a target Secret changes, restart the service and complete a replacement-generation exchange before retiring the old credential.
+The service never reuses a connection for another audience or tenant.
+
 ## 6. Request path
 
 ```text

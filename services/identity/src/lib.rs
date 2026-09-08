@@ -1,7 +1,9 @@
-//! The separate identity authority exposes only public JWKS and HTTPS health.
+//! The separate identity authority serves public keys and configured PAT exchanges.
 
 pub mod cli;
+mod session;
 
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::fmt;
 use std::sync::Arc;
@@ -17,12 +19,14 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use rustls::pki_types::pem::PemObject as _;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_postgres::{Client, NoTls};
 use tokio_rustls::TlsAcceptor;
 use wamn_control_provision::identity_issuer::{
     IdentityIssuerConnection, parse_identity_issuer_url,
 };
+use wamn_control_provision::session_target::SessionTarget;
 use wamn_platform_identity::session_keys::session_jwks;
 
 // Match the public-key client's total fetch bound. No retry or stale response
@@ -34,6 +38,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct IdentityConfig {
     issuer: String,
     connection: IdentityIssuerConnection,
+    targets: BTreeMap<String, SessionTarget>,
 }
 
 impl IdentityConfig {
@@ -44,7 +49,27 @@ impl IdentityConfig {
         Ok(Self {
             issuer: issuer.to_owned(),
             connection,
+            targets: BTreeMap::new(),
         })
+    }
+
+    /// Enable exchanges only for explicitly provisioned, nonduplicated audiences.
+    pub fn with_session_targets(
+        mut self,
+        targets: Vec<SessionTarget>,
+    ) -> Result<Self, IdentityServiceError> {
+        for target in targets {
+            if self
+                .targets
+                .insert(target.audience().to_owned(), target)
+                .is_some()
+            {
+                return Err(IdentityServiceError::new(
+                    "duplicate identity session audience",
+                ));
+            }
+        }
+        Ok(self)
     }
 }
 
@@ -58,6 +83,17 @@ pub struct IdentityService {
 struct Inner {
     issuer: String,
     database: Database,
+    // Key reads remain available while a signer waits on the rotation barrier.
+    signing: Option<Mutex<Database>>,
+    targets: BTreeMap<String, ConfiguredTarget>,
+}
+
+#[derive(Debug)]
+struct ConfiguredTarget {
+    binding: SessionTarget,
+    // One connection per used environment supports the existing live-successor
+    // retirement rule. Unused environments consume no database connections.
+    reader: Mutex<Option<Database>>,
 }
 
 pub(crate) struct Database {
@@ -83,13 +119,16 @@ impl Drop for Database {
 pub(crate) async fn connect(config: &IdentityConfig) -> Result<Database, IdentityServiceError> {
     // The parsed capability is the only URL passed to the driver. NoTls is the
     // repository's existing internal system-database transport contract.
-    let (client, connection) = tokio::time::timeout(
-        IO_TIMEOUT,
-        tokio_postgres::connect(config.connection.url(), NoTls),
-    )
-    .await
-    .map_err(|_| IdentityServiceError::new("identity database connection timed out"))?
-    .map_err(|_| IdentityServiceError::new("identity database connection failed"))?;
+    connect_database(config.connection.url()).await
+}
+
+// Callers supply only an already parsed issuer or session-reader capability.
+pub(crate) async fn connect_database(url: &str) -> Result<Database, IdentityServiceError> {
+    let (client, connection) =
+        tokio::time::timeout(IO_TIMEOUT, tokio_postgres::connect(url, NoTls))
+            .await
+            .map_err(|_| IdentityServiceError::new("identity database connection timed out"))?
+            .map_err(|_| IdentityServiceError::new("identity database connection failed"))?;
     let driver = tokio::spawn(async move {
         let _ = connection.await;
     });
@@ -100,10 +139,29 @@ impl IdentityService {
     /// Connect using already validated issuer-scoped authority.
     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
         let database = connect(&config).await?;
+        let signing = if config.targets.is_empty() {
+            None
+        } else {
+            Some(Mutex::new(connect(&config).await?))
+        };
         Ok(Self {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
                 database,
+                signing,
+                targets: config
+                    .targets
+                    .into_iter()
+                    .map(|(audience, binding)| {
+                        (
+                            audience,
+                            ConfiguredTarget {
+                                binding,
+                                reader: Mutex::new(None),
+                            },
+                        )
+                    })
+                    .collect(),
             }),
         })
     }
@@ -112,6 +170,13 @@ impl IdentityService {
         &self,
         request: Request<Incoming>,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
+        if request.method() == Method::POST
+            && request.uri().path() == "/session"
+            && request.uri().query().is_none()
+            && !self.inner.targets.is_empty()
+        {
+            return Ok(session::respond(&self.inner, request).await);
+        }
         let response = if request.method() != Method::GET || request.uri().query().is_some() {
             response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec())
         } else {
@@ -197,7 +262,7 @@ pub fn tls_config(
     Ok(config)
 }
 
-/// Serve the two public routes; dropping this future closes owned connections.
+/// Serve public keys and configured exchanges; dropping this future closes connections.
 pub async fn serve(
     listener: TcpListener,
     service: IdentityService,

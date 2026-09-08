@@ -197,6 +197,24 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
         assert_eq!(
             acl,
             [
+                "column|identity|pats.expires_at|SELECT|f",
+                "column|identity|pats.principal_id|SELECT|f",
+                "column|identity|pats.revoked_at|SELECT|f",
+                "column|identity|pats.token_hash|SELECT|f",
+                "column|identity|pats.token_prefix|SELECT|f",
+                "column|identity|principals.display_name|SELECT|f",
+                "column|identity|principals.id|SELECT|f",
+                "column|identity|principals.kind|SELECT|f",
+                "column|identity|principals.status|SELECT|f",
+                "column|identity|principals.subject|SELECT|f",
+                "column|identity|project_env_memberships.env|SELECT|f",
+                "column|identity|project_env_memberships.org|SELECT|f",
+                "column|identity|project_env_memberships.principal_id|SELECT|f",
+                "column|identity|project_env_memberships.project|SELECT|f",
+                "column|registry|project_envs.env|SELECT|f",
+                "column|registry|project_envs.instance_suffix|SELECT|f",
+                "column|registry|project_envs.org|SELECT|f",
+                "column|registry|project_envs.project|SELECT|f",
                 "relation|identity|session_keys|DELETE|f",
                 "relation|identity|session_keys|INSERT|f",
                 "relation|identity|session_keys|SELECT|f",
@@ -206,6 +224,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "relation|identity|session_signing_state|SELECT|f",
                 "relation|identity|session_signing_state|UPDATE|f",
                 "schema|identity|identity|USAGE|f",
+                "schema|registry|registry|USAGE|f",
             ]
             .join("\n")
         );
@@ -216,6 +235,41 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                AND has_table_privilege(current_user, c.oid, 'SELECT') ORDER BY c.relname",
         );
         assert_eq!(actual, "session_keys\nsession_signing_state");
+        for url in [&a_url, &b_url] {
+            // Execute each fresh-read shape as the actual scoped issuer login.
+            run(
+                url,
+                "SELECT p.id::text, p.kind, p.subject, p.display_name, p.status, t.token_hash, \
+                (t.revoked_at IS NULL AND t.expires_at > now()) AS usable \
+                FROM identity.pats t JOIN identity.principals p ON p.id = t.principal_id \
+                WHERE t.token_prefix = 'absent-fixture-token';",
+            );
+            assert_eq!(
+                run(
+                    url,
+                    "SELECT EXISTS(SELECT 1 FROM identity.project_env_memberships \
+                WHERE principal_id = '00000000-0000-0000-0000-000000000001' \
+                  AND org = 'acme' AND project = 'receiving' AND env = 'dev');"
+                ),
+                "f"
+            );
+            run(
+                url,
+                "SELECT org, project, env, instance_suffix FROM registry.project_envs \
+                WHERE org = 'acme' AND project = 'receiving' AND env = 'dev';",
+            );
+            for statement in [
+                "SELECT secret_name FROM registry.project_envs",
+                "SELECT * FROM identity.project_roles",
+                "SELECT label FROM identity.pats",
+                "UPDATE identity.principals SET status = 'disabled'",
+                "DELETE FROM identity.pats",
+                "DELETE FROM identity.project_env_memberships",
+                "UPDATE registry.project_envs SET instance_suffix = 'z9z9z9z9'",
+            ] {
+                denied(url, statement);
+            }
+        }
         run(
             &a_url,
             &format!(

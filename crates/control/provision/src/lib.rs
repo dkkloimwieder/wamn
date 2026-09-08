@@ -68,6 +68,8 @@ pub mod org;
 pub mod restore;
 pub mod saga;
 pub mod secret;
+pub mod session_role_reader;
+pub mod session_target;
 pub mod sql;
 #[cfg(feature = "ops")]
 pub mod state;

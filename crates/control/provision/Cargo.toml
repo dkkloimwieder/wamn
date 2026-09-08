@@ -25,6 +25,7 @@ path = "tests/restore.rs"
 required-features = ["ops"]
 
 [dependencies]
+serde = { workspace = true, features = ["derive"] }
 # The projects-file entry (the `WAMN_PG_PROJECTS_FILE` format the plugin's
 # StaticCredentialProvider parses) and the per-project credential Secret render
 # as JSON (kubectl apply accepts JSON manifests). No schemars — this is a

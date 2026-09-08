@@ -20,6 +20,7 @@ use crate::name::{
     APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_secret_name, secret_name,
     workload_secret_name,
 };
+use crate::session_target::{SESSION_TARGET_KEY, SessionTarget};
 use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyKind};
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
@@ -95,7 +96,7 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
 
 /// The body one workload credential `Secret` carries.
 ///
-/// Three SHAPES, closed — not one variant per family. Which shape a family
+/// Four shapes, not one variant per family. Which shape a family
 /// takes is [`WorkloadRoleFamily::secret_body_kind`], so an admitted family
 /// gets the plain single-`url` Secret with no edit here.
 #[derive(Debug, Clone, Copy)]
@@ -122,6 +123,8 @@ pub enum WorkloadSecretBody<'a> {
     /// `subPath`, so an atomic Secret projection update can be observed after
     /// the wrapper drains/reloads pools.
     EffectWriterCredential(&'a EffectWriterCredential),
+    /// The checked audience binding and reader credential in `target.json`.
+    SessionTarget(&'a SessionTarget),
 }
 
 impl WorkloadSecretBody<'_> {
@@ -130,6 +133,7 @@ impl WorkloadSecretBody<'_> {
             Self::Url(_) => WorkloadSecretBodyKind::Url,
             Self::TenantUrl { .. } => WorkloadSecretBodyKind::TenantUrl,
             Self::EffectWriterCredential(_) => WorkloadSecretBodyKind::EffectWriterCredential,
+            Self::SessionTarget(_) => WorkloadSecretBodyKind::SessionTarget,
         }
     }
 }
@@ -184,6 +188,9 @@ pub fn render_workload_secret_manifest(
                     .expect("effect-writer credential serializes"),
             })
         }
+        WorkloadSecretBody::SessionTarget(target) => json!({
+            (SESSION_TARGET_KEY): target.to_json().expect("validated session target serializes"),
+        }),
     };
     json!({
         "apiVersion": "v1",
@@ -194,8 +201,7 @@ pub fn render_workload_secret_manifest(
     })
 }
 
-/// The effect-writer credential's own annotation block — the one family whose
-/// Secret carries a frozen document rather than a url.
+/// The effect-writer credential's annotation block.
 fn effect_writer_annotations(
     credential: &EffectWriterCredential,
 ) -> serde_json::Map<String, Value> {
@@ -361,6 +367,46 @@ pub fn render_project_env_cdc_secret_manifest(
 mod tests {
     use super::*;
     use std::time::SystemTime;
+
+    #[test]
+    fn session_reader_secret_round_trips_the_checked_target() {
+        let triple = Triple::new("acme", "receiving", "dev");
+        let database = crate::project_env_database_name("acme", "receiving", "dev", "k3m9x2p7");
+        let role = crate::workload_generation_role(
+            WorkloadRoleFamily::SessionRoleReader,
+            crate::WorkloadRoleScope::ProjectEnvironment {
+                org: "acme",
+                project: "receiving",
+                environment: "dev",
+                database: &database,
+            },
+            crate::CredentialGeneration::A,
+        )
+        .unwrap();
+        let url = format!("postgres://{role}:fixture-password@database.invalid/{database}");
+        let target = SessionTarget::new(&triple, "k3m9x2p7", "t1", &url).unwrap();
+        let secret = render_workload_secret_manifest(
+            WorkloadRoleFamily::SessionRoleReader,
+            &triple,
+            "wamn-system",
+            WorkloadSecretBody::SessionTarget(&target),
+        );
+        let data = secret["stringData"].as_object().unwrap();
+        assert_eq!(data.len(), 1);
+        let parsed =
+            SessionTarget::from_json(data[SESSION_TARGET_KEY].as_str().unwrap().as_bytes())
+                .unwrap();
+        assert_eq!(
+            parsed.audience(),
+            "urn:wamn:project-env:acme:receiving:dev:k3m9x2p7"
+        );
+        assert_eq!(parsed.tenant_id(), "t1");
+        assert_eq!(parsed.connection().url(), url);
+        assert!(
+            !format!("{:?}", WorkloadSecretBody::SessionTarget(&target))
+                .contains("fixture-password")
+        );
+    }
 
     use chrono::{DateTime, Utc};
     use wamn_run_state::{

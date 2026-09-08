@@ -253,9 +253,9 @@
       "native": {
         "native_kind": "capability",
         "native_reason": "The system-database-backed signing authority is a separate security boundary; guests, hosts, and the authoring Gate must never receive its private signing keys.",
-        "owner": "wamn-ctc8.15.1 / identity owners",
-        "credential_failure_scope": "The identity process alone holds its issuer-scoped key-table credential and HTTPS listener key. Hosts receive public JWKS only; PAT minting remains on the provisioning CLI.",
-        "tested_boundary": "Key lifecycle, public-only HTTPS JWKS, and scoped-credential tests own this boundary. Local tests do not establish deployed isolation or the later two-host token-admission proof.",
+        "owner": "wamn-ctc8.15.1 and wamn-ctc8.15.2 / identity owners",
+        "credential_failure_scope": "The identity process holds its signing credential, required system identity reads, and dedicated user/role readers for configured audiences. It has no tenant writes or execution grants. Hosts receive public JWKS only; PAT minting remains on the CLI.",
+        "tested_boundary": "Key lifecycle, HTTPS session exchange, public JWKS, and real scoped-credential tests own this boundary. Local tests do not establish deployed isolation or the later two-host token-admission proof.",
         "exit_condition": "Retain while session issuance and later OIDC federation require an isolated signing authority; replace only with an equivalent boundary that keeps private keys out of hosts and the authoring Gate."
       }
     },

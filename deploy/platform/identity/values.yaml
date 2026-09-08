@@ -9,6 +9,10 @@ issuer: ""
 databaseSecret: ""
 tlsSecret: ""
 
+# Each Secret contains one provisioner-generated target.json document.
+# Empty keeps POST /session disabled. Restart after credential rotation.
+sessionTargetSecrets: []
+
 resources:
   requests:
     cpu: 100m

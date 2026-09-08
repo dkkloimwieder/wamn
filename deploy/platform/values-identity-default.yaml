@@ -12,3 +12,5 @@
 issuer: ""
 databaseSecret: wamn-identity-db
 tlsSecret: ""
+# Add prepared SessionRoleReader Secrets to enable their exact session audiences.
+sessionTargetSecrets: []

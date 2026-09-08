@@ -5,8 +5,9 @@ umask 077
 
 usage() {
   printf '%s\n' \
-    'usage: identity-jwks-journey-run [--apply] --evidence-dir DIR' \
+    'usage: identity-jwks-journey-run [--apply] [--session-exchange] --evidence-dir DIR' \
     'Without --apply, print the plan without building or creating resources.' \
+    '--session-exchange adds the session proof after all five unconfigured JWKS stages.' \
     'DIR must be new and under docs/perf/ in this worktree or its shared checkout.' \
     'The run creates and removes its own named kind cluster and image tags.' \
     'No existing cluster, database, ingress, or production trust root is used.' >&2
@@ -14,10 +15,12 @@ usage() {
 
 fail() { printf 'identity-jwks journey: %s\n' "$*" >&2; exit 2; }
 apply=false
+session_exchange=false
 evidence_dir=
 while (($#)); do
   case "$1" in
     --apply) apply=true; shift ;;
+    --session-exchange) session_exchange=true; shift ;;
     --evidence-dir)
       (($# >= 2)) && [[ -n "$2" ]] || fail '--evidence-dir needs a directory'
       evidence_dir=$2; shift 2 ;;
@@ -64,6 +67,10 @@ if [[ "$apply" != true ]]; then
   printf 'evidence=%s\nshared_checkout=%s\n' "${evidence_dir:-not specified}" "$shared_root"
   printf '%s\n' 'order=canonical identity build; serial component-builder prewarm; canonical gates build; own kind+PG18; production credential CLI; actual identity chart; five key-set Jobs; named cleanup' \
     'proof=public HTTPS JWKS and key evidence only; token_admission=not_proven expiry_outage=not_proven'
+  if [[ "$session_exchange" == true ]]; then
+    printf '%s\n' 'session_order=registry and app fixtures; protected PAT fixture; actual reader credential and membership CLI; configured identity chart; signed-claim and refusal Job; membership revoke; next-exchange refusal Job' \
+      'session_proof=exchange only; host_admission=not_proven'
+  fi
   exit 0
 fi
 
@@ -94,6 +101,7 @@ cluster_owned=false
 identity_owned=false
 gates_owned=false
 completed=false
+session_completed=false
 
 record_command() {
   printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$commands_record"
@@ -113,10 +121,12 @@ capture_cluster() {
   run timeout 30s "${kube[@]}" -n "$namespace" get jobs,pods,deployments,services -o json \
     >"$evidence_dir/final-resources.json" 2>"$evidence_dir/final-capture-errors.log" || return 1
   run timeout 30s "${kube[@]}" -n "$namespace" get events -o json >"$evidence_dir/final-events.json" 2>>"$evidence_dir/final-capture-errors.log" || return 1
-  local job
+  local job container
   while IFS= read -r job; do
-    [[ "$job" =~ ^identity-jwks-[a-z0-9-]+$ ]] || return 1
-    run timeout 30s "${kube[@]}" -n "$namespace" logs "job/$job" -c identity-jwks \
+    [[ "$job" =~ ^identity-(jwks|session)-[a-z0-9-]+$ ]] || return 1
+    container=identity-jwks
+    [[ "$job" != identity-session-* ]] || container=identity-session
+    run timeout 30s "${kube[@]}" -n "$namespace" logs "job/$job" -c "$container" \
       >"$evidence_dir/final-$job.log" 2>>"$evidence_dir/final-capture-errors.log" || true
   done < <(jq -r '.items[] | select(.kind == "Job") | .metadata.name' "$evidence_dir/final-resources.json")
 }
@@ -148,7 +158,9 @@ cleanup() {
   [[ "$completed" == true && "$cleanup_failed" == false ]] || { ((status != 0)) || status=1; }
   jq -n --arg source "$head" --arg cluster "$cluster" --argjson exit "$status" \
     --argjson cleanup_failed "$cleanup_failed" --argjson completed "$completed" \
-    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,exit_code:$exit,token_admission:"not_proven",expiry_outage:"not_proven"}' \
+    --argjson session_exchange "$session_exchange" --argjson session_completed "$session_completed" \
+    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,exit_code:$exit,token_admission:"not_proven",expiry_outage:"not_proven"}
+      + (if $session_exchange then {session_exchange_completed:$session_completed,host_admission:"not_proven"} else {} end)' \
     >"$evidence_dir/journey-verdict.json"
   printf 'IDENTITY-JWKS journey exit=%s cleanup_failed=%s evidence=%s\n' "$status" "$cleanup_failed" "$evidence_dir"
   exit "$status"
@@ -164,6 +176,9 @@ sha256sum Cargo.lock Dockerfile tools/identity-jwks-journey-run \
   deploy/platform/identity/Chart.yaml deploy/platform/identity/values.yaml \
   deploy/platform/identity/templates/deployment.yaml deploy/platform/identity/templates/service.yaml \
   >"$evidence_dir/source-inputs.sha256"
+if [[ "$session_exchange" == true ]]; then
+  sha256sum deploy/sql/app-schema.sql >>"$evidence_dir/source-inputs.sha256"
+fi
 identity_owned=true
 run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
   --target identity --tag "$identity_image" --label "wamn.dev/source-head=$head" "$repo_root" \
@@ -307,6 +322,144 @@ gate() {
   sed -n '/^IDENTITY_JWKS/p' "$evidence_dir/$name.log" >"$evidence_dir/$name-receipts.txt"
   cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-receipts.txt"
 }
+session_gate() {
+  local stage=$1 cases_file=$2 name secret count spec status=0
+  name=identity-session-$stage
+  secret=identity-session-cases-$stage
+  [[ "$name" =~ ^identity-session-[a-z0-9-]+$ && ${#name} -le 63 ]] || fail 'invalid session Job name'
+  [[ "$cases_file" == "$work_dir"/* && -f "$cases_file" ]] || fail 'session cases must stay in the private fixture directory'
+  jq -e 'type == "array" and length > 0 and all(.[];
+    (.name | type == "string" and test("^[a-z0-9_-]{1,64}$"))
+    and (.expected_status == 200 or .expected_status == 401))
+    and (map(.name) | length == (unique | length))' "$cases_file" >/dev/null
+  count=$(jq -er 'length' "$cases_file")
+  # The public plan deliberately excludes the PAT. The Job gets that material
+  # only through its Secret volume, never its arguments or environment values.
+  jq 'map({name,audience,expected_status,subject,org,roles})' "$cases_file" >"$evidence_dir/$name-cases.json"
+  run "${kube[@]}" -n "$namespace" create secret generic "$secret" --from-file="cases.json=$cases_file"
+  jq -n --arg ns "$namespace" --arg name "$name" --arg image "$gates_image" --arg issuer "$issuer" --arg secret "$secret" \
+    '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-session"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-session",image:$image,imagePullPolicy:"Never",args:["identity-session"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_SESSION_CASES_FILE",value:"/etc/wamn-identity-cases/cases.json"}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true},{name:"cases",mountPath:"/etc/wamn-identity-cases",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public",items:[{key:"ca.crt",path:"ca.crt"}]}},{name:"cases",secret:{secretName:$secret,defaultMode:256,items:[{key:"cases.json",path:"cases.json"}]}}]}}}}' \
+    >"$evidence_dir/$name.json"
+  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg receipt "IDENTITY_SESSION result=pass cases=$count host_admission=not_proven" \
+    '{name:$name,container:"identity-session",expectation:"positive",exit_code:0,image:$image,log_contains:$receipt}')
+  run env KUBECTL="$work_dir/kubectl" "$repo_root/tools/kubernetes-gate-run" \
+    --namespace "$namespace" --timeout-secs 180 --manifest "$evidence_dir/$name.json" \
+    --verdict-record "$evidence_dir/$name-verdict.json" --job "$spec" \
+    2>&1 | tee "$evidence_dir/$name-run.log" || status=$?
+  run "${kube[@]}" -n "$namespace" get job "$name" -o json >"$evidence_dir/$name-state.json"
+  run "${kube[@]}" -n "$namespace" get pods -l "job-name=$name" -o json >"$evidence_dir/$name-pods.json"
+  run "${kube[@]}" -n "$namespace" logs "job/$name" -c identity-session >"$evidence_dir/$name.log"
+  ((status == 0)) || return "$status"
+  {
+    jq -r '.[] | "IDENTITY_SESSION case=\(.name) result=pass"' "$cases_file"
+    printf 'IDENTITY_SESSION result=pass cases=%s host_admission=not_proven\n' "$count"
+  } >"$evidence_dir/$name-expected.txt"
+  sed -n '/^IDENTITY_SESSION /p' "$evidence_dir/$name.log" >"$evidence_dir/$name-receipts.txt"
+  cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-receipts.txt"
+}
+session_target() {
+  local org=$1 environment=$2 instance=$3 tenant=$4 role=$5 database label pod admin_secret target_secret
+  database=wamn-db-$org--shared--$environment--$instance
+  label=$org-$environment
+  pod=identity-session-provision-$label
+  admin_secret=identity-session-admin-$label
+  target_secret=wamn-session-role-reader-$org--shared--$environment
+  run "${kube[@]}" -n "$namespace" exec "deployment/$postgres" -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 \
+    -c "CREATE DATABASE \"$database\"" >"$evidence_dir/session-$label-create.log" 2>&1
+  run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
+    <"$repo_root/deploy/sql/app-schema.sql" >"$evidence_dir/session-$label-schema.log" 2>&1
+  printf '%s\n' "CREATE SCHEMA catalog; CREATE SCHEMA wamn_run;" \
+    "REVOKE CONNECT, TEMPORARY ON DATABASE \"$database\" FROM PUBLIC;" \
+    "INSERT INTO app_system.users (tenant_id,id,email) VALUES ('$tenant','$session_human_id','session@example.invalid');" \
+    "INSERT INTO app_system.roles (tenant_id,name) VALUES ('$tenant','$role');" \
+    "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('$tenant','$session_human_id','$role');" \
+    >"$evidence_dir/session-$label-data.sql"
+  run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
+    <"$evidence_dir/session-$label-data.sql" >"$evidence_dir/session-$label-data.log" 2>&1
+  # Rebind only the fixture administrator's database. Neither URL passes in
+  # argv: the existing CLI consumes both through Secret-backed environment.
+  jq -Rj --arg database "$database" 'sub("/wamn_system$"; "/" + $database)' \
+    <"$work_dir/system-admin-url" >"$work_dir/session-$label-admin-url"
+  run "${kube[@]}" -n "$namespace" create secret generic "$admin_secret" \
+    --from-file="url=$work_dir/session-$label-admin-url"
+  jq -n --arg ns "$namespace" --arg name "$pod" --arg image "$gates_image" --arg admin "$admin_secret" \
+    '{apiVersion:"v1",kind:"Pod",metadata:{name:$name,namespace:$ns},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"provisioner",image:$image,imagePullPolicy:"Never",command:["sleep","1800"],env:[{name:"WAMN_SYSTEM_ADMIN_URL",valueFrom:{secretKeyRef:{name:"identity-postgres-admin",key:"url"}}},{name:"WAMN_TARGET_ADMIN_DATABASE_URL",valueFrom:{secretKeyRef:{name:$admin,key:"url"}}}]}]}}' \
+    >"$evidence_dir/session-$label-provisioner.json"
+  run "${kube[@]}" apply -f "$evidence_dir/session-$label-provisioner.json"
+  run "${kube[@]}" -n "$namespace" wait --for=condition=Ready "pod/$pod" --timeout=180s
+  run "${kube[@]}" -n "$namespace" exec "$pod" -- /usr/local/bin/wamn-ctl provision-project-env \
+    --org "$org" --project shared --env "$environment" --tenant "$tenant" --namespace "$namespace" \
+    --prepare-session-role-reader-generation a --emit-session-role-reader-secret /tmp/session-target.json \
+    >"$evidence_dir/session-$label-provision.log" 2>&1
+  run "${kube[@]}" -n "$namespace" exec "$pod" -- cat /tmp/session-target.json >"$work_dir/session-$label-target.json"
+  jq -e --arg name "$target_secret" --arg ns "$namespace" \
+    '.kind == "Secret" and .metadata.name == $name and .metadata.namespace == $ns and (.stringData | keys == ["target.json"])' \
+    "$work_dir/session-$label-target.json" >/dev/null
+  run "${kube[@]}" apply -f "$work_dir/session-$label-target.json"
+  session_target_secrets+=("$target_secret")
+  session_audiences+=("$(jq -er '.stringData["target.json"] | fromjson | .audience' "$work_dir/session-$label-target.json")")
+  run "${kube[@]}" -n "$namespace" delete pod "$pod" --wait=true --timeout=60s
+  run "${kube[@]}" -n "$namespace" delete secret "$admin_secret" --wait=true --timeout=60s
+}
+session_journey() {
+  local session_human_id session_kid index
+  local -a session_target_secrets=() session_audiences=()
+  # Registry rows and app roles are fixture data in the owned PG18 server.
+  # Raw PATs are created below by the production identity library, not SQL.
+  printf '%s\n' \
+    "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;" \
+    "INSERT INTO registry.orgs (id,placement_kind,pool_cluster) VALUES ('acme','pooled','fixture'),('other','pooled','fixture');" \
+    "INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'),('acme','prod','\"own\"',1,1,'1Gi','1','1Gi','postgres:18'),('other','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18');" \
+    "INSERT INTO registry.projects (org,id) VALUES ('acme','shared'),('other','shared');" \
+    "INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix) VALUES ('acme','shared','dev','fixture-acme-dev','k3m9x2p7'),('acme','shared','prod','fixture-acme-prod','p7x2m9k3'),('other','shared','dev','fixture-other-dev','q2n5r8t4');" \
+    >"$evidence_dir/session-registry.sql"
+  run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 \
+    <"$evidence_dir/session-registry.sql" >"$evidence_dir/session-registry.log" 2>&1
+  run "${kube[@]}" apply -f "$evidence_dir/provisioner.json"
+  run "${kube[@]}" -n "$namespace" wait --for=condition=Ready "pod/$provisioner" --timeout=180s
+  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- env WAMN_SESSION_FIXTURE_ALLOW=1 \
+    /usr/local/bin/wamn-gates identity-session-fixture --output /tmp/identity-session.json \
+    >"$evidence_dir/session-pat-fixture.log" 2>&1
+  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- cat /tmp/identity-session.json >"$work_dir/identity-session.json"
+  session_human_id=$(jq -er '.human_id | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$work_dir/identity-session.json")
+  jq '{human_id,service_id}' "$work_dir/identity-session.json" >"$evidence_dir/session-principals.json"
+  session_target acme dev k3m9x2p7 t1 member
+  session_target acme prod p7x2m9k3 t2 administrator
+  session_target other dev q2n5r8t4 t3 outsider
+  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl grant-project-env-membership \
+    --org acme --project shared --env dev --principal-id "$session_human_id" \
+    >"$evidence_dir/session-grant-membership.log" 2>&1
+  # The five foundation Jobs ran with no target files, including their absent
+  # /session assertion. Configure exchange only after those Jobs have passed.
+  key_command session-published publish
+  session_kid=$(jq -er '.kid | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$evidence_dir/session-published.json")
+  key_command session-activated activate --kid "$session_kid"
+  jq -e --arg kid "$session_kid" '.activated == true and .kid == $kid' "$evidence_dir/session-activated.json" >/dev/null
+  for index in "${!session_target_secrets[@]}"; do
+    helm_args+=(--set-string "sessionTargetSecrets[$index]=${session_target_secrets[$index]}")
+  done
+  run helm template "$release" "$repo_root/deploy/platform/identity" "${helm_args[@]}" >"$evidence_dir/identity-session-rendered.yaml"
+  run helm upgrade --install "$release" "$repo_root/deploy/platform/identity" "${helm_args[@]}" --wait --timeout 180s \
+    2>&1 | tee "$evidence_dir/identity-session-install.log"
+  run "${kube[@]}" -n "$namespace" get deployment "$release" -o json >"$evidence_dir/identity-session-deployment.json"
+  jq -n --slurpfile fixture "$work_dir/identity-session.json" \
+    --arg dev "${session_audiences[0]}" --arg prod "${session_audiences[1]}" --arg other "${session_audiences[2]}" \
+    '$fixture[0] as $f | [
+      {name:"human-dev",pat:$f.human_pat,audience:$dev,expected_status:200,subject:$f.human_id,org:"acme",roles:["member"]},
+      {name:"human-prod-no-membership",pat:$f.human_pat,audience:$prod,expected_status:401,subject:"",org:"",roles:[]},
+      {name:"human-wrong-org",pat:$f.human_pat,audience:$other,expected_status:401,subject:"",org:"",roles:[]},
+      {name:"service-pat",pat:$f.service_pat,audience:$dev,expected_status:401,subject:"",org:"",roles:[]}
+    ]' >"$work_dir/session-initial-cases.json"
+  session_gate initial "$work_dir/session-initial-cases.json"
+  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl revoke-project-env-membership \
+    --org acme --project shared --env dev --principal-id "$session_human_id" \
+    >"$evidence_dir/session-revoke-membership.log" 2>&1
+  jq '[.[] | select(.name == "human-dev") | .name="membership-revoked" | .expected_status=401 | .subject="" | .org="" | .roles=[]]' \
+    "$work_dir/session-initial-cases.json" >"$work_dir/session-revoked-cases.json"
+  session_gate revoked "$work_dir/session-revoked-cases.json"
+  run "${kube[@]}" -n "$namespace" delete pod "$provisioner" --wait=true --timeout=60s
+  session_completed=true
+}
 key_command() {
   local receipt=$1; shift
   run "${kube[@]}" -n "$namespace" exec "deployment/$release" -c identity -- \
@@ -331,5 +484,8 @@ gate removed-a "$(jq -nc --arg b "$kid_b" '[$b]')"
 key_command removed-b remove --kid "$kid_b"
 jq -e --arg kid "$kid_b" '.removed == true and .kid == $kid' "$evidence_dir/removed-b.json" >/dev/null
 gate removed-b '[]'
+if [[ "$session_exchange" == true ]]; then
+  session_journey
+fi
 assert_clean_source
 completed=true
