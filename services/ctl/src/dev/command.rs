@@ -535,6 +535,13 @@ pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
             .join(",");
         println!("{prefix} skipped: unchanged {skipped}");
     }
+    let timings = receipt
+        .timings()
+        .iter()
+        .map(|(stage, elapsed)| format!("{}={}ms", stage.as_str(), elapsed.as_millis()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("{prefix} stage-ms: {timings}");
 }
 
 #[cfg(test)]

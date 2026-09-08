@@ -25,6 +25,7 @@ pub mod watch;
 
 use std::error::Error;
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use config::DevConfig;
 use read::DevRuntimeEndpoint;
@@ -407,6 +408,7 @@ impl Error for DevRunError {
 pub struct DevRunReceipt {
     completed: Box<[DevStage]>,
     skipped: Box<[DevStage]>,
+    timings: Box<[(DevStage, Duration)]>,
 }
 
 impl DevRunReceipt {
@@ -421,6 +423,15 @@ impl DevRunReceipt {
     /// Stages the runner reported as unchanged, so their work was not redone.
     pub fn skipped(&self) -> &[DevStage] {
         &self.skipped
+    }
+
+    /// Wall time each stage took, in execution order.
+    ///
+    /// A skipped stage is here too, and its time is the cost of deciding it was
+    /// unchanged. That is the number worth reading: a skip that costs as much
+    /// as the stage bought nothing.
+    pub fn timings(&self) -> &[(DevStage, Duration)] {
+        &self.timings
     }
 }
 
@@ -567,7 +578,9 @@ where
     }
     let mut completed = Vec::with_capacity(DEV_STAGE_ORDER.len() - first);
     let mut skipped = Vec::new();
+    let mut timings = Vec::with_capacity(DEV_STAGE_ORDER.len() - first);
     for stage in DEV_STAGE_ORDER.into_iter().skip(first) {
+        let began = Instant::now();
         runner.stage_started(stage);
         // The decision is made HERE and not inside the stage, because entering
         // a stage tears down a live activation and discards the downstream work
@@ -577,6 +590,7 @@ where
                 runner.stage_skipped(stage);
                 completed.push(stage);
                 skipped.push(stage);
+                timings.push((stage, began.elapsed()));
                 continue;
             }
             Ok(false) => {}
@@ -618,10 +632,12 @@ where
         }
         runner.stage_completed(stage);
         completed.push(stage);
+        timings.push((stage, began.elapsed()));
     }
     Ok(DevRunReceipt {
         completed: completed.into_boxed_slice(),
         skipped: skipped.into_boxed_slice(),
+        timings: timings.into_boxed_slice(),
     })
 }
 
