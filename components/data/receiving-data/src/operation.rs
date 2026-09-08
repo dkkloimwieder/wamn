@@ -551,12 +551,14 @@ fn parse_item<T: DeserializeOwned>(item: &EnvelopeItem) -> Result<T, OperationEr
     serde_json::from_value(item.body.clone()).map_err(|_| invalid_input("input"))
 }
 
+/// Parse any accepted UUID spelling and re-spell it lowercase-hyphenated.
+///
+/// Case is representation, so an input arrives in any spelling and reaches the
+/// database in one.
 fn parse_uuid(value: &str, field: &'static str) -> Result<WamnUuid, AccessError> {
     uuid::Uuid::parse_str(value)
-        .ok()
-        .filter(|parsed| parsed.hyphenated().to_string() == value)
         .map(|parsed| WamnUuid(parsed.hyphenated().to_string()))
-        .ok_or_else(|| AccessError::invalid("input is not a canonical UUID", field))
+        .map_err(|_| AccessError::invalid("input is not a UUID", field))
 }
 
 fn invalid_input(field: &'static str) -> OperationError {
@@ -1090,8 +1092,17 @@ mod tests {
         assert!(
             serde_json::from_value::<ListInput>(serde_json::json!({"unexpected": true})).is_err()
         );
-        assert!(parse_uuid("01234567-89ab-cdef-0123-456789abcdef", "id").is_ok());
-        assert!(parse_uuid("01234567-89AB-CDEF-0123-456789ABCDEF", "id").is_err());
+        assert!(parse_uuid("not-a-uuid", "id").is_err());
+    }
+
+    #[test]
+    fn an_uppercase_uuid_input_is_respelled_rather_than_refused() {
+        assert_eq!(
+            parse_uuid("01234567-89AB-CDEF-0123-456789ABCDEF", "id")
+                .unwrap()
+                .0,
+            "01234567-89ab-cdef-0123-456789abcdef"
+        );
     }
 
     #[test]

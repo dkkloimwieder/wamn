@@ -94,7 +94,7 @@ pub enum SupplierIdUpdate {
     Value(Box<str>),
 }
 
-/// Load one purchase order by canonical UUID.
+/// Load one purchase order by UUID, in any accepted spelling.
 pub async fn get(connection: &mut Connection, id: &str) -> Result<PurchaseOrderRow, AccessError> {
     let id = canonical_uuid(id, "purchase_order id", "id")?;
     generated::get(connection, WamnUuid(id))
@@ -428,12 +428,14 @@ fn validate_row_status(value: &str) -> Result<(), AccessError> {
     }
 }
 
+/// Parse any accepted UUID spelling and re-spell it lowercase-hyphenated.
+///
+/// Case is representation, so an input arrives in any spelling and reaches the
+/// database in one.
 fn canonical_uuid(value: &str, context: &str, field: &'static str) -> Result<String, AccessError> {
     uuid::Uuid::parse_str(value)
-        .ok()
-        .filter(|parsed| parsed.hyphenated().to_string() == value)
         .map(|parsed| parsed.hyphenated().to_string())
-        .ok_or_else(|| AccessError::invalid(format!("{context} is not a canonical UUID"), field))
+        .map_err(|_| AccessError::invalid(format!("{context} is not a UUID"), field))
 }
 
 fn row_uuid(value: &WamnUuid) -> Result<uuid::Uuid, AccessError> {

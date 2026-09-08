@@ -27,7 +27,7 @@ pub struct Page {
     pub next_cursor: Option<Box<str>>,
 }
 
-/// Load one immutable receipt by canonical UUID.
+/// Load one immutable receipt by UUID, in any accepted spelling.
 pub async fn get(connection: &mut Connection, id: &str) -> Result<ReceiptRow, AccessError> {
     let id = parse_input_uuid(id, "receipt id")?;
     generated::get(connection, WamnUuid(id.hyphenated().to_string()))
@@ -105,20 +105,20 @@ fn cursor_from_row(row: &ReceiptRow) -> Result<Box<str>, AccessError> {
         .map(String::into_boxed_str)
 }
 
+/// Parse any accepted UUID spelling. The caller re-spells it
+/// lowercase-hyphenated, because case is representation.
 fn parse_input_uuid(value: &str, context: &str) -> Result<Uuid, AccessError> {
-    parse_canonical_uuid(value)
-        .ok_or_else(|| AccessError::invalid(format!("{context} is not a canonical UUID"), "id"))
+    Uuid::parse_str(value)
+        .map_err(|_| AccessError::invalid(format!("{context} is not a UUID"), "id"))
 }
 
+/// A row arrives from PostgreSQL already canonical. A different spelling is a
+/// broken invariant, not a caller choice, so this one still refuses.
 fn parse_row_uuid(value: &str) -> Result<Uuid, AccessError> {
-    parse_canonical_uuid(value)
-        .ok_or_else(|| AccessError::internal("receipt row contains a noncanonical id"))
-}
-
-fn parse_canonical_uuid(value: &str) -> Option<Uuid> {
     Uuid::parse_str(value)
         .ok()
         .filter(|parsed| parsed.hyphenated().to_string() == value)
+        .ok_or_else(|| AccessError::internal("receipt row contains a noncanonical id"))
 }
 
 #[cfg(test)]

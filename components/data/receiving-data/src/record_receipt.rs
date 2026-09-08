@@ -719,27 +719,31 @@ fn validate_count(
     }
 }
 
+/// Parse any accepted UUID spelling and re-spell it lowercase-hyphenated.
+///
+/// Case is representation, so it re-spells. The caller writes the re-spelled
+/// text into the canonical command, and the idempotency key hashes that.
 fn canonical_uuid(value: &str, field: &'static str) -> Result<Uuid, RecordReceiptError> {
     Uuid::parse_str(value)
-        .ok()
-        .filter(|parsed| parsed.hyphenated().to_string() == value)
-        .ok_or_else(|| {
-            RecordReceiptError::invalid(
-                format!("{field} must be a canonical lowercase UUID"),
-                field,
-            )
-        })
+        .map_err(|_| RecordReceiptError::invalid(format!("{field} must be a UUID"), field))
 }
 
+/// Parse any accepted RFC 3339 instant and re-spell it as UTC with six
+/// fractional digits.
+///
+/// The command hashes the re-spelled bytes, never the arriving bytes. A client
+/// whose retry infrastructure re-spells one instant gets one command instead of
+/// an idempotency conflict.
 fn canonical_timestamp(value: &str) -> Result<String, RecordReceiptError> {
     DateTime::parse_from_rfc3339(value)
-        .ok()
-        .map(|timestamp| timestamp.to_utc())
-        .filter(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Micros, true) == value)
-        .map(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Micros, true))
-        .ok_or_else(|| {
+        .map(|timestamp| {
+            timestamp
+                .to_utc()
+                .to_rfc3339_opts(SecondsFormat::Micros, true)
+        })
+        .map_err(|_| {
             RecordReceiptError::invalid(
-                "value.occurred_at must be UTC RFC3339 with six fractional digits",
+                "value.occurred_at must be an RFC3339 timestamp",
                 "value.occurred_at",
             )
         })
@@ -822,6 +826,44 @@ mod tests {
         let scaled = prepare(&command(vec![line(FIRST_LINE_ID, "12.3400")])).unwrap();
         let respelled = prepare(&command(vec![line(FIRST_LINE_ID, "12.34")])).unwrap();
         assert_ne!(scaled.canonical_command, respelled.canonical_command);
+    }
+
+    #[test]
+    fn a_noncanonical_timestamp_is_respelled_rather_than_refused() {
+        let mut input = command(vec![line(FIRST_LINE_ID, "1.0")]);
+        input.value.occurred_at = "2026-08-29T14:34:56+02:00".into();
+        assert_eq!(
+            prepare(&input).unwrap().occurred_at,
+            "2026-08-29T12:34:56.000000Z"
+        );
+        input.value.occurred_at = "yesterday".into();
+        assert_eq!(
+            prepare(&input).unwrap_err().kind(),
+            RecordReceiptErrorKind::InvalidInput
+        );
+    }
+
+    #[test]
+    fn two_spellings_of_one_instant_make_one_command() {
+        let canonical = prepare(&command(vec![line(FIRST_LINE_ID, "1.0")])).unwrap();
+        let mut respelled = command(vec![line(FIRST_LINE_ID, "1.0")]);
+        respelled.value.occurred_at = "2026-08-29T14:34:56+02:00".into();
+        let respelled = prepare(&respelled).unwrap();
+        assert_eq!(canonical.canonical_command, respelled.canonical_command);
+    }
+
+    #[test]
+    fn two_spellings_of_one_uuid_make_one_command() {
+        const LOWER: &str = "0123456a-89ab-cdef-0123-456789abcdef";
+        const UPPER: &str = "0123456A-89AB-CDEF-0123-456789ABCDEF";
+        let mut lower = command(vec![line(LOWER, "1.0")]);
+        lower.value.purchase_order_id = LOWER.into();
+        let mut upper = command(vec![line(UPPER, "1.0")]);
+        upper.value.purchase_order_id = UPPER.into();
+        assert_eq!(
+            prepare(&lower).unwrap().canonical_command,
+            prepare(&upper).unwrap().canonical_command
+        );
     }
 
     #[test]
