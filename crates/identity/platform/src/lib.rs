@@ -74,6 +74,17 @@ const SELECT_PAT_BY_PREFIX_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
     FROM identity.pats JOIN identity.principals p \
         ON p.id = identity.pats.principal_id \
     WHERE identity.pats.token_prefix = $1";
+const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
+    p.display_name, p.status, identity.pats.token_hash, \
+    (identity.pats.revoked_at IS NULL AND identity.pats.expires_at > now()) AS usable \
+    FROM identity.pats JOIN identity.principals p \
+        ON p.id = identity.pats.principal_id \
+    WHERE identity.pats.token_prefix = $1 AND CASE p.kind \
+        WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
+            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = $5) \
+        WHEN 'human' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
+            WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4) \
+        ELSE false END";
 const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
@@ -771,7 +782,7 @@ pub async fn revoke_project_env_membership(
     Ok(removed != 0)
 }
 
-/// The identity reads used by route authentication, prepared once.
+/// The identity query used by route authentication, prepared once.
 ///
 /// The free functions above hand `query`/`query_opt` a `&str`. `tokio-postgres`
 /// converts a `&str` through `prepare::prepare` on every call and never caches
@@ -781,95 +792,55 @@ pub async fn revoke_project_env_membership(
 /// at 1.184 ms and 0.709 ms per request against a 0.30 ms single round trip: see
 /// `docs/perf/2026.09/2a-auth-instrument.md`.
 ///
-/// Holding the `Statement` handles moves that Parse to process start. The
-/// handles are bound to the connection they were prepared on, so this type must
+/// Holding the `Statement` handle moves that Parse to process start. The
+/// handle is bound to the connection it was prepared on, so this type must
 /// be used only with the client it was prepared from; a different connection
 /// would refuse the statement name.
+///
+/// Route authentication uses [`Self::authenticate_route_pat`] to read both
+/// the PAT and its project role or environment membership in one statement.
 #[derive(Clone, Debug)]
 pub struct PreparedIdentityReads {
-    pat_by_prefix: Statement,
-    project_roles: Statement,
-    project_env_membership: Statement,
+    route_pat: Statement,
 }
 
 impl PreparedIdentityReads {
-    /// Parse the identity statements on `client`, once.
+    /// Parse the identity statement on `client`, once.
     pub async fn prepare(client: &(impl GenericClient + Sync)) -> Result<Self, IdentityError> {
         Ok(Self {
-            pat_by_prefix: client
-                .prepare(SELECT_PAT_BY_PREFIX_SQL)
-                .await
-                .map_err(database_error)?,
-            project_roles: client
-                .prepare(SELECT_PROJECT_ROLES_SQL)
-                .await
-                .map_err(database_error)?,
-            project_env_membership: client
-                .prepare(SELECT_PROJECT_ENV_MEMBERSHIP_SQL)
+            route_pat: client
+                .prepare(SELECT_ROUTE_PAT_SQL)
                 .await
                 .map_err(database_error)?,
         })
     }
 
-    /// [`authenticate_pat`] over the prepared handle. Same predicates, one round
-    /// trip.
-    pub async fn authenticate_pat(
+    /// Authenticate a route PAT and its system scope in one round trip.
+    ///
+    /// Services need the required project role. Humans need explicit membership
+    /// in the exact project environment. The caller must still enforce the
+    /// configured service identity and read tenant permissions.
+    pub async fn authenticate_route_pat(
         &self,
         client: &(impl GenericClient + Sync),
         token: &str,
+        org: &str,
+        project: &str,
+        env: &str,
+        required_role: &str,
     ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
         let Some(prefix) = lookup_prefix(PAT_TOKEN_PREFIX, token) else {
             return Ok(None);
         };
-        let row = client
-            .query_opt(&self.pat_by_prefix, &[&prefix])
-            .await
-            .map_err(database_error)?;
-        decide_pat(row, token)
-    }
-
-    /// [`project_roles`] over the prepared handle. Same validation, one round
-    /// trip.
-    pub async fn project_roles(
-        &self,
-        client: &(impl GenericClient + Sync),
-        principal_id: &PrincipalId,
-        org: &str,
-        project: &str,
-    ) -> Result<Vec<ProjectRole>, IdentityError> {
-        let org = checked_scope_segment("org", org)?;
-        let project = checked_scope_segment("project", project)?;
-        let rows = client
-            .query(
-                &self.project_roles,
-                &[&principal_id.as_str(), &org, &project],
-            )
-            .await
-            .map_err(database_error)?;
-        decode_project_roles(rows)
-    }
-
-    /// [`has_project_env_membership`] over the prepared handle, with one round trip.
-    pub async fn has_project_env_membership(
-        &self,
-        client: &(impl GenericClient + Sync),
-        principal_id: &PrincipalId,
-        org: &str,
-        project: &str,
-        env: &str,
-    ) -> Result<bool, IdentityError> {
         let org = checked_scope_segment("org", org)?;
         let project = checked_scope_segment("project", project)?;
         let env = checked_scope_segment("env", env)?;
-        client
-            .query_one(
-                &self.project_env_membership,
-                &[&principal_id.as_str(), &org, &project, &env],
-            )
+        let role = canonical_role(required_role)?;
+        let row = client
+            .query_opt(&self.route_pat, &[&prefix, &org, &project, &env, &role])
             .await
-            .map_err(database_error)?
-            .try_get(0)
-            .map_err(database_error)
+            .map_err(database_error)?;
+        decide_pat(row, token)
     }
 }
 

@@ -38,6 +38,25 @@
 # Pinned by wamn_proof_integration::throughput_bench::PGBENCH_LOG_MARKER.
 readonly WAMN_THROUGHPUT_PGBENCH_LOG_MARKER='===LOGS==='
 
+# The caller supplies run_throughput_sweep; the offline proof records each call.
+run_fresh_auth_sweeps() {
+  local evidence=$1 service_secret=$2 human_secret=$3
+  local repetition credential secret_name status
+  local -a credentials
+  for repetition in 1 2 3; do
+    credentials=(service human)
+    if [[ $repetition == 2 ]]; then credentials=(human service); fi
+    for credential in "${credentials[@]}"; do
+      secret_name=$service_secret
+      if [[ "$credential" == human ]]; then secret_name=$human_secret; fi
+      run_throughput_sweep "$evidence/$credential-$repetition" \
+        "$credential" "$repetition" "$secret_name"
+      status=$?
+      if (( status != 0 )); then return "$status"; fi
+    done
+  done
+}
+
 render_throughput_job() {
   local -n _rtj_spec=$1
   local out=$2

@@ -384,7 +384,7 @@ impl AuthenticatedCaller {
 /// Trusted dependencies and scope for PAT-backed route authentication.
 pub struct RouteAuthentication {
     identity_reader: Arc<tokio_postgres::Client>,
-    /// The identity statements, parsed once at construction rather than on
+    /// The identity statement, parsed once at construction rather than on
     /// every request. See [`PreparedIdentityReads`].
     prepared: PreparedIdentityReads,
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
@@ -571,8 +571,15 @@ impl FlowHttpRouting {
             let token = required_bearer_token(headers)?;
             let principal = authentication
                 .prepared
-                .authenticate_pat(authentication.identity_reader.as_ref(), token)
-                .instrument(tracing::info_span!("wamn.auth.pat"))
+                .authenticate_route_pat(
+                    authentication.identity_reader.as_ref(),
+                    token,
+                    &authentication.org,
+                    &authentication.project,
+                    &manifest.release.environment,
+                    ROUTE_CALLER_ROLE,
+                )
+                .instrument(tracing::info_span!("wamn.auth.identity"))
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "route PAT authentication unavailable");
@@ -583,23 +590,6 @@ impl FlowHttpRouting {
             let permissions = match principal.kind() {
                 PrincipalKind::Service => {
                     if principal.subject() != authentication.expected_subject.as_ref() {
-                        return Err(unauthorized());
-                    }
-                    let roles = authentication
-                        .prepared
-                        .project_roles(
-                            authentication.identity_reader.as_ref(),
-                            principal.id(),
-                            &authentication.org,
-                            &authentication.project,
-                        )
-                        .instrument(tracing::info_span!("wamn.auth.roles"))
-                        .await
-                        .map_err(|error| {
-                            tracing::warn!(error = %error, "route caller role lookup unavailable");
-                            authentication_unavailable()
-                        })?;
-                    if !roles.iter().any(|role| role.as_str() == ROUTE_CALLER_ROLE) {
                         return Err(unauthorized());
                     }
                     authentication
@@ -613,24 +603,6 @@ impl FlowHttpRouting {
                         .await
                 }
                 PrincipalKind::Human => {
-                    let member = authentication
-                        .prepared
-                        .has_project_env_membership(
-                            authentication.identity_reader.as_ref(),
-                            principal.id(),
-                            &authentication.org,
-                            &authentication.project,
-                            &manifest.release.environment,
-                        )
-                        .instrument(tracing::info_span!("wamn.auth.membership"))
-                        .await
-                        .map_err(|error| {
-                            tracing::warn!(error = %error, "route caller membership lookup unavailable");
-                            authentication_unavailable()
-                        })?;
-                    if !member {
-                        return Err(unauthorized());
-                    }
                     authentication
                         .postgres
                         .user_operation_permissions(
@@ -642,10 +614,10 @@ impl FlowHttpRouting {
                         .await
                 }
             }
-                .map_err(|error| {
-                    tracing::warn!(error = %error, "route operation grants unavailable");
-                    authentication_unavailable()
-                })?;
+            .map_err(|error| {
+                tracing::warn!(error = %error, "route operation grants unavailable");
+                authentication_unavailable()
+            })?;
             Ok(Some(AuthenticatedCaller {
                 attachment_id: attachment_id.into(),
                 principal_id: principal.id().as_str().into(),

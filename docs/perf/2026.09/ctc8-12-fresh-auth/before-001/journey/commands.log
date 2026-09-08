@@ -1,2 +1,26 @@
 2026-09-08T02:02:04Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/tools/build-components m1 
 2026-09-08T02:03:29Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target RUSTC_WRAPPER= cargo build --locked --release -p wamn-host 
+2026-09-08T02:14:32Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker 
+2026-09-08T02:15:30Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target RUSTC_WRAPPER= cargo build --locked --offline -p wamn-gates 
+2026-09-08T02:16:00Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target RUSTC_WRAPPER= cargo build --locked --offline -p wamn-proof-integration --bin wamn-throughput 
+2026-09-08T02:16:02Z docker build --platform=linux/amd64 --provenance=false --file /tmp/tmp.CmkjRtqlRN/host-image/Dockerfile --tag wamn-host:receiving-ac8648807511-1462065-release /tmp/tmp.CmkjRtqlRN/host-image 
+2026-09-08T02:16:04Z kind create cluster --name wamn-receiving-journey --config /tmp/tmp.CmkjRtqlRN/kind-config.yaml --kubeconfig /tmp/tmp.CmkjRtqlRN/kubeconfig 
+2026-09-08T02:16:28Z kubectl --kubeconfig /tmp/tmp.CmkjRtqlRN/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-08T02:16:42Z kubectl --kubeconfig /tmp/tmp.CmkjRtqlRN/kubeconfig --context kind-wamn-receiving-journey create namespace wamn-receiving-journey 
+2026-09-08T02:16:42Z kind load docker-image wamn-host:receiving-ac8648807511-1462065-release --name wamn-receiving-journey 
+2026-09-08T02:16:49Z htpasswd \<credential-bearing\ arguments\ redacted\> 
+2026-09-08T02:16:49Z postgres \<credential-bearing\ arguments\ redacted\> 
+2026-09-08T02:16:50Z docker run --detach --name wamn-receiving-registry-ac8648807511-1462065 --network kind --env REGISTRY_AUTH=htpasswd --env REGISTRY_AUTH_HTPASSWD_REALM=WAMN\ Receiving\ cluster\ journey --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd --volume /tmp/tmp.CmkjRtqlRN/htpasswd:/auth/htpasswd:ro registry:2 
+2026-09-08T02:16:50Z docker run --detach --name wamn-receiving-nats-ac8648807511-1462065 --network kind nats:2.10-alpine --jetstream --store_dir /data --http_port 8222 
+2026-09-08T02:16:53Z cargo test production_two_package_release_serves_all_thirteen_pat_routes \<journey\ document\ with\ disposable\ PostgreSQL\ and\ OCI\ inputs\ redacted\> 
+2026-09-08T02:17:09Z kubectl --kubeconfig /tmp/tmp.CmkjRtqlRN/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get deployment hostgroup-default -o json 
+2026-09-08T02:17:09Z kubectl --kubeconfig /tmp/tmp.CmkjRtqlRN/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get pods -o json 
+2026-09-08T02:17:09Z kubectl --kubeconfig /tmp/tmp.CmkjRtqlRN/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get events -o json 
+2026-09-08T02:17:09Z kubectl --kubeconfig /tmp/tmp.CmkjRtqlRN/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get secrets -o name 
+2026-09-08T02:17:09Z kubectl --kubeconfig /tmp/tmp.CmkjRtqlRN/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get jobs -o json 
+2026-09-08T02:17:09Z kind delete cluster --name wamn-receiving-journey 
+2026-09-08T02:17:10Z docker rm --force --volumes wamn-receiving-pg18-ac8648807511-1462065 
+2026-09-08T02:17:10Z docker rm --force --volumes wamn-receiving-registry-ac8648807511-1462065 
+2026-09-08T02:17:11Z docker rm --force --volumes wamn-receiving-nats-ac8648807511-1462065 
+2026-09-08T02:17:11Z docker image rm wamn-host:receiving-ac8648807511-1462065-release 
+2026-09-08T02:17:11Z rm -rf -- /tmp/tmp.CmkjRtqlRN 

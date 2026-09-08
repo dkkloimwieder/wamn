@@ -1,0 +1,1 @@
+docker run -d --name wamn-ctc8-12-mutation-001-2131286 --label wamn.proof.owner=ctc8-12-mutation -e POSTGRES_PASSWORD=probe -p 127.0.0.1::5432 postgres:18 

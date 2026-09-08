@@ -137,5 +137,33 @@ REASON='spec is missing layer' refused_saying render_throughput_job bad5 "$work/
 check "a spec without a layer is refused" $?
 
 echo
+echo "6. fresh-auth sweeps keep distinct credentials and alternate their order"
+declare -a scheduled=()
+run_throughput_sweep() { scheduled+=("$1|$2|$3|$4"); }
+run_fresh_auth_sweeps "evidence with spaces" service-secret human-secret
+expected=(
+  'evidence with spaces/service-1|service|1|service-secret'
+  'evidence with spaces/human-1|human|1|human-secret'
+  'evidence with spaces/human-2|human|2|human-secret'
+  'evidence with spaces/service-2|service|2|service-secret'
+  'evidence with spaces/service-3|service|3|service-secret'
+  'evidence with spaces/human-3|human|3|human-secret'
+)
+[[ ${#scheduled[@]} == 6 ]]; check "exactly three sweeps per credential" $?
+for i in "${!expected[@]}"; do
+  [[ ${scheduled[$i]} == "${expected[$i]}" ]]; check "scheduled sweep $i" $?
+done
+run_throughput_sweep() { return 7; }
+status=0
+run_fresh_auth_sweeps evidence service-secret human-secret || status=$?
+[[ $status == 7 ]]; check "a failed sweep stops the sequence with its exit code" $?
+status=0
+bash -e -c '
+  source "$1"
+  run_throughput_sweep() { false; return 0; }
+  run_fresh_auth_sweeps evidence service-secret human-secret
+' bash "$repo_root/tools/journey-throughput.sh" || status=$?
+[[ $status == 1 ]]; check "the scheduler preserves errexit inside the real sweep" $?
+
 if [[ $failures -eq 0 ]]; then echo "journey-throughput-proof: all checks passed"; else
   echo "journey-throughput-proof: $failures check(s) FAILED"; exit 1; fi

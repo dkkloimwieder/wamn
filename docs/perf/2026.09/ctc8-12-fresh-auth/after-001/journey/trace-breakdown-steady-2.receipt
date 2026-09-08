@@ -1,0 +1,1 @@
+verdict=pass phase=steady-2 http_total_ms=4.629 auth_ms=0.976 resolve_ms=0.011 pull_ms=0.000 compile_ms=0.000 linker_setup_ms=0.123 link_ms=0.073 instantiate_ms=0.092 executor_platform_acquire_ms=0.000 callable_http_acquire_ms=0.018 guest_sql_acquire_ms=0.022 sql_ms=0.178 guest_db_call_ms=0.405
