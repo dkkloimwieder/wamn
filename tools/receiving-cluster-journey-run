@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--membershipproof] --evidence-dir DIR
+usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] --evidence-dir DIR
 
 Without --apply, print the immutable plan and exit.
 
@@ -16,6 +16,8 @@ Without --apply, print the immutable plan and exit.
                        --measure-startup); evidence under throughput/
   --membershipproof    Prove human membership through deployed HTTP, then stop;
                        cannot combine with startup or throughput measurement
+  --fresh-auth-bench    Repeat the existing throughput sweep three times for each
+                       of service and human PATs; implies --throughput
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
 The fixed scratch cluster is wamn-receiving-journey. Every Kubernetes and Helm
@@ -28,6 +30,7 @@ apply=false
 measure_startup=false
 throughput=false
 membershipproof=false
+fresh_auth_bench=false
 evidence_dir=
 while (($#)); do
   case "$1" in
@@ -35,6 +38,7 @@ while (($#)); do
     --measure-startup) measure_startup=true; shift ;;
     --throughput) throughput=true; measure_startup=true; shift ;;
     --membershipproof) membershipproof=true; shift ;;
+    --fresh-auth-bench) fresh_auth_bench=true; throughput=true; measure_startup=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
@@ -501,6 +505,14 @@ if [[ "$membershipproof" != true ]]; then
 fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker
+if [[ "$fresh_auth_bench" == true ]]; then
+  run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo build --locked --offline -p wamn-gates
+fi
+if [[ "$throughput" == true ]]; then
+  run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo build --locked --offline -p wamn-proof-integration --bin wamn-throughput
+fi
 
 # Release, matching tools/build-components and the Dockerfile's component
 # stage. These two were the last debug guests the journey pushed.
@@ -1513,6 +1525,7 @@ if [[ "$measure_startup" == true ]]; then
 
   run_startup_request() {
     local phase=$1 request_id=$2 trace_id=$3 parent_span_id=$4 job="startup-request-$1"
+    local secret_name=${5:-$route_caller_secret_name}
     local manifest=$work_dir/$job.yaml
     declare -A probe_spec=(
       [job]=$job
@@ -1520,7 +1533,7 @@ if [[ "$measure_startup" == true ]]; then
       [request_id]=$request_id
       [namespace]=$namespace
       [host_image]=$host_image
-      [secret_name]=$route_caller_secret_name
+      [secret_name]=$secret_name
       [route_host]=$route_host
       [trace_id]=$trace_id
       [parent_span_id]=$parent_span_id
@@ -1628,6 +1641,10 @@ if [[ "$measure_startup" == true ]]; then
         phase: $phase,
         http_total_ms: $http_total_ms,
         authentication_ms: named("wamn.route.authenticate"),
+        identity_read_spans: ([$spans[] | select(.name == "wamn.auth.pat" or
+          .name == "wamn.auth.roles" or .name == "wamn.auth.membership" or
+          .name == "wamn.auth.identity")] | length),
+        permission_read_spans: ([$spans[] | select(.name == "wamn.auth.permissions")] | length),
         resolution_ms: named("wamn.router.resolve"),
         artifact_pull_ms: named("wamn.component.pull"),
         compile_ms: named("wamn.component.compile"),
@@ -1833,7 +1850,9 @@ if [[ "$measure_startup" == true ]]; then
   # is compared to this one. Runs BEFORE the ratio gate so a red ratio does not
   # cost the sweep its evidence.
   run_throughput_sweep() {
-    local sweep_dir=$evidence_dir/throughput
+    local sweep_dir=${1:-$evidence_dir/throughput}
+    local credential=${2:-service} repetition=${3:-1}
+    local secret_name=${4:-$route_caller_secret_name}
     local -a sweep=(1 4 8 16 32 64)
     local duration_seconds=10
     local oha_image='ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f'
@@ -1841,11 +1860,8 @@ if [[ "$measure_startup" == true ]]; then
     local tool nats_ip bench_id bench_sql pg_sample_url layer c job
     mkdir -p "$sweep_dir"
 
-    # The Rust half, built once; sampling through cargo run would put a cargo
-    # start inside every step's window.
-    record_command cargo build --locked --offline -p wamn-proof-integration --bin wamn-throughput
-    cargo build --locked --offline -p wamn-proof-integration --bin wamn-throughput
-    tool=$(cargo metadata --no-deps --format-version 1 | jq -r .target_directory)/debug/wamn-throughput
+    # Built before startup measurement, never between repeated sweeps.
+    tool=$cargo_target_dir/debug/wamn-throughput
     [[ -x $tool ]] || { echo "throughput tool not built at $tool" >&2; exit 1; }
 
     pg_sample_url="postgresql://postgres:probe@127.0.0.1:$postgres_host_port/postgres"
@@ -1873,17 +1889,21 @@ if [[ "$measure_startup" == true ]]; then
         cat /sys/fs/cgroup/cpu.stat >"$sweep_dir/cpu-host-$1-c$2-$3.txt"
       docker exec "$postgres_container" cat /sys/fs/cgroup/cpu.stat \
         >"$sweep_dir/cpu-pg-$1-c$2-$3.txt"
+      cat /proc/loadavg >"$sweep_dir/load-$1-c$2-$3.txt"
+      cat /proc/meminfo >"$sweep_dir/memory-machine-$1-c$2-$3.txt"
+      "${kube[@]}" -n "$namespace" exec "$measurement_pod" -c host -- \
+        cat /sys/fs/cgroup/memory.current >"$sweep_dir/memory-host-$1-c$2-$3.txt"
     }
 
     : >"$sweep_dir/steps.jsonl"
     for layer in route nodb pg; do
       for c in "${sweep[@]}"; do
-        job=bench-$layer-c$c
+        job=bench-$credential-r$repetition-$layer-c$c
         declare -A bench_spec=(
           [job]=$job [namespace]=$namespace [layer]=$layer
           [concurrency]=$c [duration_seconds]=$duration_seconds
           [oha_image]=$oha_image [pgbench_image]=$pgbench_image
-          [route_host]=$route_host [secret_name]=$route_caller_secret_name
+          [route_host]=$route_host [secret_name]=$secret_name
           [pg_host]=$postgres_ip [pg_port]=5432 [pg_database]=$project_database
           [pg_user]=postgres [pg_password]=probe [sql]=$bench_sql [sampling_rate]=0.05
         )
@@ -1926,7 +1946,7 @@ if [[ "$measure_startup" == true ]]; then
     done
 
     jq -n --arg source "$head" --argjson duration "$duration_seconds" \
-      --arg route_target "POST $app_probe_route through flow-http, authenticated" \
+      --arg route_target "POST $app_probe_route through flow-http, $credential PAT, repetition $repetition" \
       --arg nodb_target "GET /no-such-route through flow-http: routed and answered 404 by the guest, no auth, no database" \
       --arg pg_target "pgbench -M prepared, the generated purchase_order/get read against $project_database as postgres" \
       --slurpfile steps "$sweep_dir/steps.jsonl" '{
@@ -1943,7 +1963,30 @@ if [[ "$measure_startup" == true ]]; then
     "$tool" report --evidence-dir "$sweep_dir" --out-md "$sweep_dir/report.md" \
       --out-json "$sweep_dir/summary.json" | tee "$sweep_dir/verdict.txt"
   }
-  if [[ "$throughput" == true ]]; then
+  if [[ "$fresh_auth_bench" == true ]]; then
+    human_pat_file=$work_dir/throughput-human-pat
+    human_secret_name=wamn-throughput-human
+    WAMN_SYSTEM_ADMIN_URL="$system_url" WAMN_PROJECT_ADMIN_URL="$project_url" \
+      "$cargo_target_dir/debug/wamn-gates" membershipproof \
+      --endpoint-url "http://flow-http.$namespace.svc.cluster.local" --host "$route_host" \
+      --org "$app_org" --project "$app_project" --env "$app_environment" \
+      --tenant "$app_tenant" --ctl-bin "$ctl" --throughput-pat-file "$human_pat_file" \
+      >"$evidence_dir/human-benchmark-fixture.receipt"
+    [[ $(stat -c '%a' "$human_pat_file") == 600 ]] || {
+      echo "human benchmark PAT file is not private" >&2
+      exit 1
+    }
+    run "${kube[@]}" -n "$namespace" create secret generic "$human_secret_name" \
+      --from-file="token=$human_pat_file"
+    for sample in 1 2 3 4 5; do
+      run_startup_request "human-$sample" "human-$sample" \
+        "4444444444444444444444444444000$sample" "444444444444000$sample" "$human_secret_name"
+    done
+    for sample in 1 2 3 4 5; do
+      collect_trace_breakdown "human-$sample" "4444444444444444444444444444000$sample" false
+    done
+    run_fresh_auth_sweeps "$evidence_dir/throughput" "$route_caller_secret_name" "$human_secret_name"
+  elif [[ "$throughput" == true ]]; then
     run_throughput_sweep
   fi
 

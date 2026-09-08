@@ -2092,6 +2092,25 @@ the shell writes is strict on the Rust side (`deny_unknown_fields`) and its
 schema is checked in at `tests/integration/schema/wamn-throughput.schema.json`,
 regenerated with `wamn-throughput schema`.
 
+For the fresh-auth comparison (`wamn-ctc8.12`), use `--fresh-auth-bench` instead of `--throughput`.
+This mode runs three sweeps for each credential: a service PAT and a human PAT with explicit environment membership.
+The second pair reverses the credential order.
+Each sweep retains the existing route, no-database, and direct-statement layers in its own directory.
+Each step also records machine load, machine memory, and host memory.
+Five human request traces accompany the existing service traces.
+The trace summaries count identity-read and permission-read spans, not PostgreSQL server statements.
+
+The fixture uses the production identity authority and membership CLI.
+Its two-hour human PAT exists only for this disposable benchmark.
+The runner holds that PAT in a private file and Kubernetes Secret, never in evidence.
+Journey teardown removes the fixture database and its identity facts.
+The original membership proof still runs its seven HTTP cases and removes its own facts.
+
+Use separate repository evidence directories for the baseline and changed source snapshots.
+Keep the measurement source worktree clean during each run.
+Run builds and measurements serially, and report the spread across all repetitions.
+Do not claim a latency improvement when the observed variance obscures it.
+
 ### Other live gates that carry their command in-source
 
 These have no section tag; the file's own doc comment is the recipe of record.
