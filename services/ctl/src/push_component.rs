@@ -52,6 +52,53 @@ const INSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
          $1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb\
      ) ON CONFLICT DO NOTHING RETURNING admitted_at";
 
+/// The same append for a DISPOSABLE environment, which REPLACES the coordinate's
+/// admitted fact instead of colliding with it (wamn-10yt.38).
+///
+/// Same eleven parameters as [`INSERT_COMPONENT_SQL`], so the choice between the
+/// two is one statement swap and never a second parameter shape. `RETURNING`
+/// fires on the update as well as the insert, so the conflicting arm below is
+/// simply not reached — a replacement is not an exact retry and must not be
+/// judged as one.
+const UPSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
+         tenant_id, package_id, package_version, component, interface_version, operations, \
+         component_digest, projection_hash, imports, imports_fingerprint, effects\
+     ) VALUES (\
+         $1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb\
+     ) ON CONFLICT ON CONSTRAINT component_library_pkey DO UPDATE SET \
+         operations = EXCLUDED.operations, \
+         component_digest = EXCLUDED.component_digest, \
+         projection_hash = EXCLUDED.projection_hash, \
+         imports = EXCLUDED.imports, \
+         imports_fingerprint = EXCLUDED.imports_fingerprint, \
+         effects = EXCLUDED.effects, \
+         admitted_at = now() \
+     RETURNING admitted_at";
+
+/// Whether the tenant's PROJECTED environment marks its facts replaceable.
+///
+/// Read LOCALLY, inside the control transaction that is about to write the fact,
+/// from `catalog.tenant_environments` — provisioning's projection of the
+/// authority row in `registry.project_envs`. No second database on the admit
+/// path for a flag that changes once in an environment's lifetime.
+/// A tenant with no projected environment is DURABLE, which is what makes this
+/// additive: absence reproduces the refusal exactly.
+const SELECT_ENVIRONMENT_DISPOSABLE_SQL: &str = "SELECT coalesce((\
+         SELECT disposable FROM catalog.tenant_environments WHERE tenant_id = $1\
+     ), false)";
+
+/// A replacement moves the coordinate's digest, and any admitted connection
+/// requirement still points at the OLD one. Release that reference first; the
+/// requirements for the new digest are appended immediately after the fact
+/// moves, so the transaction never observes a component without its connections.
+const RELEASE_SUPERSEDED_REQUIREMENTS_SQL: &str = "DELETE FROM catalog.connection_requirements \
+      WHERE tenant_id = $1 \
+        AND component_digest <> $6 \
+        AND component_digest = (\
+            SELECT component_digest FROM catalog.component_library \
+             WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+               AND component = $4 AND interface_version = $5)";
+
 const EXACT_COMPONENT_SQL: &str = "SELECT EXISTS (\
          SELECT 1 FROM catalog.component_library \
           WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
@@ -1439,6 +1486,21 @@ async fn persist_with_client(
         .query_one(LOCK_PROJECTION_SQL, &[&coordinate])
         .await
         .with_context(|| format!("lock {plane} component projection coordinate"))?;
+    // The disposable marker lives only in the control store, beside the facts it
+    // governs (wamn-10yt.38). The verification project plane is recreated per
+    // run and carries no projection to consult, so it stays frozen.
+    let replaceable = if plane == ProjectionPlane::Control {
+        transaction
+            .query_one(
+                SELECT_ENVIRONMENT_DISPOSABLE_SQL,
+                &[&component.scope.tenant_id],
+            )
+            .await
+            .context("resolve the projected environment's disposable marker")?
+            .get(0)
+    } else {
+        false
+    };
     let package_inserted = if plane == ProjectionPlane::Control {
         let existing = transaction
             .query_opt(
@@ -1505,8 +1567,13 @@ async fn persist_with_client(
             .await?
         }
     };
-    let (component_inserted, observed_projection_hash) =
-        append_or_verify_admitted_component_count(&transaction, component, projection_hash).await?;
+    let (component_inserted, observed_projection_hash) = append_or_verify_admitted_component_count(
+        &transaction,
+        component,
+        projection_hash,
+        replaceable,
+    )
+    .await?;
     let mut requirements_inserted = 0;
     // One transaction per plane: a library fact without its connection facts,
     // or the reverse, is never visible inside that plane.
@@ -1754,20 +1821,28 @@ async fn verify_requirement_inventory(
 ///
 /// The caller owns the transaction and tenant claim so release promotion can
 /// combine this write with its target wiring and pointer cutover atomically.
+///
+/// Always the FROZEN reading: promotion copies an already-admitted fact into a
+/// target and has no environment of its own to consult. Only the control
+/// projection in [`persist_with_client`] resolves the disposable marker.
 pub(crate) async fn append_or_verify_admitted_component(
     transaction: &tokio_postgres::Transaction<'_>,
     component: &AdmittedComponent,
     projection_hash: &str,
 ) -> anyhow::Result<()> {
-    append_or_verify_admitted_component_count(transaction, component, projection_hash)
+    append_or_verify_admitted_component_count(transaction, component, projection_hash, false)
         .await
         .map(|_| ())
 }
 
+/// `replaceable` is the PROJECTED environment's answer, never a caller's
+/// preference: it is read from `catalog.tenant_environments` inside this same
+/// transaction (wamn-10yt.38).
 async fn append_or_verify_admitted_component_count(
     transaction: &tokio_postgres::Transaction<'_>,
     component: &AdmittedComponent,
     projection_hash: &str,
+    replaceable: bool,
 ) -> anyhow::Result<(bool, String)> {
     let imports =
         serde_json::to_string(&component.imports).context("serialize admitted imports")?;
@@ -1789,8 +1864,29 @@ async fn append_or_verify_admitted_component_count(
         &effects,
     ];
 
+    if replaceable {
+        transaction
+            .execute(
+                RELEASE_SUPERSEDED_REQUIREMENTS_SQL,
+                &[
+                    &component.scope.tenant_id,
+                    &component.scope.package_id,
+                    &component.scope.package_version,
+                    &component.component,
+                    &component.interface_version,
+                    &component.component_digest,
+                ],
+            )
+            .await
+            .context("release the superseded component's connection requirements")?;
+    }
+    let append_sql = if replaceable {
+        UPSERT_COMPONENT_SQL
+    } else {
+        INSERT_COMPONENT_SQL
+    };
     let inserted = transaction
-        .query_opt(INSERT_COMPONENT_SQL, &params)
+        .query_opt(append_sql, &params)
         .await
         .context("append admitted component-library fact")?
         .is_some();

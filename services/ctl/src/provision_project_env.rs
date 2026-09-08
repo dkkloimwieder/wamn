@@ -118,6 +118,19 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub tenant: Option<String>,
 
+    /// Mark this environment DISPOSABLE: its admitted component facts may be
+    /// REPLACED rather than frozen, so an author's no-op edit does not lock them
+    /// out of their own package version (wamn-10yt.38).
+    ///
+    /// `wamn dev up` provisions its own per-run target with this. Nothing else
+    /// passes it, and the default is what keeps every other environment's
+    /// admitted fact immutable BY CONSTRUCTION rather than by a caller
+    /// remembering to withhold a flag. The marker is recorded on the
+    /// environment's registry row and projected into the control store; the
+    /// admit path reads THAT, never an argument of its own.
+    #[arg(long, default_value_t = false)]
+    pub disposable: bool,
+
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the org's
     /// placement, read-or-mint the stored instance suffix, and record the project
     /// + project-env. Env `WAMN_SYSTEM_ADMIN_URL`.
@@ -602,9 +615,11 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     let instance = record_project_env(
         system_url,
         &triple,
+        args.tenant.as_deref(),
         &secret_name,
         args.secret_namespace.as_deref(),
         &mint_instance_suffix()?,
+        args.disposable,
     )
     .await?;
 
@@ -3266,27 +3281,39 @@ pub(crate) async fn read_project_env_instance(
 async fn record_project_env(
     system_url: &str,
     triple: &Triple,
+    tenant: Option<&str>,
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
+    disposable: bool,
 ) -> anyhow::Result<String> {
-    let (client, conn) = tokio_postgres::connect(system_url, NoTls)
+    let (mut client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
-    let result =
-        do_record_project_env(&client, triple, secret_name, secret_namespace, minted).await;
+    let result = do_record_project_env(
+        &mut client,
+        triple,
+        tenant,
+        secret_name,
+        secret_namespace,
+        minted,
+        disposable,
+    )
+    .await;
     drop(client);
     let _ = conn_task.await;
     result
 }
 
 async fn do_record_project_env(
-    client: &tokio_postgres::Client,
+    client: &mut tokio_postgres::Client,
     triple: &Triple,
+    tenant: Option<&str>,
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
+    disposable: bool,
 ) -> anyhow::Result<String> {
     client
         .batch_execute("SET ROLE wamn_system")
@@ -3310,6 +3337,7 @@ async fn do_record_project_env(
                 &secret_name,
                 &secret_namespace,
                 &minted,
+                &disposable,
             ],
         )
         .await
@@ -3321,9 +3349,92 @@ async fn do_record_project_env(
     // is a trust boundary, so the value is re-checked before any name derives
     // from it.
     let stored: String = row.get(0);
+    let stored_disposable: bool = row.get(1);
     validate_instance_suffix(&stored)
         .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
+    project_tenant_environment(client, triple, tenant, &stored, stored_disposable).await?;
     Ok(stored)
+}
+
+/// Probe for the control store's environment projection without assuming it.
+const CONTROL_PROJECTION_INSTALLED_SQL: &str =
+    "SELECT to_regclass('catalog.tenant_environments') IS NOT NULL";
+
+/// Claim the projected tenant for the transaction's RLS policy.
+const CLAIM_PROJECTED_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+
+/// Write the projected copy of the row just recorded.
+const PROJECT_TENANT_ENVIRONMENT_SQL: &str =
+    "SELECT catalog.project_tenant_environment($1, $2, $3, $4, $5, $6)";
+
+/// Project the recorded project-env into the control store, beside the facts its
+/// `disposable` marker governs (wamn-10yt.38).
+///
+/// `registry.project_envs` stays the AUTHORITY. This copy carries that row's
+/// identity — the triple plus the STORED instance suffix, read back from the
+/// upsert rather than assumed — so the admit path resolves the marker locally
+/// and a disagreement between the two planes refuses instead of passing.
+///
+/// ABSENCE MEANS DURABLE, so a system database with no control store, or a
+/// provisioning that names no tenant, records nothing here and admits exactly as
+/// it always did. Only a DISPOSABLE environment insists, because for it the
+/// missing projection would be the difference between an author's edit landing
+/// and an author's edit being refused.
+async fn project_tenant_environment(
+    client: &mut tokio_postgres::Client,
+    triple: &Triple,
+    tenant: Option<&str>,
+    instance_suffix: &str,
+    disposable: bool,
+) -> anyhow::Result<()> {
+    let installed: bool = client
+        .query_one(CONTROL_PROJECTION_INSTALLED_SQL, &[])
+        .await
+        .context("probe the control store's environment projection")?
+        .get(0);
+    if !installed {
+        anyhow::ensure!(
+            !disposable,
+            "a disposable project-env needs catalog.tenant_environments: apply \
+             deploy/sql/control-portable-store.sql to the system database first"
+        );
+        return Ok(());
+    }
+    let Some(tenant) = tenant else {
+        anyhow::ensure!(
+            !disposable,
+            "a disposable project-env needs --tenant: the admit path resolves the \
+             marker by the tenant its component facts are keyed on"
+        );
+        return Ok(());
+    };
+    let env = triple.env.as_str();
+    let transaction = client
+        .transaction()
+        .await
+        .context("begin the project-env control projection")?;
+    transaction
+        .query_one(CLAIM_PROJECTED_TENANT_SQL, &[&tenant])
+        .await
+        .context("claim the projected tenant")?;
+    transaction
+        .execute(
+            PROJECT_TENANT_ENVIRONMENT_SQL,
+            &[
+                &tenant,
+                &triple.org,
+                &triple.project,
+                &env,
+                &instance_suffix,
+                &disposable,
+            ],
+        )
+        .await
+        .context("project the project-env into the control store")?;
+    transaction
+        .commit()
+        .await
+        .context("commit the project-env control projection")
 }
 
 /// Print a JSON document to a path, or to stdout with a labeled header when the

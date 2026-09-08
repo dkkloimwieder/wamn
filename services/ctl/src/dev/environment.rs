@@ -184,6 +184,11 @@ fn provisioning_args(
         project: Some(PROJECT.to_owned()),
         env: Some(ENVIRONMENT.to_owned()),
         tenant: Some(TENANT.to_owned()),
+        // The development target is disposable, and its registry row is where
+        // that is written down (wamn-10yt.38). Admit reads the projection of
+        // THIS row, so an author's re-run replaces its own component fact
+        // instead of being locked out of a package version by a reformat.
+        disposable: true,
         system_database_url: Some(system_url.to_owned()),
         cluster: Some("route-auth-pg18".to_owned()),
         connection_limit: None,
@@ -215,6 +220,9 @@ pub fn generation_args(
         project: Some(PROJECT.to_owned()),
         env: Some(ENVIRONMENT.to_owned()),
         tenant: Some(TENANT.to_owned()),
+        // A workload generation action returns before provisioning records the
+        // project-env row, so this never reaches the registry.
+        disposable: false,
         system_database_url: Some(system_url.to_owned()),
         cluster: None,
         connection_limit: None,
