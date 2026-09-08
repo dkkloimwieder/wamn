@@ -1,0 +1,2 @@
+cargo generate-lockfile --manifest-path tools/probes/ctc8-13-native-http/Cargo.toml --offline
+RUSTC_WRAPPER=sccache cargo build --manifest-path tools/probes/ctc8-13-native-http/Cargo.toml --locked --offline
