@@ -1382,8 +1382,14 @@ long as it runs. It is not a gate: it emits no receipt, and its evidence is that
 Point it only at disposable services. Standup resets the control store, so every
 run is a fresh start; never point it at shared infrastructure or the frozen
 cluster. Minted PATs and credential URLs live only in the mode-0700 environment
-directory and are never printed. `wamn dev` refuses to publish from a dirty
-worktree, so run the loop from a clean one.
+directory and are never printed.
+
+`wamn dev` runs from a dirty worktree, and that is the point of the loop
+(`wamn-10yt.43`). It recreates its target database before every run. It pushes
+to the registry the session owns. Nothing it deploys outlives the session, so
+the committed-source refusal has nothing to protect. Point a run at a durable
+target and every one of those refusals returns, because the condition is the
+target and not the stage.
 
 The scratch path is deliberately not under `/tmp`: a cold build of the loop is
 several gigabytes, `/tmp` is a tmpfs on many machines, and the environment is
