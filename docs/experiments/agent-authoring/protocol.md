@@ -321,9 +321,9 @@ Human items, scored from the worktree and the transcript:
 - H-3 Invariant: the overlap rule is enforced by the database — an exclusion
   constraint, or a lock and check inside one transaction — not by application
   code that reads then writes. Either database form scores the same. If the
-  §4.6 probe shows the migration validator or the guest role refuses `EXCLUDE`,
-  lock-in-transaction is the top rung for that run and an agent that tried the
-  constraint and was refused is not marked down.
+  §4.6 probe shows that any stage refuses `EXCLUDE`, lock-in-transaction is the
+  top rung for that run and an agent that tried the constraint and was refused
+  is not marked down.
 - H-4 Generated artifacts are regenerated, never hand-edited.
 - H-5 Report reproduces: every claim in "How I verified" replays.
 - H-6 Procedure followed: "How I verified" shows tests, the loop, the
