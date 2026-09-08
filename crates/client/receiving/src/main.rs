@@ -19,6 +19,10 @@
 //! PAT, and `WAMN_HOST` supplies the routing host header when the deployment
 //! routes by host. All three are deployment facts, so none of them is
 //! compiled in.
+//!
+//! Where those three values come from against a `wamn dev` session, the keys
+//! this binary reads, and the teardown, are the `[RECEIVING-TUI]` recipe in
+//! `docs/operations/build-and-test.md`.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -202,6 +206,7 @@ fn route(template: &str) -> RouteMetadata {
     }
 }
 
+/// Rows of a `bounded_list` result, which spells its rows `rows`.
 fn rows(value: &Value) -> &[Value] {
     value["rows"].as_array().map_or(&[], Vec::as_slice)
 }
@@ -210,22 +215,44 @@ fn text(row: &Value, member: &str) -> String {
     row[member].as_str().unwrap_or_default().to_owned()
 }
 
+/// An `int64` member, which is spelled as a JSON STRING on the wire.
+///
+/// `int32` is a JSON number and `int64` is not: a 64-bit integer does not
+/// survive every JSON reader intact, so the platform carries it lexically.
+/// Reading `row_version` with `as_i64` therefore yields `None` and the screen
+/// shows revision 0 for every order, which is exactly what a stale-write
+/// refusal reports back (measured live against the served release,
+/// `[RECEIVING-TUI]`).
+fn integer(row: &Value, member: &str) -> i64 {
+    row[member]
+        .as_str()
+        .and_then(|digits| digits.parse().ok())
+        .unwrap_or_default()
+}
+
 /// Load the first page of purchase orders.
 async fn load_orders(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
     app.begin("purchase_order.query", screen)?;
     let request_id = app.next_request_id();
     let event = match call(&app.client, ORDER_QUERY, &request_id, json!({})).await {
         Ok(page) => Event::OrdersLoaded {
-            rows: rows(&page)
+            // A `page` result is NOT a `bounded_list`: it spells its rows
+            // `item` and its continuation `next_cursor`. Reading `rows` and
+            // `next` here found neither, so the list rendered empty against a
+            // deployment holding two orders and reported no error at all
+            // (measured live, `[RECEIVING-TUI]`).
+            rows: page["item"]
+                .as_array()
+                .map_or(&[][..], Vec::as_slice)
                 .iter()
                 .map(|row| PurchaseOrderRow {
                     id: text(row, "id"),
                     number: text(row, "purchase_order_number"),
                     status: text(row, "status"),
-                    row_version: row["row_version"].as_i64().unwrap_or_default(),
+                    row_version: integer(row, "row_version"),
                 })
                 .collect(),
-            next: page["next"].as_str().map(str::to_owned),
+            next: page["next_cursor"].as_str().map(str::to_owned),
         },
         Err(error) => Event::Failed { error },
     };
