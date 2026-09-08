@@ -48,20 +48,22 @@ pub fn record_receipt(
 
     let mut lines = Vec::with_capacity(state.lines.len());
     for line in entered_lines(state) {
-        // Sent as a JSON NUMBER, not a string: the contract declares
-        // `numeric`, and a quoted quantity is a different wire value that the
-        // input schema refuses.
+        // Sent as a JSON STRING carrying the typed digits verbatim, and SCALE
+        // IS THE REASON. The contract declares `numeric` under the
+        // canonicalization `postgresql_lexical_scale_preserved`; a JSON number
+        // cannot carry `5.0000`, because every reader re-serializes it as
+        // `5.0` and the scale the operator typed is gone. The published route
+        // agrees — `value.line[].quantity` is `{"type": "string"}` in the
+        // wiring's input schema — so a number is refused at ingress with
+        // `{"error":{"code":"schema-invalid"}}` before the operation runs, and
+        // no receipt is ever recorded. Measured live against the served
+        // release; the recipe is `[RECEIVING-TUI]`.
         //
-        // The digits are carried through serde_json's own number parsing
-        // rather than `arbitrary_precision`. That feature would change how
-        // EVERY number in the workspace serializes — the same class of global
-        // hazard as `preserve_order`, which the repo already refuses — and
-        // `float_roundtrip`, which the workspace does enable, guarantees a
-        // parsed value re-serializes to the shortest string that reads back
-        // identically. What the operator typed is what goes on the wire.
-        let quantity: Value =
-            serde_json::from_str(&line.entered).map_err(|_| "a quantity must be a number")?;
-        if !quantity.is_number() {
+        // The reducer already refuses anything but digits and at most one
+        // decimal point at entry, so the only shape left to reject is a lone
+        // separator.
+        let quantity = line.entered.trim();
+        if quantity.chars().all(|symbol| !symbol.is_ascii_digit()) {
             return Err("a quantity must be a number");
         }
         lines.push(json!({

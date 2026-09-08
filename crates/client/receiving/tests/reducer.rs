@@ -341,11 +341,14 @@ fn the_envelope_carries_what_the_client_supplies_and_what_was_entered() {
     );
 }
 
-/// The quantity is a JSON NUMBER, not a string: the contract declares
-/// `numeric`, and a quoted quantity is a different wire value the input
-/// schema refuses.
+/// The quantity is a JSON STRING carrying the typed digits, and SCALE is why:
+/// `numeric` is canonicalized `postgresql_lexical_scale_preserved`, which a
+/// JSON number cannot hold — `5.0000` comes back out as `5.0`. The published
+/// route agrees, spelling `value.line[].quantity` `{"type": "string"}`, and a
+/// number is refused at ingress with `schema-invalid` before the operation
+/// runs. Measured live against the served release, recipe `[RECEIVING-TUI]`.
 #[test]
-fn a_quantity_is_sent_as_a_number_carrying_the_typed_digits() {
+fn a_quantity_is_sent_as_a_string_carrying_the_typed_digits() {
     let supplied = ClientSupplied {
         request_id: "req-1".to_owned(),
         idempotency_key: "idem-1".to_owned(),
@@ -357,8 +360,41 @@ fn a_quantity_is_sent_as_a_number_carrying_the_typed_digits() {
     );
     let items = record_receipt(&decimal, &supplied).expect("builds");
     let quantity = &items[0]["value"]["line"][0]["quantity"];
-    assert!(quantity.is_number(), "quantity was not a JSON number");
-    assert_eq!(quantity.to_string(), "3.5", "the typed digits changed");
+    assert_eq!(
+        quantity.as_str(),
+        Some("3.5"),
+        "the quantity is not the typed digits as a JSON string"
+    );
+}
+
+/// A trailing zero survives, which is the whole reason the wire spelling is
+/// lexical: `5.0000` sent as a JSON number reads back as `5.0`, and the scale
+/// the operator typed is a semantic input to the command.
+#[test]
+fn a_typed_scale_survives_onto_the_wire() {
+    let supplied = ClientSupplied {
+        request_id: "req-1".to_owned(),
+        idempotency_key: "idem-1".to_owned(),
+        occurred_at: "2026-09-03T10:15:00Z".to_owned(),
+    };
+    let scaled = apply(
+        &ready(),
+        vec![
+            Event::BackspaceQuantity,
+            Event::TypeQuantity('5'),
+            Event::TypeQuantity('.'),
+            Event::TypeQuantity('0'),
+            Event::TypeQuantity('0'),
+            Event::TypeQuantity('0'),
+            Event::TypeQuantity('0'),
+        ],
+    );
+    let items = record_receipt(&scaled, &supplied).expect("builds");
+    assert_eq!(
+        items[0]["value"]["line"][0]["quantity"].as_str(),
+        Some("5.0000"),
+        "the typed scale was lost"
+    );
 }
 
 /// The same operator action retried must carry the SAME idempotency key —

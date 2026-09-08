@@ -110,9 +110,14 @@ async fn the_receipt_entry_workflow_runs_end_to_end() {
     deployment.answer(
         "/purchase_order/query",
         200,
-        r#"[{"request_id":"r1","value":{"rows":[
+        // A `page` result spells its rows `item` and its continuation
+        // `next_cursor`, and `int64` is spelled as a JSON string. These are
+        // the bytes the served release actually returned; the earlier fixture
+        // said `rows`/`next` with a numeric `row_version`, which is why the
+        // client's own mapping could be wrong and still pass here.
+        r#"[{"request_id":"r1","value":{"item":[
              {"id":"00000000-0000-0000-0000-000000000001","purchase_order_number":"PO-1001",
-              "status":"open","row_version":4}],"next":"cursor-2"}}]"#,
+              "status":"open","row_version":"4"}],"next_cursor":"cursor-2"}}]"#,
     );
     deployment.answer(
         "/receiving/load_receipt_screen",
@@ -170,9 +175,9 @@ async fn the_receipt_entry_workflow_runs_end_to_end() {
     state = reduce(
         &state,
         Event::OrdersLoaded {
-            rows: page["rows"]
+            rows: page["item"]
                 .as_array()
-                .expect("rows")
+                .expect("item")
                 .iter()
                 .map(|row| PurchaseOrderRow {
                     id: row["id"].as_str().expect("id").to_owned(),
@@ -181,10 +186,14 @@ async fn the_receipt_entry_workflow_runs_end_to_end() {
                         .expect("number")
                         .to_owned(),
                     status: row["status"].as_str().expect("status").to_owned(),
-                    row_version: row["row_version"].as_i64().expect("row_version"),
+                    row_version: row["row_version"]
+                        .as_str()
+                        .expect("row_version")
+                        .parse()
+                        .expect("an int64 spelled lexically"),
                 })
                 .collect(),
-            next: page["next"].as_str().map(str::to_owned),
+            next: page["next_cursor"].as_str().map(str::to_owned),
         },
     );
     assert!(screen_contains(&state, "PO-1001"), "{:?}", render(&state));
@@ -310,7 +319,10 @@ async fn the_receipt_entry_workflow_runs_end_to_end() {
         sent[0]["value"]["line"][0]["location_id"],
         "22222222-0000-0000-0000-000000000001"
     );
-    assert_eq!(sent[0]["value"]["line"][0]["quantity"], 4);
+    // A JSON STRING. The published route's input schema spells
+    // `value.line[].quantity` `{"type": "string"}`; a number is refused at
+    // ingress with `schema-invalid` before the operation runs.
+    assert_eq!(sent[0]["value"]["line"][0]["quantity"], "4");
     assert_eq!(
         deployment.last().headers["authorization"],
         "Bearer pat-operator"

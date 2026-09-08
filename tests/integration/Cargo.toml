@@ -49,7 +49,7 @@ wasmtime-wasi = { workspace = true }
 [dev-dependencies]
 http-body-util = { workspace = true }
 hyper = { workspace = true }
-uuid = "1"
+uuid = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wasmtime-wasi-http = { workspace = true }
 
