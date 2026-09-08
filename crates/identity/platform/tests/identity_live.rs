@@ -144,7 +144,7 @@ async fn project_environment_membership_round_trip(
         .expect("seed distinct registered project-environments");
     let reads = PreparedIdentityReads::prepare(client)
         .await
-        .expect("prepare identity queries");
+        .expect("prepare the identity query");
     let human_token = issue_pat(
         client,
         human.id(),
@@ -199,12 +199,6 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("unprepared query observes new grant")
     );
-    assert!(
-        reads
-            .has_project_env_membership(client, human.id(), "acme", "receiving", "dev")
-            .await
-            .expect("prepared query observes new grant")
-    );
     assert_eq!(
         route_principal_id(
             &reads,
@@ -258,12 +252,6 @@ async fn project_environment_membership_round_trip(
                 .await
                 .expect("read another principal or environment")
         );
-        assert!(
-            !reads
-                .has_project_env_membership(client, principal.id(), org, project, env)
-                .await
-                .expect("prepared query isolates the exact grant")
-        );
     }
     assert_eq!(
         grant_project_env_membership(client, service.id(), "acme", "receiving", "dev")
@@ -304,12 +292,6 @@ async fn project_environment_membership_round_trip(
             .expect("revoke membership")
     );
     assert!(
-        !reads
-            .has_project_env_membership(client, human.id(), "acme", "receiving", "dev")
-            .await
-            .expect("prepared query observes revocation immediately")
-    );
-    assert!(
         route_principal_id(
             &reads,
             client,
@@ -329,8 +311,7 @@ async fn project_environment_membership_round_trip(
     );
     for (principal, org, project, env) in other_memberships {
         assert!(
-            reads
-                .has_project_env_membership(client, principal.id(), org, project, env)
+            has_project_env_membership(client, principal.id(), org, project, env)
                 .await
                 .expect("revocation preserves every other principal and environment")
         );
@@ -350,10 +331,17 @@ async fn project_environment_membership_round_trip(
         .await
         .expect("replace the provisioned environment");
     assert!(
-        !reads
-            .has_project_env_membership(client, human.id(), "acme", "receiving", "dev")
-            .await
-            .expect("replacement environment must not inherit the deleted grant")
+        route_principal_id(
+            &reads,
+            client,
+            human_token.token(),
+            "acme",
+            "receiving",
+            "dev"
+        )
+        .await
+        .is_none(),
+        "replacement environment must not inherit the deleted grant"
     );
 
     grant_project_env_membership(client, other_human.id(), "acme", "receiving", "dev")

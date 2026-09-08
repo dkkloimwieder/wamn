@@ -384,7 +384,7 @@ impl AuthenticatedCaller {
 /// Trusted dependencies and scope for PAT-backed route authentication.
 pub struct RouteAuthentication {
     identity_reader: Arc<tokio_postgres::Client>,
-    /// The identity statements, parsed once at construction rather than on
+    /// The identity statement, parsed once at construction rather than on
     /// every request. See [`PreparedIdentityReads`].
     prepared: PreparedIdentityReads,
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
