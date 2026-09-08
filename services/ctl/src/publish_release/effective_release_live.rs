@@ -9,9 +9,10 @@ use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
 use super::{
-    MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest, ReleaseWiringTarget,
-    mint_release_manifest_with_package_manifests, proven_effect_free_operation_dependencies,
-    read_package_manifests, resolve_route_host_overlay, sha256, validate_package_weld,
+    DependencyDigestRule, MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest,
+    ReleaseWiringTarget, mint_release_manifest_with_package_manifests,
+    proven_effect_free_operation_dependencies, read_package_manifests, resolve_route_host_overlay,
+    sha256, validate_package_weld,
 };
 use crate::apply_package::{self, ApplyPackageArgs};
 use crate::author_wiring::{self, AuthorWiringRequest};
@@ -209,8 +210,11 @@ async fn admit_components(
                 input.version
             );
         }
-        let effect_free_operation_dependencies =
-            proven_effect_free_operation_dependencies(&declaration, &component_facts);
+        let effect_free_operation_dependencies = proven_effect_free_operation_dependencies(
+            &declaration,
+            &component_facts,
+            DependencyDigestRule::Declared,
+        );
         let facts = validate_component_admission(
             &engine,
             &bytes,
@@ -402,6 +406,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         packages: &packages,
         wirings: &wirings,
         attachments: &attachments,
+        environment_is_disposable: false,
     };
 
     let first = mint(&mut project, &request, &manifests, &manifest_hashes).await;

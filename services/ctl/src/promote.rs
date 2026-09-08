@@ -700,6 +700,9 @@ async fn promote_target(
             packages: &packages,
             wirings: &wirings,
             attachments: &source.manifest.attachments,
+            // A promotion carries an already-published release into a real
+            // environment, so it always matches the declared dependency digest.
+            environment_is_disposable: false,
         },
         &source.manifest.registrations,
     )

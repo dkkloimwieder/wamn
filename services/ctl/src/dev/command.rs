@@ -545,6 +545,12 @@ pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
         "{prefix} stage-ms: prepare={}ms {timings}",
         receipt.prepared().as_millis()
     );
+    // One line per notice, after the timings, for the same reason the skip line
+    // is separate: a scripted caller reads the completed and served lines by
+    // shape. A notice never refuses, so it must never change either of them.
+    for notice in receipt.notices() {
+        println!("{prefix} {}: {}", notice.code(), notice.detail());
+    }
 }
 
 #[cfg(test)]

@@ -38,7 +38,7 @@ use super::read::{
 use super::target_database;
 use super::verification_world::RUN_SCHEMA;
 use super::watch::GitSource;
-use super::{DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
+use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
 use crate::apply_package::ApplyPackageArgs;
 use crate::dev_gate::GateClient;
 use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
@@ -55,6 +55,9 @@ const BUILD_TOOL: &str = "tools/build-components";
 const AUTHORING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__TENANT_ID__";
 const PACKAGE_MANIFEST: &str = "wamn.json";
+
+/// Stable code for the notice a run emits when it built past an authored pin.
+pub const BASE_PIN_STALE_NOTICE: &str = "pin stale";
 const PACKAGE_ATTACHMENTS: &str = "publication/attachments.json";
 const PACKAGE_COMPONENTS: &str = "publication/components";
 const PACKAGE_WIRINGS: &str = "publication/wirings";
@@ -1338,6 +1341,20 @@ impl DevStageRunner for ProductionDevStageRunner {
         // A development loop recreates its target before every run and pushes
         // to the session's own registry, so nothing it deploys is durable.
         DevTargetDurability::Disposable
+    }
+
+    fn run_notices(&self) -> Vec<DevRunNotice> {
+        // A durable publish from this same source WILL refuse until the pin is
+        // reminted, so the run says it here rather than leaving it to be found
+        // at promotion (wamn-10yt.48).
+        self.base_digests_moved_off_pin()
+            .map(|(coordinate, pin, built)| {
+                DevRunNotice::new(
+                    BASE_PIN_STALE_NOTICE,
+                    format!("{coordinate} {PACKAGE_MANIFEST} names {pin}, built {built}"),
+                )
+            })
+            .collect()
     }
 
     async fn prepare_run(&mut self) -> Result<(), Self::Error> {
