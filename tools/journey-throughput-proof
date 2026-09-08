@@ -157,6 +157,13 @@ run_throughput_sweep() { return 7; }
 status=0
 run_fresh_auth_sweeps evidence service-secret human-secret || status=$?
 [[ $status == 7 ]]; check "a failed sweep stops the sequence with its exit code" $?
+status=0
+bash -e -c '
+  source "$1"
+  run_throughput_sweep() { false; return 0; }
+  run_fresh_auth_sweeps evidence service-secret human-secret
+' bash "$repo_root/tools/journey-throughput.sh" || status=$?
+[[ $status == 1 ]]; check "the scheduler preserves errexit inside the real sweep" $?
 
 if [[ $failures -eq 0 ]]; then echo "journey-throughput-proof: all checks passed"; else
   echo "journey-throughput-proof: $failures check(s) FAILED"; exit 1; fi
