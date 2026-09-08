@@ -88,6 +88,37 @@ mod tests {
         assert!(timestamp("f", "yesterday").is_err());
     }
 
+    /// The spelling above is the one the published input contracts declare.
+    /// A reference is never more lenient than the contract it proves, so the
+    /// re-spelling and the declared token move together or this fails. The
+    /// refusal literals are welded to their contract the same way, in
+    /// `error.rs`.
+    #[test]
+    fn the_canonical_forms_are_the_ones_the_contracts_publish() {
+        for operation in [
+            "carrier/create",
+            "dock/create",
+            "appointment/book",
+            "appointment/check_in",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../packages/dock/generated/contracts")
+                .join(format!("{operation}.input.json"));
+            let contract: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+            )
+            .expect("parses");
+            assert_eq!(
+                contract["canonicalization"]["timestamptz"], "utc_rfc3339_six_fractional_digits",
+                "{operation} declares another timestamp form"
+            );
+            assert_eq!(
+                contract["canonicalization"]["uuid"], "lowercase_hyphenated",
+                "{operation} declares another uuid form"
+            );
+        }
+    }
+
     /// A day is the half-open UTC day it names, so an appointment at
     /// `23:59:59Z` belongs to that day and one at `00:00:00Z` the next belongs
     /// to the next.

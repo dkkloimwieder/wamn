@@ -254,8 +254,12 @@ mod tests {
     fn the_correlation_id_is_the_envelopes_and_the_body_is_the_items() {
         assert!(prepare_envelope(r#"[{"dock_id":"x"}]"#).is_err());
 
+        // This package carries a command body at the TOP LEVEL, so an item with
+        // nothing but its correlation id is the empty command. The nested
+        // spelling would send `"value":{}` here, and against this shape that
+        // reads as an unknown field rather than a missing one.
         let items = prepare_envelope(
-            r#"[{"request_id":"a","dock_id":"x","extra":true},{"request_id":"b","value":{}}]"#,
+            r#"[{"request_id":"a","dock_id":"x","extra":true},{"request_id":"b"}]"#,
         )
         .unwrap();
         assert_eq!(items[0].request_id, "a");

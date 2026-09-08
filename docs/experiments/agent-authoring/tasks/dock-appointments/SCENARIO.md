@@ -53,7 +53,9 @@ about how they work is yours.
 ## The data contract
 
 An integrator is handed the field names and types, so they are pinned too.
-Everything about how you store and compute them is yours.
+Everything about how you store and compute them is yours. The exit gate asserts
+this table against the contracts your package publishes. Every cell below is a
+list of `name` type pairs.
 
 | operation | input | result |
 |---|---|---|
@@ -61,13 +63,22 @@ Everything about how you store and compute them is yours.
 | `dock.create` | `name` text | `dock_id` uuid |
 | `appointment.book` | `carrier_id` uuid, `dock_id` uuid, `slot_start` timestamp, `slot_end` timestamp | `appointment_id` uuid, `status` text |
 | `appointment.check_in` | `appointment_id` uuid, `arrived_at` timestamp | `status` text, `arrived_at` timestamp |
-| `appointment.query` | `dock_id` uuid, `day` date, `status` text | `appointments`, a list whose entries carry `slot_start` timestamp |
+| `appointment.query` | `dock_id` uuid, `day` date, `status` text | `appointments` list, `slot_start` timestamp |
 
 A timestamp arrives as any RFC 3339 value and is emitted as UTC RFC 3339 with
 exactly six fractional digits and a Z offset, as in
 `2026-10-01T09:00:00.000000Z`. The platform canonicalizes a representation on
 the way in and then hashes the canonical bytes, so a caller that re-spells a
 timestamp on retry sends the same command. A date is `2026-10-01`.
+
+Each canonical form has one name, and a command operation publishes the name in
+its input contract. The exit gate asserts these two rows the same way it asserts
+the table above.
+
+| scalar | canonical form |
+|---|---|
+| `timestamp` | `utc_rfc3339_six_fractional_digits` |
+| `uuid` | `lowercase_hyphenated` |
 
 The envelope is platform law rather than scenario content. Every command carries
 `request_id` and `idempotency_key`, and the caller supplies both.

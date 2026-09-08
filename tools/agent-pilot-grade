@@ -9,6 +9,7 @@
 #   agent-pilot-grade --run <nnn>
 #   agent-pilot-grade --replay <dir>
 #   agent-pilot-grade --placement <dir>
+#   agent-pilot-grade --contract <dir>
 #
 # --replay grades a recorded run directory and needs no environment. It scores
 # every step from the requests and responses the run wrote into
@@ -23,6 +24,11 @@
 # stops. It sends nothing and needs no environment, so the placement rule can be
 # proven against a package tree alone. wamn-nvbd.11.
 #
+# --contract asserts the brief's data contract against the contracts the package
+# publishes, one line per statement. It reads two documents and nothing else, so
+# a brief that disagrees with the reference is caught before an agent reads it
+# and refuses half the fixture. wamn-nvbd.13.
+#
 # Exit codes: 0 ok · 2 usage · 10 environment · 30 a grading failure.
 set -euo pipefail
 umask 077
@@ -33,24 +39,27 @@ readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
 die() { printf 'agent-pilot-grade: %s\n' "$1" >&2; exit "${2:-$EX_USAGE}"; }
 note() { printf '[grade] %s\n' "$*" >&2; }
 
-RUN=""; REPLAY=""; PLACEMENT=""
+RUN=""; REPLAY=""; PLACEMENT=""; CONTRACT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --run) RUN="${2:-}"; shift 2 ;;
     --replay) REPLAY="${2:-}"; shift 2 ;;
     --placement) PLACEMENT="${2:-}"; shift 2 ;;
+    --contract) CONTRACT="${2:-}"; shift 2 ;;
     *) die "unknown flag $1" ;;
   esac
 done
 
 TREE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-if [[ -n "$PLACEMENT" ]]; then
+if [[ -n "$CONTRACT" ]]; then
+  DIR="$(cd "$CONTRACT" && pwd -P)" || die "--contract $CONTRACT is not a directory"
+elif [[ -n "$PLACEMENT" ]]; then
   DIR="$(cd "$PLACEMENT" && pwd -P)" || die "--placement $PLACEMENT is not a directory"
 elif [[ -n "$REPLAY" ]]; then
   DIR="$(cd "$REPLAY" && pwd -P)" || die "--replay $REPLAY is not a directory"
 else
-  [[ -n "$RUN" ]] || die "--run, --replay or --placement is required"
+  [[ -n "$RUN" ]] || die "--run, --replay, --placement or --contract is required"
   matches=()
   for candidate in "$PILOT_HOME"/runs/"$RUN"-*; do
     [[ -d "$candidate" ]] && matches+=("$candidate")
@@ -65,7 +74,7 @@ mkdir -p "$DIR/grade"
 
 # Where this grade writes. A replay gets its own checklist and its own reuse
 # ledger, so grading a recorded run cannot destroy the recording.
-if [[ -n "$PLACEMENT" ]]; then
+if [[ -n "$PLACEMENT" || -n "$CONTRACT" ]]; then
   # Placement writes no checklist. It answers one question and prints it.
   CHECKLIST=""
   RESULTS="$DIR/grade/placement-results.json"
@@ -98,10 +107,38 @@ STEPS_NAME="$(jq -r '.grade.steps // "steps.json"' "$GRADE_MANIFEST")"
 STEPS="$GRADING/$STEPS_NAME"
 [[ -s "$STEPS" ]] || STEPS="$DIR/$STEPS_NAME"
 [[ -s "$STEPS" ]] || STEPS="$DIR/fixture/$STEPS_NAME"
+
+# The brief the task hands the author, resolved through the same three places.
+# The agent reads it, so it stays in the fixture directory the agent is handed.
+BRIEF_NAME="$(jq -r '.grade.brief // "SCENARIO.md"' "$GRADE_MANIFEST")"
+BRIEF="$GRADING/$BRIEF_NAME"
+[[ -s "$BRIEF" ]] || BRIEF="$DIR/$BRIEF_NAME"
+[[ -s "$BRIEF" ]] || BRIEF="$DIR/fixture/$BRIEF_NAME"
+
 COMMIT="$(jq -r '.commit // ""' "$DIR/run.json" 2>/dev/null || true)"
+
+# FIXTURE NAMES ARE UNIQUE PER RUN. A fixture value marked {{run}} is expanded
+# to the run key. Arm 032 lost every step after create-dock: the agent had
+# already created a dock named Door 7 while testing its own package, so the
+# package refused the duplicate with the typed error it had declared, and the
+# reuse chain below it had no id to pass.
+#
+# THE MARK IS EXPLICIT AND PER VALUE. A silent suffix on every string would
+# corrupt a timestamp, a status and the idempotency key a replay case reuses on
+# purpose, so a value the fixture does not mark is sent byte for byte. The
+# expansion is the run key, which is fixed for the life of a run, so a replay
+# scores the bytes the run sent.
+if [[ -s "$STEPS" ]]; then
+  EXPANDED="$(mktemp)"
+  jq -c --arg run "$RUN_KEY" \
+    'walk(if type == "string" then gsub("\\{\\{run\\}\\}"; $run) else . end)' \
+    "$STEPS" > "$EXPANDED" 2>/dev/null || die "steps at $STEPS are not readable json" "$EX_ENV"
+  STEPS="$EXPANDED"
+fi
 
 HELD_PID=""
 cleanup() {
+  rm -f "${EXPANDED:-}"
   if [[ -n "$HELD_PID" ]] && kill -0 "$HELD_PID" 2>/dev/null; then
     kill -INT "$HELD_PID" 2>/dev/null || true
     local waited=0
@@ -750,6 +787,160 @@ grade_placement() {
       "$RESULTS" > "$RESULTS.tmp" && mv "$RESULTS.tmp" "$RESULTS"
   done < <(jq -c '.[]' "$STEPS")
 }
+
+# ---- 8. the brief, against what the package declares ------------------------
+# A REFERENCE IS NEVER MORE LENIENT THAN THE CONTRACT IT PROVES, and the brief
+# is asserted against it here. The brief said a timestamp is UTC RFC 3339 with
+# six fractional digits while the fixture sent bare seconds. One agent parsed
+# any RFC 3339 and passed, one enforced the sentence and refused every
+# timestamped step, and both readings were defensible. That cost two arms,
+# because nothing compared the two documents.
+#
+# THE SUBJECT IS THE TABLE, AND ONLY THE TABLE. Every cell of the data contract
+# is a comma separated list of `name` type pairs, and a cell that is not is
+# reported rather than guessed at: a parser that reads prose invents a contract
+# nobody wrote. The one prose claim that is machine-checkable, the canonical
+# spelling of a scalar, is carried as a second table naming the token the input
+# contract publishes.
+brief_table() {
+  sed -n '/^## The data contract/,/^## [A-Z]/p' "$BRIEF" | jq -Rn '
+    def cells: [ splits("\\|") | gsub("^ +| +$"; "") ] | map(select(. != ""));
+    def entries: [ splits(",") | gsub("^ +| +$"; "") | select(. != "")
+                   | if test("^`[a-z_]+` [a-z]+$")
+                     then capture("^`(?<name>[a-z_]+)` (?<type>[a-z]+)$")
+                     else {unreadable: .} end ];
+    def token: ltrimstr("`") | rtrimstr("`");
+    [ inputs | select(startswith("|")) | cells ] as $rows
+    | { operations:
+          [ $rows[] | select(length == 3) | select(.[0] | test("^`[a-z_]+\\.[a-z_]+`$"))
+            | { operation: (.[0] | token), input: (.[1] | entries), result: (.[2] | entries) } ],
+        scalars:
+          [ $rows[] | select(length == 2)
+            | select((.[0] | test("^`[a-z_]+`$")) and (.[1] | test("^`[a-z_0-9]+`$")))
+            | { scalar: (.[0] | token), form: (.[1] | token) } ] }'
+}
+
+# The type word a brief writes, and the type token a contract publishes. The
+# platform has no date type, so a date is carried as text.
+contract_token() {
+  case "$1" in
+    text|uuid|list) printf '%s' "$1" ;;
+    timestamp) printf 'timestamptz' ;;
+    date) printf 'text' ;;
+    *) printf '' ;;
+  esac
+}
+
+# Every field one contract declares, as name, path and type. The two published
+# shapes are read exactly as the placement rule reads them.
+declared_fields() {
+  local contract; contract="$(contract_file "$1" "$2")"
+  [[ -n "$contract" ]] || { echo ""; return; }
+  jq -c '
+    ( if (.fields | type) == "array" then [ .fields[] | {path, type} ]
+      else
+        [ to_entries[] | select((.value | type) == "object")
+          | select((.value | has("type")) and (.value | has("required")))
+          | {path: .key, type: .value.type} ]
+        + [ .writable_fields // [] | .[] | {path: .field, type} ]
+      end )
+    | map(. + {name: (.path | gsub("\\[\\]"; "") | split(".") | last)})' "$contract"
+}
+
+assert_field() {
+  local operation="$1" side="$2" declared="$3" name="$4" type="$5" row
+  row="$(jq -cn --argjson declared "${declared:-null}" --arg op "$operation" --arg side "$side" \
+    --arg n "$name" --arg t "$type" --arg want "$(contract_token "$type")" '
+    [ ($declared // [])[] | select(.name == $n) ] as $named
+    | [ ($declared // [])[] | select(.path | startswith($n + "[]")) ] as $listed
+    | { operation:$op, side:$side, field:$n, type:$t }
+      + if $declared == null then
+          {ok:false, evidence:"the package publishes no \($side) contract"}
+        elif $want == "" then
+          {ok:false, evidence:"the brief names a type the platform does not publish"}
+        elif $want == "list" then
+          (if ($listed | length) > 0 then {ok:true, declared:($listed[0].path)}
+           else {ok:false, evidence:"no declared path begins with \($n)[]"} end)
+        elif ($named | length) == 0 then
+          {ok:false, evidence:"the package declares no \($side) field named \($n). it declares \([$declared[].path] | sort | join(", "))"}
+        elif ([$named[].type] | unique) != [$want] then
+          {ok:false, declared:($named[0].path),
+           evidence:"declared \([$named[].type] | unique | join(", ")), the brief says \($t), which the platform publishes as \($want)"}
+        else {ok:true, declared:"\($named[0].path) \($named[0].type)"} end')"
+  printf '%s\n' "$row"
+  [[ "$(jq -r .ok <<< "$row")" == true ]]
+}
+
+# A canonical form the brief names must be the one every input contract that
+# publishes it declares, and at least one must publish it. A projection is not
+# hashed and publishes no canonicalization at all, so an operation that
+# declares nothing is silent rather than wrong.
+assert_scalar() {
+  local scalar="$1" form="$2" table="$3"
+  local key operation file got declared="" wrong=""
+  key="$(contract_token "$scalar")"
+  while read -r operation; do
+    file="$(contract_file "$operation" input)"
+    [[ -n "$file" ]] || continue
+    got="$(jq -r --arg k "$key" '.canonicalization[$k] // ""' "$file")"
+    [[ -n "$got" ]] || continue
+    declared="$declared $operation"
+    [[ "$got" == "$form" ]] || wrong="$wrong $operation=$got"
+  done < <(jq -r '.operations[].operation' <<< "$table")
+
+  local row
+  row="$(jq -cn --arg s "$scalar" --arg k "$key" --arg form "$form" \
+    --arg declared "${declared# }" --arg wrong "${wrong# }" '
+    {scalar:$s, key:$k, form:$form}
+    + if $declared == "" then
+        {ok:false, evidence:"no input contract publishes a canonicalization for \($k)"}
+      elif $wrong != "" then
+        {ok:false, evidence:"declared otherwise by \($wrong)"}
+      else {ok:true, declared:$declared} end')"
+  printf '%s\n' "$row"
+  [[ "$(jq -r .ok <<< "$row")" == true ]]
+}
+
+grade_contract() {
+  [[ -s "$BRIEF" ]] || die "no brief at $BRIEF" "$EX_ENV"
+  local table; table="$(brief_table)"
+  [[ "$(jq -r '.operations | length' <<< "$table")" -gt 0 ]] \
+    || die "the data contract in $BRIEF names no operation" "$EX_GRADE"
+
+  local misses=0 row operation side entry name type declared
+  while read -r row; do
+    operation="$(jq -r .operation <<< "$row")"
+    for side in input result; do
+      declared="$(declared_fields "$operation" "$side")"
+      while read -r entry; do
+        name="$(jq -r '.name // ""' <<< "$entry")"
+        type="$(jq -r '.type // ""' <<< "$entry")"
+        if [[ -z "$name" ]]; then
+          jq -cn --arg op "$operation" --arg side "$side" --arg cell "$(jq -r .unreadable <<< "$entry")" \
+            '{operation:$op, side:$side, ok:false,
+              evidence:"the entry \($cell) is not a `name` type pair"}'
+          misses=$((misses + 1))
+        elif ! assert_field "$operation" "$side" "$declared" "$name" "$type"; then
+          misses=$((misses + 1))
+        fi
+      done < <(jq -c --arg side "$side" '.[$side][]' <<< "$row")
+    done
+  done < <(jq -c '.operations[]' <<< "$table")
+
+  while read -r row; do
+    assert_scalar "$(jq -r .scalar <<< "$row")" "$(jq -r .form <<< "$row")" "$table" \
+      || misses=$((misses + 1))
+  done < <(jq -c '.scalars[]' <<< "$table")
+
+  [[ "$misses" -eq 0 ]] \
+    || { note "the brief fails $misses assertion(s) against $OVERLAY_ROOT"; return "$EX_GRADE"; }
+  note "the brief's data contract holds against $OVERLAY_ROOT"
+}
+
+if [[ -n "$CONTRACT" ]]; then
+  grade_contract || exit "$?"
+  exit 0
+fi
 
 if [[ -n "$PLACEMENT" ]]; then
   grade_placement

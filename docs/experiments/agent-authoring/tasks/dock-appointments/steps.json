@@ -8,7 +8,7 @@
       "operation": "carrier.create"
     },
     "body": {
-      "name": "Northbound Freight"
+      "name": "Northbound Freight {{run}}"
     },
     "expect": {
       "status": 200,
@@ -27,7 +27,7 @@
       "operation": "dock.create"
     },
     "body": {
-      "name": "Door 7"
+      "name": "Door 7 {{run}}"
     },
     "expect": {
       "status": 200,
