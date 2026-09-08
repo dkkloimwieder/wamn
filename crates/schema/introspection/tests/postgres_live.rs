@@ -19,7 +19,8 @@ use wamn_schema_introspection::migration_policy::{
     validate_migration_bytes_for_schemas, validate_migration_file,
 };
 use wamn_schema_introspection::postgres::{
-    PostgresIntrospectionErrorKind, read_catalog, read_catalog_excluding_relations,
+    PostgresIntrospectionError, PostgresIntrospectionErrorKind, read_catalog,
+    read_catalog_excluding_relations,
 };
 
 const APPLICATION_SCHEMA: &str = "receiving";
@@ -636,38 +637,91 @@ async fn assert_additive_columns(client: &Client) {
     );
 }
 
+/// Outcome accumulator for the refusal matrix.
+///
+/// Cases record instead of aborting so that one stale assertion cannot leave
+/// every case after it unproven while the suite still reports a single
+/// failure. `ran` is the anti-deselection guard: a deleted case shows up as a
+/// count mismatch rather than as a smaller green matrix.
+#[derive(Debug)]
+struct RefusalMatrix<'a> {
+    admin: &'a Client,
+    reader: &'a Client,
+    ran: usize,
+    failures: Vec<String>,
+}
+
+impl<'a> RefusalMatrix<'a> {
+    fn new(admin: &'a Client, reader: &'a Client) -> Self {
+        Self {
+            admin,
+            reader,
+            ran: 0,
+            failures: Vec::new(),
+        }
+    }
+}
+
+/// Every case `assert_refusal_matrix` is required to run.
+const REFUSAL_CASES: usize = 22;
+
 async fn refusal_case(
-    admin: &Client,
-    reader: &Client,
+    matrix: &mut RefusalMatrix<'_>,
+    case: &str,
     create_sql: &str,
     server_probe_sql: &str,
     cleanup_sql: &str,
     expected: PostgresIntrospectionErrorKind,
-) -> wamn_schema_introspection::postgres::PostgresIntrospectionError {
-    admin
-        .batch_execute(create_sql)
-        .await
-        .expect("create legitimate catalog refusal input");
-    let server_answer = admin.query_one(server_probe_sql, &[]).await;
-    let reader_answer = read_catalog(reader, &[APPLICATION_SCHEMA]).await;
-    let cleanup = admin.batch_execute(cleanup_sql).await;
+) -> Option<PostgresIntrospectionError> {
+    matrix.ran += 1;
+    if let Err(error) = matrix.admin.batch_execute(create_sql).await {
+        matrix.failures.push(format!(
+            "{case}: creating the refusal input failed: {error}"
+        ));
+        return None;
+    }
+    let server_answer = matrix.admin.query_one(server_probe_sql, &[]).await;
+    let reader_answer = read_catalog(matrix.reader, &[APPLICATION_SCHEMA]).await;
+    let cleanup = matrix.admin.batch_execute(cleanup_sql).await;
 
-    assert!(
-        server_answer
-            .expect("read refused object from server catalog")
-            .get::<_, bool>(0),
-        "the refused object is present in the server answer"
-    );
-    let error = reader_answer.expect_err("catalog reader must refuse the server object");
-    assert_eq!(error.kind(), expected, "typed refusal: {error}");
-    cleanup.expect("remove refused catalog object");
-    error
+    match server_answer {
+        Ok(row) if row.get::<_, bool>(0) => {}
+        Ok(_) => matrix.failures.push(format!(
+            "{case}: the refused object is absent from the server answer"
+        )),
+        Err(error) => matrix
+            .failures
+            .push(format!("{case}: reading the server answer failed: {error}")),
+    }
+    if let Err(error) = cleanup {
+        matrix.failures.push(format!(
+            "{case}: removing the refused object failed: {error}"
+        ));
+    }
+    match reader_answer {
+        Ok(_) => {
+            matrix.failures.push(format!(
+                "{case}: the catalog reader ACCEPTED the server object that this \
+                 case asserts refuses as {expected:?}"
+            ));
+            None
+        }
+        Err(error) if error.kind() == expected => Some(error),
+        Err(error) => {
+            matrix.failures.push(format!(
+                "{case}: expected {expected:?}, the reader refused as {:?}: {error}",
+                error.kind()
+            ));
+            None
+        }
+    }
 }
 
 async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
+    let matrix = &mut RefusalMatrix::new(admin, reader);
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "unlogged table",
         "CREATE UNLOGGED TABLE receiving.refused_unlogged (id bigint)",
         "SELECT c.relpersistence='u' FROM pg_catalog.pg_class c \
           JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
@@ -678,8 +732,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "view",
         "CREATE VIEW receiving.refused_view AS SELECT 1::bigint AS id",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
           ON n.oid=c.relnamespace WHERE n.nspname='receiving' AND c.relname='refused_view' \
@@ -689,8 +743,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "materialized view",
         "CREATE MATERIALIZED VIEW receiving.refused_materialized AS SELECT 1::bigint AS id",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
           ON n.oid=c.relnamespace WHERE n.nspname='receiving' \
@@ -700,8 +754,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "foreign table",
         "CREATE FOREIGN DATA WRAPPER wamn_refused_fdw NO HANDLER; \
          CREATE SERVER wamn_refused_server FOREIGN DATA WRAPPER wamn_refused_fdw; \
          CREATE FOREIGN TABLE receiving.refused_foreign (id bigint) SERVER wamn_refused_server",
@@ -714,8 +768,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "function",
         "CREATE FUNCTION receiving.refused_function() RETURNS bigint LANGUAGE SQL AS 'SELECT 1'",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n \
           ON n.oid=p.pronamespace WHERE n.nspname='receiving' \
@@ -725,8 +779,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "procedure",
         "CREATE PROCEDURE receiving.refused_procedure() LANGUAGE SQL AS 'SELECT 1'",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n \
           ON n.oid=p.pronamespace WHERE n.nspname='receiving' \
@@ -736,8 +790,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "trigger",
         "CREATE FUNCTION wamn_introspection_fixture.trigger_function() RETURNS trigger \
            LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'; \
          CREATE TRIGGER refused_trigger BEFORE INSERT ON receiving.item \
@@ -751,8 +805,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "rule",
         "CREATE RULE refused_rule AS ON UPDATE TO receiving.item DO NOTHING",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite r JOIN pg_catalog.pg_class c \
           ON c.oid=r.ev_class JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
@@ -762,8 +816,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "policy",
         "CREATE POLICY refused_policy ON receiving.item USING (true)",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c \
           ON c.oid=p.polrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
@@ -773,8 +827,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "domain",
         "CREATE DOMAIN receiving.refused_domain AS text",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n \
           ON n.oid=t.typnamespace WHERE n.nspname='receiving' \
@@ -784,8 +838,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "enum type",
         "CREATE TYPE receiving.refused_enum AS ENUM ('one', 'two')",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n \
           ON n.oid=t.typnamespace WHERE n.nspname='receiving' \
@@ -795,8 +849,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "table acl",
         "CREATE TABLE receiving.refused_acl (id bigint); \
          GRANT SELECT ON receiving.refused_acl TO PUBLIC",
         "SELECT c.relacl IS NOT NULL FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
@@ -806,8 +860,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "identity start",
         "ALTER TABLE receiving.purchase_order ADD COLUMN refused_identity bigint \
            GENERATED ALWAYS AS IDENTITY (START WITH 2)",
         "SELECT sequence_data.seqstart=2 FROM pg_catalog.pg_sequence AS sequence_data \
@@ -819,8 +873,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "column collation",
         "ALTER TABLE receiving.item ADD COLUMN refused_collation text COLLATE \"C\"",
         "SELECT a.attcollation <> t.typcollation \
           FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid \
@@ -832,8 +886,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "column type",
         "ALTER TABLE receiving.item ADD COLUMN refused_date date",
         "SELECT pg_catalog.format_type(a.atttypid,a.atttypmod)='date' \
           FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid \
@@ -843,11 +897,18 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         PostgresIntrospectionErrorKind::UnsupportedColumnType,
     )
     .await;
+    // A text LITERAL default is supported since wamn-frru, and the supported
+    // side already proves it (`assert_additive_columns` reads back
+    // `ColumnDefault::text`). What the allowlist still refuses is a function
+    // call that is not one of the two admitted by name, so that is what this
+    // case now uses: the server stores `lower('CLOSED')` as
+    // `lower('CLOSED'::text)`, which is an expression, not a literal.
     refusal_case(
-        admin,
-        reader,
-        "ALTER TABLE receiving.purchase_order ALTER COLUMN status SET DEFAULT 'closed'",
-        "SELECT pg_catalog.pg_get_expr(d.adbin,d.adrelid,false)=$$'closed'::text$$ \
+        matrix,
+        "column default",
+        "ALTER TABLE receiving.purchase_order ALTER COLUMN status \
+           SET DEFAULT lower('CLOSED')",
+        "SELECT pg_catalog.pg_get_expr(d.adbin,d.adrelid,false)=$$lower('CLOSED'::text)$$ \
           FROM pg_catalog.pg_attrdef d JOIN pg_catalog.pg_class c ON c.oid=d.adrelid \
           JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
           JOIN pg_catalog.pg_attribute a ON a.attrelid=d.adrelid AND a.attnum=d.adnum \
@@ -857,8 +918,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "virtual generated column",
         "ALTER TABLE receiving.purchase_order ADD COLUMN refused_virtual text \
            GENERATED ALWAYS AS (lower(status)) VIRTUAL",
         "SELECT a.attgenerated='v' FROM pg_catalog.pg_attribute a \
@@ -870,8 +931,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "expression index",
         "CREATE INDEX purchase_order_status_expression_idx \
            ON receiving.purchase_order (lower(status))",
         "SELECT i.indexprs IS NOT NULL FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c \
@@ -881,8 +942,8 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     let wrong_index_name = refusal_case(
-        admin,
-        reader,
+        matrix,
+        "index name",
         "CREATE INDEX refused_name ON receiving.purchase_order (status)",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
           ON n.oid=c.relnamespace WHERE n.nspname='receiving' AND c.relname='refused_name')",
@@ -890,13 +951,17 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         PostgresIntrospectionErrorKind::UnsupportedIndex,
     )
     .await;
-    assert_eq!(
-        wrong_index_name.detail(),
-        "name must use the authored convention `purchase_order_status_idx`"
-    );
+    if let Some(error) = &wrong_index_name
+        && error.detail() != "name must use the authored convention `purchase_order_status_idx`"
+    {
+        matrix.failures.push(format!(
+            "index name: unexpected detail {:?}",
+            error.detail()
+        ));
+    }
     let repeated_index_column = refusal_case(
-        admin,
-        reader,
+        matrix,
+        "repeated index column",
         "CREATE INDEX purchase_order_status_status_idx \
            ON receiving.purchase_order (status, status)",
         "SELECT i.indnkeyatts=2 AND i.indkey[0]=i.indkey[1] \
@@ -906,27 +971,34 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         PostgresIntrospectionErrorKind::UnsupportedIndex,
     )
     .await;
-    assert!(
-        repeated_index_column
-            .detail()
-            .contains("distinct named columns")
-    );
+    if let Some(error) = &repeated_index_column
+        && !error.detail().contains("distinct named columns")
+    {
+        matrix.failures.push(format!(
+            "repeated index column: unexpected detail {:?}",
+            error.detail()
+        ));
+    }
     let wrong_constraint_name = refusal_case(
-        admin,
-        reader,
+        matrix,
+        "constraint name",
         "ALTER TABLE receiving.item ADD CONSTRAINT refused_name CHECK (item_number <> '')",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname='refused_name')",
         "ALTER TABLE receiving.item DROP CONSTRAINT refused_name",
         PostgresIntrospectionErrorKind::UnsupportedConstraint,
     )
     .await;
-    assert_eq!(
-        wrong_constraint_name.detail(),
-        "name must use the authored convention `item_item_number_check`"
-    );
+    if let Some(error) = &wrong_constraint_name
+        && error.detail() != "name must use the authored convention `item_item_number_check`"
+    {
+        matrix.failures.push(format!(
+            "constraint name: unexpected detail {:?}",
+            error.detail()
+        ));
+    }
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "sequence",
         "CREATE SEQUENCE receiving.refused_sequence",
         "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n \
           ON n.oid=c.relnamespace WHERE n.nspname='receiving' \
@@ -935,6 +1007,18 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
         PostgresIntrospectionErrorKind::UnsupportedSequence,
     )
     .await;
+
+    assert_eq!(
+        matrix.ran, REFUSAL_CASES,
+        "every refusal case must run: a case was added or deleted without \
+         moving REFUSAL_CASES"
+    );
+    assert!(
+        matrix.failures.is_empty(),
+        "{} of {REFUSAL_CASES} refusal cases failed:\n{}",
+        matrix.failures.len(),
+        matrix.failures.join("\n")
+    );
 }
 
 async fn run_gate(admin_config: Config, fixture: Fixture) {
@@ -1299,9 +1383,10 @@ async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client
 
     // The other direction: the same shape under any other name is refused, and
     // the refusal names the convention the author must use.
+    let matrix = &mut RefusalMatrix::new(admin, reader);
     let error = refusal_case(
-        admin,
-        reader,
+        matrix,
+        "exclusion constraint name",
         "CREATE TABLE receiving.dock_reservation ( \
            dock_id uuid NOT NULL, \
            carrier_id uuid NOT NULL, \
@@ -1313,17 +1398,21 @@ async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client
         PostgresIntrospectionErrorKind::UnsupportedConstraint,
     )
     .await;
+    assert!(matrix.failures.is_empty(), "{}", matrix.failures.join("\n"));
     assert_eq!(
-        error.detail(),
+        error
+            .expect("a case with no recorded failure carries its refusal")
+            .detail(),
         "name must use the authored convention `dock_reservation_dock_id_carrier_id_excl`",
         "the refusal names the reconstructed convention"
     );
 }
 
 async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Client) {
+    let matrix = &mut RefusalMatrix::new(admin, reader);
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "btree exclusion",
         "CREATE TABLE receiving.refused_btree_exclusion ( \
            dock_id uuid NOT NULL, \
            CONSTRAINT refused_btree_exclusion_excl EXCLUDE USING btree (dock_id WITH =))",
@@ -1336,8 +1425,8 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "partial exclusion",
         "CREATE TABLE receiving.refused_partial_exclusion ( \
            dock_id uuid NOT NULL, \
            starts_at timestamptz NOT NULL, \
@@ -1353,8 +1442,8 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
     )
     .await;
     refusal_case(
-        admin,
-        reader,
+        matrix,
+        "deferred exclusion",
         "CREATE TABLE receiving.refused_deferred_exclusion ( \
            dock_id uuid NOT NULL, \
            CONSTRAINT refused_deferred_exclusion_excl EXCLUDE USING gist (dock_id WITH =) \
@@ -1365,6 +1454,17 @@ async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Cli
         PostgresIntrospectionErrorKind::UnsupportedConstraint,
     )
     .await;
+
+    assert_eq!(
+        matrix.ran, 3,
+        "every unsupported exclusion shape must run: a case was added or deleted"
+    );
+    assert!(
+        matrix.failures.is_empty(),
+        "{} of 3 exclusion refusal cases failed:\n{}",
+        matrix.failures.len(),
+        matrix.failures.join("\n")
+    );
 }
 
 async fn run_exclusion_gate(admin_config: Config, fixture: Fixture) {
