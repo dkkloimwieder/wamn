@@ -268,6 +268,26 @@ validator inside `CREATE TABLE`, so an agent that writes
 already creating gets the database enforcing the invariant. H-3 scores that at
 the top.
 
+[corrected 2026-09-08, owner ruling on `wamn-nvbd.15`. The paragraph above is
+wrong, because the probe behind it was incomplete. The probe tested two refusal
+points, the migration validator and the guest role. Both admit the constraint.
+The probe never tested Introspect, and Introspect refuses it.
+
+`crates/schema/introspection/src/postgres.rs` maps `pg_constraint` by `contype`
+and has arms for `p`, `u`, `f` and `c` only. `CONSTRAINTS_SQL` filters on
+namespace and `relkind = 'r'`, with no `contype` predicate. An exclusion
+constraint therefore reaches the catch-all arm and returns
+``unsupported pg_constraint contype `x` ``. `map_indexes` rejects the supporting
+index on the same grounds.
+
+Migrate admits the constraint, the database creates it, and Introspect refuses
+it one stage later. The constraint is unreachable from inside a package.
+**Lock-in-transaction is the top rung for series 030.** No arm is marked down
+for the rung above it. The platform defect is `wamn-10yt.36`, ruled to be fixed
+by modelling the constraint rather than by moving the refusal earlier. The H-3
+fallback clause is rewritten to name any stage rather than two, and that rewrite
+lands with `wamn-10yt.36`.]
+
 A ROW LOCK ON THE PARENT ROW, TAKEN BEFORE THE OVERLAP READ, IS A VALID RUNG 2
 and it is not marked down. All three runs of series 010 found it without help
 and all three passed the contention invariant with it, on a platform where the
@@ -331,6 +351,14 @@ Human items, scored from the worktree and the transcript:
    rather than continuing the old one. Series are numbered by decade: 001 to 009
    is the first, 010 to 019 the second. A retired series keeps its runs and its
    findings; it does not contribute to the current stall table.
+
+   [amended 2026-09-07 by owner ruling, recorded on `wamn-nvbd.11` and stated
+   again on 2026-09-08. A PLATFORM CHANGE DOES NOT OPEN A SERIES. Only an
+   INSTRUMENT change does. Each arm cites its own commit, and that citation is
+   what makes the arms comparable. Series 030 is the worked case. Arm 030 hit
+   the `wamn-10yt.27` wall. The fix landed at `d2612972`. Arms 031 and 032 then
+   ran on the fixed platform, in the same series. The renumber from 020 to 030
+   was an instrument change, not a platform change.]
 
 ## 7. Measurements
 
