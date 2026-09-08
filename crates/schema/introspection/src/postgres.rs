@@ -1540,9 +1540,12 @@ fn foreign_key_action(
 /// is admitted, because the frozen column vocabulary has no range type and the
 /// non-overlap invariant is written as `tstzrange(a, b) WITH &&`.
 ///
-/// No authored-name convention is required. `validate_authored_name`
-/// reconstructs PostgreSQL's default spelling from the table and its key
-/// columns, and an expression key has no column name to reconstruct it from.
+/// The authored-name convention binds wherever it can be reconstructed. When
+/// every key is a column, the name must read `{table}_{columns}_excl`, which is
+/// PostgreSQL's own default spelling. THE ONE EXEMPTION IS AN EXPRESSION KEY:
+/// `validate_authored_name` rebuilds the expected name from column names, and an
+/// expression has none, so a constraint carrying one is required only to be
+/// named. The rule is not dropped, the exemption is stated.
 fn map_exclusion(
     row: &ConstraintRow,
     attributes: &BTreeMap<AttributeKey, String>,
@@ -1578,6 +1581,17 @@ fn map_exclusion(
              default operator classes and collations"
                 .to_owned(),
         ));
+    }
+    if !row.columns.contains(&0) {
+        validate_authored_name(
+            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            &row.schema,
+            &row.table,
+            &row.name,
+            "excl",
+            &row.columns,
+            attributes,
+        )?;
     }
 
     let mut keys = Vec::with_capacity(row.columns.len());

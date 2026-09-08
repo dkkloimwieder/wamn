@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, Config, NoTls};
 
 use wamn_schema_introspection::ir::{
-    ColumnDefault, ColumnGeneration, ExclusionAccessMethod, ExclusionElement, ExclusionKey,
-    IdentityMode,
+    ColumnDefault, ColumnGeneration, Exclusion, ExclusionAccessMethod, ExclusionElement,
+    ExclusionKey, IdentityMode,
 };
 use wamn_schema_introspection::migration_policy::{
     validate_migration_bytes_for_schemas, validate_migration_file,
@@ -1152,6 +1152,15 @@ async fn assert_exclusion_is_modelled(client: &Client) {
         1,
         "the exclusion constraint is modelled beside the primary key, not inside it"
     );
+    // THE ONE NAMING EXEMPTION. This constraint carries an expression key, so
+    // the convention cannot be reconstructed from column names and only a name
+    // is required. The name it carries is not the convention spelling, which is
+    // what makes the exemption load-bearing rather than incidental.
+    assert_ne!(
+        exclusion.name(),
+        "dock_appointment_dock_id_excl",
+        "an expression key is exempt from the reconstructed convention"
+    );
 
     let bytes = catalog.canonical_json_bytes();
     let json = std::str::from_utf8(&bytes).expect("the IR is UTF-8");
@@ -1215,6 +1224,100 @@ async fn assert_exclusion_is_enforced(client: &Client) {
         .batch_execute("DELETE FROM receiving.dock_appointment")
         .await
         .expect("remove the booking fixture rows");
+}
+
+/// S-1 naming, applied to what is reconstructible.
+///
+/// Every key here is a column, so the convention binds. The proof that the
+/// convention IS PostgreSQL's own default spelling comes from the server: an
+/// identical unnamed constraint is named by PostgreSQL, and that name is the
+/// one the reader demands.
+async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client) {
+    admin
+        .batch_execute(
+            "CREATE TABLE receiving.dock_reservation ( \
+               dock_id uuid NOT NULL, \
+               carrier_id uuid NOT NULL, \
+               CONSTRAINT dock_reservation_dock_id_carrier_id_excl \
+                 EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =)); \
+             CREATE TABLE receiving.dock_reservation_default ( \
+               dock_id uuid NOT NULL, \
+               carrier_id uuid NOT NULL, \
+               EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =))",
+        )
+        .await
+        .expect("create an authored and an unnamed all-column exclusion");
+
+    let server_default = admin
+        .query_one(
+            "SELECT constraint_row.conname::text \
+               FROM pg_catalog.pg_constraint AS constraint_row \
+               JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_row.conrelid \
+              WHERE relation.relname = 'dock_reservation_default' \
+                AND constraint_row.contype = 'x'",
+            &[],
+        )
+        .await
+        .expect("read the name PostgreSQL chose for the unnamed constraint")
+        .get::<_, String>(0);
+    assert_eq!(
+        server_default, "dock_reservation_default_dock_id_carrier_id_excl",
+        "the server spells an all-column exclusion {{table}}_{{columns}}_excl"
+    );
+
+    let catalog = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("both conventionally named all-column exclusions are modelled");
+    for (table_name, constraint_name) in [
+        (
+            "dock_reservation",
+            "dock_reservation_dock_id_carrier_id_excl",
+        ),
+        ("dock_reservation_default", server_default.as_str()),
+    ] {
+        let table = catalog
+            .tables()
+            .iter()
+            .find(|table| table.name() == table_name)
+            .expect("the all-column exclusion table is in the IR");
+        assert_eq!(
+            table
+                .exclusions()
+                .iter()
+                .map(Exclusion::name)
+                .collect::<Vec<_>>(),
+            [constraint_name]
+        );
+    }
+    admin
+        .batch_execute(
+            "DROP TABLE receiving.dock_reservation_default; \
+             DROP TABLE receiving.dock_reservation",
+        )
+        .await
+        .expect("remove the all-column exclusion tables");
+
+    // The other direction: the same shape under any other name is refused, and
+    // the refusal names the convention the author must use.
+    let error = refusal_case(
+        admin,
+        reader,
+        "CREATE TABLE receiving.dock_reservation ( \
+           dock_id uuid NOT NULL, \
+           carrier_id uuid NOT NULL, \
+           CONSTRAINT dock_reservation_no_double_booking \
+             EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =))",
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint AS c \
+           WHERE c.conname='dock_reservation_no_double_booking' AND c.contype='x')",
+        "DROP TABLE receiving.dock_reservation",
+        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+    )
+    .await;
+    assert_eq!(
+        error.detail(),
+        "name must use the authored convention `dock_reservation_dock_id_carrier_id_excl`",
+        "the refusal names the reconstructed convention"
+    );
 }
 
 async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Client) {
@@ -1288,6 +1391,7 @@ async fn run_exclusion_gate(admin_config: Config, fixture: Fixture) {
 
     assert_exclusion_is_modelled(&migration).await;
     assert_exclusion_is_enforced(&migration).await;
+    assert_the_naming_law_binds_column_keys(&target_admin, &migration).await;
     assert_unsupported_exclusion_shapes_refuse(&target_admin, &migration).await;
 }
 
