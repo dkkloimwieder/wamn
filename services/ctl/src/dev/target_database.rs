@@ -7,12 +7,23 @@
 //! development session, because nothing this database holds is durable.
 //!
 //! WHY THIS IS NOT THE VERIFICATION LIFECYCLE WITH A RENAME. A verification
-//! database is usable the moment it exists. A target database is not: Apply
-//! needs the roles and the privileges the environment was provisioned with.
-//! Roles are cluster-level and survive the drop. Per-database privileges do
-//! not, so the loop replays the privilege SQL `wamn dev up` emitted. It replays
-//! that file rather than deriving a privilege set of its own, because a set the
-//! loop computed would not be the set the environment was provisioned with.
+//! database is usable the moment it exists. A target database is not. Apply
+//! needs the environment the standup built, and a drop takes all of it.
+//!
+//! The recreate therefore replays the four things `wamn dev up` applies to the
+//! project database, THROUGH THE SAME FUNCTIONS, so there is one provisioning
+//! path and not a second copy of it:
+//!
+//!   1. the privilege SQL the standup emitted, read from where it emitted it
+//!   2. the platform floor, `catalog-schema.sql` and `app-schema.sql`
+//!   3. the run plane reconciler
+//!   4. the workload credential grants, generation A
+//!
+//! Roles are cluster-level and survive the drop. Everything inside the database
+//! does not. The floor is `include_str!` compiled into this binary, so replaying
+//! it cannot drift against an artifact on disk. The privilege SQL is read rather
+//! than derived, because a privilege set this module computed would not be the
+//! set the environment was provisioned with.
 //!
 //! THE DATABASE KEEPS ITS NAME. The environment row in the system database
 //! points at one database name, so recreating under the same name keeps the
@@ -34,8 +45,11 @@ use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
 use wamn_pg_core::Identifier;
 
 use super::config::{DevConfig, POSTGRES_SYSTEM_DATABASES};
+use super::environment;
 
 const MAINTENANCE_DATABASE: &str = "postgres";
+/// The namespace `wamn dev up` uses for the host secrets it writes.
+const HOST_SECRET_NAMESPACE: &str = "wamn-system";
 const STALE_STANDUP_REMEDY: &str =
     "run wamn dev up to provision the environment and emit its privilege SQL";
 
@@ -49,6 +63,9 @@ pub enum TargetDatabaseErrorKind {
     DropFailed,
     CreateFailed,
     PrivilegesFailed,
+    FloorFailed,
+    RunPlaneFailed,
+    CredentialsFailed,
 }
 
 impl TargetDatabaseErrorKind {
@@ -62,6 +79,9 @@ impl TargetDatabaseErrorKind {
             Self::DropFailed => "dev-target-database-drop-failed",
             Self::CreateFailed => "dev-target-database-create-failed",
             Self::PrivilegesFailed => "dev-target-database-privileges-failed",
+            Self::FloorFailed => "dev-target-database-floor-failed",
+            Self::RunPlaneFailed => "dev-target-database-run-plane-failed",
+            Self::CredentialsFailed => "dev-target-database-credentials-failed",
         }
     }
 }
@@ -202,7 +222,46 @@ pub async fn recreate(config: &DevConfig) -> Result<(), TargetDatabaseError> {
     let result = recreate_with_client(&client, &spec, &privileges).await;
     drop(client);
     handle.abort();
-    result
+    result?;
+
+    // The run plane and the workload grants live inside the database, so both
+    // went with the drop. Reconcilers, not SQL files: they are the same calls
+    // the standup makes, so there is one path and not a second copy.
+    environment::reconcile_journey_run_plane(
+        config.system_database_url(),
+        config.target_database_url(),
+    )
+    .await
+    .map_err(|source| {
+        TargetDatabaseError::new(
+            TargetDatabaseErrorKind::RunPlaneFailed,
+            "reconcile the run plane into the recreated target database",
+        )
+        .with_source(SourceError(source))
+    })?;
+
+    // Generation A, the generation the standup pinned. Re-preparing it re-grants
+    // inside the database without rotating a credential, so the URLs dev.json
+    // already carries stay valid.
+    let root = config.target_privileges_file().parent().ok_or_else(|| {
+        TargetDatabaseError::new(TargetDatabaseErrorKind::StaleStandup, STALE_STANDUP_REMEDY)
+    })?;
+    environment::prepare_journey_credentials(
+        config.system_database_url(),
+        config.target_database_url(),
+        root,
+        root,
+        HOST_SECRET_NAMESPACE,
+    )
+    .await
+    .map_err(|source| {
+        TargetDatabaseError::new(
+            TargetDatabaseErrorKind::CredentialsFailed,
+            "re-grant the workload credentials in the recreated target database",
+        )
+        .with_source(SourceError(source))
+    })?;
+    Ok(())
 }
 
 async fn recreate_with_client(
@@ -328,7 +387,41 @@ async fn replace_database(
             )
             .with_source(source)
         });
+    // The floor goes in on the same connection, before it is dropped. Apply
+    // reads catalog.packages, and the drop took the whole schema with it.
+    let floored = match applied {
+        Ok(()) => environment::install_journey_platform_floor(&target_client)
+            .await
+            .map_err(|source| {
+                TargetDatabaseError::new(
+                    TargetDatabaseErrorKind::FloorFailed,
+                    "install the platform floor into the recreated target database",
+                )
+                .with_source(SourceError(source))
+            }),
+        Err(error) => Err(error),
+    };
     drop(target_client);
     handle.abort();
-    applied
+    floored
+}
+
+/// Carry an `anyhow::Error` as a `std::error::Error` source.
+///
+/// The standup functions return `anyhow::Error`, which is not itself an
+/// `Error`. Wrapping preserves the whole chain rather than flattening it to a
+/// string at the boundary.
+#[derive(Debug)]
+struct SourceError(anyhow::Error);
+
+impl fmt::Display for SourceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, formatter)
+    }
+}
+
+impl Error for SourceError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.0.source()
+    }
 }
