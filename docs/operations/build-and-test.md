@@ -1160,9 +1160,11 @@ route reader. It tests scope isolation, repeated grants and revocations,
 fresh role removal, disabled users, and the org-issued principal UUID.
 Service PAT scope and permission tests remain in the gate.
 
-The human path reads the PAT, the environment membership, and the tenant
-permissions. The service path retains its PAT, project-role, and tenant
-permission reads. Fresh-auth measurement belongs to `wamn-ctc8.12`.
+Both paths use one prepared system query, then the unchanged tenant permission
+query (`wamn-ctc8.12`). The system query reads the PAT and principal with the
+service project role or the exact human environment membership. The host still
+checks the full token, expiry, revocation, principal status, and expected service
+identity. No database objects or grants change.
 
 For an existing system database, install the `identity.project_env_memberships`
 definition from `deploy/sql/system-schema.sql` as `wamn_system`.
