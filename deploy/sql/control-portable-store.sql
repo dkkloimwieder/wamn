@@ -296,6 +296,116 @@ CREATE TABLE catalog.connection_requirements (
         REFERENCES catalog.component_library (tenant_id, component_digest)
 );
 
+-- ---------------------------------------------------------------------------
+-- The environment identity behind a tenant's control facts, PROJECTED from
+-- `registry.project_envs` (wamn-10yt.38).
+--
+-- `registry.project_envs` is the AUTHORITY for `disposable`; this is one
+-- projection of that one source, written by provisioning into the plane that
+-- holds the facts the marker governs. The admit path reads it LOCALLY, inside
+-- its own control transaction, rather than opening the registry on every
+-- component admission for a flag that changes once in an environment's
+-- lifetime — the dual-plane shape `catalog.effective_releases` already carries.
+--
+-- The projected copy CARRIES THE AUTHORITY ROW'S IDENTITY — the (org, project,
+-- env) triple plus the provisioned `instance_suffix` — so a disagreement
+-- between the two planes is DETECTABLE rather than silent:
+-- `catalog.project_tenant_environment` refuses a second triple under one
+-- tenant instead of overwriting the first.
+--
+-- ABSENCE MEANS DURABLE. A tenant with no row here is frozen exactly as before,
+-- so the projection is additive: a control store that never sees a disposable
+-- environment behaves as it always did.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.tenant_environments (
+    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
+    org             text        NOT NULL CHECK (org <> ''),
+    project         text        NOT NULL CHECK (project <> ''),
+    env             text        NOT NULL CHECK (env <> ''),
+    instance_suffix text        NOT NULL CHECK (instance_suffix ~ '^[a-z0-9]{8}$'),
+    disposable      boolean     NOT NULL,
+    projected_at    timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT tenant_environments_pkey PRIMARY KEY (tenant_id)
+);
+
+-- Project one `registry.project_envs` row into this plane. Idempotent, and
+-- REFRESHING on the instance identity and the marker: re-provisioning a triple
+-- mints a new `instance_suffix` and may change `disposable`, and a projection
+-- that pinned its first copy would outlive the authority it mirrors. Only a
+-- DIFFERENT triple under the same tenant is a content conflict.
+CREATE OR REPLACE FUNCTION catalog.project_tenant_environment(
+    p_tenant_id text,
+    p_org text,
+    p_project text,
+    p_env text,
+    p_instance_suffix text,
+    p_disposable boolean
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    recorded_org text;
+    recorded_project text;
+    recorded_env text;
+BEGIN
+    SELECT org, project, env
+      INTO recorded_org, recorded_project, recorded_env
+      FROM catalog.tenant_environments
+     WHERE tenant_id = p_tenant_id;
+
+    IF FOUND AND (recorded_org, recorded_project, recorded_env)
+                 IS DISTINCT FROM (p_org, p_project, p_env) THEN
+        RAISE EXCEPTION USING ERRCODE = '23505',
+            MESSAGE = 'tenant-environment-identity-projection-content-conflict',
+            DETAIL = format(
+                'tenant=%s recorded=%s/%s/%s presented=%s/%s/%s',
+                p_tenant_id, recorded_org, recorded_project, recorded_env,
+                p_org, p_project, p_env
+            );
+    END IF;
+
+    INSERT INTO catalog.tenant_environments (
+        tenant_id, org, project, env, instance_suffix, disposable
+    ) VALUES (
+        p_tenant_id, p_org, p_project, p_env, p_instance_suffix, p_disposable
+    )
+    ON CONFLICT ON CONSTRAINT tenant_environments_pkey DO UPDATE SET
+        instance_suffix = EXCLUDED.instance_suffix,
+        disposable      = EXCLUDED.disposable,
+        projected_at    = now();
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.project_tenant_environment(
+    text, text, text, text, text, boolean
+) FROM PUBLIC;
+
+-- The admitted component fact and its connection requirements are frozen for a
+-- DURABLE environment and replaceable for a disposable one (wamn-10yt.38). The
+-- rule lives HERE, in one trigger over the row's own tenant, so an admit path
+-- that forgets the condition still cannot mutate a durable tenant's fact.
+--
+-- FAIL-CLOSED by construction: a caller that has not claimed `app.tenant` sees
+-- no row through the projection's RLS policy and is refused, exactly as a
+-- tenant with no projected environment is.
+CREATE OR REPLACE FUNCTION catalog.reject_durable_component_fact_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM catalog.tenant_environments
+         WHERE tenant_id = OLD.tenant_id AND disposable
+    ) THEN
+        RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    END IF;
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME || ' is immutable';
+END
+$$;
+REVOKE ALL ON FUNCTION catalog.reject_durable_component_fact_change() FROM PUBLIC;
+
 CREATE TABLE catalog.authoring_command_audit (
     tenant_id         text        NOT NULL CHECK (tenant_id <> ''),
     audit_id          uuid        NOT NULL DEFAULT gen_random_uuid(),
@@ -453,7 +563,8 @@ BEGIN
         'catalog.effective_releases', 'catalog.effective_release_packages',
         'catalog.effective_release_heads', 'catalog.component_library',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
-        'catalog.deployment_attestations', 'wamn_run.gate_reports'
+        'catalog.deployment_attestations', 'catalog.tenant_environments',
+        'wamn_run.gate_reports'
     ] LOOP
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', relation_name);
@@ -474,13 +585,25 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.packages', 'catalog.package_migrations',
         'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.component_library', 'catalog.connection_requirements',
         'catalog.authoring_command_audit', 'catalog.deployment_attestations',
         'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',
+            trigger_name, relation_name
+        );
+    END LOOP;
+
+    -- The component fact and its requirements carry the SAME freeze, conditioned
+    -- on the row's own environment (wamn-10yt.38). Same trigger names, so the
+    -- refusal an author already knows keeps its spelling.
+    FOREACH relation_name IN ARRAY ARRAY[
+        'catalog.component_library', 'catalog.connection_requirements'
+    ] LOOP
+        trigger_name := split_part(relation_name, '.', 2) || '_immutable';
+        EXECUTE format(
+            'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_component_fact_change()',
             trigger_name, relation_name
         );
     END LOOP;
@@ -569,7 +692,8 @@ BEGIN
         'authoring_command_audit', 'component_library',
         'connection_requirements', 'deployment_attestations',
         'effective_release_heads', 'effective_release_packages',
-        'effective_releases', 'package_migrations', 'packages'
+        'effective_releases', 'package_migrations', 'packages',
+        'tenant_environments'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';
