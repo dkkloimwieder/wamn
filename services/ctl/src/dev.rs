@@ -265,6 +265,14 @@ pub trait DevStageRunner {
     /// Report that one stage was skipped because its input is unchanged.
     fn stage_skipped(&mut self, _stage: DevStage) {}
 
+    /// Facts observed during the run that the receipt must carry.
+    ///
+    /// Read once, after the last stage. A run that refuses reports nothing
+    /// here, because the error already carries the refusal.
+    fn run_notices(&self) -> Vec<DevRunNotice> {
+        Vec::new()
+    }
+
     /// Whether this stage's input is unchanged since the previous run.
     ///
     /// Only a stage whose output SURVIVES the run boundary may answer true. A
@@ -410,6 +418,41 @@ pub struct DevRunReceipt {
     skipped: Box<[DevStage]>,
     timings: Box<[(DevStage, Duration)]>,
     prepared: Duration,
+    notices: Box<[DevRunNotice]>,
+}
+
+/// One fact a run reports even though it did not refuse.
+///
+/// A notice is not a warning about something that might happen. It is already
+/// true of this run, and it is what a DURABLE target would have refused. The
+/// first one is the base component pin a development run resolved past: the
+/// authored manifest names bytes the run did not build, so a promotion from
+/// this source will refuse until the pin is reminted. Saying it here is what
+/// stops that from being discovered at promotion time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevRunNotice {
+    code: Box<str>,
+    detail: Box<str>,
+}
+
+impl DevRunNotice {
+    /// Build one notice under a stable code.
+    pub fn new(code: impl Into<Box<str>>, detail: impl Into<Box<str>>) -> Self {
+        Self {
+            code: code.into(),
+            detail: detail.into(),
+        }
+    }
+
+    /// Stable category, safe for a scripted caller to match on.
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// What is true of this run, in one line.
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
 }
 
 impl DevRunReceipt {
@@ -424,6 +467,11 @@ impl DevRunReceipt {
     /// Stages the runner reported as unchanged, so their work was not redone.
     pub fn skipped(&self) -> &[DevStage] {
         &self.skipped
+    }
+
+    /// Facts this run reported without refusing.
+    pub fn notices(&self) -> &[DevRunNotice] {
+        &self.notices
     }
 
     /// Wall time each stage took, in execution order.
@@ -651,6 +699,7 @@ where
         skipped: skipped.into_boxed_slice(),
         timings: timings.into_boxed_slice(),
         prepared,
+        notices: runner.run_notices().into_boxed_slice(),
     })
 }
 
@@ -834,6 +883,65 @@ mod tests {
                 fail_at: Some(stage),
             }
         }
+    }
+
+    /// A runner that finishes every stage and has one thing to say about it.
+    #[derive(Debug, Default)]
+    struct NoticingRunner {
+        invoked: Vec<DevStage>,
+    }
+
+    impl DevStageRunner for NoticingRunner {
+        type Error = Infallible;
+
+        async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+            self.invoked.push(stage);
+            Ok(())
+        }
+
+        fn target_durability(&self) -> DevTargetDurability {
+            DevTargetDurability::Disposable
+        }
+
+        fn run_notices(&self) -> Vec<DevRunNotice> {
+            vec![DevRunNotice::new(
+                "pin stale",
+                "client_acme_receiving@3.0.0 wamn.json names sha256:aa, built sha256:bb",
+            )]
+        }
+    }
+
+    /// The receipt carries what the run reported without refusing. A durable
+    /// publish from this same source refuses on that pin, so a run that stayed
+    /// silent would push the discovery to promotion time.
+    #[tokio::test]
+    async fn a_run_that_proceeds_past_a_stale_pin_reports_it_on_the_receipt() {
+        let mut runner = NoticingRunner::default();
+
+        let receipt = run_once_stages(DevSourceState::Dirty, &mut runner)
+            .await
+            .expect("a disposable target runs every stage");
+
+        assert_eq!(receipt.completed().len(), DEV_STAGE_ORDER.len());
+        assert_eq!(receipt.notices().len(), 1);
+        assert_eq!(receipt.notices()[0].code(), "pin stale");
+        assert!(
+            receipt.notices()[0].detail().contains("sha256:bb"),
+            "the notice names the digest the run actually built"
+        );
+    }
+
+    /// The default is silence. A runner with nothing to report adds no line,
+    /// so the completed and served lines a scripted caller reads never move.
+    #[tokio::test]
+    async fn a_run_with_nothing_to_report_carries_no_notices() {
+        let mut runner = RecordingRunner::default();
+
+        let receipt = run_once_stages(DevSourceState::Clean, &mut runner)
+            .await
+            .expect("a clean run completes");
+
+        assert!(receipt.notices().is_empty());
     }
 
     #[derive(Clone, Debug)]

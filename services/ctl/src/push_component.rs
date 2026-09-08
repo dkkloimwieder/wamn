@@ -52,6 +52,53 @@ const INSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
          $1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb\
      ) ON CONFLICT DO NOTHING RETURNING admitted_at";
 
+/// The same append for a DISPOSABLE environment, which REPLACES the coordinate's
+/// admitted fact instead of colliding with it (wamn-10yt.38).
+///
+/// Same eleven parameters as [`INSERT_COMPONENT_SQL`], so the choice between the
+/// two is one statement swap and never a second parameter shape. `RETURNING`
+/// fires on the update as well as the insert, so the conflicting arm below is
+/// simply not reached — a replacement is not an exact retry and must not be
+/// judged as one.
+const UPSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
+         tenant_id, package_id, package_version, component, interface_version, operations, \
+         component_digest, projection_hash, imports, imports_fingerprint, effects\
+     ) VALUES (\
+         $1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb\
+     ) ON CONFLICT ON CONSTRAINT component_library_pkey DO UPDATE SET \
+         operations = EXCLUDED.operations, \
+         component_digest = EXCLUDED.component_digest, \
+         projection_hash = EXCLUDED.projection_hash, \
+         imports = EXCLUDED.imports, \
+         imports_fingerprint = EXCLUDED.imports_fingerprint, \
+         effects = EXCLUDED.effects, \
+         admitted_at = now() \
+     RETURNING admitted_at";
+
+/// Whether the tenant's PROJECTED environment marks its facts replaceable.
+///
+/// Read LOCALLY, inside the control transaction that is about to write the fact,
+/// from `catalog.tenant_environments` — provisioning's projection of the
+/// authority row in `registry.project_envs`. No second database on the admit
+/// path for a flag that changes once in an environment's lifetime.
+/// A tenant with no projected environment is DURABLE, which is what makes this
+/// additive: absence reproduces the refusal exactly.
+const SELECT_ENVIRONMENT_DISPOSABLE_SQL: &str = "SELECT coalesce((\
+         SELECT disposable FROM catalog.tenant_environments WHERE tenant_id = $1\
+     ), false)";
+
+/// A replacement moves the coordinate's digest, and any admitted connection
+/// requirement still points at the OLD one. Release that reference first; the
+/// requirements for the new digest are appended immediately after the fact
+/// moves, so the transaction never observes a component without its connections.
+const RELEASE_SUPERSEDED_REQUIREMENTS_SQL: &str = "DELETE FROM catalog.connection_requirements \
+      WHERE tenant_id = $1 \
+        AND component_digest <> $6 \
+        AND component_digest = (\
+            SELECT component_digest FROM catalog.component_library \
+             WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+               AND component = $4 AND interface_version = $5)";
+
 const EXACT_COMPONENT_SQL: &str = "SELECT EXISTS (\
          SELECT 1 FROM catalog.component_library \
           WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
@@ -1439,6 +1486,21 @@ async fn persist_with_client(
         .query_one(LOCK_PROJECTION_SQL, &[&coordinate])
         .await
         .with_context(|| format!("lock {plane} component projection coordinate"))?;
+    // The disposable marker lives only in the control store, beside the facts it
+    // governs (wamn-10yt.38). The verification project plane is recreated per
+    // run and carries no projection to consult, so it stays frozen.
+    let replaceable = if plane == ProjectionPlane::Control {
+        transaction
+            .query_one(
+                SELECT_ENVIRONMENT_DISPOSABLE_SQL,
+                &[&component.scope.tenant_id],
+            )
+            .await
+            .context("resolve the projected environment's disposable marker")?
+            .get(0)
+    } else {
+        false
+    };
     let package_inserted = if plane == ProjectionPlane::Control {
         let existing = transaction
             .query_opt(
@@ -1505,8 +1567,13 @@ async fn persist_with_client(
             .await?
         }
     };
-    let (component_inserted, observed_projection_hash) =
-        append_or_verify_admitted_component_count(&transaction, component, projection_hash).await?;
+    let (component_inserted, observed_projection_hash) = append_or_verify_admitted_component_count(
+        &transaction,
+        component,
+        projection_hash,
+        replaceable,
+    )
+    .await?;
     let mut requirements_inserted = 0;
     // One transaction per plane: a library fact without its connection facts,
     // or the reverse, is never visible inside that plane.
@@ -1754,20 +1821,28 @@ async fn verify_requirement_inventory(
 ///
 /// The caller owns the transaction and tenant claim so release promotion can
 /// combine this write with its target wiring and pointer cutover atomically.
+///
+/// Always the FROZEN reading: promotion copies an already-admitted fact into a
+/// target and has no environment of its own to consult. Only the control
+/// projection in [`persist_with_client`] resolves the disposable marker.
 pub(crate) async fn append_or_verify_admitted_component(
     transaction: &tokio_postgres::Transaction<'_>,
     component: &AdmittedComponent,
     projection_hash: &str,
 ) -> anyhow::Result<()> {
-    append_or_verify_admitted_component_count(transaction, component, projection_hash)
+    append_or_verify_admitted_component_count(transaction, component, projection_hash, false)
         .await
         .map(|_| ())
 }
 
+/// `replaceable` is the PROJECTED environment's answer, never a caller's
+/// preference: it is read from `catalog.tenant_environments` inside this same
+/// transaction (wamn-10yt.38).
 async fn append_or_verify_admitted_component_count(
     transaction: &tokio_postgres::Transaction<'_>,
     component: &AdmittedComponent,
     projection_hash: &str,
+    replaceable: bool,
 ) -> anyhow::Result<(bool, String)> {
     let imports =
         serde_json::to_string(&component.imports).context("serialize admitted imports")?;
@@ -1789,8 +1864,29 @@ async fn append_or_verify_admitted_component_count(
         &effects,
     ];
 
+    if replaceable {
+        transaction
+            .execute(
+                RELEASE_SUPERSEDED_REQUIREMENTS_SQL,
+                &[
+                    &component.scope.tenant_id,
+                    &component.scope.package_id,
+                    &component.scope.package_version,
+                    &component.component,
+                    &component.interface_version,
+                    &component.component_digest,
+                ],
+            )
+            .await
+            .context("release the superseded component's connection requirements")?;
+    }
+    let append_sql = if replaceable {
+        UPSERT_COMPONENT_SQL
+    } else {
+        INSERT_COMPONENT_SQL
+    };
     let inserted = transaction
-        .query_opt(INSERT_COMPONENT_SQL, &params)
+        .query_opt(append_sql, &params)
         .await
         .context("append admitted component-library fact")?
         .is_some();
@@ -2094,7 +2190,11 @@ mod tests {
 
     /// A component absent from the manifest, exporting one handler and
     /// registering nothing: the palette-node shape.
-    fn stranger(manifest: &wamn_schema_generator::PackageManifest, name: &str, registered: Option<&str>) -> AdmittedComponent {
+    fn stranger(
+        manifest: &wamn_schema_generator::PackageManifest,
+        name: &str,
+        registered: Option<&str>,
+    ) -> AdmittedComponent {
         AdmittedComponent {
             scope: wamn_catalog::ComponentPackageScope {
                 tenant_id: "tenant-a".to_owned(),
@@ -2136,7 +2236,10 @@ mod tests {
         )
         .expect("an unregistered palette node is admitted without manifest membership");
 
-        assert!(served.is_empty(), "a palette node serves no manifest operation: {served:?}");
+        assert!(
+            served.is_empty(),
+            "a palette node serves no manifest operation: {served:?}"
+        );
     }
 
     /// The other half of the ruling: membership is still the fence for anyone
@@ -2146,7 +2249,11 @@ mod tests {
         let manifest = overlay_manifest();
         let expected =
             expected_operation_contracts(&manifest).expect("operation contract coordinates derive");
-        let registered = expected.keys().next().expect("the manifest registers operations").clone();
+        let registered = expected
+            .keys()
+            .next()
+            .expect("the manifest registers operations")
+            .clone();
 
         let error = validate_component_operation_assignment(
             &manifest,
@@ -2155,9 +2262,14 @@ mod tests {
         )
         .expect_err("a stranger registering a manifest operation was admitted");
 
-        assert_eq!(error.kind(), ComponentProjectionErrorKind::StatementComponentMismatch);
+        assert_eq!(
+            error.kind(),
+            ComponentProjectionErrorKind::StatementComponentMismatch
+        );
         assert!(
-            error.to_string().contains("absent from the package manifest yet registers"),
+            error
+                .to_string()
+                .contains("absent from the package manifest yet registers"),
             "the refusal names the membership rule: {error}"
         );
     }
@@ -2648,6 +2760,240 @@ mod tests {
         for database in [&project_database, &control_database] {
             run_alone(&base, &format!("DROP DATABASE \"{database}\" WITH (FORCE)")).await;
         }
+    }
+
+    /// Both directions of wamn-10yt.38 against a real control store.
+    ///
+    /// The trigger is a no-op edit: the same package version, the same
+    /// coordinate, different component bytes. A durable environment answers with
+    /// `component-fact-conflict`, which is what locked an author out of their own
+    /// version after a reformat. The SAME admission against a target whose
+    /// projected environment says disposable lands, digest and connection
+    /// requirements together.
+    ///
+    /// The only thing that changes between the two arms is the projected row.
+    #[tokio::test]
+    async fn the_projected_environment_decides_whether_a_component_fact_may_be_replaced() {
+        let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
+            eprintln!("skipping disposable-projection proof; WAMN_CTL_PG_URL is unset");
+            return;
+        };
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(std::env::temp_dir().join("wamn-ctl-live-database.lock"))
+            .expect("open shared ctl database lock");
+        lock.lock()
+            .expect("lock disposable PostgreSQL across tests");
+
+        let base_config: PgConfig = url.parse().expect("parse WAMN_CTL_PG_URL");
+        let base = connect(&base_config).await;
+        let control_database = format!("wamn_disposable_control_{}", std::process::id());
+        run_alone(
+            &base,
+            &format!("DROP DATABASE IF EXISTS \"{control_database}\" WITH (FORCE)"),
+        )
+        .await;
+        base.batch_execute(
+            "DO $roles$ DECLARE role_name text; BEGIN \
+               FOREACH role_name IN ARRAY ARRAY[\
+                 'wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author'\
+               ] LOOP \
+                 IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
+                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+                 END IF; \
+               END LOOP; \
+             END $roles$;",
+        )
+        .await
+        .expect("ensure production schema prerequisite roles");
+        run_alone(&base, &format!("CREATE DATABASE \"{control_database}\"")).await;
+        run_alone(
+            &base,
+            &format!("GRANT CREATE ON DATABASE \"{control_database}\" TO wamn_system"),
+        )
+        .await;
+
+        let control_config = database_config(&base_config, &control_database);
+        let control = connect(&control_config).await;
+        control
+            .batch_execute("SET ROLE wamn_system")
+            .await
+            .expect("assume production control owner");
+        control
+            .batch_execute(include_str!("../../../deploy/sql/system-schema.sql"))
+            .await
+            .expect("install production control system schema");
+        control
+            .batch_execute(include_str!(
+                "../../../deploy/sql/control-portable-store.sql"
+            ))
+            .await
+            .expect("install production portable control store");
+        control
+            .batch_execute("RESET ROLE")
+            .await
+            .expect("restore test administrator");
+
+        let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let directory = crate::apply_package::read_package_directory(&package_path)
+            .expect("read real Receiving package");
+        let package = plan_package_migrations(&directory, None).expect("plan real package");
+
+        // One coordinate, two byte revisions — the reformat this bead is about.
+        let admitted = |marker: u8| {
+            let bytes = vec![marker; 32];
+            let mut component = projection_component();
+            component.component_digest =
+                wamn_runtime::component_admission::component_digest(&bytes);
+            let requirements = vec![ComponentConnectionRequirement::new(
+                &component.component_digest,
+                "warehouse",
+                ConnectionTypeDescriptor::http_v1(),
+            )];
+            let projection_hash = admitted_projection_hash(&component, &requirements)
+                .expect("hash admitted projection once");
+            (component, requirements, projection_hash)
+        };
+        let project_control = |component: &AdmittedComponent,
+                               requirements: Vec<ComponentConnectionRequirement>,
+                               projection_hash: String| {
+            let component = component.clone();
+            let control_config = control_config.clone();
+            let directory = directory.clone();
+            let package_path = package_path.clone();
+            let manifest_sha256 = package.manifest_sha256.clone();
+            async move {
+                persist_plane(
+                    &control_config,
+                    ProjectionPlane::Control,
+                    &component,
+                    &requirements,
+                    &manifest_sha256,
+                    &projection_hash,
+                    &directory,
+                    &package_path,
+                )
+                .await
+            }
+        };
+        let stored_digest = async || -> String {
+            control
+                .query_one(
+                    "SELECT component_digest FROM catalog.component_library \
+                      WHERE tenant_id = $1",
+                    &[&projection_component().scope.tenant_id],
+                )
+                .await
+                .expect("read the admitted component digest")
+                .get(0)
+        };
+        let stored_requirement_digest = async || -> String {
+            control
+                .query_one(
+                    "SELECT component_digest FROM catalog.connection_requirements \
+                      WHERE tenant_id = $1",
+                    &[&projection_component().scope.tenant_id],
+                )
+                .await
+                .expect("read the admitted requirement's component digest")
+                .get(0)
+        };
+        let project_environment = async |disposable: bool| {
+            control
+                .batch_execute("SET ROLE wamn_system")
+                .await
+                .expect("assume production control owner");
+            control
+                .query_one(
+                    "SELECT set_config('app.tenant', $1, false)",
+                    &[&projection_component().scope.tenant_id],
+                )
+                .await
+                .expect("claim the projected tenant");
+            control
+                .execute(
+                    "SELECT catalog.project_tenant_environment(\
+                         $1, 'acme', 'receiving', 'dev', 'abcd1234', $2)",
+                    &[&projection_component().scope.tenant_id, &disposable],
+                )
+                .await
+                .expect("project the environment");
+            control
+                .batch_execute("RESET ROLE")
+                .await
+                .expect("restore test administrator");
+        };
+
+        let (first, first_requirements, first_hash) = admitted(b'a');
+        project_control(&first, first_requirements, first_hash)
+            .await
+            .expect("the first admission projects into a fresh control store");
+        assert_eq!(stored_digest().await, first.component_digest);
+
+        // ARM ONE: no projected environment at all. Absence means durable.
+        let (second, second_requirements, second_hash) = admitted(b'b');
+        let unprojected =
+            project_control(&second, second_requirements.clone(), second_hash.clone())
+                .await
+                .expect_err("a tenant with no projected environment refuses a moved digest");
+        assert_eq!(
+            unprojected
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("a moved digest is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::ComponentFactConflict
+        );
+
+        // ARM TWO: projected, and DURABLE. The refusal is unchanged.
+        project_environment(false).await;
+        let durable = project_control(&second, second_requirements.clone(), second_hash.clone())
+            .await
+            .expect_err("a durable environment refuses a moved digest");
+        assert_eq!(
+            durable
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("a moved digest is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::ComponentFactConflict
+        );
+        assert_eq!(stored_digest().await, first.component_digest);
+
+        // ARM THREE: the SAME admission, against a disposable environment.
+        project_environment(true).await;
+        project_control(&second, second_requirements, second_hash)
+            .await
+            .expect("a disposable environment replaces its own admitted fact");
+        assert_eq!(stored_digest().await, second.component_digest);
+        assert_eq!(
+            stored_requirement_digest().await,
+            second.component_digest,
+            "the replacement left a connection requirement pointing at the superseded digest"
+        );
+
+        // And flipping the environment back re-freezes it, with no redeploy.
+        project_environment(false).await;
+        let (third, third_requirements, third_hash) = admitted(b'c');
+        let refrozen = project_control(&third, third_requirements, third_hash)
+            .await
+            .expect_err("a re-provisioned durable environment freezes again");
+        assert_eq!(
+            refrozen
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("a moved digest is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::ComponentFactConflict
+        );
+
+        drop(control);
+        run_alone(
+            &base,
+            &format!("DROP DATABASE \"{control_database}\" WITH (FORCE)"),
+        )
+        .await;
     }
 
     /// The exact bytes this publisher stores in `requirement_json`, frozen

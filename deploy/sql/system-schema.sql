@@ -336,6 +336,17 @@ CREATE TABLE identity.session_signing_state (
 -- the identity every FK here points at (`registry.event_readers`, and the
 -- separately installed ops relations), and a re-provisioned environment must
 -- REPLACE its row rather than accumulate one per instance.
+--
+-- `disposable` marks an environment whose admitted facts a development loop may
+-- REPLACE (wamn-10yt.38). `wamn dev up` provisions its own target with it true;
+-- every other provisioning leaves the `false` default, which is what keeps every
+-- existing environment's admitted component fact immutable BY CONSTRUCTION
+-- rather than by a caller remembering to withhold a flag. The condition is
+-- anchored in THIS row, never in a CLI argument or a stage: the target decides.
+-- This row is the AUTHORITY; `catalog.tenant_environments` in the control store
+-- carries the projected copy the admit path reads (deploy/sql/control-portable-store.sql).
+-- It is deliberately NOT `registry.env_policies.durability_class`, which is
+-- run-retention policy for admitted runs and means something else.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.project_envs (
     org              text NOT NULL,
@@ -344,6 +355,7 @@ CREATE TABLE registry.project_envs (
     secret_name      text NOT NULL,
     secret_namespace text,
     instance_suffix  text NOT NULL,
+    disposable       boolean NOT NULL DEFAULT false,
     PRIMARY KEY (org, project, env),
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)

@@ -38,7 +38,7 @@ use super::read::{
 use super::target_database;
 use super::verification_world::RUN_SCHEMA;
 use super::watch::GitSource;
-use super::{DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
+use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
 use crate::apply_package::ApplyPackageArgs;
 use crate::dev_gate::GateClient;
 use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
@@ -55,6 +55,9 @@ const BUILD_TOOL: &str = "tools/build-components";
 const AUTHORING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__TENANT_ID__";
 const PACKAGE_MANIFEST: &str = "wamn.json";
+
+/// Stable code for the notice a run emits when it built past an authored pin.
+pub const BASE_PIN_STALE_NOTICE: &str = "pin stale";
 const PACKAGE_ATTACHMENTS: &str = "publication/attachments.json";
 const PACKAGE_COMPONENTS: &str = "publication/components";
 const PACKAGE_WIRINGS: &str = "publication/wirings";
@@ -354,6 +357,7 @@ pub struct ProductionDevStageRunner {
     admissions: Vec<ComponentAdmissionReceipt>,
     gated_wirings: Vec<GatedWiring>,
     published_wirings: Vec<PublishedWiring>,
+    target_instance: Option<String>,
     publish_provenance: Option<CommitProvenance>,
     release: Option<ReleaseCarrier>,
     activation: Option<DevActivation>,
@@ -380,6 +384,10 @@ impl fmt::Debug for ProductionDevStageRunner {
             .field(
                 "verified_base_digest_count",
                 &self.verified_base_digests.len(),
+            )
+            .field(
+                "base_digests_moved_off_pin",
+                &self.base_digests_moved_off_pin().collect::<Vec<_>>(),
             )
             .field("admission_count", &self.admissions.len())
             .field("gated_wiring_count", &self.gated_wirings.len())
@@ -418,6 +426,7 @@ impl ProductionDevStageRunner {
             verified_base_digests: Vec::new(),
             admissions: Vec::new(),
             gated_wirings: Vec::new(),
+            target_instance: None,
             published_wirings: Vec::new(),
             publish_provenance: None,
             release: None,
@@ -433,6 +442,36 @@ impl ProductionDevStageRunner {
     /// Read-only state for terminal and future console clients.
     pub fn read_handle(&self) -> DevReadHandle {
         self.read_handle.clone()
+    }
+
+    /// Base coordinates this run built off their pinned digest, with both values.
+    ///
+    /// A disposable target accepts a moved digest instead of stopping the loop,
+    /// so the drift is only visible if the run reports it. Nothing is written
+    /// back to the authored manifest.
+    pub fn base_digests_moved_off_pin(&self) -> impl Iterator<Item = (&str, &str, &str)> {
+        self.verified_base_digests.iter().filter_map(|verified| {
+            verified
+                .superseded_pin()
+                .map(|pin| (verified.coordinate(), pin, verified.digest()))
+        })
+    }
+
+    /// Base component digests THIS RUN built, by package coordinate.
+    ///
+    /// Empty for a durable target, so the authored declaration is admitted
+    /// exactly as written and a durable publish still names the bytes it
+    /// declared.
+    fn built_base_digests(&self) -> BTreeMap<Box<str>, Box<str>> {
+        if super::config::refuses_moved_base_digest(<Self as DevStageRunner>::target_durability(
+            self,
+        )) {
+            return BTreeMap::new();
+        }
+        self.verified_base_digests
+            .iter()
+            .map(|verified| (verified.coordinate().into(), verified.digest().into()))
+            .collect()
     }
 
     /// Start the two read-only environment observation sources once.
@@ -618,6 +657,10 @@ impl ProductionDevStageRunner {
             &build.plan.virtualization.artifacts,
         )?;
 
+        // Read the durability through the trait so this refusal and the
+        // committed-source refusal keep answering to one definition of the
+        // target, rather than each carrying its own copy of the answer.
+        let durability = <Self as DevStageRunner>::target_durability(self);
         let packages = self.packages.as_ref().expect("package_inputs proved state");
         for base in packages.base_packages() {
             let artifact = self
@@ -629,7 +672,7 @@ impl ProductionDevStageRunner {
                 .expect("selected artifacts contain every resolved package");
             let verified = base
                 .component_digest()
-                .verify(artifact.digest.clone())
+                .verify(artifact.digest.clone(), durability)
                 .map_err(|source| {
                     ProductionDevStageError::owner(
                         "verify the built base component digest",
@@ -655,8 +698,11 @@ impl ProductionDevStageRunner {
                 .root
                 .join(PACKAGE_COMPONENTS)
                 .join(format!("{}.json.in", artifact.component));
-            let declaration =
-                render_component_declaration(&template, &self.config.activation_identity().tenant)?;
+            let declaration = render_component_declaration(
+                &template,
+                &self.config.activation_identity().tenant,
+                &self.built_base_digests(),
+            )?;
             let admission = admit_component(AdmitComponentArgs {
                 package: package.root,
                 component_bytes: artifact.path,
@@ -719,6 +765,7 @@ impl ProductionDevStageRunner {
                 &input.package_version,
                 &input.document,
                 None,
+                self.target_instance.as_deref(),
             );
             let outcome = self
                 .authoring
@@ -836,6 +883,7 @@ impl ProductionDevStageRunner {
                 &input.package_version,
                 &input.document,
                 Some(&provenance.commit),
+                self.target_instance.as_deref(),
             );
             let outcome = self
                 .authoring
@@ -1319,6 +1367,20 @@ impl DevStageRunner for ProductionDevStageRunner {
         DevTargetDurability::Disposable
     }
 
+    fn run_notices(&self) -> Vec<DevRunNotice> {
+        // A durable publish from this same source WILL refuse until the pin is
+        // reminted, so the run says it here rather than leaving it to be found
+        // at promotion (wamn-10yt.48).
+        self.base_digests_moved_off_pin()
+            .map(|(coordinate, pin, built)| {
+                DevRunNotice::new(
+                    BASE_PIN_STALE_NOTICE,
+                    format!("{coordinate} {PACKAGE_MANIFEST} names {pin}, built {built}"),
+                )
+            })
+            .collect()
+    }
+
     async fn prepare_run(&mut self) -> Result<(), Self::Error> {
         // The previous run's host still holds connections to this database, and
         // both DROP DATABASE WITH FORCE and CREATE DATABASE ... TEMPLATE refuse
@@ -1327,11 +1389,14 @@ impl DevStageRunner for ProductionDevStageRunner {
         if self.activation.is_some() {
             self.shutdown().await?;
         }
-        target_database::recreate(&self.config)
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("recreate the target database", source.into())
-            })
+        // The recreate hands back which creation of the database this run got.
+        // An authoring claim is keyed by it, so a replayed command against a
+        // database that no longer exists executes instead of returning a result
+        // whose effect was dropped with the old one (wamn-10yt.51).
+        self.target_instance = Some(target_database::recreate(&self.config).await.map_err(
+            |source| ProductionDevStageError::owner("recreate the target database", source.into()),
+        )?);
+        Ok(())
     }
 
     async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
@@ -1482,12 +1547,23 @@ fn load_wirings(packages: &[PackageInput]) -> Result<Vec<WiringInput>, Productio
     Ok(inputs)
 }
 
+/// `target_instance` names WHICH CREATION of the target database this command
+/// runs against, and it is what makes a replay honest here (wamn-10yt.51).
+///
+/// An authoring claim is recorded in the control database, which no dev run
+/// recreates, while its effect lands in the project database, which every run
+/// drops and clones afresh. Without the instance, the second run replays, gets
+/// the first run's result back, and writes nothing into a database that was
+/// just emptied. The idempotency law is untouched: a recreated database is a
+/// different target, so the same document against it is a different command.
+/// A durable target passes None, because nothing recreates it.
 fn authoring_command_id(
     command: &str,
     package_id: &str,
     package_version: &str,
     document: &Value,
     source_commit: Option<&str>,
+    target_instance: Option<&str>,
 ) -> String {
     let mut identity = serde_json::json!({
         "command": command,
@@ -1498,6 +1574,9 @@ fn authoring_command_id(
     if let Some(source_commit) = source_commit {
         identity["source-commit"] = Value::String(source_commit.to_owned());
     }
+    if let Some(target_instance) = target_instance {
+        identity["target-instance"] = Value::String(target_instance.to_owned());
+    }
     format!(
         "wamn-dev-{command}-{}",
         wamn_execution_contract::canonical_json_sha256(&identity)
@@ -1506,9 +1585,22 @@ fn authoring_command_id(
     )
 }
 
+/// Renders one authored component declaration for admission.
+///
+/// `scope.tenant-id` is a placeholder the deployment fills. `built_base_digests`
+/// fills the second rendered value: the digest of a base component this run
+/// actually built (wamn-10yt.48). The authored template pins a digest by hand,
+/// Generate never rewrites it, and once an author edits the base package that
+/// pin names bytes that no longer exist. Every consumer of the admitted fact
+/// then resolves the dependency to zero components, including the serving
+/// manifest's own validation, which is a persisted contract and must stay
+/// strict. So the DOCUMENT is made true rather than the validator made
+/// tolerant. The map is empty for a durable target, which admits the authored
+/// pin unchanged.
 fn render_component_declaration(
     template: &Path,
     tenant: &str,
+    built_base_digests: &BTreeMap<Box<str>, Box<str>>,
 ) -> Result<TemporaryFile, ProductionDevStageError> {
     let bytes = fs::read(template).map_err(|source| {
         ProductionDevStageError::owner(
@@ -1538,6 +1630,33 @@ fn render_component_declaration(
         ));
     }
     *slot = Value::String(tenant.to_owned());
+    if let Some(operations) = document
+        .get_mut("operations")
+        .and_then(Value::as_object_mut)
+    {
+        for operation in operations.values_mut() {
+            let Some(dependencies) = operation
+                .get_mut("dependencies")
+                .and_then(Value::as_array_mut)
+            else {
+                continue;
+            };
+            for dependency in dependencies {
+                let Some(coordinate) = dependency
+                    .get("package")
+                    .and_then(Value::as_str)
+                    .zip(dependency.get("version").and_then(Value::as_str))
+                    .map(|(package, version)| format!("{package}@{version}"))
+                else {
+                    continue;
+                };
+                let Some(built) = built_base_digests.get(coordinate.as_str()) else {
+                    continue;
+                };
+                dependency["digest"] = Value::String(built.to_string());
+            }
+        }
+    }
     let rendered = serde_json::to_vec(&document).map_err(|source| {
         ProductionDevStageError::owner("serialize component declaration", source.into())
     })?;
@@ -1619,14 +1738,17 @@ mod tests {
     #[test]
     fn command_identity_is_stable_and_publish_separates_source_commits() {
         let document = serde_json::json!({"wiring-id": "purchase_order_get", "version": 1});
-        let first_gate = authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None);
-        let second_gate = authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None);
+        let first_gate =
+            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None, None);
+        let second_gate =
+            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None, None);
         let first_publish = authoring_command_id(
             "publish",
             "wamn_receiving",
             "1.0.0",
             &document,
             Some("0123456789abcdef"),
+            None,
         );
         let repeated_publish = authoring_command_id(
             "publish",
@@ -1634,6 +1756,7 @@ mod tests {
             "1.0.0",
             &document,
             Some("0123456789abcdef"),
+            None,
         );
         let next_commit_publish = authoring_command_id(
             "publish",
@@ -1641,11 +1764,143 @@ mod tests {
             "1.0.0",
             &document,
             Some("fedcba9876543210"),
+            None,
         );
         assert_eq!(first_gate, second_gate);
         assert_eq!(first_publish, repeated_publish);
         assert_ne!(first_gate, first_publish);
         assert_ne!(first_publish, next_commit_publish);
+    }
+
+    /// The claim says which creation of the target database it ran against.
+    ///
+    /// Measured live on 2026-09-08: without this, a second run replayed all
+    /// fourteen publish commands, wrote nothing, and Release refused with
+    /// "has no wiring purchase_order_get version 1" against a database the run
+    /// had just recreated. The control database held one audit row per command
+    /// for two runs. A third run with NO edit failed identically, so the wall
+    /// was the recreate and not the edit.
+    #[test]
+    fn a_recreated_target_is_a_different_command_and_a_durable_one_is_unchanged() {
+        let document = serde_json::json!({"wiring": "purchase_order_get", "version": 1});
+
+        let durable =
+            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None, None);
+        let first_instance = authoring_command_id(
+            "gate",
+            "wamn_receiving",
+            "1.0.0",
+            &document,
+            None,
+            Some("16394"),
+        );
+        let same_instance = authoring_command_id(
+            "gate",
+            "wamn_receiving",
+            "1.0.0",
+            &document,
+            None,
+            Some("16394"),
+        );
+        let next_instance = authoring_command_id(
+            "gate",
+            "wamn_receiving",
+            "1.0.0",
+            &document,
+            None,
+            Some("16512"),
+        );
+
+        assert_eq!(
+            first_instance, same_instance,
+            "one creation of the target replays as one command"
+        );
+        assert_ne!(
+            first_instance, next_instance,
+            "a recreated database is a different target"
+        );
+        assert_ne!(
+            durable, first_instance,
+            "a durable target carries no instance, so its claims never move"
+        );
+    }
+
+    /// The rendered declaration names the bytes this run built.
+    ///
+    /// The shipped overlay template pins its base dependency by hand, and
+    /// Generate never rewrites that file. Once an author edits the base
+    /// package, the pin names bytes that no longer exist, and every consumer of
+    /// the admitted fact resolves the dependency to zero components. The
+    /// serving manifest's own validation is one of them, and it guards a
+    /// persisted contract, so the document is made true rather than the
+    /// validator made tolerant.
+    #[test]
+    fn a_disposable_target_renders_the_base_digest_it_built_into_the_declaration() {
+        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/client_acme_receiving/publication/components")
+            .join("client_acme_receiving.json.in");
+        let authored: Value = serde_json::from_slice(
+            &fs::read(&template).expect("read the shipped declaration template"),
+        )
+        .expect("parse the shipped declaration template");
+        let authored_pin = dependency_digests(&authored);
+        assert_eq!(
+            authored_pin.len(),
+            1,
+            "the shipped overlay declares exactly one base dependency"
+        );
+        let built = format!("sha256:{}", "7".repeat(64));
+        assert_ne!(authored_pin[0], built);
+
+        let durable = render_component_declaration(&template, "tenant-a", &BTreeMap::new())
+            .expect("render for a durable target");
+        let durable_document: Value =
+            serde_json::from_slice(&fs::read(durable.path()).expect("read the durable render"))
+                .expect("parse the durable render");
+        assert_eq!(
+            dependency_digests(&durable_document),
+            authored_pin,
+            "a durable target admits the pin exactly as authored"
+        );
+
+        let mut built_base_digests = BTreeMap::new();
+        built_base_digests.insert(
+            Box::<str>::from("wamn_receiving@1.0.0"),
+            Box::<str>::from(built.as_str()),
+        );
+        let disposable = render_component_declaration(&template, "tenant-a", &built_base_digests)
+            .expect("render for a disposable target");
+        let disposable_document: Value = serde_json::from_slice(
+            &fs::read(disposable.path()).expect("read the disposable render"),
+        )
+        .expect("parse the disposable render");
+        assert_eq!(
+            dependency_digests(&disposable_document),
+            vec![built.clone()],
+            "a disposable target names the base it just built"
+        );
+        assert_eq!(
+            disposable_document
+                .pointer("/scope/tenant-id")
+                .and_then(Value::as_str),
+            Some("tenant-a"),
+            "the tenant placeholder is still filled"
+        );
+    }
+
+    fn dependency_digests(document: &Value) -> Vec<String> {
+        document
+            .get("operations")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|operations| operations.values())
+            .filter_map(|operation| operation.get("dependencies"))
+            .filter_map(Value::as_array)
+            .flatten()
+            .filter_map(|dependency| dependency.get("digest"))
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect()
     }
 
     #[test]

@@ -156,6 +156,45 @@ pub struct MintReleaseManifest<'a> {
     pub packages: &'a BTreeSet<PackageCoordinate>,
     pub wirings: &'a BTreeSet<ReleaseWiringTarget>,
     pub attachments: &'a BTreeMap<String, ServingAttachment>,
+    /// Whether provisioning marked this target's environment disposable.
+    ///
+    /// Read from the projection wamn-10yt.38 writes into the control store, so
+    /// the condition is the TARGET and never an operator's say-so. It selects
+    /// the dependency rule below and changes nothing else.
+    pub environment_is_disposable: bool,
+}
+
+/// How a release matches a declared dependency to an admitted component fact.
+///
+/// `Declared` is the durable rule: a publish names the exact bytes it depends
+/// on, and the digest pinned in the authored manifest IS that declaration.
+///
+/// `Built` is the development rule, ruled 2026-09-08 on wamn-10yt.48. A
+/// disposable target rebuilt the base from the same tree in the same run, so
+/// the base it built is the honest dependency and the declared digest names
+/// bytes that no longer exist. Matching by coordinate and operation there costs
+/// nothing, because the run built both halves. A durable publish keeps
+/// demanding the exact bytes, as it must.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DependencyDigestRule {
+    Declared,
+    Built,
+}
+
+impl DependencyDigestRule {
+    /// The rule a target's projected environment marker selects.
+    pub const fn for_environment(disposable: bool) -> Self {
+        if disposable {
+            Self::Built
+        } else {
+            Self::Declared
+        }
+    }
+
+    /// Whether a fact must carry the digest the declaration named.
+    pub const fn matches_declared_digest(self) -> bool {
+        matches!(self, Self::Declared)
+    }
 }
 
 /// The deployment-attestation key derived from mounted release bytes.
@@ -410,6 +449,10 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
     );
     let release_id = i32::try_from(args.effective_release_id)
         .context("effective-release-id exceeds PostgreSQL integer")?;
+    let environment_is_disposable =
+        read_projected_environment_disposable(&args.control_database_url, &args.tenant)
+            .await
+            .context("resolve the release target's disposable marker")?;
     let request = MintReleaseManifest {
         tenant_id: &args.tenant,
         effective_release_id: release_id,
@@ -418,6 +461,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         packages: &packages,
         wirings: &wirings,
         attachments: &attachments,
+        environment_is_disposable,
     };
     let run_schema = args.verified_run_schema()?;
     let source_policy = crate::verification_policy::read_authoritative_environment_policy(
@@ -619,6 +663,32 @@ pub(crate) fn report_deployment_coordinate(
         manifest_hash = %manifest_hash,
         "release carries a complete deployment attestation coordinate"
     );
+}
+
+/// Whether provisioning marked this tenant's environment disposable.
+///
+/// The same projection the admit path reads (wamn-10yt.38), from the same
+/// control store, read ONCE per release mint rather than once per fact. The
+/// control database always carries `catalog`, because the release identity is
+/// projected into it a few lines later, so an absent relation is a stale store
+/// and says so rather than defaulting quietly. A tenant with no projected row
+/// is DURABLE, which is what keeps the change additive.
+const SELECT_ENVIRONMENT_DISPOSABLE_SQL: &str = "SELECT coalesce((\
+         SELECT disposable FROM catalog.tenant_environments WHERE tenant_id = $1\
+     ), false)";
+
+async fn read_projected_environment_disposable(
+    control_database_url: &str,
+    tenant_id: &str,
+) -> anyhow::Result<bool> {
+    on_control_plane(control_database_url, async |control| {
+        let row = control
+            .query_one(SELECT_ENVIRONMENT_DISPOSABLE_SQL, &[&tenant_id])
+            .await
+            .context("read the projected environment's disposable marker")?;
+        Ok(row.get(0))
+    })
+    .await
 }
 
 async fn on_control_plane<F, T>(control_database_url: &str, write: F) -> anyhow::Result<T>
@@ -1471,6 +1541,7 @@ fn resolve_wiring_components(
     owner: &ComponentPackageScope,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     package_manifest: Option<&wamn_schema_generator::PackageManifest>,
+    rule: DependencyDigestRule,
 ) -> Result<BTreeMap<String, AdmittedComponent>, MintManifestError> {
     let mut resolved = BTreeMap::new();
     for (node_id, node) in &document.nodes {
@@ -1544,7 +1615,8 @@ fn resolve_wiring_components(
                 (
                     requirement.package.as_str(),
                     requirement.version.as_str(),
-                    Some(requirement.digest.as_str()),
+                    rule.matches_declared_digest()
+                        .then_some(requirement.digest.as_str()),
                     Some(registered_operation),
                 )
             }
@@ -1624,6 +1696,7 @@ type ComponentOperationKey = (String, String, String);
 fn resolve_component_dependency_closure(
     roots: &BTreeMap<String, AdmittedComponent>,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, MintManifestError> {
     let mut pending = roots.values().cloned().collect::<Vec<_>>();
     let mut closure = BTreeMap::<(String, String, String), AdmittedComponent>::new();
@@ -1644,18 +1717,20 @@ fn resolve_component_dependency_closure(
         }
         for operation in component.operations.values() {
             for dependency in &operation.dependencies {
-                pending.push(resolve_component_dependency(dependency, component_facts)?.clone());
+                pending
+                    .push(resolve_component_dependency(dependency, component_facts, rule)?.clone());
             }
         }
         closure.insert(key, component);
     }
-    validate_component_dependency_cycles(closure.values())?;
+    validate_component_dependency_cycles(closure.values(), component_facts, rule)?;
     Ok(closure.into_values().collect())
 }
 
 fn resolve_component_dependency<'a>(
     dependency: &wamn_catalog::ComponentOperationDependency,
     component_facts: &'a BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    rule: DependencyDigestRule,
 ) -> Result<&'a AdmittedComponent, MintManifestError> {
     let Some(facts) =
         component_facts.get(&(dependency.package.clone(), dependency.version.clone()))
@@ -1669,7 +1744,7 @@ fn resolve_component_dependency<'a>(
         ));
     };
     let mut matches = facts.iter().filter(|component| {
-        component.component_digest == dependency.digest
+        (!rule.matches_declared_digest() || component.component_digest == dependency.digest)
             && component
                 .operation(&dependency.operation)
                 .is_some_and(|operation| {
@@ -1713,11 +1788,12 @@ fn resolve_component_dependency<'a>(
 pub fn proven_effect_free_operation_dependencies(
     declaration: &wamn_catalog::ComponentDeclaration,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    rule: DependencyDigestRule,
 ) -> BTreeSet<String> {
     let mut proven = BTreeSet::new();
     for operation in declaration.operations.values() {
         for dependency in &operation.dependencies {
-            if resolve_component_dependency(dependency, component_facts)
+            if resolve_component_dependency(dependency, component_facts, rule)
                 .is_ok_and(|component| component.effects.is_empty())
             {
                 proven.insert(dependency.operation.clone());
@@ -1727,8 +1803,16 @@ pub fn proven_effect_free_operation_dependencies(
     proven
 }
 
+/// Every edge is keyed by the fact it RESOLVES TO, never by the digest the
+/// declaration named. Under the durable rule the two are the same value,
+/// because resolution demanded equality. Under the development rule they differ
+/// exactly when a base package was edited, which is the case wamn-10yt.48 is
+/// about, and keying on the declaration there names a node that is not in the
+/// graph.
 fn validate_component_dependency_cycles<'a>(
     components: impl Iterator<Item = &'a AdmittedComponent>,
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    rule: DependencyDigestRule,
 ) -> Result<(), MintManifestError> {
     let mut graph = BTreeMap::<ComponentOperationKey, Vec<ComponentOperationKey>>::new();
     for component in components {
@@ -1742,13 +1826,14 @@ fn validate_component_dependency_cycles<'a>(
                 .dependencies
                 .iter()
                 .map(|dependency| {
-                    (
-                        dependency.package.clone(),
-                        dependency.digest.clone(),
+                    let resolved = resolve_component_dependency(dependency, component_facts, rule)?;
+                    Ok((
+                        resolved.scope.package_id.clone(),
+                        resolved.component_digest.clone(),
                         dependency.operation.clone(),
-                    )
+                    ))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, MintManifestError>>()?;
             if graph.insert(key.clone(), dependencies).is_some() {
                 return Err(MintManifestError::new(
                     MintManifestErrorKind::OperationDependency,
@@ -1945,11 +2030,13 @@ async fn resolve_wiring(
             "wiring row hash differs from its canonical document hash",
         ));
     }
+    let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
     let resolved = resolve_wiring_components(
         &document,
         scope,
         component_facts,
         package_manifests.get(&target.package_id),
+        rule,
     )?;
     validate_resolved_wiring_compatibility(&document, &resolved).map_err(|error| {
         MintManifestError::with_source(
@@ -1961,7 +2048,7 @@ async fn resolve_wiring(
             error,
         )
     })?;
-    let component_closure = resolve_component_dependency_closure(&resolved, component_facts)?;
+    let component_closure = resolve_component_dependency_closure(&resolved, component_facts, rule)?;
     validate_anonymous_wiring_closure(request.attachments, target, &document, &resolved)?;
     let entry_operation = resolved_wiring_entry_operation(&document, &resolved)?;
     wirings.insert(ServingWiring {
@@ -2760,6 +2847,7 @@ mod tests {
             &declaration.scope,
             &facts,
             Some(&handler_manifest()),
+            DependencyDigestRule::Declared,
         )
         .expect("the repository private handler resolves through its admitted operation fact");
         validate_resolved_wiring_compatibility(&document, &resolved)
@@ -2876,6 +2964,7 @@ mod tests {
             &owner,
             &facts,
             Some(&dependency_manifest(&base.component_digest)),
+            DependencyDigestRule::Declared,
         )
         .expect("the alias resolves its exact package, version, digest, and operation");
 
@@ -2902,6 +2991,7 @@ mod tests {
             &owner,
             &facts,
             Some(&dependency_manifest(&format!("sha256:{}", "d".repeat(64)))),
+            DependencyDigestRule::Declared,
         )
         .expect_err("digest drift refuses the dependency");
         assert_eq!(
@@ -2914,6 +3004,7 @@ mod tests {
             &owner,
             &BTreeMap::new(),
             Some(&dependency_manifest(DIGEST)),
+            DependencyDigestRule::Declared,
         )
         .expect_err("a dependency outside the release refuses publication");
         assert_eq!(
@@ -2925,6 +3016,70 @@ mod tests {
                 .detail()
                 .contains("absent from the effective release")
         );
+    }
+
+    /// The other half of wamn-10yt.48, at the stage the Virtualize fix moved
+    /// the wall to. An author edits a base package, the built digest moves, and
+    /// the overlay's authored pin still names the old bytes. A durable release
+    /// refuses that, above. A disposable target built both halves from this
+    /// same tree, so it resolves the dependency by coordinate and operation.
+    /// Release membership is NOT relaxed: a dependency outside the release
+    /// still refuses, because that is a different fact.
+    #[test]
+    fn a_disposable_target_resolves_a_moved_base_digest_and_still_demands_membership() {
+        let owner = ComponentPackageScope {
+            tenant_id: "tenant-a".to_owned(),
+            package_id: "wamn_receiving".to_owned(),
+            package_version: "1.0.0".to_owned(),
+        };
+        let mut base = closure_component(
+            "registered-component",
+            Some("base:receiving/record-receipt@1.0.0"),
+        );
+        base.scope.package_id = "base".to_owned();
+        let facts = BTreeMap::from([(("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()])]);
+        let stale_pin = format!("sha256:{}", "d".repeat(64));
+        assert_ne!(stale_pin, base.component_digest);
+
+        let resolved = resolve_wiring_components(
+            &dependency_document(),
+            &owner,
+            &facts,
+            Some(&dependency_manifest(&stale_pin)),
+            DependencyDigestRule::Built,
+        )
+        .expect("a disposable target resolves the base it just built");
+        assert_eq!(resolved["registered"], base);
+
+        let membership_error = resolve_wiring_components(
+            &dependency_document(),
+            &owner,
+            &BTreeMap::new(),
+            Some(&dependency_manifest(&stale_pin)),
+            DependencyDigestRule::Built,
+        )
+        .expect_err("a dependency outside the release refuses on either rule");
+        assert_eq!(
+            membership_error.kind(),
+            MintManifestErrorKind::OperationDependency
+        );
+    }
+
+    /// The rule is selected by the projected environment marker and by nothing
+    /// else. wamn-10yt.38 writes that marker; this pins the mapping so an
+    /// operator switch cannot be added without failing here.
+    #[test]
+    fn the_projected_environment_marker_selects_the_dependency_rule() {
+        assert_eq!(
+            DependencyDigestRule::for_environment(false),
+            DependencyDigestRule::Declared
+        );
+        assert_eq!(
+            DependencyDigestRule::for_environment(true),
+            DependencyDigestRule::Built
+        );
+        assert!(DependencyDigestRule::Declared.matches_declared_digest());
+        assert!(!DependencyDigestRule::Built.matches_declared_digest());
     }
 
     #[test]
@@ -2956,8 +3111,9 @@ mod tests {
             ),
         ]);
 
-        let closure = resolve_component_dependency_closure(&roots, &facts)
-            .expect("the exact dependency expands the release component closure");
+        let closure =
+            resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Declared)
+                .expect("the exact dependency expands the release component closure");
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
@@ -2975,10 +3131,59 @@ mod tests {
             (("base".to_owned(), "1.0.0".to_owned()), vec![base]),
             (("overlay".to_owned(), "3.0.0".to_owned()), vec![overlay]),
         ]);
-        let error = resolve_component_dependency_closure(&roots, &cyclic)
-            .expect_err("an exact component dependency cycle was accepted");
+        let error =
+            resolve_component_dependency_closure(&roots, &cyclic, DependencyDigestRule::Declared)
+                .expect_err("an exact component dependency cycle was accepted");
         assert_eq!(error.kind(), MintManifestErrorKind::OperationDependency);
         assert!(error.detail().contains("cycle"));
+    }
+
+    /// The SECOND authored pin wamn-10yt.48 found. The overlay's component
+    /// declaration under `publication/components/` names its base dependency by
+    /// digest, and Generate never rewrites that file, so the closure walker
+    /// hits the same wall the wiring resolver does. One rule governs both.
+    #[test]
+    fn a_disposable_target_expands_a_closure_whose_declared_dependency_digest_moved() {
+        let base_operation = "base:receiving/record-receipt@1.0.0";
+        let overlay_operation = "overlay:receiving/record-receipt@3.0.0";
+        let mut base = closure_component("base-component", Some(base_operation));
+        base.scope.package_id = "base".to_owned();
+        let mut overlay = closure_component("overlay-component", Some(overlay_operation));
+        overlay.scope.package_id = "overlay".to_owned();
+        overlay.scope.package_version = "3.0.0".to_owned();
+        overlay.component_digest = format!("sha256:{}", "b".repeat(64));
+        let stale_pin = format!("sha256:{}", "d".repeat(64));
+        assert_ne!(stale_pin, base.component_digest);
+        overlay
+            .operations
+            .get_mut(overlay_operation)
+            .expect("the overlay operation exists")
+            .dependencies = vec![wamn_catalog::ComponentOperationDependency {
+            package: "base".to_owned(),
+            version: "1.0.0".to_owned(),
+            digest: stale_pin,
+            operation: base_operation.to_owned(),
+        }];
+        let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
+        let facts = BTreeMap::from([
+            (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
+            (
+                ("overlay".to_owned(), "3.0.0".to_owned()),
+                vec![overlay.clone()],
+            ),
+        ]);
+
+        let refusal =
+            resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Declared)
+                .expect_err("a durable release still demands the declared bytes");
+        assert_eq!(refusal.kind(), MintManifestErrorKind::OperationDependency);
+
+        let closure =
+            resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Built)
+                .expect("a disposable target expands the closure it just built");
+        assert_eq!(closure.len(), 2);
+        assert!(closure.contains(&base));
+        assert!(closure.contains(&overlay));
     }
 
     /// The one operation dependency declared in the tree, read from the
@@ -3039,7 +3244,11 @@ mod tests {
         let (declaration, dependency) = repository_overlay_dependency();
         let facts = dependency_facts(&dependency, Vec::new());
 
-        let proven = proven_effect_free_operation_dependencies(&declaration, &facts);
+        let proven = proven_effect_free_operation_dependencies(
+            &declaration,
+            &facts,
+            DependencyDigestRule::Declared,
+        );
 
         assert_eq!(proven, BTreeSet::from([dependency.operation]));
     }
@@ -3061,7 +3270,11 @@ mod tests {
             }],
         );
 
-        let proven = proven_effect_free_operation_dependencies(&declaration, &facts);
+        let proven = proven_effect_free_operation_dependencies(
+            &declaration,
+            &facts,
+            DependencyDigestRule::Declared,
+        );
 
         assert!(
             proven.is_empty(),

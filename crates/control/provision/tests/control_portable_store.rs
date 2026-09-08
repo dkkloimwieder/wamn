@@ -198,7 +198,8 @@ BEGIN
     'authoring_command_audit', 'component_library',
     'connection_requirements', 'deployment_attestations',
     'effective_release_heads', 'effective_release_packages',
-    'effective_releases', 'package_migrations', 'packages'
+    'effective_releases', 'package_migrations', 'packages',
+    'tenant_environments'
   ]::text[], format('catalog inventory drifted: %s', catalog_tables);
   SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';
@@ -272,6 +273,75 @@ DO $projection_conflict$ BEGIN
   END;
 END
 $projection_conflict$;
+
+-- wamn-10yt.38. The admitted component fact is frozen for a DURABLE
+-- environment and replaceable for a disposable one, decided by the projected
+-- environment row and by nothing the caller says. Both directions, one store.
+INSERT INTO catalog.component_library
+  (tenant_id, package_id, package_version, component, interface_version,
+   operations, component_digest, projection_hash, imports,
+   imports_fingerprint, effects)
+VALUES ('tenant-a', 'receiving', '1.0.0', 'receiving', '0.1.0',
+        '{"wamn-receiving:purchase-order/get@1.0.0": {}}'::jsonb,
+        'sha256:' || repeat('1', 64), 'sha256:' || repeat('2', 64),
+        '[]'::jsonb, 'sha256:' || repeat('3', 64), '[]'::jsonb);
+
+DO $unprojected_is_frozen$ BEGIN
+  ASSERT NOT EXISTS (
+    SELECT 1 FROM catalog.tenant_environments WHERE tenant_id = 'tenant-a'),
+    'the store shipped a projected environment';
+  BEGIN
+    UPDATE catalog.component_library
+       SET component_digest = 'sha256:' || repeat('4', 64)
+     WHERE tenant_id = 'tenant-a';
+    ASSERT false, 'a tenant with no projected environment replaced its fact';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    ASSERT SQLERRM = 'catalog.component_library is immutable';
+  END;
+END
+$unprojected_is_frozen$;
+
+SELECT catalog.project_tenant_environment(
+  'tenant-a', 'acme', 'receiving', 'dev', 'abcd1234', false);
+DO $durable_is_frozen$ BEGIN
+  BEGIN
+    UPDATE catalog.component_library
+       SET component_digest = 'sha256:' || repeat('4', 64)
+     WHERE tenant_id = 'tenant-a';
+    ASSERT false, 'a durable environment replaced a frozen component fact';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    ASSERT SQLERRM = 'catalog.component_library is immutable';
+  END;
+END
+$durable_is_frozen$;
+
+-- Re-provisioning the same triple refreshes the instance identity and the
+-- marker: the projection follows its authority rather than pinning a copy.
+SELECT catalog.project_tenant_environment(
+  'tenant-a', 'acme', 'receiving', 'dev', 'efgh5678', true);
+UPDATE catalog.component_library
+   SET component_digest = 'sha256:' || repeat('4', 64)
+ WHERE tenant_id = 'tenant-a';
+DO $disposable_replaces$ BEGIN
+  ASSERT (SELECT component_digest FROM catalog.component_library
+           WHERE tenant_id = 'tenant-a') = 'sha256:' || repeat('4', 64),
+    'the disposable environment did not carry the new digest';
+  ASSERT (SELECT instance_suffix FROM catalog.tenant_environments
+           WHERE tenant_id = 'tenant-a') = 'efgh5678',
+    'the projection pinned a superseded instance identity';
+END
+$disposable_replaces$;
+
+DO $identity_conflict$ BEGIN
+  BEGIN
+    PERFORM catalog.project_tenant_environment(
+      'tenant-a', 'acme', 'shipping', 'dev', 'efgh5678', true);
+    ASSERT false, 'one tenant projected two environment identities';
+  EXCEPTION WHEN unique_violation THEN
+    ASSERT SQLERRM = 'tenant-environment-identity-projection-content-conflict';
+  END;
+END
+$identity_conflict$;
 RESET ROLE;
 "#,
     );
@@ -568,6 +638,35 @@ DO $source_refusal$ BEGIN
   END;
 END
 $source_refusal$;
+
+-- wamn-10yt.51. A DISPOSABLE environment attests what it deployed THIS run.
+-- Its effective release id never moves, so a second dev run mints a different
+-- manifest under the same coordinate and the frozen row would refuse forever.
+-- The condition is provisioning's projection, never anything the caller says.
+SELECT catalog.project_tenant_environment(
+  'tenant-a', 'acme', 'billing', 'prod', 'abcd1234', true);
+DO $disposable_reattests$ BEGIN
+  PERFORM ({conflicting});
+  ASSERT (SELECT count(*) FROM catalog.deployment_attestations) = 1,
+    'the disposable re-attestation inserted a second row';
+  ASSERT (SELECT deployed_manifest_hash FROM catalog.deployment_attestations
+           WHERE tenant_id = 'tenant-a') = '{other_hash}',
+    'the disposable environment kept the superseded manifest';
+END
+$disposable_reattests$;
+
+-- And the same store refreezes the moment the marker says durable.
+SELECT catalog.project_tenant_environment(
+  'tenant-a', 'acme', 'billing', 'prod', 'abcd1234', false);
+DO $durable_refreezes$ BEGIN
+  BEGIN
+    PERFORM ({write});
+    ASSERT false, 'a durable environment replaced its own attestation';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'WAMN-RUST-DURABLE-REFREEZE % %', SQLSTATE, SQLERRM;
+  END;
+END
+$durable_refreezes$;
 RESET ROLE;
 "#,
             project = render(&project),
@@ -575,6 +674,7 @@ RESET ROLE;
             write = render(&write),
             conflicting = render(&conflicting_write),
             conflicting_source = render(&conflicting_source_write),
+            other_hash = other_hash,
         ),
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -604,5 +704,12 @@ RESET ROLE;
             wamn_schema_control::attestation::CONTENT_CONFLICT
         )),
         "the server accepted conflicting source provenance:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "WAMN-RUST-DURABLE-REFREEZE 23505 {}",
+            wamn_schema_control::attestation::CONTENT_CONFLICT
+        )),
+        "the store stayed replaceable after the marker said durable:\n{stderr}"
     );
 }

@@ -82,6 +82,7 @@ fn action_args(
         project: Some(PROJECT.to_string()),
         env: Some(ENVIRONMENT.to_string()),
         tenant: Some(TENANT.to_string()),
+        disposable: false,
         system_database_url: Some(system_url.into()),
         cluster: None,
         connection_limit: None,

@@ -142,21 +142,30 @@ pub fn select_retired_project_envs_sql() -> &'static str {
 /// and additive — re-provisioning refreshes the credential Secret reference.
 /// Params: `$1` org, `$2` project, `$3` env, `$4` secret_name, `$5`
 /// secret_namespace (nullable — `NULL` = the resolving component's own namespace),
-/// and `$6` the freshly minted instance_suffix.
+/// `$6` the freshly minted instance_suffix, and `$7` whether this provisioning
+/// declares the environment DISPOSABLE.
 ///
 /// READ-OR-MINT: `instance_suffix` is set on INSERT and deliberately NOT
 /// refreshed on conflict, and the statement RETURNS the stored value — a
 /// re-provision gets back the EXISTING instance identity and keeps deriving the
 /// names of the resources that already exist (wamn-0h0g.13.57). A recreated
 /// environment is a new INSERT (its old row cascaded away) and gets a new one.
+///
+/// `disposable` is the OPPOSITE: it IS refreshed on conflict (wamn-10yt.38),
+/// because unlike the instance identity it is a declared property of THIS
+/// provisioning request, and a marker that could only ever be set once would
+/// strand an environment on whichever side it was first provisioned. Both
+/// columns come back so the caller projects the STORED row rather than the one
+/// it hoped it wrote.
 pub fn upsert_project_env_sql() -> &'static str {
     "INSERT INTO registry.project_envs \
-       (org, project, env, secret_name, secret_namespace, instance_suffix) \
-     VALUES ($1, $2, $3, $4, $5, $6) \
+       (org, project, env, secret_name, secret_namespace, instance_suffix, disposable) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7) \
      ON CONFLICT (org, project, env) DO UPDATE SET \
        secret_name = EXCLUDED.secret_name, \
-       secret_namespace = EXCLUDED.secret_namespace \
-     RETURNING instance_suffix"
+       secret_namespace = EXCLUDED.secret_namespace, \
+       disposable = EXCLUDED.disposable \
+     RETURNING instance_suffix, disposable"
 }
 
 // --- event readers (wamn-l5i9.9, D19 v3) ------------------------------------
@@ -352,17 +361,21 @@ mod tests {
             "secret_name",
             "secret_namespace",
             "instance_suffix",
+            "disposable",
         ] {
             assert!(sql.contains(col), "missing column {col}");
         }
-        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5, $6)"));
+        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5, $6, $7)"));
         // Idempotent + additive: refreshes the Secret reference on the triple PK.
         assert!(sql.contains("ON CONFLICT (org, project, env) DO UPDATE"));
         assert!(sql.contains("secret_name = EXCLUDED.secret_name"));
         // Read-or-mint: the instance identity is never refreshed, and the stored
         // value comes back so a re-provision keeps deriving the existing names.
         assert!(!sql.contains("instance_suffix = EXCLUDED.instance_suffix"));
-        assert!(sql.contains("RETURNING instance_suffix"));
+        // The disposable marker IS refreshed — it is what THIS provisioning
+        // declares, not an identity minted once (wamn-10yt.38).
+        assert!(sql.contains("disposable = EXCLUDED.disposable"));
+        assert!(sql.contains("RETURNING instance_suffix, disposable"));
     }
 
     #[test]
