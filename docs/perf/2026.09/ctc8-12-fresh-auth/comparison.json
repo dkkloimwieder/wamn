@@ -1,0 +1,6338 @@
+[
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1948.8545041502223,
+      "median": 2162.5659675863462,
+      "max": 2480.769407148232
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.381855,
+      "median": 0.428104,
+      "max": 0.456352
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.731238,
+      "median": 0.930939,
+      "max": 1.484189
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.6694515738986895,
+      "median": 0.7568730122041452,
+      "max": 0.7956389102662758
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.1268564162185715,
+      "median": 1.1934307894161431,
+      "max": 1.2050031195589368
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0019247678467937163,
+      "median": 0.0023932502368964464,
+      "max": 0.003000508646998694
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.719,
+      "median": 13.762,
+      "max": 13.784
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 19491,
+        "status_distribution": {
+          "404": 19491,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 21632,
+        "status_distribution": {
+          "404": 21632,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 24811,
+        "status_distribution": {
+          "404": 24811,
+          "cut off at the deadline": 1
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 5928.905310994746,
+      "median": 6304.057015209385,
+      "max": 6784.862923406524
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.528504,
+      "median": 0.556438,
+      "max": 0.570705
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 1.466472,
+      "median": 1.742683,
+      "max": 2.2100549999999997
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.5425518369512351,
+      "median": 0.5637590604133292,
+      "max": 0.5750740041150911
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.4691120926864745,
+      "median": 2.610490966509988,
+      "max": 2.666276071842407
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.001828794901499816,
+      "median": 0.0022350910693314015,
+      "max": 0.0025629254163647064
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.616,
+      "median": 13.808,
+      "max": 13.81
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 63049,
+        "status_distribution": {
+          "404": 63049,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 59294,
+        "status_distribution": {
+          "404": 59294,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 67857,
+        "status_distribution": {
+          "404": 67857,
+          "cut off at the deadline": 4
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 8756.49483462611,
+      "median": 8992.738940009636,
+      "max": 9643.719266568181
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.7281949999999999,
+      "median": 0.765007,
+      "max": 0.78454
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 2.625678,
+      "median": 3.03235,
+      "max": 3.116158
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.5128399933641623,
+      "median": 0.5235337965536421,
+      "max": 0.53626507867632
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.4156716472038946,
+      "median": 3.427196818214993,
+      "max": 3.5844166968620916
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0021403724907526757,
+      "median": 0.0023875389860011343,
+      "max": 0.0025018609063679072
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.703,
+      "median": 13.787,
+      "max": 13.799
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 89950,
+        "status_distribution": {
+          "404": 89950,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 87574,
+        "status_distribution": {
+          "404": 87574,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 96446,
+        "status_distribution": {
+          "404": 96446,
+          "cut off at the deadline": 8
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 8642.601595518374,
+      "median": 9273.636778892196,
+      "max": 10616.882886765598
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 1.44492,
+      "median": 1.587008,
+      "max": 1.644754
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 3.642634,
+      "median": 4.833778000000001,
+      "max": 5.830838
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.4987656765054865,
+      "median": 0.5225497601207447,
+      "max": 0.5308499693389943
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.329765004717319,
+      "median": 3.52528205687684,
+      "max": 3.82616443898559
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0019023191966002187,
+      "median": 0.002285693504982936,
+      "max": 0.0026500471732393755
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.749,
+      "median": 13.779,
+      "max": 13.841
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 86429,
+        "status_distribution": {
+          "404": 86429,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 92755,
+        "status_distribution": {
+          "404": 92755,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 106178,
+        "status_distribution": {
+          "404": 106178,
+          "cut off at the deadline": 16
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 8276.228355666291,
+      "median": 8740.359878516982,
+      "max": 11207.402240242911
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 2.789208,
+      "median": 3.451583,
+      "max": 3.5432609999999998
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 6.105218,
+      "median": 9.38682,
+      "max": 11.174171
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.48098767987296653,
+      "median": 0.5276504175723593,
+      "max": 0.5461784337655121
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.2600923909123707,
+      "median": 3.366318005984959,
+      "max": 3.899280538077706
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0021071816012228064,
+      "median": 0.0021369243121005977,
+      "max": 0.003141507392716997
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.701,
+      "median": 13.827,
+      "max": 13.865
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 82759,
+        "status_distribution": {
+          "404": 82759,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 31,
+        "total_requests": 87410,
+        "status_distribution": {
+          "404": 87410,
+          "cut off at the deadline": 31
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 112093,
+        "status_distribution": {
+          "404": 112093,
+          "cut off at the deadline": 32
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 8354.34527104266,
+      "median": 9653.08401336605,
+      "max": 11347.793802110808
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 5.521672,
+      "median": 6.258001,
+      "max": 7.290194
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 11.702354,
+      "median": 16.695107,
+      "max": 17.953861
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.4791498303292034,
+      "median": 0.505587931838193,
+      "max": 0.5385926192015705
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.2684220316814385,
+      "median": 3.5966787767133352,
+      "max": 3.936133806386197
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0021253451533243583,
+      "median": 0.0022355368908950094,
+      "max": 0.00280766396462681
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.57,
+      "median": 13.762,
+      "max": 13.811
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 96535,
+        "status_distribution": {
+          "404": 96535,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 83514,
+        "status_distribution": {
+          "404": 83514,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 63,
+        "total_requests": 113455,
+        "status_distribution": {
+          "404": 113455,
+          "cut off at the deadline": 63
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 24578.818154,
+      "median": 25133.061031,
+      "max": 25916.566248
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.034,
+      "median": 0.035,
+      "max": 0.035
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.083,
+      "median": 0.089,
+      "max": 0.096
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.001340368527319321,
+      "median": 0.0014086955136999467,
+      "max": 0.0014564611144354388
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.02504125495853235,
+      "median": 0.02563544157065482,
+      "max": 0.02598997457318498
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.5039548503425998,
+      "median": 0.5055974063609333,
+      "max": 0.5075718125681058
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.765,
+      "median": 13.803,
+      "max": 13.865
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 245631,
+        "status_distribution": {
+          "committed": 245631,
+          "sampled_latencies": 12451
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 251187,
+        "status_distribution": {
+          "committed": 251187,
+          "sampled_latencies": 12577
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 259031,
+        "status_distribution": {
+          "committed": 259031,
+          "sampled_latencies": 12799
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 44904.580668,
+      "median": 50021.237561,
+      "max": 51889.402601
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.071,
+      "median": 0.073,
+      "max": 0.08
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.145,
+      "median": 0.157,
+      "max": 0.217
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0007319846366643364,
+      "median": 0.000792583668380601,
+      "max": 0.0009009663558400833
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.027313849697678423,
+      "median": 0.02848586635978473,
+      "max": 0.029133756125686226
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 1.8395147016431286,
+      "median": 1.9025597353089243,
+      "max": 1.916270515404538
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.876,
+      "median": 13.892,
+      "max": 13.903
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 499681,
+        "status_distribution": {
+          "committed": 499681,
+          "sampled_latencies": 24887
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 448696,
+        "status_distribution": {
+          "committed": 448696,
+          "sampled_latencies": 22139
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 518377,
+        "status_distribution": {
+          "committed": 518377,
+          "sampled_latencies": 25949
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 77990.739577,
+      "median": 79977.725559,
+      "max": 81314.724722
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.084,
+      "median": 0.084,
+      "max": 0.085
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.243,
+      "median": 0.244,
+      "max": 0.272
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0003736950414391541,
+      "median": 0.000382696828384578,
+      "max": 0.00039226273058963517
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.02156226060561511,
+      "median": 0.022028062328682412,
+      "max": 0.022086937962431424
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 3.2808448275862134,
+      "median": 3.33971793018718,
+      "max": 3.3581139015367167
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.837,
+      "median": 13.862,
+      "max": 14.056
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 798397,
+        "status_distribution": {
+          "committed": 798397,
+          "sampled_latencies": 39905
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 778440,
+        "status_distribution": {
+          "committed": 778440,
+          "sampled_latencies": 39222
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 811227,
+        "status_distribution": {
+          "committed": 811227,
+          "sampled_latencies": 40504
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 66183.406931,
+      "median": 70064.165393,
+      "max": 71598.471077
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.174,
+      "median": 0.175,
+      "max": 0.177
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 1.002,
+      "median": 1.155,
+      "max": 1.171
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0004562748406553736,
+      "median": 0.0004726169757132796,
+      "max": 0.0005659051873249736
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.02377320189850022,
+      "median": 0.02402891267934427,
+      "max": 0.025339357293287294
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.8397471974998356,
+      "median": 3.213338285631053,
+      "max": 3.2699974443227346
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.695,
+      "median": 13.731,
+      "max": 14.719
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 698115,
+        "status_distribution": {
+          "committed": 698115,
+          "sampled_latencies": 35005
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 659068,
+        "status_distribution": {
+          "committed": 659068,
+          "sampled_latencies": 33016
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 713548,
+        "status_distribution": {
+          "committed": 713548,
+          "sampled_latencies": 35429
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 64694.059864,
+      "median": 66956.771699,
+      "max": 70911.05716
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.324,
+      "median": 0.324,
+      "max": 0.328
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 2.087,
+      "median": 2.227,
+      "max": 2.687
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.00047498182251981276,
+      "median": 0.0005109845549952907,
+      "max": 0.0005442903928602861
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.024088368743257583,
+      "median": 0.024553092858185282,
+      "max": 0.025251715916489094
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 3.0999979770247794,
+      "median": 3.240288787483704,
+      "max": 3.308859272596323
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.806,
+      "median": 13.841,
+      "max": 13.885
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 663386,
+        "status_distribution": {
+          "committed": 663386,
+          "sampled_latencies": 33163
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 642137,
+        "status_distribution": {
+          "committed": 642137,
+          "sampled_latencies": 32393
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 704168,
+        "status_distribution": {
+          "committed": 704168,
+          "sampled_latencies": 35126
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 64294.409309,
+      "median": 66522.361258,
+      "max": 68822.984677
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.572,
+      "median": 0.594,
+      "max": 0.616
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 5.396,
+      "median": 6.062,
+      "max": 6.317
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0004782442095578486,
+      "median": 0.0005112333191152498,
+      "max": 0.0005481598928656126
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.023205377574349696,
+      "median": 0.0241956741167999,
+      "max": 0.025158222802053685
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 3.2781181416249927,
+      "median": 3.3266687815428986,
+      "max": 3.3880716533180757
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.797,
+      "median": 13.87,
+      "max": 13.984
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 656440,
+        "status_distribution": {
+          "committed": 656440,
+          "sampled_latencies": 32777
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 633224,
+        "status_distribution": {
+          "committed": 633224,
+          "sampled_latencies": 31697
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 678532,
+        "status_distribution": {
+          "committed": 678532,
+          "sampled_latencies": 33958
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 281.65593957557644,
+      "median": 317.0736743557466,
+      "max": 347.23696149085265
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 2.683865,
+      "median": 2.966606,
+      "max": 3.2573
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 5.21737,
+      "median": 5.871061,
+      "max": 7.436998
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 4.9078101958525515,
+      "median": 5.3253820189274625,
+      "max": 5.658292258522717
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.123915567468433,
+      "median": 1.2141442031070238,
+      "max": 1.28865741511004
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.13186534527756139,
+      "median": 0.13780329401611124,
+      "max": 0.14577546698932906
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.223,
+      "median": 13.904,
+      "max": 14.177
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 2816,
+        "status_distribution": {
+          "200": 2816,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 3170,
+        "status_distribution": {
+          "200": 3170,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 3472,
+        "status_distribution": {
+          "200": 3472,
+          "cut off at the deadline": 1
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 796.9068202356117,
+      "median": 949.8399835841099,
+      "max": 1024.9551077835838
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 3.654872,
+      "median": 3.8675699999999997,
+      "max": 4.389812
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 7.59608,
+      "median": 8.9933,
+      "max": 13.157972000000001
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 3.149248438719796,
+      "median": 3.25483784352955,
+      "max": 3.441045443133314
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.996021845190416,
+      "median": 2.2624017419307716,
+      "max": 2.3447760825341817
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.36031296876137864,
+      "median": 0.3995555880846096,
+      "max": 0.41016971810521063
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.663,
+      "median": 13.733,
+      "max": 13.764
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 7966,
+        "status_distribution": {
+          "200": 7966,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 9497,
+        "status_distribution": {
+          "200": 9497,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 10248,
+        "status_distribution": {
+          "200": 10248,
+          "cut off at the deadline": 4
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1182.1462546729663,
+      "median": 1218.3782671549793,
+      "max": 1382.0602940205608
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 5.46241,
+      "median": 6.155369,
+      "max": 6.235718
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 11.283774,
+      "median": 13.269511,
+      "max": 14.995688
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.8613348052700562,
+      "median": 2.994848780888269,
+      "max": 3.0527432512482084
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.616542177413511,
+      "median": 2.647525437259598,
+      "max": 2.8629928292047344
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.518588525422501,
+      "median": 0.5227753102547347,
+      "max": 0.5599813124728518
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.779,
+      "median": 13.787,
+      "max": 13.806
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 12181,
+        "status_distribution": {
+          "200": 12181,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 11817,
+        "status_distribution": {
+          "200": 11817,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 13814,
+        "status_distribution": {
+          "200": 13814,
+          "cut off at the deadline": 8
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1258.6454419704232,
+      "median": 1307.110039013048,
+      "max": 1476.4719659047266
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 10.441279,
+      "median": 11.667466,
+      "max": 11.807784999999999
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 19.30554,
+      "median": 24.043482,
+      "max": 27.870741000000002
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.8103934115095224,
+      "median": 2.9701409257197415,
+      "max": 2.9716233249100226
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.7200693372177733,
+      "median": 2.809820360582143,
+      "max": 2.99730600737367
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.5446540422432637,
+      "median": 0.5599254217652608,
+      "max": 0.5939923371647478
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.73,
+      "median": 13.811,
+      "max": 13.833
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 12574,
+        "status_distribution": {
+          "200": 12574,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 13059,
+        "status_distribution": {
+          "200": 13059,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 14753,
+        "status_distribution": {
+          "200": 14753,
+          "cut off at the deadline": 16
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 934.4996553947808,
+      "median": 1154.240161725481,
+      "max": 1209.9225754209083
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 25.921261,
+      "median": 27.052026,
+      "max": 32.006709
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 40.651741,
+      "median": 43.769863,
+      "max": 67.001986
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 3.044352746251364,
+      "median": 3.0951464431512283,
+      "max": 3.2907479875496404
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.220927127852227,
+      "median": 2.5756719190459045,
+      "max": 2.666984686842312
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.4201719666787402,
+      "median": 0.48250234911456263,
+      "max": 0.4946635459757434
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.779,
+      "median": 13.805,
+      "max": 13.835
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 9317,
+        "status_distribution": {
+          "200": 9317,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 11513,
+        "status_distribution": {
+          "200": 11513,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 12071,
+        "status_distribution": {
+          "200": 12071,
+          "cut off at the deadline": 32
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "human",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1019.512175502612,
+      "median": 1119.662279289786,
+      "max": 1241.9379562083084
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 51.371009,
+      "median": 56.00274,
+      "max": 61.357496
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 69.17952600000001,
+      "median": 97.791853,
+      "max": 104.78946
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 3.0217609838983486,
+      "median": 3.1723140265804743,
+      "max": 3.265646240378924
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.42536159765482,
+      "median": 2.585777265407712,
+      "max": 2.7042682114409624
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.4542564309270796,
+      "median": 0.47836166007905423,
+      "max": 0.49789362780594404
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.645,
+      "median": 13.662,
+      "max": 13.81
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 10134,
+        "status_distribution": {
+          "200": 10134,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 11136,
+        "status_distribution": {
+          "200": 11136,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 12359,
+        "status_distribution": {
+          "200": 12359,
+          "cut off at the deadline": 64
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 2126.6374978624604,
+      "median": 2416.8855414390887,
+      "max": 2417.8233217800293
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.388723,
+      "median": 0.389057,
+      "max": 0.43052999999999997
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.7729189999999999,
+      "median": 0.774063,
+      "max": 1.109129
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.6831804648085492,
+      "median": 0.6859062512928749,
+      "max": 0.7513868722964085
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.1607827413379834,
+      "median": 1.199845304669935,
+      "max": 1.2050472452391392
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0019224344542100032,
+      "median": 0.002316034307323383,
+      "max": 0.003913270865112256
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.758,
+      "median": 13.767,
+      "max": 13.769
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 21268,
+        "status_distribution": {
+          "404": 21268,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 24182,
+        "status_distribution": {
+          "404": 24182,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 24171,
+        "status_distribution": {
+          "404": 24171,
+          "cut off at the deadline": 1
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 5602.441722398489,
+      "median": 6001.243121673967,
+      "max": 6651.397959143159
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.539806,
+      "median": 0.558267,
+      "max": 0.5829989999999999
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 1.524295,
+      "median": 2.2814319999999997,
+      "max": 2.3961870000000003
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.5518974551685802,
+      "median": 0.5634364960376954,
+      "max": 0.56554802645829
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.3184650411280843,
+      "median": 2.462895588448709,
+      "max": 2.6517464971833125
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0024058933988172428,
+      "median": 0.002432810912779743,
+      "max": 0.0034410987074027745
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.616,
+      "median": 13.782,
+      "max": 13.846
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 56028,
+        "status_distribution": {
+          "404": 56028,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 66527,
+        "status_distribution": {
+          "404": 66527,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 60019,
+        "status_distribution": {
+          "404": 60019,
+          "cut off at the deadline": 4
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 7826.081696574272,
+      "median": 8108.523646379021,
+      "max": 9671.197011749471
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.727842,
+      "median": 0.801941,
+      "max": 0.852764
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 2.616212,
+      "median": 3.711535,
+      "max": 3.788071
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.5117935664439127,
+      "median": 0.5139464254329305,
+      "max": 0.5493287055367517
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.0105547577603704,
+      "median": 3.148355976868456,
+      "max": 3.592907487713226
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0022463862388035286,
+      "median": 0.0025367835443913123,
+      "max": 0.0037622570351028414
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.661,
+      "median": 13.788,
+      "max": 13.836
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 81106,
+        "status_distribution": {
+          "404": 81106,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 78295,
+        "status_distribution": {
+          "404": 78295,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 96725,
+        "status_distribution": {
+          "404": 96725,
+          "cut off at the deadline": 8
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 5398.726165118532,
+      "median": 9855.62191866835,
+      "max": 10701.793513611934
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 1.4297209999999998,
+      "median": 1.480507,
+      "max": 2.517616
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 3.666589,
+      "median": 4.740738,
+      "max": 10.366347
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.4803260415186995,
+      "median": 0.49341173942695077,
+      "max": 0.5489135459495509
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.9213041618047486,
+      "median": 3.476024230853953,
+      "max": 3.8241464050394787
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0020849863866253286,
+      "median": 0.0021474911302529986,
+      "max": 0.003122255672222496
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.619,
+      "median": 13.811,
+      "max": 15.426
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 98558,
+        "status_distribution": {
+          "404": 98558,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 15,
+        "total_requests": 53994,
+        "status_distribution": {
+          "404": 53994,
+          "cut off at the deadline": 15
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 107041,
+        "status_distribution": {
+          "404": 107041,
+          "cut off at the deadline": 16
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 9973.01689456214,
+      "median": 11229.920765697745,
+      "max": 11243.100513849311
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 2.71965,
+      "median": 2.764497,
+      "max": 3.003242
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 6.216908999999999,
+      "median": 6.80755,
+      "max": 8.479196
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.4562038456749497,
+      "median": 0.4791067491763891,
+      "max": 0.49230380939966156
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.5646541784651165,
+      "median": 3.740039956252278,
+      "max": 3.8881768191343493
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0019872100585323583,
+      "median": 0.0025036665940625074,
+      "max": 0.003169959897921859
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.715,
+      "median": 13.773,
+      "max": 13.839
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 112438,
+        "status_distribution": {
+          "404": 112438,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 99727,
+        "status_distribution": {
+          "404": 99727,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 112310,
+        "status_distribution": {
+          "404": 112310,
+          "cut off at the deadline": 32
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "nodb",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 11037.709580570849,
+      "median": 11353.446381317312,
+      "max": 13225.068230363166
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 4.645106,
+      "median": 5.498716,
+      "max": 5.627199
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 11.704678,
+      "median": 11.859472,
+      "max": 12.62829
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.4109239732915919,
+      "median": 0.4768307800731178,
+      "max": 0.48549228957144086
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.8814765664614215,
+      "median": 3.910942630057801,
+      "max": 3.946392084241103
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.002104961970297797,
+      "median": 0.002173410404624141,
+      "max": 0.0028158315177920505
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0072992700729927005
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.77,
+      "median": 13.805,
+      "max": 13.84
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 63,
+        "total_requests": 132243,
+        "status_distribution": {
+          "404": 132243,
+          "cut off at the deadline": 63
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 110370,
+        "status_distribution": {
+          "404": 110370,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 113515,
+        "status_distribution": {
+          "404": 113515,
+          "cut off at the deadline": 64
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 23944.085041,
+      "median": 24048.757636,
+      "max": 25305.372756
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.035,
+      "median": 0.037,
+      "max": 0.037
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.098,
+      "median": 0.099,
+      "max": 0.103
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0014530961395409067,
+      "median": 0.0014937743967913216,
+      "max": 0.0019649695757208694
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.023784924623117945,
+      "median": 0.025142660882130144,
+      "max": 0.025905816974607462
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.33472050729839686,
+      "median": 0.503404229214776,
+      "max": 0.5063725234996339
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.83,
+      "median": 13.856,
+      "max": 20.895
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 252923,
+        "status_distribution": {
+          "committed": 252923,
+          "sampled_latencies": 12614
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 239298,
+        "status_distribution": {
+          "committed": 239298,
+          "sampled_latencies": 11939
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 240298,
+        "status_distribution": {
+          "committed": 240298,
+          "sampled_latencies": 12055
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 40584.534705,
+      "median": 47945.166374,
+      "max": 52053.408318
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.071,
+      "median": 0.077,
+      "max": 0.087
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.153,
+      "median": 0.164,
+      "max": 0.249
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0007234736149734027,
+      "median": 0.0008331971896603298,
+      "max": 0.0009999186015249549
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.027064752859909395,
+      "median": 0.02851558701558724,
+      "max": 0.029191330020885465
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 1.7971867213941095,
+      "median": 1.8721279136279139,
+      "max": 1.91360515144974
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.887,
+      "median": 13.899,
+      "max": 13.986
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 405413,
+        "status_distribution": {
+          "committed": 405413,
+          "sampled_latencies": 19914
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 519954,
+        "status_distribution": {
+          "committed": 519954,
+          "sampled_latencies": 26073
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 478661,
+        "status_distribution": {
+          "committed": 478661,
+          "sampled_latencies": 24072
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 71535.140419,
+      "median": 72329.091601,
+      "max": 82674.485428
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.084,
+      "median": 0.086,
+      "max": 0.087
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.202,
+      "median": 0.293,
+      "max": 0.315
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0003631095591381167,
+      "median": 0.0004356626973679193,
+      "max": 0.0004943982931336687
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.021446130718017698,
+      "median": 0.022867932765793197,
+      "max": 0.02417610364683816
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.8841290786948166,
+      "median": 3.135747144000588,
+      "max": 3.394324146324009
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.743,
+      "median": 13.969,
+      "max": 14.588
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 713354,
+        "status_distribution": {
+          "committed": 713354,
+          "sampled_latencies": 35646
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 825043,
+        "status_distribution": {
+          "committed": 825043,
+          "sampled_latencies": 41520
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 721370,
+        "status_distribution": {
+          "committed": 721370,
+          "sampled_latencies": 36057
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 65479.48597,
+      "median": 69718.952863,
+      "max": 73128.261219
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.17,
+      "median": 0.175,
+      "max": 0.18
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 1.066,
+      "median": 1.078,
+      "max": 1.268
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.00045286765180147746,
+      "median": 0.00048225967330336105,
+      "max": 0.0005710767276024621
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.02367709304831102,
+      "median": 0.024270988772183706,
+      "max": 0.02533548914153236
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.8308121723738853,
+      "median": 3.196818036943144,
+      "max": 3.2358626156826014
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.805,
+      "median": 13.939,
+      "max": 14.689
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 651669,
+        "status_distribution": {
+          "committed": 651669,
+          "sampled_latencies": 32524
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 694773,
+        "status_distribution": {
+          "committed": 694773,
+          "sampled_latencies": 34688
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 728767,
+        "status_distribution": {
+          "committed": 728767,
+          "sampled_latencies": 36697
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 61473.689341,
+      "median": 69730.295406,
+      "max": 71199.601686
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.312,
+      "median": 0.313,
+      "max": 0.329
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 2.048,
+      "median": 2.068,
+      "max": 2.793
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.00047623582349362413,
+      "median": 0.0004926896129387802,
+      "max": 0.0005801513213178213
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.024321650527554316,
+      "median": 0.02468335745296933,
+      "max": 0.025487622337362938
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.990860247553254,
+      "median": 3.315364109985524,
+      "max": 3.3322615984968955
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.82,
+      "median": 13.838,
+      "max": 13.896
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 610489,
+        "status_distribution": {
+          "committed": 610489,
+          "sampled_latencies": 30771
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 692371,
+        "status_distribution": {
+          "committed": 692371,
+          "sampled_latencies": 34426
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 706715,
+        "status_distribution": {
+          "committed": 706715,
+          "sampled_latencies": 35307
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "pg",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 66957.288853,
+      "median": 68731.001254,
+      "max": 69122.717727
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.524,
+      "median": 0.586,
+      "max": 0.589
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 4.691,
+      "median": 5.371,
+      "max": 6.052
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.00047757609334686746,
+      "median": 0.0004898720408438906,
+      "max": 0.0005542437948185138
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.023144672950585445,
+      "median": 0.023967035334688747,
+      "max": 0.025165029199585586
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 3.060596015115081,
+      "median": 3.3960840474150245,
+      "max": 3.4181673369721426
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.924,
+      "median": 14.004,
+      "max": 14.555
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 660859,
+        "status_distribution": {
+          "committed": 660859,
+          "sampled_latencies": 33325
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 681233,
+        "status_distribution": {
+          "committed": 681233,
+          "sampled_latencies": 33981
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 678673,
+        "status_distribution": {
+          "committed": 678673,
+          "sampled_latencies": 34101
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 315.03025053836143,
+      "median": 328.32417927646924,
+      "max": 358.4470155450373
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 2.610033,
+      "median": 2.8161319999999996,
+      "max": 2.950935
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 4.927674,
+      "median": 6.968483999999999,
+      "max": 7.175129
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 4.808583984374971,
+      "median": 5.017865062442888,
+      "max": 5.290703809523836
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.7013347098641918,
+      "median": 1.178622135785013,
+      "max": 1.3038254652746177
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.07202388351994554,
+      "median": 0.12307439886845858,
+      "max": 0.13391034952337927
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.218,
+      "median": 14.14,
+      "max": 23.489
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 3283,
+        "status_distribution": {
+          "200": 3283,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 3150,
+        "status_distribution": {
+          "200": 3150,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 3584,
+        "status_distribution": {
+          "200": 3584,
+          "cut off at the deadline": 1
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 798.3007442938843,
+      "median": 989.9559320077122,
+      "max": 1034.6805894625168
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 3.596292,
+      "median": 3.764287,
+      "max": 4.407002
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 7.7398299999999995,
+      "median": 8.013278,
+      "max": 13.130343
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 3.180788786853552,
+      "median": 3.2529950495049573,
+      "max": 3.291288936223531
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.8542832839192434,
+      "median": 2.33947140884982,
+      "max": 2.383230245527631
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.3048413807708599,
+      "median": 0.3705216159267647,
+      "max": 0.3747444050119478
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.763,
+      "median": 13.807,
+      "max": 14.166
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 7981,
+        "status_distribution": {
+          "200": 7981,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 9898,
+        "status_distribution": {
+          "200": 9898,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 10345,
+        "status_distribution": {
+          "200": 10345,
+          "cut off at the deadline": 4
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1196.6884529314752,
+      "median": 1342.7614138315234,
+      "max": 1380.7162625319063
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 5.448587000000001,
+      "median": 5.584904,
+      "max": 6.162148999999999
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 11.284601,
+      "median": 12.246674,
+      "max": 14.509038
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.887212505433992,
+      "median": 2.9004240093629825,
+      "max": 2.942966629422701
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.4632496982605603,
+      "median": 2.8613359646581515,
+      "max": 2.890982806152057
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.440970607028754,
+      "median": 0.504105228852848,
+      "max": 0.507631746952983
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.784,
+      "median": 13.808,
+      "max": 14.085
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 11962,
+        "status_distribution": {
+          "200": 11962,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 13425,
+        "status_distribution": {
+          "200": 13425,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 13802,
+        "status_distribution": {
+          "200": 13802,
+          "cut off at the deadline": 8
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1192.3139263660148,
+      "median": 1374.7975368430284,
+      "max": 1417.397275479077
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 10.864451,
+      "median": 10.933907,
+      "max": 12.382509
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 20.120945000000003,
+      "median": 26.56943,
+      "max": 31.707762
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.8606008731424737,
+      "median": 2.8890397524572116,
+      "max": 2.9112253918937956
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.4615385782401393,
+      "median": 2.863604026845623,
+      "max": 2.984564499782824
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.4513576795260799,
+      "median": 0.5101306920689929,
+      "max": 0.52822527870276
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.814,
+      "median": 13.842,
+      "max": 13.857
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 11911,
+        "status_distribution": {
+          "200": 11911,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 14162,
+        "status_distribution": {
+          "200": 14162,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 13735,
+        "status_distribution": {
+          "200": 13735,
+          "cut off at the deadline": 16
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1129.6824624708079,
+      "median": 1224.9500653064424,
+      "max": 1250.5492069817828
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 25.417964,
+      "median": 25.731039,
+      "max": 26.64188
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 37.540181,
+      "median": 38.052170000000004,
+      "max": 56.98848
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.9406995296832017,
+      "median": 2.997611747736197,
+      "max": 3.0424882179675996
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.4570877882405284,
+      "median": 2.6908814675446853,
+      "max": 2.707723271806008
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.41794446504040933,
+      "median": 0.4484520587596745,
+      "max": 0.4521199420919292
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.487,
+      "median": 13.815,
+      "max": 13.819
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 11269,
+        "status_distribution": {
+          "200": 11269,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 12222,
+        "status_distribution": {
+          "200": 12222,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 12479,
+        "status_distribution": {
+          "200": 12479,
+          "cut off at the deadline": 32
+        }
+      }
+    ]
+  },
+  {
+    "phase": "after",
+    "run": "001",
+    "credential": "service",
+    "source": "a9e23b54d5ac88e01052c076ea8019ebd8888af5",
+    "layer": "route",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1154.7571787980062,
+      "median": 1223.908987637275,
+      "max": 1262.3540201956796
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 51.306020000000004,
+      "median": 52.089228,
+      "max": 53.204249000000004
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 72.357597,
+      "median": 74.628503,
+      "max": 109.755685
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.9600865250696398,
+      "median": 3.0361452678500283,
+      "max": 3.065331307989181
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.47726917753333,
+      "median": 2.7058541711966537,
+      "max": 2.757996601590738
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.41411757849493713,
+      "median": 0.44688881640936085,
+      "max": 0.46001323210412215
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.727,
+      "median": 13.797,
+      "max": 13.83
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 11488,
+        "status_distribution": {
+          "200": 11488,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 12179,
+        "status_distribution": {
+          "200": 12179,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 12563,
+        "status_distribution": {
+          "200": 12563,
+          "cut off at the deadline": 64
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 2029.3258871724518,
+      "median": 2367.8326320206615,
+      "max": 2529.524692950953
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.37132000000000004,
+      "median": 0.397513,
+      "max": 0.452797
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.774196,
+      "median": 0.812551,
+      "max": 1.2406679999999999
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.6439006680105921,
+      "median": 0.6878600261791188,
+      "max": 0.7700393161550987
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.1352039511911707,
+      "median": 1.1790708598726092,
+      "max": 1.1894413697429957
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0019287058483019026,
+      "median": 0.0025637412383195043,
+      "max": 0.0028781231841951177
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.696,
+      "median": 13.768,
+      "max": 13.816
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 23683,
+        "status_distribution": {
+          "404": 23683,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 20297,
+        "status_distribution": {
+          "404": 20297,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 25299,
+        "status_distribution": {
+          "404": 25299,
+          "cut off at the deadline": 1
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 5477.423690765473,
+      "median": 6006.1360908881725,
+      "max": 6221.263393670084
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.5463210000000001,
+      "median": 0.548119,
+      "max": 0.5884119999999999
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 1.905769,
+      "median": 2.299565,
+      "max": 2.692921
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.5363933760505988,
+      "median": 0.5483050550510327,
+      "max": 0.5660192778122604
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.267471405587246,
+      "median": 2.335110563686439,
+      "max": 2.4859932225623083
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0022377933245845984,
+      "median": 0.002605528740673851,
+      "max": 0.0026990291262194207
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.674,
+      "median": 13.722,
+      "max": 13.802
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 62215,
+        "status_distribution": {
+          "404": 62215,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 54778,
+        "status_distribution": {
+          "404": 54778,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 60085,
+        "status_distribution": {
+          "404": 60085,
+          "cut off at the deadline": 4
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 8458.637709002081,
+      "median": 9682.560200217276,
+      "max": 9796.607386708169
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.705022,
+      "median": 0.7172930000000001,
+      "max": 0.783588
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 2.7423740000000003,
+      "median": 2.843315,
+      "max": 3.624402
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.48832086577583034,
+      "median": 0.4891138165749942,
+      "max": 0.5120285619709636
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.1339704775687314,
+      "median": 3.4416314410480244,
+      "max": 3.4715885846733494
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0018327510917051926,
+      "median": 0.0026297262059950567,
+      "max": 0.0032431259044873825
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.74,
+      "median": 13.806,
+      "max": 13.82
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 96838,
+        "status_distribution": {
+          "404": 96838,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 84588,
+        "status_distribution": {
+          "404": 84588,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 97991,
+        "status_distribution": {
+          "404": 97991,
+          "cut off at the deadline": 8
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 5817.576128615087,
+      "median": 8964.281965632032,
+      "max": 9769.81082013738
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 1.5268199999999998,
+      "median": 1.6144079999999998,
+      "max": 2.377209
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 4.340046,
+      "median": 5.344842,
+      "max": 9.918041
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.49937667996523166,
+      "median": 0.5128123707964064,
+      "max": 0.567597566215772
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.2659114862083043,
+      "median": 3.2324220587174564,
+      "max": 3.6405803545481006
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.002302237721578295,
+      "median": 0.0025757513380017813,
+      "max": 0.0028731876217263507
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.764,
+      "median": 13.863,
+      "max": 14.574
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 89734,
+        "status_distribution": {
+          "404": 89734,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 58181,
+        "status_distribution": {
+          "404": 58181,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 97714,
+        "status_distribution": {
+          "404": 97714,
+          "cut off at the deadline": 16
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 8519.10651989082,
+      "median": 8855.58275498187,
+      "max": 11066.6047299874
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 2.749871,
+      "median": 3.349845,
+      "max": 3.419536
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 7.192462,
+      "median": 9.698636,
+      "max": 10.804803
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.45824446793707674,
+      "median": 0.5001233360723089,
+      "max": 0.5172408019959589
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.119454312490847,
+      "median": 3.3135657047805047,
+      "max": 3.6538393371757993
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0021685878962662093,
+      "median": 0.002193512959439112,
+      "max": 0.0031652563824405206
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.658,
+      "median": 13.827,
+      "max": 13.88
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 85190,
+        "status_distribution": {
+          "404": 85190,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 88579,
+        "status_distribution": {
+          "404": 88579,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 110673,
+        "status_distribution": {
+          "404": 110673,
+          "cut off at the deadline": 32
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 7326.392860401701,
+      "median": 8221.93255248962,
+      "max": 11888.108134150047
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 5.194275,
+      "median": 7.332954,
+      "max": 8.027355
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 12.025436000000001,
+      "median": 20.138994,
+      "max": 24.659701
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.44420490824376313,
+      "median": 0.509912498463808,
+      "max": 0.5334760508546749
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.6987368649273726,
+      "median": 3.1721814367358747,
+      "max": 3.8074431949250234
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.002038855247972458,
+      "median": 0.003070680060706014,
+      "max": 0.003579903060113389
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.823,
+      "median": 13.837,
+      "max": 13.872
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 73233,
+        "status_distribution": {
+          "404": 73233,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 82195,
+        "status_distribution": {
+          "404": 82195,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 118902,
+        "status_distribution": {
+          "404": 118902,
+          "cut off at the deadline": 64
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 15453.350465,
+      "median": 22103.175505,
+      "max": 27820.191981
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.032,
+      "median": 0.039,
+      "max": 0.055
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.076,
+      "median": 0.11,
+      "max": 0.177
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0012222921755768292,
+      "median": 0.0017294899017100507,
+      "max": 0.0025785130390852565
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.024497224024793582,
+      "median": 0.026554149867914243,
+      "max": 0.028748176500329316
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.47999847073543356,
+      "median": 0.4846762475626464,
+      "max": 0.5030793135770356
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.847,
+      "median": 13.869,
+      "max": 14.386
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 154382,
+        "status_distribution": {
+          "committed": 154382,
+          "sampled_latencies": 7643
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 220879,
+        "status_distribution": {
+          "committed": 220879,
+          "sampled_latencies": 11168
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 277963,
+        "status_distribution": {
+          "committed": 277963,
+          "sampled_latencies": 13859
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 41585.096182,
+      "median": 42800.779869,
+      "max": 54424.053037
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.068,
+      "median": 0.083,
+      "max": 0.084
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.136,
+      "median": 0.233,
+      "max": 0.238
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0006358154371429501,
+      "median": 0.0009447266278445444,
+      "max": 0.0009983549026553133
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.02481355445473712,
+      "median": 0.027842239536643658,
+      "max": 0.029860240616678507
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 1.716220437150936,
+      "median": 1.794813846264679,
+      "max": 1.8927805298298537
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.881,
+      "median": 13.929,
+      "max": 14.503
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 427421,
+        "status_distribution": {
+          "committed": 427421,
+          "sampled_latencies": 21453
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 415173,
+        "status_distribution": {
+          "committed": 415173,
+          "sampled_latencies": 20642
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 543598,
+        "status_distribution": {
+          "committed": 543598,
+          "sampled_latencies": 27141
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 70621.055543,
+      "median": 71153.348025,
+      "max": 78745.593662
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.082,
+      "median": 0.084,
+      "max": 0.087
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.267,
+      "median": 0.3,
+      "max": 0.321
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0003373552804745523,
+      "median": 0.0004590898140489551,
+      "max": 0.0004904890457599659
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.018939748715020313,
+      "median": 0.0220239929710667,
+      "max": 0.02350818002849889
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.7496198972695294,
+      "median": 2.841935170728397,
+      "max": 3.092845017133074
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 14.008,
+      "median": 14.731,
+      "max": 14.796
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 709811,
+        "status_distribution": {
+          "committed": 709811,
+          "sampled_latencies": 35614
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 706028,
+        "status_distribution": {
+          "committed": 706028,
+          "sampled_latencies": 35268
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 786435,
+        "status_distribution": {
+          "committed": 786435,
+          "sampled_latencies": 38970
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 60529.992742,
+      "median": 75382.220636,
+      "max": 77603.143517
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.163,
+      "median": 0.169,
+      "max": 0.184
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.825,
+      "median": 1.019,
+      "max": 1.429
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.000385540501391712,
+      "median": 0.0004122330159117853,
+      "max": 0.0005780645760160295
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.02140621858394965,
+      "median": 0.022534744961065244,
+      "max": 0.025258202361130903
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.837106322879689,
+      "median": 3.1673149967256062,
+      "max": 3.2058708171765025
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.743,
+      "median": 13.807,
+      "max": 13.926
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 751262,
+        "status_distribution": {
+          "committed": 751262,
+          "sampled_latencies": 37294
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 603289,
+        "status_distribution": {
+          "committed": 603289,
+          "sampled_latencies": 30519
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 773208,
+        "status_distribution": {
+          "committed": 773208,
+          "sampled_latencies": 38748
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 57795.459591,
+      "median": 66715.002775,
+      "max": 76465.424665
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.308,
+      "median": 0.348,
+      "max": 0.359
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 1.928,
+      "median": 2.337,
+      "max": 3.153
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0003943001637906022,
+      "median": 0.00048510758358276515,
+      "max": 0.0006293703975731961
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.021555539547653383,
+      "median": 0.02348254455156808,
+      "max": 0.024714461875738083
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.700871891484551,
+      "median": 3.012192229038858,
+      "max": 3.2599775968880547
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.692,
+      "median": 13.882,
+      "max": 14.597
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 662787,
+        "status_distribution": {
+          "committed": 662787,
+          "sampled_latencies": 32666
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 573203,
+        "status_distribution": {
+          "committed": 573203,
+          "sampled_latencies": 28711
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 758899,
+        "status_distribution": {
+          "committed": 758899,
+          "sampled_latencies": 37845
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 70107.247286,
+      "median": 72219.999319,
+      "max": 75183.365241
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.517,
+      "median": 0.538,
+      "max": 0.565
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 4.939,
+      "median": 5.582,
+      "max": 5.971
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.00042061080822141414,
+      "median": 0.00046815140009132057,
+      "max": 0.0005033406165932825
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.022399183147023046,
+      "median": 0.023250501720174725,
+      "max": 0.025337454083078338
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 3.213893119525287,
+      "median": 3.2344296875000067,
+      "max": 3.3150005015763897
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.952,
+      "median": 13.956,
+      "max": 14.156
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 712593,
+        "status_distribution": {
+          "committed": 712593,
+          "sampled_latencies": 35415
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 692919,
+        "status_distribution": {
+          "committed": 692919,
+          "sampled_latencies": 34789
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 743212,
+        "status_distribution": {
+          "committed": 743212,
+          "sampled_latencies": 36910
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 288.5590050858332,
+      "median": 322.96264626951756,
+      "max": 344.64486815991063
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 2.7763739999999997,
+      "median": 2.940013,
+      "max": 3.2476179999999997
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 5.02847,
+      "median": 5.681020999999999,
+      "max": 6.803829
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 4.853478525827039,
+      "median": 5.1471941777641055,
+      "max": 5.523405892547658
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.078658769376565,
+      "median": 1.1789948215932677,
+      "max": 1.2718697338403022
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.127211534556282,
+      "median": 0.13635582038731325,
+      "max": 0.14778235741444953
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.15,
+      "median": 14.097,
+      "max": 14.773
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 3446,
+        "status_distribution": {
+          "200": 3446,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 2885,
+        "status_distribution": {
+          "200": 2885,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 3229,
+        "status_distribution": {
+          "200": 3229,
+          "cut off at the deadline": 1
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 877.5532558938912,
+      "median": 899.9563850427533,
+      "max": 941.3619276219898
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 3.914952,
+      "median": 4.092013000000001,
+      "max": 4.146373
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 8.788124,
+      "median": 9.356494,
+      "max": 10.358632
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 3.1491153968760384,
+      "median": 3.18792232470275,
+      "max": 3.2112199680875335
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.0453897640653373,
+      "median": 2.0731401214048306,
+      "max": 2.14197202948832
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.3668680217785864,
+      "median": 0.3750836826130937,
+      "max": 0.38555507372073294
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.775,
+      "median": 13.836,
+      "max": 13.838
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 8774,
+        "status_distribution": {
+          "200": 8774,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 8999,
+        "status_distribution": {
+          "200": 8999,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 9411,
+        "status_distribution": {
+          "200": 9411,
+          "cut off at the deadline": 4
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1257.840564008655,
+      "median": 1268.452712606772,
+      "max": 1342.4185231607241
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 5.635911,
+      "median": 5.889038,
+      "max": 5.932004
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 11.38348,
+      "median": 12.748759999999999,
+      "max": 12.96629
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.8102644012221436,
+      "median": 2.8315173909614306,
+      "max": 2.8629151423572345
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.592976662104723,
+      "median": 2.6366634106933007,
+      "max": 2.7424142244200382
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.5131147446517464,
+      "median": 0.5238530405405418,
+      "max": 0.5407454730565047
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.616,
+      "median": 13.751,
+      "max": 13.883
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 13419,
+        "status_distribution": {
+          "200": 13419,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 12679,
+        "status_distribution": {
+          "200": 12679,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 12574,
+        "status_distribution": {
+          "200": 12574,
+          "cut off at the deadline": 8
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1170.3449221538717,
+      "median": 1207.2429210851801,
+      "max": 1344.3179364604837
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 11.231579,
+      "median": 12.205067999999999,
+      "max": 12.476482
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 23.754229000000002,
+      "median": 28.443929,
+      "max": 32.362154999999994
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.8055979749851114,
+      "median": 2.895216766467065,
+      "max": 2.9137305140961667
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.455923663014294,
+      "median": 2.530394613667442,
+      "max": 2.738322336869642
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.502211377984181,
+      "median": 0.5131707352199806,
+      "max": 0.5539647580293536
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.762,
+      "median": 13.781,
+      "max": 13.887
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 11690,
+        "status_distribution": {
+          "200": 11690,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 13432,
+        "status_distribution": {
+          "200": 13432,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 12060,
+        "status_distribution": {
+          "200": 12060,
+          "cut off at the deadline": 16
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1042.2628389153706,
+      "median": 1135.0872116391652,
+      "max": 1171.8858390348023
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 26.477389,
+      "median": 26.877768,
+      "max": 29.376941
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 43.125258,
+      "median": 54.010849,
+      "max": 56.764472000000005
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.9491011207117888,
+      "median": 2.9766227481455396,
+      "max": 3.0582856455647387
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.230411240527638,
+      "median": 2.4534009753257218,
+      "max": 2.4949007020337337
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.4255368369351591,
+      "median": 0.4674982895407187,
+      "max": 0.47283969023666594
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.739,
+      "median": 13.817,
+      "max": 14.252
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 11324,
+        "status_distribution": {
+          "200": 11324,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 11689,
+        "status_distribution": {
+          "200": 11689,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 10394,
+        "status_distribution": {
+          "200": 10394,
+          "cut off at the deadline": 32
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "human",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1007.3306283787957,
+      "median": 1064.2780552497202,
+      "max": 1160.3663128584958
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 53.485432,
+      "median": 56.958419000000006,
+      "max": 61.386706
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 98.761009,
+      "median": 98.870469,
+      "max": 112.20644200000001
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.987485273735273,
+      "median": 3.0519695709695895,
+      "max": 3.0986289823229676
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.2645479891978595,
+      "median": 2.3428322089227565,
+      "max": 2.5178893188289404
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.428523684402601,
+      "median": 0.44092361262240615,
+      "max": 0.473943637292833
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.697,
+      "median": 13.701,
+      "max": 13.785
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 11544,
+        "status_distribution": {
+          "200": 11544,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 10013,
+        "status_distribution": {
+          "200": 10013,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 10582,
+        "status_distribution": {
+          "200": 10582,
+          "cut off at the deadline": 64
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 2118.2441576233446,
+      "median": 2293.703540942673,
+      "max": 2560.2187923222737
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.36443899999999996,
+      "median": 0.408155,
+      "max": 0.438046
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.841968,
+      "median": 0.991355,
+      "max": 1.0891799999999998
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.6339497715111582,
+      "median": 0.6967114772677729,
+      "max": 0.748867399924472
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.1536620609410235,
+      "median": 1.1575360660486658,
+      "max": 1.17445846599133
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0021531720741659504,
+      "median": 0.0022034008683046976,
+      "max": 0.002693040506144746
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.751,
+      "median": 13.808,
+      "max": 13.82
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 21184,
+        "status_distribution": {
+          "404": 21184,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 25603,
+        "status_distribution": {
+          "404": 25603,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 22941,
+        "status_distribution": {
+          "404": 22941,
+          "cut off at the deadline": 1
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 5837.675756990985,
+      "median": 6250.547966504732,
+      "max": 6928.46137952273
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.506925,
+      "median": 0.543286,
+      "max": 0.5592159999999999
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 1.5778299999999998,
+      "median": 2.0147530000000002,
+      "max": 2.433448
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.5129827844959416,
+      "median": 0.5367652008382251,
+      "max": 0.5396573087595485
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.282236363636361,
+      "median": 2.450686751387669,
+      "max": 2.568731917046012
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0023298648746210232,
+      "median": 0.002461427019190773,
+      "max": 0.002921852176452754
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.692,
+      "median": 13.805,
+      "max": 13.839
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 62513,
+        "status_distribution": {
+          "404": 62513,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 69298,
+        "status_distribution": {
+          "404": 69298,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 58382,
+        "status_distribution": {
+          "404": 58382,
+          "cut off at the deadline": 4
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 8705.157526423543,
+      "median": 9396.69613069861,
+      "max": 10447.278563716496
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.678772,
+      "median": 0.729134,
+      "max": 0.78281
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 2.330675,
+      "median": 3.0899159999999997,
+      "max": 3.3599099999999997
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.4749013119491689,
+      "median": 0.49338870799548823,
+      "max": 0.5034501734396174
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.1587906457192254,
+      "median": 3.378583794812008,
+      "max": 3.6229859833552416
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.002096137215336308,
+      "median": 0.0022605489852477547,
+      "max": 0.002812591081317058
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.698,
+      "median": 13.724,
+      "max": 13.876
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 93978,
+        "status_distribution": {
+          "404": 93978,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 104501,
+        "status_distribution": {
+          "404": 104501,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 87062,
+        "status_distribution": {
+          "404": 87062,
+          "cut off at the deadline": 8
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 9031.59802630824,
+      "median": 9476.695552942805,
+      "max": 11315.834921205478
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 1.292518,
+      "median": 1.50415,
+      "max": 1.6074
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 3.994844,
+      "median": 5.300129,
+      "max": 5.46694
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.4443149152722054,
+      "median": 0.4808867353183231,
+      "max": 0.502742203673157
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.291289027395271,
+      "median": 3.307749691559622,
+      "max": 3.592672381768813
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0018707453371034329,
+      "median": 0.002706986519785035,
+      "max": 0.0033939848549786344
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.779,
+      "median": 13.798,
+      "max": 13.998
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 90331,
+        "status_distribution": {
+          "404": 90331,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 113186,
+        "status_distribution": {
+          "404": 113186,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 94778,
+        "status_distribution": {
+          "404": 94778,
+          "cut off at the deadline": 16
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 8643.529275016937,
+      "median": 10187.801833635343,
+      "max": 10398.370577059855
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 2.871771,
+      "median": 2.958461,
+      "max": 3.4304729999999997
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 8.042023,
+      "median": 8.150488,
+      "max": 10.264021999999999
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.4691378816289269,
+      "median": 0.47728141226356535,
+      "max": 0.5090370070451047
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.1711362063995376,
+      "median": 3.5161582905488302,
+      "max": 3.5915778857479577
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.0020672499819147944,
+      "median": 0.002375515312135017,
+      "max": 0.004788916114153986
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.584,
+      "median": 13.829,
+      "max": 13.876
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 86443,
+        "status_distribution": {
+          "404": 86443,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 103995,
+        "status_distribution": {
+          "404": 103995,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 101879,
+        "status_distribution": {
+          "404": 101879,
+          "cut off at the deadline": 32
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "nodb",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 10407.187501310724,
+      "median": 11227.615028761946,
+      "max": 12098.41037064953
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 5.138723000000001,
+      "median": 5.544994999999999,
+      "max": 5.820837
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 11.403283,
+      "median": 12.507741,
+      "max": 15.759011
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.44024550903153853,
+      "median": 0.4640597804782432,
+      "max": 0.46891296828309836
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 3.4259778869778894,
+      "median": 3.760589560320549,
+      "max": 3.8871750364963553
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.00224299270073466,
+      "median": 0.0022838784203263293,
+      "max": 0.0034704808704811947
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.7,
+      "median": 13.851,
+      "max": 14.245
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 104077,
+        "status_distribution": {
+          "404": 104077,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 120965,
+        "status_distribution": {
+          "404": 120965,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 112244,
+        "status_distribution": {
+          "404": 112244,
+          "cut off at the deadline": 64
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 20750.805926,
+      "median": 23205.262689,
+      "max": 26693.656234
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.033,
+      "median": 0.037,
+      "max": 0.042
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.09,
+      "median": 0.104,
+      "max": 0.118
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0012545956157971273,
+      "median": 0.0016776587332202391,
+      "max": 0.002245143621150658
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.023781762529123833,
+      "median": 0.02407019057892085,
+      "max": 0.025176049204052954
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.31705820275023977,
+      "median": 0.49816425470332965,
+      "max": 0.4995811578568797
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.82,
+      "median": 13.905,
+      "max": 21.889
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 231860,
+        "status_distribution": {
+          "committed": 231860,
+          "sampled_latencies": 11530
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 207392,
+        "status_distribution": {
+          "committed": 207392,
+          "sampled_latencies": 10313
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 266776,
+        "status_distribution": {
+          "committed": 266776,
+          "sampled_latencies": 13528
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 45516.076823,
+      "median": 47829.711849,
+      "max": 53686.930979
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.068,
+      "median": 0.076,
+      "max": 0.079
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.15,
+      "median": 0.175,
+      "max": 0.209
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0006537534104535381,
+      "median": 0.0007611602051551947,
+      "max": 0.0008200735821570376
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.025183548850573688,
+      "median": 0.026223343666626025,
+      "max": 0.02705939156319778
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 1.8314219850432012,
+      "median": 1.8468099632326471,
+      "max": 1.8819290948275795
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.773,
+      "median": 13.871,
+      "max": 13.92
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 454458,
+        "status_distribution": {
+          "committed": 454458,
+          "sampled_latencies": 22737
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 536219,
+        "status_distribution": {
+          "committed": 536219,
+          "sampled_latencies": 26579
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 477881,
+        "status_distribution": {
+          "committed": 477881,
+          "sampled_latencies": 23928
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 73115.594655,
+      "median": 79605.36211,
+      "max": 85883.475062
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.079,
+      "median": 0.083,
+      "max": 0.083
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.225,
+      "median": 0.241,
+      "max": 0.328
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.000316166403493317,
+      "median": 0.00038155125448749433,
+      "max": 0.00044680230048502043
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.01938416988418822,
+      "median": 0.02178332734459153,
+      "max": 0.022865217391279665
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.8847404628330984,
+      "median": 3.206535106000719,
+      "max": 3.313547833547829
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.915,
+      "median": 13.986,
+      "max": 14.26
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 794428,
+        "status_distribution": {
+          "committed": 794428,
+          "sampled_latencies": 39357
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 857482,
+        "status_distribution": {
+          "committed": 857482,
+          "sampled_latencies": 42983
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 729759,
+        "status_distribution": {
+          "committed": 729759,
+          "sampled_latencies": 36614
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 61681.503239,
+      "median": 71552.628016,
+      "max": 77248.329634
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.165,
+      "median": 0.169,
+      "max": 0.179
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 0.894,
+      "median": 1.027,
+      "max": 1.082
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0003852021288347671,
+      "median": 0.00043839962745497824,
+      "max": 0.0005837007640157826
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.021435452375784987,
+      "median": 0.02294281729428081,
+      "max": 0.024773183738456113
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.597435972020213,
+      "median": 3.080598106144019,
+      "max": 3.210734721920885
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.623,
+      "median": 13.827,
+      "max": 14.439
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 712934,
+        "status_distribution": {
+          "committed": 712934,
+          "sampled_latencies": 35689
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 769435,
+        "status_distribution": {
+          "committed": 769435,
+          "sampled_latencies": 38469
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 612814,
+        "status_distribution": {
+          "committed": 612814,
+          "sampled_latencies": 30580
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 59954.346604,
+      "median": 61778.476198,
+      "max": 69616.336415
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.306,
+      "median": 0.326,
+      "max": 0.358
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 2.327,
+      "median": 2.811,
+      "max": 2.946
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.0004642440184596076,
+      "median": 0.0005461216866073411,
+      "max": 0.000578185956051488
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.022933953488374466,
+      "median": 0.02364603636363592,
+      "max": 0.024237066903563927
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 2.709620856967125,
+      "median": 2.7757733818181807,
+      "max": 3.00540608228981
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.75,
+      "median": 13.975,
+      "max": 14.633
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 595349,
+        "status_distribution": {
+          "committed": 595349,
+          "sampled_latencies": 29792
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 690374,
+        "status_distribution": {
+          "committed": 690374,
+          "sampled_latencies": 34667
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 613403,
+        "status_distribution": {
+          "committed": 613403,
+          "sampled_latencies": 30604
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "pg",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 65554.979265,
+      "median": 68582.193568,
+      "max": 69856.594537
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 0.528,
+      "median": 0.548,
+      "max": 0.56
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 5.634,
+      "median": 5.928,
+      "max": 6.978
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 0.00045593276116642057,
+      "median": 0.0004590533932244622,
+      "max": 0.0004985167195617254
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.022577813248196826,
+      "median": 0.022854744525547057,
+      "max": 0.023446197469821888
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 3.140353351752207,
+      "median": 3.219521657113839,
+      "max": 3.2369064233576643
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.7,
+      "median": 13.754,
+      "max": 13.783
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 686746,
+        "status_distribution": {
+          "committed": 686746,
+          "sampled_latencies": 34228
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 677895,
+        "status_distribution": {
+          "committed": 677895,
+          "sampled_latencies": 33943
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 0,
+        "total_requests": 646877,
+        "status_distribution": {
+          "committed": 646877,
+          "sampled_latencies": 32068
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 1,
+    "requests_per_second": {
+      "n": 3,
+      "min": 193.26571338689146,
+      "median": 289.15072302052806,
+      "max": 315.3382718080156
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 2.912096,
+      "median": 3.220542,
+      "max": 4.335921000000001
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 6.835438,
+      "median": 7.046303,
+      "max": 15.476611
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 5.1379314938154375,
+      "median": 5.695368730543065,
+      "max": 6.355497929606621
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 0.8390038947728043,
+      "median": 0.8953891456849203,
+      "max": 1.223280072491133
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.09642079504051333,
+      "median": 0.09830488554834711,
+      "max": 0.13154851619723207
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.243,
+      "median": 14.635,
+      "max": 18.389
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 2891,
+        "status_distribution": {
+          "200": 2891,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 1932,
+        "status_distribution": {
+          "200": 1932,
+          "cut off at the deadline": 1
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 1,
+        "total_requests": 3153,
+        "status_distribution": {
+          "200": 3153,
+          "cut off at the deadline": 1
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 4,
+    "requests_per_second": {
+      "n": 3,
+      "min": 636.4578071792163,
+      "median": 942.3298950362986,
+      "max": 946.6253969334489
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 3.903128,
+      "median": 3.9193250000000006,
+      "max": 4.734889
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 8.744683,
+      "median": 9.182704,
+      "max": 20.687977999999998
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 3.162981849060585,
+      "median": 3.3117229501267964,
+      "max": 3.4149105627160825
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 1.4293198026315606,
+      "median": 2.1627559878066314,
+      "max": 2.2931040386303776
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.23963809210526602,
+      "median": 0.3553335026854439,
+      "max": 0.37379975124378123
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.668,
+      "median": 13.778,
+      "max": 15.2
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 9464,
+        "status_distribution": {
+          "200": 9464,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 6362,
+        "status_distribution": {
+          "200": 6362,
+          "cut off at the deadline": 4
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 4,
+        "total_requests": 9421,
+        "status_distribution": {
+          "200": 9421,
+          "cut off at the deadline": 4
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 8,
+    "requests_per_second": {
+      "n": 3,
+      "min": 924.9155011713664,
+      "median": 1083.4403377048402,
+      "max": 1160.8904330407124
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 6.324965,
+      "median": 6.70848,
+      "max": 7.773556
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 15.188681,
+      "median": 17.101705,
+      "max": 21.670793
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.8272235436056525,
+      "median": 2.9738856773478513,
+      "max": 3.026701211596714
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.023931278935187,
+      "median": 2.3235359307359222,
+      "max": 2.383197878831904
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.36661255787037617,
+      "median": 0.42207647907647616,
+      "max": 0.43199142815632696
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.766,
+      "median": 13.824,
+      "max": 13.86
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 7,
+        "total_requests": 11604,
+        "status_distribution": {
+          "200": 11604,
+          "cut off at the deadline": 7
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 9244,
+        "status_distribution": {
+          "200": 9244,
+          "cut off at the deadline": 8
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 8,
+        "total_requests": 10829,
+        "status_distribution": {
+          "200": 10829,
+          "cut off at the deadline": 8
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 16,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1053.7202967381838,
+      "median": 1409.4351032810353,
+      "max": 1410.6280032560653
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 10.662753,
+      "median": 10.723127,
+      "max": 14.132614
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 23.000737,
+      "median": 26.276765,
+      "max": 33.473995
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.744002909452172,
+      "median": 2.7620812500000045,
+      "max": 2.992500237529674
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.2821581769436863,
+      "median": 2.7915455529887385,
+      "max": 2.8213946604759186
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.4258137816100301,
+      "median": 0.5124558908460871,
+      "max": 0.5192550058038323
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.784,
+      "median": 13.801,
+      "max": 13.852
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 14092,
+        "status_distribution": {
+          "200": 14092,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 10525,
+        "status_distribution": {
+          "200": 10525,
+          "cut off at the deadline": 16
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 16,
+        "total_requests": 14080,
+        "status_distribution": {
+          "200": 14080,
+          "cut off at the deadline": 16
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 32,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1008.9312677264747,
+      "median": 1077.9379612441526,
+      "max": 1126.2411670497588
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 27.249055000000002,
+      "median": 27.344197,
+      "max": 31.131511
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 47.177542,
+      "median": 50.541855,
+      "max": 66.03714199999999
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.9528667596466818,
+      "median": 2.9534016196493806,
+      "max": 3.1088339960238547
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.3002993527508075,
+      "median": 2.3024782135866064,
+      "max": 2.4045336907694606
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.40145167696381295,
+      "median": 0.4138111143312544,
+      "max": 0.41815855868919666
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.596,
+      "median": 13.793,
+      "max": 13.802
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 10060,
+        "status_distribution": {
+          "200": 10060,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 11237,
+        "status_distribution": {
+          "200": 11237,
+          "cut off at the deadline": 32
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 32,
+        "total_requests": 10755,
+        "status_distribution": {
+          "200": 10755,
+          "cut off at the deadline": 32
+        }
+      }
+    ]
+  },
+  {
+    "phase": "before",
+    "run": "002",
+    "credential": "service",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "layer": "route",
+    "concurrency": 64,
+    "requests_per_second": {
+      "n": 3,
+      "min": 1067.8606190095377,
+      "median": 1231.4443788330593,
+      "max": 1235.3059957096002
+    },
+    "p50_ms": {
+      "n": 3,
+      "min": 49.372074000000005,
+      "median": 51.701769,
+      "max": 56.01337
+    },
+    "p99_ms": {
+      "n": 3,
+      "min": 80.145618,
+      "median": 109.94224,
+      "max": 125.280379
+    },
+    "host_cpu_ms_per_request": {
+      "n": 3,
+      "min": 2.836306167400878,
+      "median": 2.948013579443812,
+      "max": 3.069677966101691
+    },
+    "host_cpu_cores": {
+      "n": 3,
+      "min": 2.359240121580544,
+      "median": 2.5267035610465087,
+      "max": 2.634787136627907
+    },
+    "pg_cpu_cores": {
+      "n": 3,
+      "min": 0.4023702417137034,
+      "median": 0.4338286337209364,
+      "max": 0.45210501453488344
+    },
+    "host_throttled_share": {
+      "n": 3,
+      "min": 0.0,
+      "median": 0.0,
+      "max": 0.0
+    },
+    "sample_window_seconds": {
+      "n": 3,
+      "min": 13.76,
+      "median": 13.76,
+      "max": 13.818
+    },
+    "errors": [
+      {
+        "repetition": "1",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 12298,
+        "status_distribution": {
+          "200": 12298,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "2",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 12258,
+        "status_distribution": {
+          "200": 12258,
+          "cut off at the deadline": 64
+        }
+      },
+      {
+        "repetition": "3",
+        "errors": 0,
+        "cut_off": 64,
+        "total_requests": 10620,
+        "status_distribution": {
+          "200": 10620,
+          "cut off at the deadline": 64
+        }
+      }
+    ]
+  }
+]

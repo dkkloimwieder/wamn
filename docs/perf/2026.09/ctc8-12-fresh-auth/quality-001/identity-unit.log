@@ -1,0 +1,31 @@
+   Compiling syn v3.0.4
+   Compiling cc v1.4.4
+   Compiling smallvec v1.15.2
+   Compiling postgres-types v0.2.14
+   Compiling parking_lot_core v0.9.12
+   Compiling getrandom v0.2.17
+   Compiling ring v0.17.14
+   Compiling parking_lot v0.12.5
+   Compiling tokio-macros v2.7.2
+   Compiling async-trait v0.1.92
+   Compiling tokio v1.53.1
+   Compiling tokio-util v0.7.19
+   Compiling tokio-postgres v0.7.18
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/crates/identity/platform)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.30s
+     Running unittests src/lib.rs (target/debug/deps/wamn_platform_identity-9e899c7154d82f18)
+
+running 10 tests
+test tests::issued_tokens_never_reach_debug_output ... ok
+test tests::minted_tokens_are_unique_prefixed_hex_that_parses_back ... ok
+test tests::principal_columns_are_shared_by_every_record_decoder ... ok
+test tests::route_caller_subject_is_exactly_environment_scoped_and_validated ... ok
+test tests::subjects_and_roles_are_canonical_fail_closed_tokens ... ok
+test tests::token_digest_is_deterministic_and_hides_the_token ... ok
+test tests::token_labels_and_lifetimes_fail_closed ... ok
+test tests::token_storage_keeps_a_digest_and_never_the_token ... ok
+test tests::the_two_reads_the_management_surface_makes_take_no_row_lock ... ok
+test tests::principal_id_parsing_preserves_uuid_identity_and_rejects_other_spellings ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

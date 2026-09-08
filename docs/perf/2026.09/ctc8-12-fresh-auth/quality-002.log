@@ -1,0 +1,28 @@
+test tests::token_storage_keeps_a_digest_and_never_the_token ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+test platform_identity_round_trip_on_postgres ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+test platform_pat_round_trip_on_postgres ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out; finished in 2.02s
+
+test router_driver::tests::nested_permission_denial_survives_the_real_component_boundary ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.01s
+
+test plugins::connection_http::tests::the_effect_span_is_injected_onto_the_outbound_request ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 277 filtered out; finished in 0.00s
+
+test plugins::wamn_blobstore::plugin::tests::a_blobstore_effect_span_names_the_invocation_it_was_raised_under ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 283 filtered out; finished in 0.00s
+

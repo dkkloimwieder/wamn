@@ -1,0 +1,935 @@
+{
+  "index": {
+    "schema": "wamn-throughput/v0.1",
+    "source": "b5ae3eba8bd3da805df15b2b8c46becc2860de7e",
+    "duration_seconds": 10,
+    "concurrency": [
+      1,
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "layers": [
+      {
+        "layer": "route",
+        "driver": "oha",
+        "target": "POST /purchase_order/get through flow-http, human PAT, repetition 3",
+        "expected_status": 200
+      },
+      {
+        "layer": "nodb",
+        "driver": "oha",
+        "target": "GET /no-such-route through flow-http: routed and answered 404 by the guest, no auth, no database",
+        "expected_status": 404
+      },
+      {
+        "layer": "pg",
+        "driver": "pgbench",
+        "target": "pgbench -M prepared, the generated purchase_order/get read against wamn-db-acme--receiving--dev--yf906w0c as postgres",
+        "expected_status": null
+      }
+    ],
+    "steps": [
+      {
+        "layer": "route",
+        "concurrency": 1,
+        "result": "route-c1.out",
+        "before": "sample-route-c1-before.json",
+        "after": "sample-route-c1-after.json",
+        "host_cpu_before": "cpu-host-route-c1-before.txt",
+        "host_cpu_after": "cpu-host-route-c1-after.txt",
+        "pg_cpu_before": "cpu-pg-route-c1-before.txt",
+        "pg_cpu_after": "cpu-pg-route-c1-after.txt"
+      },
+      {
+        "layer": "route",
+        "concurrency": 4,
+        "result": "route-c4.out",
+        "before": "sample-route-c4-before.json",
+        "after": "sample-route-c4-after.json",
+        "host_cpu_before": "cpu-host-route-c4-before.txt",
+        "host_cpu_after": "cpu-host-route-c4-after.txt",
+        "pg_cpu_before": "cpu-pg-route-c4-before.txt",
+        "pg_cpu_after": "cpu-pg-route-c4-after.txt"
+      },
+      {
+        "layer": "route",
+        "concurrency": 8,
+        "result": "route-c8.out",
+        "before": "sample-route-c8-before.json",
+        "after": "sample-route-c8-after.json",
+        "host_cpu_before": "cpu-host-route-c8-before.txt",
+        "host_cpu_after": "cpu-host-route-c8-after.txt",
+        "pg_cpu_before": "cpu-pg-route-c8-before.txt",
+        "pg_cpu_after": "cpu-pg-route-c8-after.txt"
+      },
+      {
+        "layer": "route",
+        "concurrency": 16,
+        "result": "route-c16.out",
+        "before": "sample-route-c16-before.json",
+        "after": "sample-route-c16-after.json",
+        "host_cpu_before": "cpu-host-route-c16-before.txt",
+        "host_cpu_after": "cpu-host-route-c16-after.txt",
+        "pg_cpu_before": "cpu-pg-route-c16-before.txt",
+        "pg_cpu_after": "cpu-pg-route-c16-after.txt"
+      },
+      {
+        "layer": "route",
+        "concurrency": 32,
+        "result": "route-c32.out",
+        "before": "sample-route-c32-before.json",
+        "after": "sample-route-c32-after.json",
+        "host_cpu_before": "cpu-host-route-c32-before.txt",
+        "host_cpu_after": "cpu-host-route-c32-after.txt",
+        "pg_cpu_before": "cpu-pg-route-c32-before.txt",
+        "pg_cpu_after": "cpu-pg-route-c32-after.txt"
+      },
+      {
+        "layer": "route",
+        "concurrency": 64,
+        "result": "route-c64.out",
+        "before": "sample-route-c64-before.json",
+        "after": "sample-route-c64-after.json",
+        "host_cpu_before": "cpu-host-route-c64-before.txt",
+        "host_cpu_after": "cpu-host-route-c64-after.txt",
+        "pg_cpu_before": "cpu-pg-route-c64-before.txt",
+        "pg_cpu_after": "cpu-pg-route-c64-after.txt"
+      },
+      {
+        "layer": "nodb",
+        "concurrency": 1,
+        "result": "nodb-c1.out",
+        "before": "sample-nodb-c1-before.json",
+        "after": "sample-nodb-c1-after.json",
+        "host_cpu_before": "cpu-host-nodb-c1-before.txt",
+        "host_cpu_after": "cpu-host-nodb-c1-after.txt",
+        "pg_cpu_before": "cpu-pg-nodb-c1-before.txt",
+        "pg_cpu_after": "cpu-pg-nodb-c1-after.txt"
+      },
+      {
+        "layer": "nodb",
+        "concurrency": 4,
+        "result": "nodb-c4.out",
+        "before": "sample-nodb-c4-before.json",
+        "after": "sample-nodb-c4-after.json",
+        "host_cpu_before": "cpu-host-nodb-c4-before.txt",
+        "host_cpu_after": "cpu-host-nodb-c4-after.txt",
+        "pg_cpu_before": "cpu-pg-nodb-c4-before.txt",
+        "pg_cpu_after": "cpu-pg-nodb-c4-after.txt"
+      },
+      {
+        "layer": "nodb",
+        "concurrency": 8,
+        "result": "nodb-c8.out",
+        "before": "sample-nodb-c8-before.json",
+        "after": "sample-nodb-c8-after.json",
+        "host_cpu_before": "cpu-host-nodb-c8-before.txt",
+        "host_cpu_after": "cpu-host-nodb-c8-after.txt",
+        "pg_cpu_before": "cpu-pg-nodb-c8-before.txt",
+        "pg_cpu_after": "cpu-pg-nodb-c8-after.txt"
+      },
+      {
+        "layer": "nodb",
+        "concurrency": 16,
+        "result": "nodb-c16.out",
+        "before": "sample-nodb-c16-before.json",
+        "after": "sample-nodb-c16-after.json",
+        "host_cpu_before": "cpu-host-nodb-c16-before.txt",
+        "host_cpu_after": "cpu-host-nodb-c16-after.txt",
+        "pg_cpu_before": "cpu-pg-nodb-c16-before.txt",
+        "pg_cpu_after": "cpu-pg-nodb-c16-after.txt"
+      },
+      {
+        "layer": "nodb",
+        "concurrency": 32,
+        "result": "nodb-c32.out",
+        "before": "sample-nodb-c32-before.json",
+        "after": "sample-nodb-c32-after.json",
+        "host_cpu_before": "cpu-host-nodb-c32-before.txt",
+        "host_cpu_after": "cpu-host-nodb-c32-after.txt",
+        "pg_cpu_before": "cpu-pg-nodb-c32-before.txt",
+        "pg_cpu_after": "cpu-pg-nodb-c32-after.txt"
+      },
+      {
+        "layer": "nodb",
+        "concurrency": 64,
+        "result": "nodb-c64.out",
+        "before": "sample-nodb-c64-before.json",
+        "after": "sample-nodb-c64-after.json",
+        "host_cpu_before": "cpu-host-nodb-c64-before.txt",
+        "host_cpu_after": "cpu-host-nodb-c64-after.txt",
+        "pg_cpu_before": "cpu-pg-nodb-c64-before.txt",
+        "pg_cpu_after": "cpu-pg-nodb-c64-after.txt"
+      },
+      {
+        "layer": "pg",
+        "concurrency": 1,
+        "result": "pg-c1.out",
+        "before": "sample-pg-c1-before.json",
+        "after": "sample-pg-c1-after.json",
+        "host_cpu_before": "cpu-host-pg-c1-before.txt",
+        "host_cpu_after": "cpu-host-pg-c1-after.txt",
+        "pg_cpu_before": "cpu-pg-pg-c1-before.txt",
+        "pg_cpu_after": "cpu-pg-pg-c1-after.txt"
+      },
+      {
+        "layer": "pg",
+        "concurrency": 4,
+        "result": "pg-c4.out",
+        "before": "sample-pg-c4-before.json",
+        "after": "sample-pg-c4-after.json",
+        "host_cpu_before": "cpu-host-pg-c4-before.txt",
+        "host_cpu_after": "cpu-host-pg-c4-after.txt",
+        "pg_cpu_before": "cpu-pg-pg-c4-before.txt",
+        "pg_cpu_after": "cpu-pg-pg-c4-after.txt"
+      },
+      {
+        "layer": "pg",
+        "concurrency": 8,
+        "result": "pg-c8.out",
+        "before": "sample-pg-c8-before.json",
+        "after": "sample-pg-c8-after.json",
+        "host_cpu_before": "cpu-host-pg-c8-before.txt",
+        "host_cpu_after": "cpu-host-pg-c8-after.txt",
+        "pg_cpu_before": "cpu-pg-pg-c8-before.txt",
+        "pg_cpu_after": "cpu-pg-pg-c8-after.txt"
+      },
+      {
+        "layer": "pg",
+        "concurrency": 16,
+        "result": "pg-c16.out",
+        "before": "sample-pg-c16-before.json",
+        "after": "sample-pg-c16-after.json",
+        "host_cpu_before": "cpu-host-pg-c16-before.txt",
+        "host_cpu_after": "cpu-host-pg-c16-after.txt",
+        "pg_cpu_before": "cpu-pg-pg-c16-before.txt",
+        "pg_cpu_after": "cpu-pg-pg-c16-after.txt"
+      },
+      {
+        "layer": "pg",
+        "concurrency": 32,
+        "result": "pg-c32.out",
+        "before": "sample-pg-c32-before.json",
+        "after": "sample-pg-c32-after.json",
+        "host_cpu_before": "cpu-host-pg-c32-before.txt",
+        "host_cpu_after": "cpu-host-pg-c32-after.txt",
+        "pg_cpu_before": "cpu-pg-pg-c32-before.txt",
+        "pg_cpu_after": "cpu-pg-pg-c32-after.txt"
+      },
+      {
+        "layer": "pg",
+        "concurrency": 64,
+        "result": "pg-c64.out",
+        "before": "sample-pg-c64-before.json",
+        "after": "sample-pg-c64-after.json",
+        "host_cpu_before": "cpu-host-pg-c64-before.txt",
+        "host_cpu_after": "cpu-host-pg-c64-after.txt",
+        "pg_cpu_before": "cpu-pg-pg-c64-before.txt",
+        "pg_cpu_after": "cpu-pg-pg-c64-after.txt"
+      }
+    ]
+  },
+  "results": [
+    {
+      "layer": "route",
+      "driver": "oha",
+      "concurrency": 1,
+      "requests_per_second": 322.96264626951756,
+      "p50_ms": 2.940013,
+      "p99_ms": 5.681020999999999,
+      "total_requests": 3229,
+      "errors": 0,
+      "cut_off": 1,
+      "status_distribution": {
+        "200": 3229,
+        "cut off at the deadline": 1
+      },
+      "duration_seconds": 10.001156596,
+      "server": {
+        "xact_commit": 14586,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 1034.6882315386254,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 14.097,
+        "host_cpu_cores": 1.1789948215932677,
+        "pg_cpu_cores": 0.13635582038731325,
+        "host_cpu_ms_per_request": 5.1471941777641055,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "route",
+      "driver": "oha",
+      "concurrency": 4,
+      "requests_per_second": 941.3619276219898,
+      "p50_ms": 3.914952,
+      "p99_ms": 8.788124,
+      "total_requests": 9411,
+      "errors": 0,
+      "cut_off": 4,
+      "status_distribution": {
+        "200": 9411,
+        "cut off at the deadline": 4
+      },
+      "duration_seconds": 10.00146673,
+      "server": {
+        "xact_commit": 43913,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 3173.821913847933,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.836,
+        "host_cpu_cores": 2.14197202948832,
+        "pg_cpu_cores": 0.38555507372073294,
+        "host_cpu_ms_per_request": 3.1491153968760384,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "route",
+      "driver": "oha",
+      "concurrency": 8,
+      "requests_per_second": 1257.840564008655,
+      "p50_ms": 5.932004,
+      "p99_ms": 12.748759999999999,
+      "total_requests": 12574,
+      "errors": 0,
+      "cut_off": 8,
+      "status_distribution": {
+        "200": 12574,
+        "cut off at the deadline": 8
+      },
+      "duration_seconds": 10.002857564,
+      "server": {
+        "xact_commit": 61253,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 4412.086724771303,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.883,
+        "host_cpu_cores": 2.592976662104723,
+        "pg_cpu_cores": 0.5131147446517464,
+        "host_cpu_ms_per_request": 2.8629151423572345,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "route",
+      "driver": "oha",
+      "concurrency": 16,
+      "requests_per_second": 1207.2429210851801,
+      "p50_ms": 12.205067999999999,
+      "p99_ms": 28.443929,
+      "total_requests": 12060,
+      "errors": 0,
+      "cut_off": 16,
+      "status_distribution": {
+        "200": 12060,
+        "cut off at the deadline": 16
+      },
+      "duration_seconds": 10.002957805,
+      "server": {
+        "xact_commit": 62434,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 4495.859436883416,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.887,
+        "host_cpu_cores": 2.530394613667442,
+        "pg_cpu_cores": 0.5131707352199806,
+        "host_cpu_ms_per_request": 2.9137305140961667,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "route",
+      "driver": "oha",
+      "concurrency": 32,
+      "requests_per_second": 1042.2628389153706,
+      "p50_ms": 29.376941,
+      "p99_ms": 54.010849,
+      "total_requests": 10394,
+      "errors": 0,
+      "cut_off": 32,
+      "status_distribution": {
+        "200": 10394,
+        "cut off at the deadline": 32
+      },
+      "duration_seconds": 10.003234895,
+      "server": {
+        "xact_commit": 51153,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 3589.180465899523,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 14.252,
+        "host_cpu_cores": 2.230411240527638,
+        "pg_cpu_cores": 0.4255368369351591,
+        "host_cpu_ms_per_request": 3.0582856455647387,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "route",
+      "driver": "oha",
+      "concurrency": 64,
+      "requests_per_second": 1064.2780552497202,
+      "p50_ms": 56.958419000000006,
+      "p99_ms": 112.20644200000001,
+      "total_requests": 10582,
+      "errors": 0,
+      "cut_off": 64,
+      "status_distribution": {
+        "200": 10582,
+        "cut off at the deadline": 64
+      },
+      "duration_seconds": 10.003025006,
+      "server": {
+        "xact_commit": 52982,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 3843.4530286543345,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.785,
+        "host_cpu_cores": 2.3428322089227565,
+        "pg_cpu_cores": 0.44092361262240615,
+        "host_cpu_ms_per_request": 3.0519695709695895,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "nodb",
+      "driver": "oha",
+      "concurrency": 1,
+      "requests_per_second": 2529.524692950953,
+      "p50_ms": 0.37132000000000004,
+      "p99_ms": 0.774196,
+      "total_requests": 25299,
+      "errors": 0,
+      "cut_off": 1,
+      "status_distribution": {
+        "404": 25299,
+        "cut off at the deadline": 1
+      },
+      "duration_seconds": 10.001879037,
+      "server": {
+        "xact_commit": 5595,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 404.96525767226404,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.816,
+        "host_cpu_cores": 1.1790708598726092,
+        "pg_cpu_cores": 0.0019287058483019026,
+        "host_cpu_ms_per_request": 0.6439006680105921,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "nodb",
+      "driver": "oha",
+      "concurrency": 4,
+      "requests_per_second": 6006.1360908881725,
+      "p50_ms": 0.5463210000000001,
+      "p99_ms": 2.299565,
+      "total_requests": 60085,
+      "errors": 0,
+      "cut_off": 4,
+      "status_distribution": {
+        "404": 60085,
+        "cut off at the deadline": 4
+      },
+      "duration_seconds": 10.004601809,
+      "server": {
+        "xact_commit": 7,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 0.5071728734965947,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.802,
+        "host_cpu_cores": 2.335110563686439,
+        "pg_cpu_cores": 0.0026990291262194207,
+        "host_cpu_ms_per_request": 0.5363933760505988,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "nodb",
+      "driver": "oha",
+      "concurrency": 8,
+      "requests_per_second": 9796.607386708169,
+      "p50_ms": 0.705022,
+      "p99_ms": 2.843315,
+      "total_requests": 97991,
+      "errors": 0,
+      "cut_off": 8,
+      "status_distribution": {
+        "404": 97991,
+        "cut off at the deadline": 8
+      },
+      "duration_seconds": 10.003360973,
+      "server": {
+        "xact_commit": 5,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 0.3621613791105317,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.806,
+        "host_cpu_cores": 3.4715885846733494,
+        "pg_cpu_cores": 0.0026297262059950567,
+        "host_cpu_ms_per_request": 0.4891138165749942,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "nodb",
+      "driver": "oha",
+      "concurrency": 16,
+      "requests_per_second": 9769.81082013738,
+      "p50_ms": 1.5268199999999998,
+      "p99_ms": 4.340046,
+      "total_requests": 97714,
+      "errors": 0,
+      "cut_off": 16,
+      "status_distribution": {
+        "404": 97714,
+        "cut off at the deadline": 16
+      },
+      "duration_seconds": 10.003264321,
+      "server": {
+        "xact_commit": 5,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 0.36326649229875035,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.764,
+        "host_cpu_cores": 3.6405803545481006,
+        "pg_cpu_cores": 0.002302237721578295,
+        "host_cpu_ms_per_request": 0.5128123707964064,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "nodb",
+      "driver": "oha",
+      "concurrency": 32,
+      "requests_per_second": 11066.6047299874,
+      "p50_ms": 2.749871,
+      "p99_ms": 7.192462,
+      "total_requests": 110673,
+      "errors": 0,
+      "cut_off": 32,
+      "status_distribution": {
+        "404": 110673,
+        "cut off at the deadline": 32
+      },
+      "duration_seconds": 10.003519842,
+      "server": {
+        "xact_commit": 7,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 0.5043227665706052,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.88,
+        "host_cpu_cores": 3.6538393371757993,
+        "pg_cpu_cores": 0.0021685878962662093,
+        "host_cpu_ms_per_request": 0.45824446793707674,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "nodb",
+      "driver": "oha",
+      "concurrency": 64,
+      "requests_per_second": 11888.108134150047,
+      "p50_ms": 5.194275,
+      "p99_ms": 12.025436000000001,
+      "total_requests": 118902,
+      "errors": 0,
+      "cut_off": 64,
+      "status_distribution": {
+        "404": 118902,
+        "cut off at the deadline": 64
+      },
+      "duration_seconds": 10.00714316,
+      "server": {
+        "xact_commit": 7,
+        "xact_rollback": 0,
+        "sessions": 1,
+        "server_tps": 0.5046136101499423,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.872,
+        "host_cpu_cores": 3.8074431949250234,
+        "pg_cpu_cores": 0.002038855247972458,
+        "host_cpu_ms_per_request": 0.44420490824376313,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "pg",
+      "driver": "pgbench",
+      "concurrency": 1,
+      "requests_per_second": 27820.191981,
+      "p50_ms": 0.032,
+      "p99_ms": 0.076,
+      "total_requests": 277963,
+      "errors": 0,
+      "cut_off": 0,
+      "status_distribution": {
+        "committed": 277963,
+        "sampled_latencies": 13859
+      },
+      "duration_seconds": 10.0,
+      "server": {
+        "xact_commit": 277971,
+        "xact_rollback": 0,
+        "sessions": 3,
+        "server_tps": 20042.613021847286,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.869,
+        "host_cpu_cores": 0.024497224024793582,
+        "pg_cpu_cores": 0.5030793135770356,
+        "host_cpu_ms_per_request": 0.0012222921755768292,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "pg",
+      "driver": "pgbench",
+      "concurrency": 4,
+      "requests_per_second": 54424.053037,
+      "p50_ms": 0.068,
+      "p99_ms": 0.136,
+      "total_requests": 543598,
+      "errors": 0,
+      "cut_off": 0,
+      "status_distribution": {
+        "committed": 543598,
+        "sampled_latencies": 27141
+      },
+      "duration_seconds": 10.0,
+      "server": {
+        "xact_commit": 543612,
+        "xact_rollback": 0,
+        "sessions": 6,
+        "server_tps": 39027.353004522934,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.929,
+        "host_cpu_cores": 0.02481355445473712,
+        "pg_cpu_cores": 1.8927805298298537,
+        "host_cpu_ms_per_request": 0.0006358154371429501,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "pg",
+      "driver": "pgbench",
+      "concurrency": 8,
+      "requests_per_second": 78745.593662,
+      "p50_ms": 0.082,
+      "p99_ms": 0.267,
+      "total_requests": 786435,
+      "errors": 0,
+      "cut_off": 0,
+      "status_distribution": {
+        "committed": 786435,
+        "sampled_latencies": 38970
+      },
+      "duration_seconds": 10.0,
+      "server": {
+        "xact_commit": 786457,
+        "xact_rollback": 0,
+        "sessions": 10,
+        "server_tps": 56143.41804683039,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 14.008,
+        "host_cpu_cores": 0.018939748715020313,
+        "pg_cpu_cores": 3.092845017133074,
+        "host_cpu_ms_per_request": 0.0003373552804745523,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "pg",
+      "driver": "pgbench",
+      "concurrency": 16,
+      "requests_per_second": 77603.143517,
+      "p50_ms": 0.169,
+      "p99_ms": 0.825,
+      "total_requests": 773208,
+      "errors": 0,
+      "cut_off": 0,
+      "status_distribution": {
+        "committed": 773208,
+        "sampled_latencies": 38748
+      },
+      "duration_seconds": 10.0,
+      "server": {
+        "xact_commit": 773246,
+        "xact_rollback": 0,
+        "sessions": 18,
+        "server_tps": 55525.348269424096,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.926,
+        "host_cpu_cores": 0.02140621858394965,
+        "pg_cpu_cores": 3.2058708171765025,
+        "host_cpu_ms_per_request": 0.000385540501391712,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "pg",
+      "driver": "pgbench",
+      "concurrency": 32,
+      "requests_per_second": 76465.424665,
+      "p50_ms": 0.308,
+      "p99_ms": 1.928,
+      "total_requests": 758899,
+      "errors": 0,
+      "cut_off": 0,
+      "status_distribution": {
+        "committed": 758899,
+        "sampled_latencies": 37845
+      },
+      "duration_seconds": 10.0,
+      "server": {
+        "xact_commit": 758969,
+        "xact_rollback": 0,
+        "sessions": 34,
+        "server_tps": 54672.885751332666,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.882,
+        "host_cpu_cores": 0.021555539547653383,
+        "pg_cpu_cores": 3.2599775968880547,
+        "host_cpu_ms_per_request": 0.0003943001637906022,
+        "host_throttled_share": 0.0
+      }
+    },
+    {
+      "layer": "pg",
+      "driver": "pgbench",
+      "concurrency": 64,
+      "requests_per_second": 75183.365241,
+      "p50_ms": 0.538,
+      "p99_ms": 4.939,
+      "total_requests": 743212,
+      "errors": 0,
+      "cut_off": 0,
+      "status_distribution": {
+        "committed": 743212,
+        "sampled_latencies": 36910
+      },
+      "duration_seconds": 10.0,
+      "server": {
+        "xact_commit": 743348,
+        "xact_rollback": 0,
+        "sessions": 66,
+        "server_tps": 53263.68586987676,
+        "numbackends_after": {
+          "postgres": 2,
+          "wamn-db-acme--receiving--dev--yf906w0c": 18
+        },
+        "activity_after": {
+          "postgres/active": 1,
+          "postgres/idle": 1,
+          "wamn-db-acme--receiving--dev--yf906w0c/idle": 18
+        },
+        "sample_window_seconds": 13.956,
+        "host_cpu_cores": 0.022399183147023046,
+        "pg_cpu_cores": 3.3150005015763897,
+        "host_cpu_ms_per_request": 0.00042061080822141414,
+        "host_throttled_share": 0.0
+      }
+    }
+  ],
+  "verdicts": [
+    {
+      "layer": "route",
+      "knee": {
+        "concurrency": 8,
+        "turns_at": 16,
+        "gain": 0.9597742000287989,
+        "efficiency": -0.040225799971201126,
+        "p99_ms_before": 12.748759999999999,
+        "p99_ms_at": 28.443929
+      },
+      "peak": {
+        "concurrency": 8,
+        "requests_per_second": 1257.840564008655,
+        "p99_ms": 12.748759999999999
+      }
+    },
+    {
+      "layer": "nodb",
+      "knee": {
+        "concurrency": 8,
+        "turns_at": 16,
+        "gain": 0.9972647095557646,
+        "efficiency": -0.002735290444235372,
+        "p99_ms_before": 2.843315,
+        "p99_ms_at": 4.340046
+      },
+      "peak": {
+        "concurrency": 64,
+        "requests_per_second": 11888.108134150047,
+        "p99_ms": 12.025436000000001
+      }
+    },
+    {
+      "layer": "pg",
+      "knee": {
+        "concurrency": 8,
+        "turns_at": 16,
+        "gain": 0.9854918847916273,
+        "efficiency": -0.014508115208372696,
+        "p99_ms_before": 0.267,
+        "p99_ms_at": 0.825
+      },
+      "peak": {
+        "concurrency": 8,
+        "requests_per_second": 78745.593662,
+        "p99_ms": 0.267
+      }
+    }
+  ]
+}

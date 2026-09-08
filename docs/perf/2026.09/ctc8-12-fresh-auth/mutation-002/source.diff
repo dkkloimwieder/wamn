@@ -1,0 +1,13 @@
+diff --git a/crates/identity/platform/src/lib.rs b/crates/identity/platform/src/lib.rs
+index fc75f46a..a4ba918c 100644
+--- a/crates/identity/platform/src/lib.rs
++++ b/crates/identity/platform/src/lib.rs
+@@ -81,7 +81,7 @@ const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
+         ON p.id = identity.pats.principal_id \
+     WHERE identity.pats.token_prefix = $1 AND CASE p.kind \
+         WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
+-            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = $5) \
++            WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND (r.role = $5 OR r.role <> $5)) \
+         WHEN 'human' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
+             WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4) \
+         ELSE false END";
