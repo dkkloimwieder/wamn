@@ -1,0 +1,5 @@
+cp Cargo.lock tools/probes/ctc8-13-native-http/Cargo.lock
+cargo update --workspace --manifest-path tools/probes/ctc8-13-native-http/Cargo.toml --offline
+awk -f tools/probes/ctc8-13-native-http/audit-locks.awk Cargo.lock tools/probes/ctc8-13-native-http/Cargo.lock
+RUSTC_WRAPPER=sccache cargo build --manifest-path tools/probes/ctc8-13-native-http/Cargo.toml --locked --offline
+cargo tree --manifest-path tools/probes/ctc8-13-native-http/Cargo.toml --locked --offline --invert bit-vec

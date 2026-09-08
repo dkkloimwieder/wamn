@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Capture one already-built probe run. This script never invokes Cargo.
+set -euo pipefail
+if [[ $# -ne 2 ]]; then
+  echo 'usage: bash tools/probes/ctc8-13-native-http/run PROBE_BINARY NEW_EVIDENCE_DIRECTORY' >&2
+  exit 2
+fi
+probe_binary=$(realpath -- "$1")
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "$script_dir/../../.." && pwd)
+evidence_dir=$(realpath -m -- "$2")
+case "$evidence_dir" in
+  "$repo_root"/docs/perf/2026.09/ctc8-13-native-http/*) ;;
+  *) echo 'evidence must stay in this worktree native-probe directory' >&2; exit 2 ;;
+esac
+[[ -x "$probe_binary" && ! -e "$evidence_dir" ]] || {
+  echo 'the probe must be executable and the evidence directory must be new' >&2
+  exit 2
+}
+mkdir -m 0700 -- "$evidence_dir"
+git -C "$repo_root" rev-parse HEAD >"$evidence_dir/source-head.txt"
+git -C "$repo_root" status --porcelain --untracked-files=normal -- tools/probes/ctc8-13-native-http \
+  >"$evidence_dir/source-status.txt"
+rustc --version --verbose >"$evidence_dir/toolchain.txt"
+sha256sum "$probe_binary" >"$evidence_dir/binary.sha256"
+sha256sum "$script_dir/Cargo.toml" "$script_dir/Cargo.lock" "$script_dir/run" "$script_dir"/src/*.rs \
+  >"$evidence_dir/source.sha256"
+printf '%q\n' "$probe_binary" >"$evidence_dir/commands.log"
+status=0
+"$probe_binary" >"$evidence_dir/stdout.jsonl" 2>"$evidence_dir/stderr.log" || status=$?
+printf '%s\n' "$status" >"$evidence_dir/exit-code.txt"
+if [[ $status -eq 0 ]]; then
+  jq -se '
+    ["P2","P3"] as $abis |
+    (["scope","connected-peer-versus-pinning","private_wamn_integration","native_configuration","completion"] +
+     [$abis[] as $abi | [false,true][] as $tls | [false,true][] as $grpc |
+       "protocol-\($abi)-tls-\($tls)-grpc-\($grpc)"] +
+     [$abis[] as $abi | [false,true][] as $grpc | "tls-refusal-\($abi)-grpc-\($grpc)"] +
+     [["draining","generation-quota-keys","request-concurrency","byte-limits","deadlines-and-response-loss"][] as $prefix |
+       $abis[] | "\($prefix)-\(.)"]) as $expected |
+    (map(.case) | sort) == ($expected | sort) and
+    all(.[]; (.evidence | type) == "object" and
+      (.verdict as $verdict | ["declared","observed","pass","gap","source-gap","unproved"] | index($verdict) != null)) and
+    .[-1] == {case:"completion",verdict:"observed",evidence:{protocol_rows:8,native_adoption_proved:false}}
+  ' "$evidence_dir/stdout.jsonl" >"$evidence_dir/shape-check.log" 2>&1 || status=1
+fi
+jq -n --argjson status "$status" \
+  '{exit_code:$status,verdict:(if $status == 0 then "observed" else "failed" end),production_adoption_proved:false}' \
+  >"$evidence_dir/run-receipt.json"
+printf 'NATIVE_HTTP_PROBE exit_code=%s evidence=%s\n' "$status" "$evidence_dir"
+exit "$status"
