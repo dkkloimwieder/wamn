@@ -26,7 +26,11 @@ chrono = { workspace = true, features = ["clock", "std"] }
 crossterm = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
+# Named by the EMITTED bindings the binary compiles in, not by code written
+# here: `numeric` is `rust_decimal::Decimal` and `uuid` is `uuid::Uuid`.
+rust_decimal = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid = { workspace = true }
 
 [lints]
 workspace = true

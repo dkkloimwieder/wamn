@@ -42,16 +42,46 @@ use wamn_receiving_tui::request::{ClientSupplied, record_receipt};
 use wamn_receiving_tui::screen::AppScreen;
 use wamn_receiving_tui::{AppState, Event, reduce};
 
-/// The four routes this client calls.
-///
-/// Authored here rather than read from the release: producing route metadata
-/// from a release is `wamn-10yt.5.8` and has no in-tree producer yet. The
-/// templates are the ones the published Receiving package declares, and they
-/// are the same four the crate's workflow proof answers.
-const ORDER_QUERY: &str = "/purchase_order/query";
-const RECEIPT_SCREEN: &str = "/receiving/load_receipt_screen";
-const LOCATION_LIST: &str = "/location/list";
-const RECORD_RECEIPT: &str = "/receiving/record_receipt";
+// THE ROUTES THIS CLIENT CALLS ARE NOT AUTHORED HERE ANY MORE.
+//
+// They are read out of the bindings the development loop's Generate stage
+// emits beside the package's contracts, from the contract projection and the
+// publication attachments together (`wamn-10yt.5.8`, `wamn-10yt.45`). The
+// files are a build input by path, so `wamn dev` regenerating them and this
+// binary being rebuilt is the whole loop: a route the release moves moves
+// here by regeneration, and nothing in this crate has to be edited to follow
+// it.
+//
+// `#[path]` rather than a generated crate, because the bindings belong to the
+// PACKAGE and not to any one client: a second client includes the same files
+// from wherever it lives. The path is relative to this file's directory, so
+// four levels up is the repository root.
+//
+// Emitted modules carry every operation of their model with its request and
+// result types, its descriptors and its grant. This client calls four
+// operations, so most of that is unused here and unused is correct — it is
+// the model's contract, not this screen's.
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "the emitter writes a model's whole contract; one client calls part of it"
+)]
+#[path = "../../../../packages/receiving/generated/client/location.rs"]
+mod location;
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "the emitter writes a model's whole contract; one client calls part of it"
+)]
+#[path = "../../../../packages/receiving/generated/client/purchase_order.rs"]
+mod purchase_order;
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "the emitter writes a model's whole contract; one client calls part of it"
+)]
+#[path = "../../../../packages/receiving/generated/client/receiving.rs"]
+mod receiving;
 
 /// Which of the receipt screen's two text entries the keyboard is typing into.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -182,28 +212,22 @@ impl App {
 }
 
 /// Invoke one single-item operation and return its value.
+///
+/// The route is taken, not built: every caller passes an emitted `*_route()`,
+/// so the method and template are the release's own facts.
 async fn call(
     client: &WamnClient,
-    template: &str,
+    route: RouteMetadata,
     request_id: &str,
     mut item: Value,
 ) -> Result<Value, ClientError> {
     item["request_id"] = json!(request_id);
-    let outcomes = client
-        .invoke(&route(template), &BTreeMap::new(), &[item])
-        .await?;
+    let outcomes = client.invoke(&route, &BTreeMap::new(), &[item]).await?;
     outcomes
         .into_iter()
         .next()
         .expect("one sent item yields one outcome")
         .into_result()
-}
-
-fn route(template: &str) -> RouteMetadata {
-    RouteMetadata {
-        method: "POST".to_owned(),
-        template: template.to_owned(),
-    }
 }
 
 /// Rows of a `bounded_list` result, which spells its rows `rows`.
@@ -234,7 +258,12 @@ fn integer(row: &Value, member: &str) -> i64 {
 async fn load_orders(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
     app.begin("purchase_order.query", screen)?;
     let request_id = app.next_request_id();
-    let event = match call(&app.client, ORDER_QUERY, &request_id, json!({})).await {
+    let event = match call(
+        &app.client,
+        purchase_order::query_route(),
+        &request_id,
+        json!({}),
+    ).await {
         Ok(page) => Event::OrdersLoaded {
             // A `page` result is NOT a `bounded_list`: it spells its rows
             // `item` and its continuation `next_cursor`. Reading `rows` and
@@ -269,7 +298,12 @@ async fn open_receipt(app: &mut App, screen: &mut TerminalSession) -> io::Result
     app.begin("receiving.load_receipt_screen", screen)?;
     let request_id = app.next_request_id();
     let item = json!({ "purchase_order_id": order.id });
-    let event = match call(&app.client, RECEIPT_SCREEN, &request_id, item).await {
+    let event = match call(
+        &app.client,
+        receiving::load_receipt_screen_route(),
+        &request_id,
+        item,
+    ).await {
         Ok(value) => Event::ReceiptLoaded {
             lines: rows(&value)
                 .iter()
@@ -296,7 +330,12 @@ async fn open_receipt(app: &mut App, screen: &mut TerminalSession) -> io::Result
 
     app.begin("location.list", screen)?;
     let request_id = app.next_request_id();
-    let event = match call(&app.client, LOCATION_LIST, &request_id, json!({})).await {
+    let event = match call(
+        &app.client,
+        location::list_route(),
+        &request_id,
+        json!({}),
+    ).await {
         Ok(value) => Event::LocationsLoaded {
             locations: rows(&value)
                 .iter()
@@ -350,7 +389,11 @@ async fn submit(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
     app.begin("receiving.record_receipt", screen)?;
     let sent = app
         .client
-        .invoke(&route(RECORD_RECEIPT), &BTreeMap::new(), &items)
+        .invoke(
+            &receiving::record_receipt_route(),
+            &BTreeMap::new(),
+            &items,
+        )
         .await
         .and_then(|outcomes| {
             outcomes
