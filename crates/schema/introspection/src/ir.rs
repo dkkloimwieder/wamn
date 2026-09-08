@@ -46,6 +46,10 @@ pub struct Table {
     columns: Box<[Column]>,
     constraints: Box<[Constraint]>,
     indexes: Box<[Index]>,
+    /// Omitted when empty, so a table that declares no exclusion constraint
+    /// keeps the canonical bytes it had before this field existed.
+    #[serde(skip_serializing_if = "<[Exclusion]>::is_empty")]
+    exclusions: Box<[Exclusion]>,
 }
 
 impl Table {
@@ -63,7 +67,15 @@ impl Table {
             columns: columns.into_boxed_slice(),
             constraints: constraints.into_boxed_slice(),
             indexes: indexes.into_boxed_slice(),
+            exclusions: Box::default(),
         }
+    }
+
+    /// Attach this table's exclusion constraints.
+    #[must_use]
+    pub fn with_exclusions(mut self, exclusions: Vec<Exclusion>) -> Self {
+        self.exclusions = exclusions.into_boxed_slice();
+        self
     }
 
     /// PostgreSQL schema name.
@@ -91,10 +103,16 @@ impl Table {
         &self.indexes
     }
 
+    /// Exclusion constraints in canonical structural order.
+    pub fn exclusions(&self) -> &[Exclusion] {
+        &self.exclusions
+    }
+
     fn normalize(&mut self) {
         self.columns.sort();
         self.constraints.sort();
         self.indexes.sort();
+        self.exclusions.sort();
     }
 }
 
@@ -425,6 +443,112 @@ pub enum ForeignKeyAction {
     Cascade,
     SetNull,
     SetDefault,
+}
+
+/// One `EXCLUDE` constraint with its required authored name.
+///
+/// An exclusion constraint is carried beside [`Constraint`] rather than inside
+/// it. The frozen `wamn:postgres` contract names the violated object for
+/// SQLSTATE 23505, 23503 and 23514; an exclusion violation is 23P01, which that
+/// contract has no variant for. A [`Constraint`] is therefore a shape whose
+/// violation a generated operation can name, and an [`Exclusion`] is a shape the
+/// database enforces without one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct Exclusion {
+    name: Box<str>,
+    access_method: ExclusionAccessMethod,
+    keys: Box<[ExclusionKey]>,
+}
+
+impl Exclusion {
+    /// Construct one exclusion constraint. Key order is semantic and preserved.
+    pub fn new(
+        name: impl Into<Box<str>>,
+        access_method: ExclusionAccessMethod,
+        keys: Vec<ExclusionKey>,
+    ) -> Result<Self, IrError> {
+        Ok(Self {
+            name: nonempty_name(name, "exclusion constraint")?,
+            access_method,
+            keys: keys.into_boxed_slice(),
+        })
+    }
+
+    /// Explicit authored name PostgreSQL reports on a 23P01 violation.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Index access method resolving the key operators.
+    pub const fn access_method(&self) -> ExclusionAccessMethod {
+        self.access_method
+    }
+
+    /// Compared keys in the order the constraint declares them.
+    pub fn keys(&self) -> &[ExclusionKey] {
+        &self.keys
+    }
+}
+
+/// Index access method backing an exclusion constraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExclusionAccessMethod {
+    Gist,
+}
+
+/// One key of an exclusion constraint: what is compared, and with which operator.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct ExclusionKey {
+    #[serde(flatten)]
+    element: ExclusionElement,
+    operator: Box<str>,
+}
+
+impl ExclusionKey {
+    /// Construct one compared key.
+    pub fn new(element: ExclusionElement, operator: impl Into<Box<str>>) -> Self {
+        Self {
+            element,
+            operator: operator.into(),
+        }
+    }
+
+    /// Compared side of this key.
+    pub const fn element(&self) -> &ExclusionElement {
+        &self.element
+    }
+
+    /// Bare PostgreSQL operator name, such as `=` or `&&`.
+    pub fn operator(&self) -> &str {
+        &self.operator
+    }
+}
+
+/// The compared side of one exclusion key.
+///
+/// A range non-overlap invariant needs an expression key, because the frozen
+/// column vocabulary has no range type: the author writes
+/// `tstzrange(starts_at, ends_at) WITH &&` over two `timestamptz` columns.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(tag = "element", rename_all = "snake_case")]
+pub enum ExclusionElement {
+    Column { name: Box<str> },
+    Expression { expression: Box<str> },
+}
+
+impl ExclusionElement {
+    /// A plain column key.
+    pub fn column(name: impl Into<Box<str>>) -> Self {
+        Self::Column { name: name.into() }
+    }
+
+    /// An expression key, carried as the server renders it.
+    pub fn expression(expression: impl Into<Box<str>>) -> Self {
+        Self::Expression {
+            expression: expression.into(),
+        }
+    }
 }
 
 /// One ordinary, non-constraint-backed btree index.

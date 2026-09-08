@@ -6,9 +6,9 @@ use std::fmt;
 use tokio_postgres::{Client, Row};
 
 use crate::ir::{
-    CatalogIr, Column, ColumnGeneration, Constraint, ForeignKeyAction, ForeignKeyColumn,
-    IdentityMode, Index, IndexColumn, IndexDirection, IrError, IrErrorKind, Table,
-    postgres_default, postgres_type,
+    CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
+    ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn, IdentityMode, Index,
+    IndexColumn, IndexDirection, IrError, IrErrorKind, Table, postgres_default, postgres_type,
 };
 
 /// Stable class of PostgreSQL catalog refusal.
@@ -125,6 +125,7 @@ struct TableParts {
     columns: Vec<Column>,
     constraints: Vec<Constraint>,
     indexes: Vec<Index>,
+    exclusions: Vec<Exclusion>,
 }
 
 #[derive(Debug)]
@@ -213,6 +214,8 @@ struct ConstraintRow {
     supporting_index_default_collations: bool,
     supporting_index_expression: bool,
     supporting_index_predicate: bool,
+    exclusion_operators: Vec<String>,
+    exclusion_key_definitions: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -502,10 +505,28 @@ SELECT namespace.nspname::text AS schema_name,
                ON attribute.attrelid = supporting_index.indrelid
               AND attribute.attnum = key_collation.column_number
             WHERE key_collation.position <= supporting_index.indnkeyatts
+              AND key_collation.column_number <> 0
               AND NOT COALESCE(key_collation.collation_oid = attribute.attcollation, false)
        ) AS supporting_index_has_default_collations,
        supporting_index.indexprs IS NOT NULL AS supporting_index_has_expression,
-       supporting_index.indpred IS NOT NULL AS supporting_index_has_predicate
+       supporting_index.indpred IS NOT NULL AS supporting_index_has_predicate,
+       ARRAY(
+           SELECT exclusion_operator.oprname::text
+             FROM unnest(constraint_row.conexclop) WITH ORDINALITY
+                  AS key_operator(operator_oid, position)
+             JOIN pg_catalog.pg_operator AS exclusion_operator
+               ON exclusion_operator.oid = key_operator.operator_oid
+            ORDER BY key_operator.position
+       ) AS exclusion_operators,
+       ARRAY(
+           SELECT pg_catalog.pg_get_indexdef(
+                      supporting_index.indexrelid, key_definition.position::int, true)
+             FROM unnest(supporting_index.indkey::smallint[]) WITH ORDINALITY
+                  AS key_definition(column_number, position)
+            WHERE constraint_row.contype = 'x'
+              AND key_definition.position <= supporting_index.indnkeyatts
+            ORDER BY key_definition.position
+       ) AS exclusion_key_definitions
   FROM pg_catalog.pg_constraint AS constraint_row
   JOIN pg_catalog.pg_class AS relation
     ON relation.oid = constraint_row.conrelid
@@ -747,6 +768,7 @@ fn validate_relations(
                         columns: Vec::new(),
                         constraints: Vec::new(),
                         indexes: Vec::new(),
+                        exclusions: Vec::new(),
                     },
                 );
             }
@@ -1334,6 +1356,8 @@ fn constraint_row(row: &Row) -> ConstraintRow {
         supporting_index_default_collations: row.get("supporting_index_has_default_collations"),
         supporting_index_expression: row.get("supporting_index_has_expression"),
         supporting_index_predicate: row.get("supporting_index_has_predicate"),
+        exclusion_operators: row.get("exclusion_operators"),
+        exclusion_key_definitions: row.get("exclusion_key_definitions"),
     }
 }
 
@@ -1508,6 +1532,98 @@ fn foreign_key_action(
     }
 }
 
+/// Model one `EXCLUDE` constraint from its `pg_constraint` row.
+///
+/// The supporting gist index carries the shape: `conkey` holds one entry per key
+/// in index order, `0` where the key is an expression, and `conexclop` holds the
+/// matching operator. Unlike a primary or unique constraint, an expression key
+/// is admitted, because the frozen column vocabulary has no range type and the
+/// non-overlap invariant is written as `tstzrange(a, b) WITH &&`.
+///
+/// No authored-name convention is required. `validate_authored_name`
+/// reconstructs PostgreSQL's default spelling from the table and its key
+/// columns, and an expression key has no column name to reconstruct it from.
+fn map_exclusion(
+    row: &ConstraintRow,
+    attributes: &BTreeMap<AttributeKey, String>,
+) -> Result<Exclusion, PostgresIntrospectionError> {
+    let refuse = |detail: String| {
+        refusal(
+            PostgresIntrospectionErrorKind::UnsupportedConstraint,
+            Some(&row.schema),
+            Some(&row.name),
+            detail,
+        )
+    };
+
+    if row.supporting_index_method.as_deref() != Some("gist") {
+        return Err(refuse(format!(
+            "exclusion constraints require a gist index, found `{}`",
+            row.supporting_index_method.as_deref().unwrap_or("none")
+        )));
+    }
+    let key_count = i16::try_from(row.columns.len())
+        .map_err(|_| refuse("constraint has more keys than PostgreSQL can represent".to_owned()))?;
+    if key_count == 0
+        || row.exclusion_operators.len() != row.columns.len()
+        || row.exclusion_key_definitions.len() != row.columns.len()
+        || row.supporting_index_keys != Some(key_count)
+        || row.supporting_index_attributes != row.supporting_index_keys
+        || !row.supporting_index_default_operator_classes
+        || !row.supporting_index_default_collations
+        || row.supporting_index_predicate
+    {
+        return Err(refuse(
+            "exclusion constraints require one operator per key over a total gist index with \
+             default operator classes and collations"
+                .to_owned(),
+        ));
+    }
+
+    let mut keys = Vec::with_capacity(row.columns.len());
+    for ((number, definition), operator) in row
+        .columns
+        .iter()
+        .zip(&row.exclusion_key_definitions)
+        .zip(&row.exclusion_operators)
+    {
+        let element = if *number == 0 {
+            ExclusionElement::expression(definition.clone())
+        } else {
+            let name = names_for_attributes(
+                PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                &row.schema,
+                &row.table,
+                &row.name,
+                std::slice::from_ref(number),
+                attributes,
+            )?
+            .pop()
+            .expect("one attribute number resolves to one column name");
+            ExclusionElement::column(name)
+        };
+        keys.push(ExclusionKey::new(element, operator.clone()));
+    }
+    Exclusion::new(row.name.clone(), ExclusionAccessMethod::Gist, keys)
+        .map_err(|error| ir_error(&row.schema, &row.name, &error))
+}
+
+fn table_parts<'a>(
+    tables: &'a mut BTreeMap<TableKey, TableParts>,
+    row: &ConstraintRow,
+) -> Result<&'a mut TableParts, PostgresIntrospectionError> {
+    tables
+        .get_mut(&(row.schema.clone(), row.table.clone()))
+        .ok_or_else(|| {
+            refusal(
+                PostgresIntrospectionErrorKind::UnsupportedConstraint,
+                Some(&row.schema),
+                Some(&row.name),
+                "constraint belongs to a relation that is not an ordinary table",
+            )
+        })
+}
+
 fn map_constraints(
     rows: &[ConstraintRow],
     attributes: &BTreeMap<AttributeKey, String>,
@@ -1516,6 +1632,11 @@ fn map_constraints(
     for row in rows {
         validate_constraint_shape(row)?;
         if row.kind == "n" {
+            continue;
+        }
+        if row.kind == "x" {
+            let exclusion = map_exclusion(row, attributes)?;
+            table_parts(tables, row)?.exclusions.push(exclusion);
             continue;
         }
 
@@ -1676,15 +1797,7 @@ fn map_constraints(
             }
         };
 
-        let Some(table) = tables.get_mut(&(row.schema.clone(), row.table.clone())) else {
-            return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedConstraint,
-                Some(&row.schema),
-                Some(&row.name),
-                "constraint belongs to a relation that is not an ordinary table",
-            ));
-        };
-        table.constraints.push(constraint);
+        table_parts(tables, row)?.constraints.push(constraint);
     }
     Ok(())
 }
@@ -1867,6 +1980,7 @@ pub async fn read_catalog_excluding_relations(
                     parts.constraints,
                     parts.indexes,
                 )
+                .with_exclusions(parts.exclusions)
             })
             .collect(),
     ))
