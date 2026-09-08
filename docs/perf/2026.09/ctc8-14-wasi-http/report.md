@@ -58,7 +58,7 @@ Build times include dependency-cache effects and are not benchmark comparisons.
 
 The gRPC rows test HTTP requests on the native gRPC-selected transport.
 They do not test a protobuf service or its RPC schema.
-No request retry hides a refusal. Each guest attempt has a ten-second deadline.
+The fixture does not retry guest calls. Each guest attempt has a ten-second deadline.
 The case sequence has a two-minute deadline, and assertions fail the process.
 The fixture uses only loopback peers and synthetic credentials.
 
