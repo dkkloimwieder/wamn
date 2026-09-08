@@ -1,7 +1,8 @@
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnGeneration, ColumnType, Constraint, ForeignKeyAction,
-    ForeignKeyColumn, IdentityMode, Index, IndexColumn, IndexDirection, IrErrorKind, Table,
-    postgres_default, postgres_type,
+    CatalogIr, Column, ColumnDefault, ColumnGeneration, ColumnType, Constraint, Exclusion,
+    ExclusionAccessMethod, ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn,
+    IdentityMode, Index, IndexColumn, IndexDirection, IrErrorKind, Table, postgres_default,
+    postgres_type,
 };
 
 fn complete_ir(reverse_collections: bool) -> CatalogIr {
@@ -319,4 +320,80 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
         default_error.to_string(),
         "unsupported PostgreSQL default `upper('open')` for wamn:postgres type `text`"
     );
+}
+
+fn exclusion_ir(reverse_collections: bool) -> CatalogIr {
+    let mut exclusions = vec![
+        Exclusion::new(
+            "dock_appointment_no_overlap",
+            ExclusionAccessMethod::Gist,
+            vec![
+                ExclusionKey::new(ExclusionElement::column("dock_id"), "="),
+                ExclusionKey::new(
+                    ExclusionElement::expression("tstzrange(starts_at, ends_at)"),
+                    "&&",
+                ),
+            ],
+        )
+        .unwrap(),
+        Exclusion::new(
+            "dock_appointment_one_carrier",
+            ExclusionAccessMethod::Gist,
+            vec![ExclusionKey::new(
+                ExclusionElement::column("carrier_id"),
+                "=",
+            )],
+        )
+        .unwrap(),
+    ];
+    if reverse_collections {
+        exclusions.reverse();
+    }
+    CatalogIr::new(vec![
+        Table::new(
+            "receiving",
+            "dock_appointment",
+            vec![Column::new("dock_id", ColumnType::Uuid, false, None, None)],
+            vec![Constraint::primary_key("dock_appointment_dock_id_pkey", ["dock_id"]).unwrap()],
+            Vec::new(),
+        )
+        .with_exclusions(exclusions),
+    ])
+}
+
+#[test]
+fn canonical_bytes_freeze_an_exclusion_constraint() {
+    let expected = concat!(
+        r#"{"tables":[{"schema":"receiving","name":"dock_appointment","columns":["#,
+        r#"{"name":"dock_id","type":"uuid","nullable":false,"default":null,"generation":null}],"#,
+        r#""constraints":[{"name":"dock_appointment_dock_id_pkey","kind":"primary_key","columns":["dock_id"]}],"#,
+        r#""indexes":[],"#,
+        r#""exclusions":[{"name":"dock_appointment_no_overlap","access_method":"gist","keys":["#,
+        r#"{"element":"column","name":"dock_id","operator":"="},"#,
+        r#"{"element":"expression","expression":"tstzrange(starts_at, ends_at)","operator":"&&"}]},"#,
+        r#"{"name":"dock_appointment_one_carrier","access_method":"gist","keys":["#,
+        r#"{"element":"column","name":"carrier_id","operator":"="}]}]}]}"#,
+    )
+    .as_bytes();
+
+    assert_eq!(exclusion_ir(false).canonical_json_bytes(), expected);
+    // Exclusion constraints normalize like every other unordered collection,
+    // while the keys inside one keep the order the constraint declares.
+    assert_eq!(
+        exclusion_ir(true).canonical_json_bytes(),
+        exclusion_ir(false).canonical_json_bytes()
+    );
+
+    let name_error = Exclusion::new("", ExclusionAccessMethod::Gist, Vec::new()).unwrap_err();
+    assert_eq!(name_error.kind(), IrErrorKind::EmptyName);
+    assert_eq!(
+        name_error.to_string(),
+        "exclusion constraint name must not be empty"
+    );
+}
+
+#[test]
+fn a_table_without_an_exclusion_constraint_keeps_its_canonical_bytes() {
+    let json = String::from_utf8(complete_ir(false).canonical_json_bytes()).unwrap();
+    assert!(!json.contains("exclusions"), "{json}");
 }

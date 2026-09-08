@@ -11,8 +11,13 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, Config, NoTls};
 
-use wamn_schema_introspection::ir::{ColumnDefault, ColumnGeneration, IdentityMode};
-use wamn_schema_introspection::migration_policy::validate_migration_file;
+use wamn_schema_introspection::ir::{
+    ColumnDefault, ColumnGeneration, Exclusion, ExclusionAccessMethod, ExclusionElement,
+    ExclusionKey, IdentityMode,
+};
+use wamn_schema_introspection::migration_policy::{
+    validate_migration_bytes_for_schemas, validate_migration_file,
+};
 use wamn_schema_introspection::postgres::{
     PostgresIntrospectionErrorKind, read_catalog, read_catalog_excluding_relations,
 };
@@ -1001,4 +1006,427 @@ async fn receiving_migration_round_trips_and_refuses_unsupported_server_objects(
     assert!(gone.get::<_, bool>(0), "fixture database was removed");
     assert!(gone.get::<_, bool>(1), "fixture role was removed");
     outcome.expect("live gate scenario completed without panic");
+}
+
+/// The dock-appointment non-overlap rule, written the way the protocol's H-3
+/// top rung describes it: one named `EXCLUDE USING gist` inside `CREATE TABLE`.
+///
+/// `btree_gist` supplies the gist operator class for the `uuid` equality half,
+/// and the range half is an expression key because the frozen column vocabulary
+/// has no range type.
+const EXCLUSION_MIGRATION_SQL: &str = "\
+CREATE TABLE receiving.dock_appointment (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    dock_id uuid NOT NULL,
+    starts_at timestamptz NOT NULL,
+    ends_at timestamptz NOT NULL,
+    CONSTRAINT dock_appointment_id_pkey PRIMARY KEY (id),
+    CONSTRAINT dock_appointment_no_overlap EXCLUDE USING gist (
+        dock_id WITH =,
+        tstzrange(starts_at, ends_at) WITH &&
+    )
+);
+";
+
+/// The frozen canonical spelling of the modelled constraint, proven separately
+/// against the server's own catalog answer below.
+const EXCLUSION_CANONICAL_JSON: &str = concat!(
+    r#""exclusions":[{"name":"dock_appointment_no_overlap","access_method":"gist","keys":["#,
+    r#"{"element":"column","name":"dock_id","operator":"="},"#,
+    r#"{"element":"expression","expression":"tstzrange(starts_at, ends_at)","operator":"&&"}]}]"#,
+);
+
+impl Fixture {
+    fn exclusion() -> Self {
+        let id = std::process::id();
+        Self {
+            database: format!("wamn_intro_excl_{id}"),
+            role: format!("wamn_intro_excl_migrator_{id}"),
+            password: format!("wamn_intro_excl_password_{id}"),
+            migration_path: PathBuf::new(),
+        }
+    }
+}
+
+/// Read the exclusion constraint straight from `pg_catalog`, so the modelled
+/// shape is compared against the SERVER's answer rather than against the
+/// migration text that produced it.
+async fn server_exclusion(client: &Client) -> (String, String, Vec<i16>, Vec<String>, Vec<String>) {
+    let row = client
+        .query_one(
+            "SELECT constraint_row.conname::text, \
+                    method.amname::text, \
+                    constraint_row.conkey, \
+                    ARRAY( \
+                        SELECT operator.oprname::text \
+                          FROM unnest(constraint_row.conexclop) WITH ORDINALITY \
+                               AS key_operator(operator_oid, position) \
+                          JOIN pg_catalog.pg_operator AS operator \
+                            ON operator.oid = key_operator.operator_oid \
+                         ORDER BY key_operator.position), \
+                    ARRAY( \
+                        SELECT pg_catalog.pg_get_indexdef( \
+                                   constraint_row.conindid, position::int, true) \
+                          FROM generate_series(1, supporting_index.indnkeyatts) AS position \
+                         ORDER BY position) \
+               FROM pg_catalog.pg_constraint AS constraint_row \
+               JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_row.conrelid \
+               JOIN pg_catalog.pg_namespace AS namespace \
+                 ON namespace.oid = relation.relnamespace \
+               JOIN pg_catalog.pg_index AS supporting_index \
+                 ON supporting_index.indexrelid = constraint_row.conindid \
+               JOIN pg_catalog.pg_class AS index_relation \
+                 ON index_relation.oid = constraint_row.conindid \
+               JOIN pg_catalog.pg_am AS method ON method.oid = index_relation.relam \
+              WHERE namespace.nspname = $1 AND relation.relname = 'dock_appointment' \
+                AND constraint_row.contype = 'x'",
+            &[&APPLICATION_SCHEMA],
+        )
+        .await
+        .expect("read the exclusion constraint from the server catalog");
+    (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4))
+}
+
+async fn assert_exclusion_is_modelled(client: &Client) {
+    let (name, access_method, column_numbers, operators, key_definitions) =
+        server_exclusion(client).await;
+    assert_eq!(name, "dock_appointment_no_overlap");
+    assert_eq!(
+        access_method, "gist",
+        "the server backs it with a gist index"
+    );
+    assert_eq!(
+        column_numbers,
+        vec![2_i16, 0_i16],
+        "the server reports one column key and one expression key"
+    );
+    assert_eq!(operators, ["=", "&&"], "server operators, in key order");
+    assert_eq!(
+        key_definitions,
+        ["dock_id", "tstzrange(starts_at, ends_at)"],
+        "server key definitions, in key order"
+    );
+
+    let catalog = read_catalog(client, &[APPLICATION_SCHEMA])
+        .await
+        .expect("Introspect models the exclusion constraint instead of refusing it");
+    let repeated = read_catalog(client, &[APPLICATION_SCHEMA])
+        .await
+        .expect("repeat the exclusion introspection");
+    assert_eq!(
+        catalog.canonical_json_bytes(),
+        repeated.canonical_json_bytes()
+    );
+
+    let table = catalog
+        .tables()
+        .iter()
+        .find(|table| table.name() == "dock_appointment")
+        .expect("the exclusion-carrying table is in the IR");
+    let exclusion = match table.exclusions() {
+        [only] => only,
+        other => panic!("one modelled exclusion constraint, found {}", other.len()),
+    };
+    assert_eq!(exclusion.name(), name);
+    assert_eq!(exclusion.access_method(), ExclusionAccessMethod::Gist);
+    assert_eq!(
+        exclusion.keys(),
+        [
+            ExclusionKey::new(ExclusionElement::column("dock_id"), "="),
+            ExclusionKey::new(
+                ExclusionElement::expression("tstzrange(starts_at, ends_at)"),
+                "&&"
+            ),
+        ]
+    );
+    assert!(
+        exclusion
+            .keys()
+            .iter()
+            .map(ExclusionKey::operator)
+            .eq(operators.iter().map(String::as_str)),
+        "modelled operators are the server's operators"
+    );
+    assert_eq!(
+        table.constraints().len(),
+        1,
+        "the exclusion constraint is modelled beside the primary key, not inside it"
+    );
+    // THE ONE NAMING EXEMPTION. This constraint carries an expression key, so
+    // the convention cannot be reconstructed from column names and only a name
+    // is required. The name it carries is not the convention spelling, which is
+    // what makes the exemption load-bearing rather than incidental.
+    assert_ne!(
+        exclusion.name(),
+        "dock_appointment_dock_id_excl",
+        "an expression key is exempt from the reconstructed convention"
+    );
+
+    let bytes = catalog.canonical_json_bytes();
+    let json = std::str::from_utf8(&bytes).expect("the IR is UTF-8");
+    assert!(
+        json.contains(EXCLUSION_CANONICAL_JSON),
+        "canonical IR carries the frozen exclusion spelling: {json}"
+    );
+
+    let supporting_index = client
+        .query_one(
+            "SELECT EXISTS ( \
+                 SELECT 1 FROM pg_catalog.pg_index AS catalog_index \
+                   JOIN pg_catalog.pg_class AS index_relation \
+                     ON index_relation.oid = catalog_index.indexrelid \
+                  WHERE catalog_index.indrelid = 'receiving.dock_appointment'::regclass \
+                    AND catalog_index.indisexclusion \
+                    AND index_relation.relname = 'dock_appointment_no_overlap')",
+            &[],
+        )
+        .await
+        .expect("read the supporting exclusion index from the server")
+        .get::<_, bool>(0);
+    assert!(supporting_index, "the server holds a supporting gist index");
+    assert!(
+        table.indexes().is_empty(),
+        "a constraint-backed exclusion index is not an ordinary index"
+    );
+}
+
+async fn assert_exclusion_is_enforced(client: &Client) {
+    client
+        .batch_execute(
+            "INSERT INTO receiving.dock_appointment (dock_id, starts_at, ends_at) VALUES \
+             ('11111111-1111-1111-1111-111111111111', \
+              '2026-01-01T09:00:00Z', '2026-01-01T10:00:00Z')",
+        )
+        .await
+        .expect("the first booking is accepted");
+    let conflict = client
+        .batch_execute(
+            "INSERT INTO receiving.dock_appointment (dock_id, starts_at, ends_at) VALUES \
+             ('11111111-1111-1111-1111-111111111111', \
+              '2026-01-01T09:30:00Z', '2026-01-01T10:30:00Z')",
+        )
+        .await
+        .expect_err("an overlapping booking on the same dock is refused");
+    let database_error = conflict
+        .as_db_error()
+        .expect("the refusal comes from the server");
+    assert_eq!(
+        database_error.code().code(),
+        "23P01",
+        "the server refuses with exclusion_violation"
+    );
+    assert_eq!(
+        database_error.constraint(),
+        Some("dock_appointment_no_overlap"),
+        "the server names the modelled constraint"
+    );
+    client
+        .batch_execute("DELETE FROM receiving.dock_appointment")
+        .await
+        .expect("remove the booking fixture rows");
+}
+
+/// S-1 naming, applied to what is reconstructible.
+///
+/// Every key here is a column, so the convention binds. The proof that the
+/// convention IS PostgreSQL's own default spelling comes from the server: an
+/// identical unnamed constraint is named by PostgreSQL, and that name is the
+/// one the reader demands.
+async fn assert_the_naming_law_binds_column_keys(admin: &Client, reader: &Client) {
+    admin
+        .batch_execute(
+            "CREATE TABLE receiving.dock_reservation ( \
+               dock_id uuid NOT NULL, \
+               carrier_id uuid NOT NULL, \
+               CONSTRAINT dock_reservation_dock_id_carrier_id_excl \
+                 EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =)); \
+             CREATE TABLE receiving.dock_reservation_default ( \
+               dock_id uuid NOT NULL, \
+               carrier_id uuid NOT NULL, \
+               EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =))",
+        )
+        .await
+        .expect("create an authored and an unnamed all-column exclusion");
+
+    let server_default = admin
+        .query_one(
+            "SELECT constraint_row.conname::text \
+               FROM pg_catalog.pg_constraint AS constraint_row \
+               JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_row.conrelid \
+              WHERE relation.relname = 'dock_reservation_default' \
+                AND constraint_row.contype = 'x'",
+            &[],
+        )
+        .await
+        .expect("read the name PostgreSQL chose for the unnamed constraint")
+        .get::<_, String>(0);
+    assert_eq!(
+        server_default, "dock_reservation_default_dock_id_carrier_id_excl",
+        "the server spells an all-column exclusion {{table}}_{{columns}}_excl"
+    );
+
+    let catalog = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("both conventionally named all-column exclusions are modelled");
+    for (table_name, constraint_name) in [
+        (
+            "dock_reservation",
+            "dock_reservation_dock_id_carrier_id_excl",
+        ),
+        ("dock_reservation_default", server_default.as_str()),
+    ] {
+        let table = catalog
+            .tables()
+            .iter()
+            .find(|table| table.name() == table_name)
+            .expect("the all-column exclusion table is in the IR");
+        assert_eq!(
+            table
+                .exclusions()
+                .iter()
+                .map(Exclusion::name)
+                .collect::<Vec<_>>(),
+            [constraint_name]
+        );
+    }
+    admin
+        .batch_execute(
+            "DROP TABLE receiving.dock_reservation_default; \
+             DROP TABLE receiving.dock_reservation",
+        )
+        .await
+        .expect("remove the all-column exclusion tables");
+
+    // The other direction: the same shape under any other name is refused, and
+    // the refusal names the convention the author must use.
+    let error = refusal_case(
+        admin,
+        reader,
+        "CREATE TABLE receiving.dock_reservation ( \
+           dock_id uuid NOT NULL, \
+           carrier_id uuid NOT NULL, \
+           CONSTRAINT dock_reservation_no_double_booking \
+             EXCLUDE USING gist (dock_id WITH =, carrier_id WITH =))",
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint AS c \
+           WHERE c.conname='dock_reservation_no_double_booking' AND c.contype='x')",
+        "DROP TABLE receiving.dock_reservation",
+        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+    )
+    .await;
+    assert_eq!(
+        error.detail(),
+        "name must use the authored convention `dock_reservation_dock_id_carrier_id_excl`",
+        "the refusal names the reconstructed convention"
+    );
+}
+
+async fn assert_unsupported_exclusion_shapes_refuse(admin: &Client, reader: &Client) {
+    refusal_case(
+        admin,
+        reader,
+        "CREATE TABLE receiving.refused_btree_exclusion ( \
+           dock_id uuid NOT NULL, \
+           CONSTRAINT refused_btree_exclusion_excl EXCLUDE USING btree (dock_id WITH =))",
+        "SELECT method.amname='btree' FROM pg_catalog.pg_constraint AS c \
+           JOIN pg_catalog.pg_class AS i ON i.oid=c.conindid \
+           JOIN pg_catalog.pg_am AS method ON method.oid=i.relam \
+          WHERE c.conname='refused_btree_exclusion_excl' AND c.contype='x'",
+        "DROP TABLE receiving.refused_btree_exclusion",
+        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+    )
+    .await;
+    refusal_case(
+        admin,
+        reader,
+        "CREATE TABLE receiving.refused_partial_exclusion ( \
+           dock_id uuid NOT NULL, \
+           starts_at timestamptz NOT NULL, \
+           ends_at timestamptz NOT NULL, \
+           CONSTRAINT refused_partial_exclusion_excl EXCLUDE USING gist ( \
+             dock_id WITH =, tstzrange(starts_at, ends_at) WITH &&) \
+             WHERE (ends_at > starts_at))",
+        "SELECT i.indpred IS NOT NULL FROM pg_catalog.pg_constraint AS c \
+           JOIN pg_catalog.pg_index AS i ON i.indexrelid=c.conindid \
+          WHERE c.conname='refused_partial_exclusion_excl' AND c.contype='x'",
+        "DROP TABLE receiving.refused_partial_exclusion",
+        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+    )
+    .await;
+    refusal_case(
+        admin,
+        reader,
+        "CREATE TABLE receiving.refused_deferred_exclusion ( \
+           dock_id uuid NOT NULL, \
+           CONSTRAINT refused_deferred_exclusion_excl EXCLUDE USING gist (dock_id WITH =) \
+             DEFERRABLE INITIALLY DEFERRED)",
+        "SELECT c.condeferred FROM pg_catalog.pg_constraint AS c \
+          WHERE c.conname='refused_deferred_exclusion_excl' AND c.contype='x'",
+        "DROP TABLE receiving.refused_deferred_exclusion",
+        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+    )
+    .await;
+}
+
+async fn run_exclusion_gate(admin_config: Config, fixture: Fixture) {
+    let target_admin = connect(target_config(&admin_config, &fixture, false)).await;
+    configure_admin(&target_admin).await;
+    assert_postgres_18(&target_admin).await;
+    // The platform installs btree_gist per project-environment database
+    // (`wamn_control_provision::sql::PLATFORM_EXTENSIONS`, wamn-yk9l); the
+    // fixture stands in for that provisioning step, never for package DDL.
+    target_admin
+        .batch_execute("CREATE EXTENSION btree_gist")
+        .await
+        .expect("provision the platform-owned gist operator classes");
+
+    validate_migration_bytes_for_schemas(
+        Path::new("0002_dock_appointment.sql"),
+        EXCLUSION_MIGRATION_SQL.as_bytes(),
+        &[APPLICATION_SCHEMA],
+    )
+    .expect("Migrate admits a named EXCLUDE USING gist inside CREATE TABLE");
+
+    let migration = connect(target_config(&admin_config, &fixture, true)).await;
+    execute_migration_transaction(&migration, EXCLUSION_MIGRATION_SQL).await;
+
+    assert_exclusion_is_modelled(&migration).await;
+    assert_exclusion_is_enforced(&migration).await;
+    assert_the_naming_law_binds_column_keys(&target_admin, &migration).await;
+    assert_unsupported_exclusion_shapes_refuse(&target_admin, &migration).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires WAMN_SCHEMA_INTROSPECTION_PG_URL and disposable PostgreSQL 18"]
+async fn an_exclusion_constraint_is_modelled_rather_than_refused() {
+    let url = std::env::var("WAMN_SCHEMA_INTROSPECTION_PG_URL")
+        .expect("WAMN_SCHEMA_INTROSPECTION_PG_URL must name a disposable PostgreSQL 18 server");
+    let admin_config = url.parse::<Config>().expect("parse PostgreSQL admin URL");
+    let admin = connect(admin_config.clone()).await;
+    configure_admin(&admin).await;
+    assert_postgres_18(&admin).await;
+    let fixture = Fixture::exclusion();
+    create_fixture(&admin, &fixture, &admin_config).await;
+
+    let database = fixture.database.clone();
+    let role = fixture.role.clone();
+    let outcome = tokio::spawn(run_exclusion_gate(admin_config, fixture)).await;
+    let teardown_fixture = Fixture {
+        database,
+        role,
+        password: String::new(),
+        migration_path: PathBuf::new(),
+    };
+    remove_fixture(&admin, &teardown_fixture).await;
+
+    let gone = admin
+        .query_one(
+            "SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1), \
+                    NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$2)",
+            &[&teardown_fixture.database, &teardown_fixture.role],
+        )
+        .await
+        .expect("record clean fixture teardown");
+    assert!(gone.get::<_, bool>(0), "fixture database was removed");
+    assert!(gone.get::<_, bool>(1), "fixture role was removed");
+    outcome.expect("exclusion gate scenario completed without panic");
 }
