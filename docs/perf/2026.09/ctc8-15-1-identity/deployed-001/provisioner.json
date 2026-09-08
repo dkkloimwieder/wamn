@@ -1,0 +1,76 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "identity-provisioner",
+    "namespace": "wamn-identity-jwks"
+  },
+  "spec": {
+    "restartPolicy": "Never",
+    "automountServiceAccountToken": false,
+    "initContainers": [
+      {
+        "name": "wait-postgres",
+        "image": "postgres:18",
+        "command": [
+          "sh",
+          "-ec",
+          "attempt=0; while [ \"$attempt\" -lt 30 ]; do\n  if result=$(timeout 2s psql -X -w -At -v ON_ERROR_STOP=1 -c \"SELECT current_database(), current_setting('server_version_num')\" 2>/dev/null); then\n    case \"$result\" in wamn_system\\|18[0-9][0-9][0-9][0-9]) printf \"IDENTITY_JWKS_POSTGRES ready=pass transport=tcp database_version=%s\\n\" \"$result\"; exit 0;; esac\n  fi\n  attempt=$((attempt+1)); sleep 1\ndone\nprintf \"IDENTITY_JWKS_POSTGRES ready=fail\\n\" >&2; exit 1"
+        ],
+        "env": [
+          {
+            "name": "PGHOST",
+            "value": "identity-postgres.wamn-identity-jwks.svc.cluster.local"
+          },
+          {
+            "name": "PGPORT",
+            "value": "5432"
+          },
+          {
+            "name": "PGUSER",
+            "value": "postgres"
+          },
+          {
+            "name": "PGDATABASE",
+            "value": "wamn_system"
+          },
+          {
+            "name": "PGCONNECT_TIMEOUT",
+            "value": "2"
+          },
+          {
+            "name": "PGPASSWORD",
+            "valueFrom": {
+              "secretKeyRef": {
+                "name": "identity-postgres-admin",
+                "key": "password"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "containers": [
+      {
+        "name": "provisioner",
+        "image": "wamn-gates:jwks-9ab1c62278e9-3144219",
+        "imagePullPolicy": "Never",
+        "command": [
+          "sleep",
+          "1800"
+        ],
+        "env": [
+          {
+            "name": "WAMN_SYSTEM_ADMIN_URL",
+            "valueFrom": {
+              "secretKeyRef": {
+                "name": "identity-postgres-admin",
+                "key": "url"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

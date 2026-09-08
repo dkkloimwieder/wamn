@@ -1,0 +1,109 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 18.95kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/debian:trixie-slim
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/rust:1.98-trixie
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 245B done
+#4 DONE 0.0s
+
+#5 [identity 1/3] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [chef 1/4] FROM docker.io/library/rust:1.98-trixie
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 67.10kB 0.0s done
+#7 DONE 0.1s
+
+#8 [root-planner 1/7] COPY Cargo.toml Cargo.lock ./
+#8 CACHED
+
+#9 [root-planner 2/7] COPY crates ./crates
+#9 CACHED
+
+#10 [root-planner 3/7] COPY components ./components
+#10 CACHED
+
+#11 [chef 2/4] RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
+#11 CACHED
+
+#12 [chef 3/4] WORKDIR /build
+#12 CACHED
+
+#13 [root-planner 4/7] COPY services ./services
+#13 CACHED
+
+#14 [chef 4/4] RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-chef-cargo-git,target=/usr/local/cargo/git,sharing=locked     cargo install cargo-chef --version 0.1.77 --locked
+#14 CACHED
+
+#15 [root-planner 5/7] COPY test-support ./test-support
+#15 CACHED
+
+#16 [root-planner 6/7] COPY tests ./tests
+#16 DONE 0.1s
+
+#17 [root-planner 7/7] RUN cargo chef prepare --recipe-path root-recipe.json
+#17 DONE 0.3s
+
+#18 [root-source 1/2] COPY .cargo/config.toml ./.cargo/config.toml
+#18 DONE 0.1s
+
+#19 [root-source 2/2] COPY deploy ./deploy
+#19 DONE 0.1s
+
+#20 [root-recipe 2/3] COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
+#20 CACHED
+
+#21 [root-recipe 1/3] COPY .cargo/config.toml ./.cargo/config.toml
+#21 CACHED
+
+#22 [root-recipe 3/3] COPY components ./components
+#22 CACHED
+
+#23 [cook-identity 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-identity
+#23 CACHED
+
+#24 [build-identity 1/2] COPY --from=root-source /build /build
+#24 DONE 0.2s
+
+#25 [build-identity 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-identity  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
+#25 0.557    Compiling wamn-catalog v0.1.0 (/build/crates/catalog/model)
+#25 0.557    Compiling wamn-schema-introspection v0.1.0 (/build/crates/schema/introspection)
+#25 0.562    Compiling wamn-run-state v0.1.0 (/build/crates/execution/run-state)
+#25 0.562    Compiling wamn-control-registry v0.1.0 (/build/crates/control/registry)
+#25 1.877 warning: function `canonical_serialized` is never used
+#25 1.877    --> crates/catalog/model/src/lib.rs:791:4
+#25 1.877     |
+#25 1.877 791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+#25 1.877     |    ^^^^^^^^^^^^^^^^^^^^
+#25 1.877     |
+#25 1.877     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#25 1.877 
+#25 2.906    Compiling wamn-schema-generator v0.1.0 (/build/crates/schema/generator)
+#25 3.270    Compiling wamn-platform-identity v0.1.0 (/build/crates/identity/platform)
+#25 6.275 warning: `wamn-catalog` (lib) generated 1 warning
+#25 7.186    Compiling wamn-control-provision v0.1.0 (/build/crates/control/provision)
+#25 9.177    Compiling wamn-identity v0.1.0 (/build/services/identity)
+#25 33.64     Finished `release` profile [optimized] target(s) in 33.44s
+#25 DONE 33.7s
+
+#26 [identity 2/3] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+#26 CACHED
+
+#27 [identity 3/3] COPY --from=build-identity /native-output/wamn-identity /usr/local/bin/wamn-identity
+#27 CACHED
+
+#28 exporting to image
+#28 exporting layers done
+#28 writing image sha256:bf25c9c4af91a54645bafc863b946f058bca39953701d6196da17c87842cc438 done
+#28 naming to docker.io/library/wamn-identity:jwks-8cbf57c885c9-3195773 0.0s done
+#28 DONE 0.0s

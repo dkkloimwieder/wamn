@@ -1,0 +1,215 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:25Z",
+                "generateName": "identity-jwks-published-a-",
+                "generation": 1,
+                "labels": {
+                    "app": "identity-jwks",
+                    "batch.kubernetes.io/controller-uid": "81755c01-2214-494b-9015-45bfad054a4a",
+                    "batch.kubernetes.io/job-name": "identity-jwks-published-a",
+                    "controller-uid": "81755c01-2214-494b-9015-45bfad054a4a",
+                    "job-name": "identity-jwks-published-a"
+                },
+                "name": "identity-jwks-published-a-jrfzz",
+                "namespace": "wamn-identity-jwks",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "identity-jwks-published-a",
+                        "uid": "81755c01-2214-494b-9015-45bfad054a4a"
+                    }
+                ],
+                "resourceVersion": "675",
+                "uid": "e59c96ef-4b11-4036-b489-d0be044bb68f"
+            },
+            "spec": {
+                "automountServiceAccountToken": false,
+                "containers": [
+                    {
+                        "args": [
+                            "identity-jwks"
+                        ],
+                        "env": [
+                            {
+                                "name": "WAMN_IDENTITY_ISSUER",
+                                "value": "https://wamn-identity.wamn-identity-jwks.svc.cluster.local"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_JWKS_URL",
+                                "value": "https://wamn-identity.wamn-identity-jwks.svc.cluster.local/.well-known/jwks.json"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_CA_FILE",
+                                "value": "/etc/wamn-identity-ca/ca.crt"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_WRONG_CA_FILE",
+                                "value": "/etc/wamn-identity-ca/wrong-ca.crt"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_EXPECTED_KIDS",
+                                "value": "[\"5797cf87-8777-4814-9ebf-155fcfc4872c\"]"
+                            }
+                        ],
+                        "image": "wamn-gates:jwks-9ab1c62278e9-3144219",
+                        "imagePullPolicy": "Never",
+                        "name": "identity-jwks",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/etc/wamn-identity-ca",
+                                "name": "public-ca",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "configMap": {
+                            "defaultMode": 420,
+                            "name": "identity-jwks-public"
+                        },
+                        "name": "public-ca"
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-08T15:25:27Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-08T15:25:25Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-08T15:25:26Z",
+                        "observedGeneration": 1,
+                        "reason": "PodFailed",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-08T15:25:26Z",
+                        "observedGeneration": 1,
+                        "reason": "PodFailed",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-08T15:25:25Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://0a63fe43d5af64c1634b70ce53263b05d016a33a302b59458d13a1e84c3c1c66",
+                        "image": "docker.io/library/wamn-gates:jwks-9ab1c62278e9-3144219",
+                        "imageID": "sha256:f79dbf19e8f235336c3da78a021009d7becedff3c409a7e42b5aae4435bd70ae",
+                        "lastState": {},
+                        "name": "identity-jwks",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://0a63fe43d5af64c1634b70ce53263b05d016a33a302b59458d13a1e84c3c1c66",
+                                "exitCode": 1,
+                                "finishedAt": "2026-09-08T15:25:25Z",
+                                "reason": "Error",
+                                "startedAt": "2026-09-08T15:25:25Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/etc/wamn-identity-ca",
+                                "name": "public-ca",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.5",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.5"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Failed",
+                "podIP": "10.244.0.8",
+                "podIPs": [
+                    {
+                        "ip": "10.244.0.8"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-08T15:25:25Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

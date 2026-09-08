@@ -1,0 +1,24 @@
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/identity/platform)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.94s
+     Running tests/session_keys_live.rs (target/debug/deps/session_keys_live-c86c0ec6e3fe9664)
+
+running 2 tests
+test session_key_lifecycle_on_postgres ... 
+thread 'session_key_lifecycle_on_postgres' (3108396) panicked at crates/identity/platform/tests/session_keys_live.rs:515:6:
+production key operation did not wait on the expected backend lock: Elapsed(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test signer_backend_loss_before_commit_does_not_issue_token ... 
+thread 'signer_backend_loss_before_commit_does_not_issue_token' (3108519) panicked at crates/identity/platform/tests/session_keys_live.rs:262:34:
+rotation passed the uncommitted signer
+FAILED
+
+failures:
+
+failures:
+    session_key_lifecycle_on_postgres
+    signer_backend_loss_before_commit_does_not_issue_token
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.88s
+
+error: test failed, to rerun pass `-p wamn-platform-identity --test session_keys_live`

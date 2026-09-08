@@ -1,0 +1,1 @@
+timeout --kill-after=5s 300s cargo test --locked --offline -p wamn-runtime --features test-util --test session_keys delayed_in_window_age_is_anchored_at_start_and_hits_do_not_extend_it -- --exact --nocapture --test-threads=1 

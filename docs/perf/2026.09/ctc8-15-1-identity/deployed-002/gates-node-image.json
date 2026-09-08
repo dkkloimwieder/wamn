@@ -1,0 +1,135 @@
+{
+  "info": {
+    "chainID": "sha256:2d28266b0de528abaa6dca0be3527cbfb2f07e3afcd498748c0de4fa70a42731",
+    "imageSpec": {
+      "architecture": "amd64",
+      "config": {
+        "Entrypoint": [
+          "/usr/local/bin/wamn-gates"
+        ],
+        "Env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "HOME=/tmp"
+        ],
+        "Labels": {
+          "wamn.dev/source-head": "8cbf57c885c9ce636df4af9b0f7496b5f144ed55"
+        }
+      },
+      "created": "2026-09-08T11:43:03.553644015-04:00",
+      "history": [
+        {
+          "comment": "debuerreotype 0.17",
+          "created": "2026-08-24T00:00:00Z",
+          "created_by": "# debian.sh --arch 'amd64' out/ 'trixie' '@1787529600'"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-06T09:57:34.90144603-04:00",
+          "created_by": "RUN /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends ca-certificates \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:24:02.216860877-04:00",
+          "created_by": "COPY /native-output/wamn-host /usr/local/bin/wamn-host # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:35:35.863378526-04:00",
+          "created_by": "ENV HOME=/tmp",
+          "empty_layer": true
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:35:35.863378526-04:00",
+          "created_by": "ENTRYPOINT [\"/usr/local/bin/wamn-host\"]",
+          "empty_layer": true
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:35:35.863378526-04:00",
+          "created_by": "COPY /native-output/wamn-gates /usr/local/bin/wamn-gates # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:02.764882828-04:00",
+          "created_by": "COPY /native-output/wamn-ctl /usr/local/bin/wamn-ctl # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:02.873275446-04:00",
+          "created_by": "COPY /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:02.979244753-04:00",
+          "created_by": "COPY /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:03.085208902-04:00",
+          "created_by": "COPY /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:03.179176607-04:00",
+          "created_by": "COPY /component-output/busyloop.wasm /bench/busyloop.wasm # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:03.274194442-04:00",
+          "created_by": "COPY /component-output/sockprobe.wasm /bench/sockprobe.wasm # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:03.365171984-04:00",
+          "created_by": "COPY /component-output/http_route.wasm /bench/http-route.wasm # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:03.460177064-04:00",
+          "created_by": "COPY /component-output/materializer.wasm /bench/materializer.wasm # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:03.553644015-04:00",
+          "created_by": "COPY /component-output/connection_http_standard.wasm /bench/connection-http-standard.wasm # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-08T11:43:03.553644015-04:00",
+          "created_by": "ENTRYPOINT [\"/usr/local/bin/wamn-gates\"]",
+          "empty_layer": true
+        }
+      ],
+      "os": "linux",
+      "rootfs": {
+        "diff_ids": [
+          "sha256:411a86676185cb54d695a805b238194a64e9b77e0c723f3802fbb87d333ea0b3",
+          "sha256:8e4ed51d39fb1ccacd58d6b312ebcb8e6f3f6314a52fdb98d278bc3c4ede6792",
+          "sha256:8803a3b000fe5cb10c3d1b8724cb4ae0481aceb7780030ce36e01bd1d9f69e1c",
+          "sha256:15a7544ed18c2ebce78475c23a8ec0556d4aa41a33e54f62187431f8a504c818",
+          "sha256:a75f6a6aa41c116cd362f553ce03bec1872d4c6e23306a628b71c9a484f9021b",
+          "sha256:7f24960a85b85ec08feefc60bec35770c094217831db4307c9d1d261353c4f47",
+          "sha256:114d1c98e95009fb247376d980f4e83b35cafcff1d4700038ad307b54d669178",
+          "sha256:ffc291762ea89bff286d568d91b015a4d58d69c5d64cb97ed75a884c6a686c71",
+          "sha256:7d21e04ccb93402f615b3889a476e3027dd2d56d69d57f7e76399eede8ea0f63",
+          "sha256:9a44b29583b742385fbb492560cd371d2a0c9b60d2a78623ae50f36eb0361ac9",
+          "sha256:826572554e3ee4be5767ba9308e3ddedda63d29948b96813ee521a13913a8719",
+          "sha256:84babcd21724217eef7c25fb433bab73eed9c2bc30c43eee92209c08168f10b7",
+          "sha256:e4b84a70b01ed9868c9be5bb692570371341759da1554fbd0c0691edecf840df"
+        ],
+        "type": "layers"
+      }
+    }
+  },
+  "status": {
+    "id": "sha256:e91b5cfd7cdf04964f054aa4bb48ff2816848d4f08f4056f7088fbf14cbebcb8",
+    "pinned": false,
+    "repoDigests": [],
+    "repoTags": [
+      "docker.io/library/wamn-gates:jwks-8cbf57c885c9-3195773"
+    ],
+    "size": "321085101",
+    "username": ""
+  }
+}

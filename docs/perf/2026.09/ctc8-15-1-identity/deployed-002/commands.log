@@ -1,0 +1,138 @@
+2026-09-08T15:31:28Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/Dockerfile --target identity --tag wamn-identity:jwks-8cbf57c885c9-3195773 --label wamn.dev/source-head=8cbf57c885c9ce636df4af9b0f7496b5f144ed55 /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908 
+2026-09-08T15:32:03Z exit=0
+2026-09-08T15:32:03Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/Dockerfile --target component-builder --output=type=cacheonly /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908 
+2026-09-08T15:32:03Z exit=0
+2026-09-08T15:32:03Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/Dockerfile --target gates --tag wamn-gates:jwks-8cbf57c885c9-3195773 --label wamn.dev/source-head=8cbf57c885c9ce636df4af9b0f7496b5f144ed55 /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908 
+2026-09-08T15:43:04Z exit=0
+2026-09-08T15:43:04Z docker image inspect wamn-identity:jwks-8cbf57c885c9-3195773 wamn-gates:jwks-8cbf57c885c9-3195773 
+2026-09-08T15:43:04Z exit=0
+2026-09-08T15:43:04Z kind create cluster --name wamn-identity-jwks-8cbf57c885c9-3195773 --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --wait 180s 
+2026-09-08T15:43:32Z exit=0
+2026-09-08T15:43:32Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-08T15:43:32Z exit=0
+2026-09-08T15:43:32Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 get nodes -o json 
+2026-09-08T15:43:32Z exit=0
+2026-09-08T15:43:32Z kind load docker-image wamn-identity:jwks-8cbf57c885c9-3195773 wamn-gates:jwks-8cbf57c885c9-3195773 --name wamn-identity-jwks-8cbf57c885c9-3195773 
+2026-09-08T15:43:40Z exit=0
+2026-09-08T15:43:40Z docker exec wamn-identity-jwks-8cbf57c885c9-3195773-control-plane crictl inspecti -o json wamn-identity:jwks-8cbf57c885c9-3195773 
+2026-09-08T15:43:40Z exit=0
+2026-09-08T15:43:40Z docker exec wamn-identity-jwks-8cbf57c885c9-3195773-control-plane crictl inspecti -o json wamn-gates:jwks-8cbf57c885c9-3195773 
+2026-09-08T15:43:40Z exit=0
+2026-09-08T15:43:40Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 create namespace wamn-identity-jwks 
+2026-09-08T15:43:40Z exit=0
+2026-09-08T15:43:40Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks create secret generic identity-postgres-admin --from-file=password=/tmp/wamn-identity-jwks.TISwDgAf/postgres-password --from-file=url=/tmp/wamn-identity-jwks.TISwDgAf/system-admin-url 
+2026-09-08T15:43:40Z exit=0
+2026-09-08T15:43:40Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 apply -f /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/postgres.json 
+2026-09-08T15:43:41Z exit=0
+2026-09-08T15:43:41Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks rollout status deployment/identity-postgres --timeout=180s 
+2026-09-08T15:43:58Z exit=0
+2026-09-08T15:43:58Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 apply -f /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/provisioner.json 
+2026-09-08T15:43:58Z exit=0
+2026-09-08T15:43:58Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks wait --for=condition=Ready pod/identity-provisioner --timeout=180s 
+2026-09-08T15:43:59Z exit=0
+2026-09-08T15:43:59Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs identity-provisioner -c wait-postgres 
+2026-09-08T15:43:59Z exit=0
+2026-09-08T15:43:59Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec deployment/identity-postgres -- psql -U postgres -d wamn_system -At -c SELECT\ current_database\(\)\,\ current_setting\(\'server_version_num\'\) 
+2026-09-08T15:43:59Z exit=0
+2026-09-08T15:43:59Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec -i deployment/identity-postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 
+2026-09-08T15:44:00Z exit=0
+2026-09-08T15:44:00Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec identity-provisioner -- /usr/local/bin/wamn-ctl provision-identity-issuer --issuer https://wamn-identity.wamn-identity-jwks.svc.cluster.local --prepare-generation a --namespace wamn-identity-jwks --secret-name wamn-identity-db --emit-secret /tmp/identity-db.json 
+2026-09-08T15:44:00Z exit=0
+2026-09-08T15:44:00Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec identity-provisioner -- cat /tmp/identity-db.json 
+2026-09-08T15:44:00Z exit=0
+2026-09-08T15:44:00Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 apply -f /tmp/wamn-identity-jwks.TISwDgAf/identity-db.json 
+2026-09-08T15:44:00Z exit=0
+2026-09-08T15:44:00Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks delete pod identity-provisioner --wait=true --timeout=60s 
+2026-09-08T15:44:31Z exit=0
+2026-09-08T15:44:31Z openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=IDENTITY-JWKS\ fixture\ ca -addext basicConstraints=critical\,CA:TRUE -addext keyUsage=critical\,keyCertSign\,cRLSign -keyout /tmp/wamn-identity-jwks.TISwDgAf/ca.key -out /tmp/wamn-identity-jwks.TISwDgAf/ca.crt 
+2026-09-08T15:44:31Z exit=0
+2026-09-08T15:44:31Z openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=IDENTITY-JWKS\ fixture\ wrong-ca -addext basicConstraints=critical\,CA:TRUE -addext keyUsage=critical\,keyCertSign\,cRLSign -keyout /tmp/wamn-identity-jwks.TISwDgAf/wrong-ca.key -out /tmp/wamn-identity-jwks.TISwDgAf/wrong-ca.crt 
+2026-09-08T15:44:31Z exit=0
+2026-09-08T15:44:31Z openssl req -new -newkey rsa:2048 -nodes -subj /CN=wamn-identity.wamn-identity-jwks.svc.cluster.local -keyout /tmp/wamn-identity-jwks.TISwDgAf/tls.key -out /tmp/wamn-identity-jwks.TISwDgAf/tls.csr 
+2026-09-08T15:44:31Z exit=0
+2026-09-08T15:44:31Z openssl x509 -req -days 1 -in /tmp/wamn-identity-jwks.TISwDgAf/tls.csr -CA /tmp/wamn-identity-jwks.TISwDgAf/ca.crt -CAkey /tmp/wamn-identity-jwks.TISwDgAf/ca.key -CAcreateserial -extfile /tmp/wamn-identity-jwks.TISwDgAf/tls.ext -out /tmp/wamn-identity-jwks.TISwDgAf/tls.crt 
+2026-09-08T15:44:31Z exit=0
+2026-09-08T15:44:31Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks create secret tls identity-jwks-tls --cert=/tmp/wamn-identity-jwks.TISwDgAf/tls.crt --key=/tmp/wamn-identity-jwks.TISwDgAf/tls.key 
+2026-09-08T15:44:31Z exit=0
+2026-09-08T15:44:31Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks create configmap identity-jwks-public --from-file=ca.crt=/tmp/wamn-identity-jwks.TISwDgAf/ca.crt --from-file=wrong-ca.crt=/tmp/wamn-identity-jwks.TISwDgAf/wrong-ca.crt 
+2026-09-08T15:44:31Z exit=0
+2026-09-08T15:44:31Z helm template wamn-identity /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/deploy/platform/identity --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --kube-context kind-wamn-identity-jwks-8cbf57c885c9-3195773 --namespace wamn-identity-jwks --set-string issuer=https://wamn-identity.wamn-identity-jwks.svc.cluster.local --set-string databaseSecret=wamn-identity-db --set-string tlsSecret=identity-jwks-tls --set-string image.repository=wamn-identity --set-string image.tag=jwks-8cbf57c885c9-3195773 --set-string image.pullPolicy=Never 
+2026-09-08T15:44:31Z exit=0
+2026-09-08T15:44:31Z helm upgrade --install wamn-identity /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/deploy/platform/identity --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --kube-context kind-wamn-identity-jwks-8cbf57c885c9-3195773 --namespace wamn-identity-jwks --set-string issuer=https://wamn-identity.wamn-identity-jwks.svc.cluster.local --set-string databaseSecret=wamn-identity-db --set-string tlsSecret=identity-jwks-tls --set-string image.repository=wamn-identity --set-string image.tag=jwks-8cbf57c885c9-3195773 --set-string image.pullPolicy=Never --wait --timeout 180s 
+2026-09-08T15:44:32Z exit=0
+2026-09-08T15:44:32Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get deployment wamn-identity -o json 
+2026-09-08T15:44:32Z exit=0
+2026-09-08T15:44:32Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec deployment/wamn-identity -c identity -- /usr/local/bin/wamn-identity publish 
+2026-09-08T15:44:32Z exit=0
+2026-09-08T15:44:33Z env KUBECTL=/tmp/wamn-identity-jwks.TISwDgAf/kubectl /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/tools/kubernetes-gate-run --namespace wamn-identity-jwks --timeout-secs 180 --manifest /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-published-a.json --verdict-record /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-published-a-verdict.json --job \{\"name\":\"identity-jwks-published-a\"\,\"container\":\"identity-jwks\"\,\"expectation\":\"positive\"\,\"exit_code\":0\,\"image\":\"wamn-gates:jwks-8cbf57c885c9-3195773\"\,\"log_contains\":\"IDENTITY_JWKS\ result=pass\ expected_keys=1\ token_admission=not_proven\ expiry_outage=not_proven\"\} 
+2026-09-08T15:44:36Z exit=0
+2026-09-08T15:44:36Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get job identity-jwks-published-a -o json 
+2026-09-08T15:44:37Z exit=0
+2026-09-08T15:44:37Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get pods -l job-name=identity-jwks-published-a -o json 
+2026-09-08T15:44:37Z exit=0
+2026-09-08T15:44:37Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-published-a -c identity-jwks 
+2026-09-08T15:44:37Z exit=0
+2026-09-08T15:44:37Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec deployment/wamn-identity -c identity -- /usr/local/bin/wamn-identity activate --kid b44ddcb0-b61a-4daa-94a0-c879b14c9729 
+2026-09-08T15:44:37Z exit=0
+2026-09-08T15:44:37Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec deployment/wamn-identity -c identity -- /usr/local/bin/wamn-identity publish 
+2026-09-08T15:44:37Z exit=0
+2026-09-08T15:44:37Z env KUBECTL=/tmp/wamn-identity-jwks.TISwDgAf/kubectl /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/tools/kubernetes-gate-run --namespace wamn-identity-jwks --timeout-secs 180 --manifest /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-published-b.json --verdict-record /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-published-b-verdict.json --job \{\"name\":\"identity-jwks-published-b\"\,\"container\":\"identity-jwks\"\,\"expectation\":\"positive\"\,\"exit_code\":0\,\"image\":\"wamn-gates:jwks-8cbf57c885c9-3195773\"\,\"log_contains\":\"IDENTITY_JWKS\ result=pass\ expected_keys=2\ token_admission=not_proven\ expiry_outage=not_proven\"\} 
+2026-09-08T15:44:41Z exit=0
+2026-09-08T15:44:41Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get job identity-jwks-published-b -o json 
+2026-09-08T15:44:41Z exit=0
+2026-09-08T15:44:41Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get pods -l job-name=identity-jwks-published-b -o json 
+2026-09-08T15:44:41Z exit=0
+2026-09-08T15:44:41Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-published-b -c identity-jwks 
+2026-09-08T15:44:41Z exit=0
+2026-09-08T15:44:41Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec deployment/wamn-identity -c identity -- /usr/local/bin/wamn-identity activate --kid 16ea9768-b25d-4999-a1de-c8af6f7a7783 
+2026-09-08T15:44:41Z exit=0
+2026-09-08T15:44:41Z env KUBECTL=/tmp/wamn-identity-jwks.TISwDgAf/kubectl /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/tools/kubernetes-gate-run --namespace wamn-identity-jwks --timeout-secs 180 --manifest /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-activated-b.json --verdict-record /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-activated-b-verdict.json --job \{\"name\":\"identity-jwks-activated-b\"\,\"container\":\"identity-jwks\"\,\"expectation\":\"positive\"\,\"exit_code\":0\,\"image\":\"wamn-gates:jwks-8cbf57c885c9-3195773\"\,\"log_contains\":\"IDENTITY_JWKS\ result=pass\ expected_keys=2\ token_admission=not_proven\ expiry_outage=not_proven\"\} 
+2026-09-08T15:44:45Z exit=0
+2026-09-08T15:44:45Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get job identity-jwks-activated-b -o json 
+2026-09-08T15:44:45Z exit=0
+2026-09-08T15:44:45Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get pods -l job-name=identity-jwks-activated-b -o json 
+2026-09-08T15:44:45Z exit=0
+2026-09-08T15:44:45Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-activated-b -c identity-jwks 
+2026-09-08T15:44:45Z exit=0
+2026-09-08T15:44:45Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec deployment/wamn-identity -c identity -- /usr/local/bin/wamn-identity remove --kid b44ddcb0-b61a-4daa-94a0-c879b14c9729 
+2026-09-08T15:44:45Z exit=0
+2026-09-08T15:44:45Z env KUBECTL=/tmp/wamn-identity-jwks.TISwDgAf/kubectl /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/tools/kubernetes-gate-run --namespace wamn-identity-jwks --timeout-secs 180 --manifest /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-removed-a.json --verdict-record /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-removed-a-verdict.json --job \{\"name\":\"identity-jwks-removed-a\"\,\"container\":\"identity-jwks\"\,\"expectation\":\"positive\"\,\"exit_code\":0\,\"image\":\"wamn-gates:jwks-8cbf57c885c9-3195773\"\,\"log_contains\":\"IDENTITY_JWKS\ result=pass\ expected_keys=1\ token_admission=not_proven\ expiry_outage=not_proven\"\} 
+2026-09-08T15:44:49Z exit=0
+2026-09-08T15:44:49Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get job identity-jwks-removed-a -o json 
+2026-09-08T15:44:49Z exit=0
+2026-09-08T15:44:49Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get pods -l job-name=identity-jwks-removed-a -o json 
+2026-09-08T15:44:49Z exit=0
+2026-09-08T15:44:49Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-removed-a -c identity-jwks 
+2026-09-08T15:44:49Z exit=0
+2026-09-08T15:44:49Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks exec deployment/wamn-identity -c identity -- /usr/local/bin/wamn-identity remove --kid 16ea9768-b25d-4999-a1de-c8af6f7a7783 
+2026-09-08T15:44:49Z exit=0
+2026-09-08T15:44:49Z env KUBECTL=/tmp/wamn-identity-jwks.TISwDgAf/kubectl /home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/tools/kubernetes-gate-run --namespace wamn-identity-jwks --timeout-secs 180 --manifest /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-removed-b.json --verdict-record /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-002/identity-jwks-removed-b-verdict.json --job \{\"name\":\"identity-jwks-removed-b\"\,\"container\":\"identity-jwks\"\,\"expectation\":\"positive\"\,\"exit_code\":0\,\"image\":\"wamn-gates:jwks-8cbf57c885c9-3195773\"\,\"log_contains\":\"IDENTITY_JWKS\ result=pass\ expected_keys=0\ token_admission=not_proven\ expiry_outage=not_proven\"\} 
+2026-09-08T15:44:53Z exit=0
+2026-09-08T15:44:53Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get job identity-jwks-removed-b -o json 
+2026-09-08T15:44:53Z exit=0
+2026-09-08T15:44:53Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get pods -l job-name=identity-jwks-removed-b -o json 
+2026-09-08T15:44:53Z exit=0
+2026-09-08T15:44:53Z kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-removed-b -c identity-jwks 
+2026-09-08T15:44:53Z exit=0
+2026-09-08T15:44:53Z timeout 30s kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get jobs\,pods\,deployments\,services -o json 
+2026-09-08T15:44:53Z exit=0
+2026-09-08T15:44:53Z timeout 30s kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks get events -o json 
+2026-09-08T15:44:53Z exit=0
+2026-09-08T15:44:53Z timeout 30s kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-activated-b -c identity-jwks 
+2026-09-08T15:44:53Z exit=0
+2026-09-08T15:44:53Z timeout 30s kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-published-a -c identity-jwks 
+2026-09-08T15:44:53Z exit=0
+2026-09-08T15:44:53Z timeout 30s kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-published-b -c identity-jwks 
+2026-09-08T15:44:54Z exit=0
+2026-09-08T15:44:54Z timeout 30s kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-removed-a -c identity-jwks 
+2026-09-08T15:44:54Z exit=0
+2026-09-08T15:44:54Z timeout 30s kubectl --kubeconfig /tmp/wamn-identity-jwks.TISwDgAf/kubeconfig --context kind-wamn-identity-jwks-8cbf57c885c9-3195773 -n wamn-identity-jwks logs job/identity-jwks-removed-b -c identity-jwks 
+2026-09-08T15:44:54Z exit=0
+2026-09-08T15:44:54Z timeout 120s kind delete cluster --name wamn-identity-jwks-8cbf57c885c9-3195773 
+2026-09-08T15:44:54Z exit=0
+2026-09-08T15:44:54Z docker image rm wamn-identity:jwks-8cbf57c885c9-3195773 
+2026-09-08T15:44:55Z exit=0
+2026-09-08T15:44:55Z docker image rm wamn-gates:jwks-8cbf57c885c9-3195773 
+2026-09-08T15:44:55Z exit=0
+2026-09-08T15:44:55Z rm -rf -- /tmp/wamn-identity-jwks.TISwDgAf 
+2026-09-08T15:44:55Z exit=0

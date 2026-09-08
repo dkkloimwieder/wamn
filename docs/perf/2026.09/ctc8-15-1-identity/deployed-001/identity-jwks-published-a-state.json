@@ -1,0 +1,132 @@
+{
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"identity-jwks-published-a\",\"namespace\":\"wamn-identity-jwks\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"metadata\":{\"labels\":{\"app\":\"identity-jwks\"}},\"spec\":{\"automountServiceAccountToken\":false,\"containers\":[{\"args\":[\"identity-jwks\"],\"env\":[{\"name\":\"WAMN_IDENTITY_ISSUER\",\"value\":\"https://wamn-identity.wamn-identity-jwks.svc.cluster.local\"},{\"name\":\"WAMN_IDENTITY_JWKS_URL\",\"value\":\"https://wamn-identity.wamn-identity-jwks.svc.cluster.local/.well-known/jwks.json\"},{\"name\":\"WAMN_IDENTITY_CA_FILE\",\"value\":\"/etc/wamn-identity-ca/ca.crt\"},{\"name\":\"WAMN_IDENTITY_WRONG_CA_FILE\",\"value\":\"/etc/wamn-identity-ca/wrong-ca.crt\"},{\"name\":\"WAMN_IDENTITY_EXPECTED_KIDS\",\"value\":\"[\\\"5797cf87-8777-4814-9ebf-155fcfc4872c\\\"]\"}],\"image\":\"wamn-gates:jwks-9ab1c62278e9-3144219\",\"imagePullPolicy\":\"Never\",\"name\":\"identity-jwks\",\"volumeMounts\":[{\"mountPath\":\"/etc/wamn-identity-ca\",\"name\":\"public-ca\",\"readOnly\":true}]}],\"restartPolicy\":\"Never\",\"volumes\":[{\"configMap\":{\"name\":\"identity-jwks-public\"},\"name\":\"public-ca\"}]}}}}\n"
+        },
+        "creationTimestamp": "2026-09-08T15:25:25Z",
+        "generation": 1,
+        "labels": {
+            "app": "identity-jwks",
+            "batch.kubernetes.io/controller-uid": "81755c01-2214-494b-9015-45bfad054a4a",
+            "batch.kubernetes.io/job-name": "identity-jwks-published-a",
+            "controller-uid": "81755c01-2214-494b-9015-45bfad054a4a",
+            "job-name": "identity-jwks-published-a"
+        },
+        "name": "identity-jwks-published-a",
+        "namespace": "wamn-identity-jwks",
+        "resourceVersion": "676",
+        "uid": "81755c01-2214-494b-9015-45bfad054a4a"
+    },
+    "spec": {
+        "activeDeadlineSeconds": 120,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "TerminatingOrFailed",
+        "selector": {
+            "matchLabels": {
+                "batch.kubernetes.io/controller-uid": "81755c01-2214-494b-9015-45bfad054a4a"
+            }
+        },
+        "suspend": false,
+        "template": {
+            "metadata": {
+                "labels": {
+                    "app": "identity-jwks",
+                    "batch.kubernetes.io/controller-uid": "81755c01-2214-494b-9015-45bfad054a4a",
+                    "batch.kubernetes.io/job-name": "identity-jwks-published-a",
+                    "controller-uid": "81755c01-2214-494b-9015-45bfad054a4a",
+                    "job-name": "identity-jwks-published-a"
+                }
+            },
+            "spec": {
+                "automountServiceAccountToken": false,
+                "containers": [
+                    {
+                        "args": [
+                            "identity-jwks"
+                        ],
+                        "env": [
+                            {
+                                "name": "WAMN_IDENTITY_ISSUER",
+                                "value": "https://wamn-identity.wamn-identity-jwks.svc.cluster.local"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_JWKS_URL",
+                                "value": "https://wamn-identity.wamn-identity-jwks.svc.cluster.local/.well-known/jwks.json"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_CA_FILE",
+                                "value": "/etc/wamn-identity-ca/ca.crt"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_WRONG_CA_FILE",
+                                "value": "/etc/wamn-identity-ca/wrong-ca.crt"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_EXPECTED_KIDS",
+                                "value": "[\"5797cf87-8777-4814-9ebf-155fcfc4872c\"]"
+                            }
+                        ],
+                        "image": "wamn-gates:jwks-9ab1c62278e9-3144219",
+                        "imagePullPolicy": "Never",
+                        "name": "identity-jwks",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/etc/wamn-identity-ca",
+                                "name": "public-ca",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "terminationGracePeriodSeconds": 30,
+                "volumes": [
+                    {
+                        "configMap": {
+                            "defaultMode": 420,
+                            "name": "identity-jwks-public"
+                        },
+                        "name": "public-ca"
+                    }
+                ]
+            }
+        }
+    },
+    "status": {
+        "conditions": [
+            {
+                "lastProbeTime": "2026-09-08T15:25:28Z",
+                "lastTransitionTime": "2026-09-08T15:25:28Z",
+                "message": "Job has reached the specified backoff limit",
+                "reason": "BackoffLimitExceeded",
+                "status": "True",
+                "type": "FailureTarget"
+            },
+            {
+                "lastProbeTime": "2026-09-08T15:25:28Z",
+                "lastTransitionTime": "2026-09-08T15:25:28Z",
+                "message": "Job has reached the specified backoff limit",
+                "reason": "BackoffLimitExceeded",
+                "status": "True",
+                "type": "Failed"
+            }
+        ],
+        "failed": 1,
+        "ready": 0,
+        "startTime": "2026-09-08T15:25:25Z",
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+    }
+}

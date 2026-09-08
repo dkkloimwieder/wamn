@@ -1,0 +1,913 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:25Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "identity-jwks-published-a-jrfzz",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "654",
+                "uid": "e59c96ef-4b11-4036-b489-d0be044bb68f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:25Z",
+            "message": "Successfully assigned wamn-identity-jwks/identity-jwks-published-a-jrfzz to wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:25Z",
+                "name": "identity-jwks-published-a-jrfzz.18d361e7cd37d393",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "658",
+                "uid": "831c9572-21af-408a-8de7-7fcd7983295d"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:25Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity-jwks}",
+                "kind": "Pod",
+                "name": "identity-jwks-published-a-jrfzz",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "656",
+                "uid": "e59c96ef-4b11-4036-b489-d0be044bb68f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:25Z",
+            "message": "Container image \"wamn-gates:jwks-9ab1c62278e9-3144219\" already present on machine and can be accessed by the pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:25Z",
+                "name": "identity-jwks-published-a-jrfzz.18d361e7e88e95dc",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "660",
+                "uid": "4dd9b446-c841-468c-b27b-6a10038767f9"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:25Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity-jwks}",
+                "kind": "Pod",
+                "name": "identity-jwks-published-a-jrfzz",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "656",
+                "uid": "e59c96ef-4b11-4036-b489-d0be044bb68f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:25Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:25Z",
+                "name": "identity-jwks-published-a-jrfzz.18d361e7eb7dfc0d",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "662",
+                "uid": "d1308859-f63b-4f46-b4df-f49f7f5eaaa2"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:25Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity-jwks}",
+                "kind": "Pod",
+                "name": "identity-jwks-published-a-jrfzz",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "656",
+                "uid": "e59c96ef-4b11-4036-b489-d0be044bb68f"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:25Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:25Z",
+                "name": "identity-jwks-published-a-jrfzz.18d361e7ee765ef1",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "663",
+                "uid": "71812a2d-24bd-4a48-a8e4-d2c12e49533c"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:25Z",
+            "involvedObject": {
+                "apiVersion": "batch/v1",
+                "kind": "Job",
+                "name": "identity-jwks-published-a",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "652",
+                "uid": "81755c01-2214-494b-9015-45bfad054a4a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:25Z",
+            "message": "Created pod: identity-jwks-published-a-jrfzz",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:25Z",
+                "name": "identity-jwks-published-a.18d361e7ccbfedb2",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "655",
+                "uid": "15e7cb1a-b4e9-40cc-804b-52c7635c8a50"
+            },
+            "reason": "SuccessfulCreate",
+            "reportingComponent": "job-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "job-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:28Z",
+            "involvedObject": {
+                "apiVersion": "batch/v1",
+                "kind": "Job",
+                "name": "identity-jwks-published-a",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "674",
+                "uid": "81755c01-2214-494b-9015-45bfad054a4a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:28Z",
+            "message": "Job has reached the specified backoff limit",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:28Z",
+                "name": "identity-jwks-published-a.18d361e882e0656a",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "677",
+                "uid": "9d6b42e0-27ba-4e7b-95f7-fb5ad7fb6295"
+            },
+            "reason": "BackoffLimitExceeded",
+            "reportingComponent": "job-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "job-controller"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:41Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "identity-postgres-6cf8744b5b-swhsk",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "509",
+                "uid": "2ef4d6d8-2517-4c04-9eee-09b1275c6b8a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:41Z",
+            "message": "Successfully assigned wamn-identity-jwks/identity-postgres-6cf8744b5b-swhsk to wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:41Z",
+                "name": "identity-postgres-6cf8744b5b-swhsk.18d361dda5d775a1",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "514",
+                "uid": "689b7485-10f6-4db7-b9cb-ba6c5ab56da8"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:42Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{postgres}",
+                "kind": "Pod",
+                "name": "identity-postgres-6cf8744b5b-swhsk",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "510",
+                "uid": "2ef4d6d8-2517-4c04-9eee-09b1275c6b8a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:42Z",
+            "message": "Pulling image \"postgres:18\"",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:42Z",
+                "name": "identity-postgres-6cf8744b5b-swhsk.18d361ddc1454653",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "519",
+                "uid": "5147cf67-98b6-4862-bd8b-e21e1e952514"
+            },
+            "reason": "Pulling",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:48Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{postgres}",
+                "kind": "Pod",
+                "name": "identity-postgres-6cf8744b5b-swhsk",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "510",
+                "uid": "2ef4d6d8-2517-4c04-9eee-09b1275c6b8a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:48Z",
+            "message": "Successfully pulled image \"postgres:18\" in 6.036s (6.036s including waiting). Image size: 162457547 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:48Z",
+                "name": "identity-postgres-6cf8744b5b-swhsk.18d361df291a84fc",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "532",
+                "uid": "46653c39-acf4-48c0-aa60-c9fed0b5136a"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:48Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{postgres}",
+                "kind": "Pod",
+                "name": "identity-postgres-6cf8744b5b-swhsk",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "510",
+                "uid": "2ef4d6d8-2517-4c04-9eee-09b1275c6b8a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:48Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:48Z",
+                "name": "identity-postgres-6cf8744b5b-swhsk.18d361df2bbd6db1",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "533",
+                "uid": "ff002b71-2045-49da-bf4a-a2c7234cc07a"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:48Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{postgres}",
+                "kind": "Pod",
+                "name": "identity-postgres-6cf8744b5b-swhsk",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "510",
+                "uid": "2ef4d6d8-2517-4c04-9eee-09b1275c6b8a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:48Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:48Z",
+                "name": "identity-postgres-6cf8744b5b-swhsk.18d361df2ed5c6cd",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "534",
+                "uid": "7d7ac1c8-ea32-4855-9421-59a494b41706"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 2,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:48Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{postgres}",
+                "kind": "Pod",
+                "name": "identity-postgres-6cf8744b5b-swhsk",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "510",
+                "uid": "2ef4d6d8-2517-4c04-9eee-09b1275c6b8a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:48Z",
+            "message": "Readiness probe failed: 127.0.0.1:5432 - no response\n",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:48Z",
+                "name": "identity-postgres-6cf8744b5b-swhsk.18d361df319fa072",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "540",
+                "uid": "cad17b7d-50e5-48ba-86b0-34d9c7b7e0ec"
+            },
+            "reason": "Unhealthy",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:41Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "identity-postgres-6cf8744b5b",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "506",
+                "uid": "1b260cf1-99a3-4649-9145-cdc60a6a944b"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:41Z",
+            "message": "Created pod: identity-postgres-6cf8744b5b-swhsk",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:41Z",
+                "name": "identity-postgres-6cf8744b5b.18d361dda546d75c",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "511",
+                "uid": "0656e227-424c-40eb-a498-665d9e1bbe3b"
+            },
+            "reason": "SuccessfulCreate",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:41Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "name": "identity-postgres",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "505",
+                "uid": "6dee7077-95a9-4759-88e1-c8d9897af44a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:41Z",
+            "message": "Scaled up replica set identity-postgres-6cf8744b5b from 0 to 1",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:41Z",
+                "name": "identity-postgres.18d361dda3f21d93",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "507",
+                "uid": "155b237c-119f-4d24-b038-c841295e2baa"
+            },
+            "reason": "ScalingReplicaSet",
+            "reportingComponent": "deployment-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "deployment-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:50Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "identity-provisioner",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "548",
+                "uid": "1fb8da86-c11a-4f61-826a-bff9b0d8c650"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:50Z",
+            "message": "Successfully assigned wamn-identity-jwks/identity-provisioner to wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:50Z",
+                "name": "identity-provisioner.18d361dfc3a214a9",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "550",
+                "uid": "a9ee02d3-40cd-4f11-9f78-6c44a7bd2484"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:50Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{wait-postgres}",
+                "kind": "Pod",
+                "name": "identity-provisioner",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "549",
+                "uid": "1fb8da86-c11a-4f61-826a-bff9b0d8c650"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:50Z",
+            "message": "Container image \"postgres:18\" already present on machine and can be accessed by the pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:50Z",
+                "name": "identity-provisioner.18d361dfcbad1275",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "552",
+                "uid": "c5e01d89-85dc-4756-8bc5-fb5c95c0eaed"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:50Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{wait-postgres}",
+                "kind": "Pod",
+                "name": "identity-provisioner",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "549",
+                "uid": "1fb8da86-c11a-4f61-826a-bff9b0d8c650"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:50Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:50Z",
+                "name": "identity-provisioner.18d361dfce8b0687",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "554",
+                "uid": "4f7cd415-d1de-4639-a275-004140e1dcf6"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:50Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.initContainers{wait-postgres}",
+                "kind": "Pod",
+                "name": "identity-provisioner",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "549",
+                "uid": "1fb8da86-c11a-4f61-826a-bff9b0d8c650"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:50Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:50Z",
+                "name": "identity-provisioner.18d361dfd196c1f3",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "555",
+                "uid": "136154b7-e40c-483b-986d-1cc1c383c139"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:51Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{provisioner}",
+                "kind": "Pod",
+                "name": "identity-provisioner",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "549",
+                "uid": "1fb8da86-c11a-4f61-826a-bff9b0d8c650"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:51Z",
+            "message": "Container image \"wamn-gates:jwks-9ab1c62278e9-3144219\" already present on machine and can be accessed by the pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:51Z",
+                "name": "identity-provisioner.18d361dff3a87253",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "557",
+                "uid": "0c23069a-0e2e-4333-9bfe-3f2a9a1e7940"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:51Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{provisioner}",
+                "kind": "Pod",
+                "name": "identity-provisioner",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "549",
+                "uid": "1fb8da86-c11a-4f61-826a-bff9b0d8c650"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:51Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:51Z",
+                "name": "identity-provisioner.18d361dff6d31161",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "559",
+                "uid": "994357d5-783c-43e4-a35a-c8bdd8faee48"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:51Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{provisioner}",
+                "kind": "Pod",
+                "name": "identity-provisioner",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "549",
+                "uid": "1fb8da86-c11a-4f61-826a-bff9b0d8c650"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:51Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:51Z",
+                "name": "identity-provisioner.18d361dff9d73be3",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "560",
+                "uid": "0ec2f9c3-1183-416f-ba65-cc02bc5b3228"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:24:52Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{provisioner}",
+                "kind": "Pod",
+                "name": "identity-provisioner",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "549",
+                "uid": "1fb8da86-c11a-4f61-826a-bff9b0d8c650"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:24:52Z",
+            "message": "Stopping container provisioner",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:24:52Z",
+                "name": "identity-provisioner.18d361e02f5567f9",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "566",
+                "uid": "d3acead1-fc29-48fd-8142-290bea7f289d"
+            },
+            "reason": "Killing",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:24Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "wamn-identity-6fdc54c548-wd52q",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "628",
+                "uid": "cf036e7b-299a-4917-af1e-96665f7bfb92"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:24Z",
+            "message": "Successfully assigned wamn-identity-jwks/wamn-identity-6fdc54c548-wd52q to wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:24Z",
+                "name": "wamn-identity-6fdc54c548-wd52q.18d361e78b2aa3b1",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "633",
+                "uid": "73fc519f-7e74-46d8-bdb7-69c9cdf4d3ad"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:24Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity}",
+                "kind": "Pod",
+                "name": "wamn-identity-6fdc54c548-wd52q",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "630",
+                "uid": "cf036e7b-299a-4917-af1e-96665f7bfb92"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:24Z",
+            "message": "Container image \"wamn-identity:jwks-9ab1c62278e9-3144219\" already present on machine and can be accessed by the pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:24Z",
+                "name": "wamn-identity-6fdc54c548-wd52q.18d361e7a50db0fb",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "639",
+                "uid": "28983d7d-4837-4c6d-99d9-1784904f70c3"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:24Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity}",
+                "kind": "Pod",
+                "name": "wamn-identity-6fdc54c548-wd52q",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "630",
+                "uid": "cf036e7b-299a-4917-af1e-96665f7bfb92"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:24Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:24Z",
+                "name": "wamn-identity-6fdc54c548-wd52q.18d361e7a7a56dce",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "641",
+                "uid": "9966480c-501c-49c1-abc8-729babee45b7"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:24Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity}",
+                "kind": "Pod",
+                "name": "wamn-identity-6fdc54c548-wd52q",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "630",
+                "uid": "cf036e7b-299a-4917-af1e-96665f7bfb92"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:24Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:24Z",
+                "name": "wamn-identity-6fdc54c548-wd52q.18d361e7aa923fa1",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "642",
+                "uid": "db06c350-ec94-4bb2-b80a-e74fdea2b1ae"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:24Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "wamn-identity-6fdc54c548",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "625",
+                "uid": "5786b130-3333-4908-98ac-bcd682a72368"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:24Z",
+            "message": "Created pod: wamn-identity-6fdc54c548-wd52q",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:24Z",
+                "name": "wamn-identity-6fdc54c548.18d361e78a4377b1",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "629",
+                "uid": "51f09454-d867-4d88-bbaa-9ab8d5f0f0f4"
+            },
+            "reason": "SuccessfulCreate",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-08T15:25:24Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "name": "wamn-identity",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "624",
+                "uid": "7e711f9b-2b27-457c-9a9e-c0ba90388b91"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-08T15:25:24Z",
+            "message": "Scaled up replica set wamn-identity-6fdc54c548 from 0 to 1",
+            "metadata": {
+                "creationTimestamp": "2026-09-08T15:25:24Z",
+                "name": "wamn-identity.18d361e788c6b00e",
+                "namespace": "wamn-identity-jwks",
+                "resourceVersion": "627",
+                "uid": "43c8fa58-da13-46b6-83f0-e0d9fe53893d"
+            },
+            "reason": "ScalingReplicaSet",
+            "reportingComponent": "deployment-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "deployment-controller"
+            },
+            "type": "Normal"
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

@@ -1,0 +1,55 @@
+{
+  "schema_version": "0.1",
+  "protocol": "wamn-kubernetes-gate-verdict/v0.1",
+  "manifest": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-1-identity/deployed-001/identity-jwks-published-a.json",
+  "namespace": "wamn-identity-jwks",
+  "run_started_at": "2026-09-08T15:25:25.106999992Z",
+  "timeout_seconds": 180,
+  "verdict": "fail",
+  "failure_classes": [
+    "identity-jwks-published-a:unexpected-terminal-condition",
+    "identity-jwks-published-a:condition-predates-run",
+    "identity-jwks-published-a:pod-phase-mismatch",
+    "identity-jwks-published-a:container-exit-code-mismatch",
+    "identity-jwks-published-a:expected-log-missing"
+  ],
+  "jobs": [
+    {
+      "name": "identity-jwks-published-a",
+      "container": "identity-jwks",
+      "expectation": "positive",
+      "expected_exit_code": 0,
+      "expected_image": "wamn-gates:jwks-9ab1c62278e9-3144219",
+      "observed": {
+        "uid": "81755c01-2214-494b-9015-45bfad054a4a",
+        "previous_uid": "",
+        "created_at": "2026-09-08T15:25:25Z",
+        "condition": "complete",
+        "condition_transition_at": "",
+        "logs_sha256": "e66260748b0be951ff8563e444cdad675e54d66932d62c4fd5be1aaa8b7e71a1",
+        "pods": [
+          {
+            "name": "identity-jwks-published-a-jrfzz",
+            "uid": "e59c96ef-4b11-4036-b489-d0be044bb68f",
+            "node": "wamn-identity-jwks-9ab1c62278e9-3144219-control-plane",
+            "created_at": "2026-09-08T15:25:25Z",
+            "started_at": "2026-09-08T15:25:25Z",
+            "phase": "Failed",
+            "init_exit_codes": [],
+            "container_exit_code": 1,
+            "image_id": "sha256:f79dbf19e8f235336c3da78a021009d7becedff3c409a7e42b5aae4435bd70ae"
+          }
+        ]
+      },
+      "verdict": "fail",
+      "failure_classes": [
+        "unexpected-terminal-condition",
+        "condition-predates-run",
+        "pod-phase-mismatch",
+        "container-exit-code-mismatch",
+        "expected-log-missing"
+      ]
+    }
+  ],
+  "snapshot_probe": null
+}

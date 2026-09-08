@@ -1,0 +1,1836 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index e9508ae7..8e4dc860 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -152,6 +152,45 @@ version = "0.7.8"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
+ 
++[[package]]
++name = "asn1-rs"
++version = "0.7.2"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b7f43a50ac4fdca5df8e885c21b835997f0a1cdee65494a6847694a98652d9d8"
++dependencies = [
++ "asn1-rs-derive",
++ "asn1-rs-impl",
++ "displaydoc",
++ "nom",
++ "num-traits",
++ "rusticata-macros",
++ "thiserror 2.0.20",
++ "time",
++]
++
++[[package]]
++name = "asn1-rs-derive"
++version = "0.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "3109e49b1e4909e9db6515a30c633684d68cdeaa252f215214cb4fa1a5bfee2c"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++ "synstructure",
++]
++
++[[package]]
++name = "asn1-rs-impl"
++version = "0.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "7b18050c2cd6fe86c3a76584ef5e0baf286d038cda203eb6223df2cc413565f7"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 2.0.119",
++]
++
+ [[package]]
+ name = "async-nats"
+ version = "0.49.1"
+@@ -309,7 +348,7 @@ version = "0.8.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
+ dependencies = [
+- "bit-vec",
++ "bit-vec 0.8.0",
+ ]
+ 
+ [[package]]
+@@ -318,6 +357,15 @@ version = "0.8.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
+ 
++[[package]]
++name = "bit-vec"
++version = "0.9.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
++dependencies = [
++ "serde",
++]
++
+ [[package]]
+ name = "bitflags"
+ version = "2.13.1"
+@@ -1116,6 +1164,12 @@ dependencies = [
+  "syn 3.0.4",
+ ]
+ 
++[[package]]
++name = "data-encoding"
++version = "2.11.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
++
+ [[package]]
+ name = "deadpool"
+ version = "0.13.1"
+@@ -1149,6 +1203,20 @@ dependencies = [
+  "tokio",
+ ]
+ 
++[[package]]
++name = "der-parser"
++version = "10.0.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "07da5016415d5a3c4dd39b11ed26f915f52fc4e0dc197d87908bc916e51bc1a6"
++dependencies = [
++ "asn1-rs",
++ "displaydoc",
++ "nom",
++ "num-bigint",
++ "num-traits",
++ "rusticata-macros",
++]
++
+ [[package]]
+ name = "deranged"
+ version = "0.5.8"
+@@ -2472,6 +2540,12 @@ version = "0.3.17"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+ 
++[[package]]
++name = "minimal-lexical"
++version = "0.2.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
++
+ [[package]]
+ name = "miniz_oxide"
+ version = "0.8.9"
+@@ -2526,6 +2600,16 @@ dependencies = [
+  "rand 0.8.8",
+ ]
+ 
++[[package]]
++name = "nom"
++version = "7.1.3"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
++dependencies = [
++ "memchr",
++ "minimal-lexical",
++]
++
+ [[package]]
+ name = "ntapi"
+ version = "0.4.3"
+@@ -2717,6 +2801,15 @@ dependencies = [
+  "wit-parser 0.253.0",
+ ]
+ 
++[[package]]
++name = "oid-registry"
++version = "0.8.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "12f40cff3dde1b6087cc5d5f5d4d65712f34016a03ed60e9c08dcc392736b5b7"
++dependencies = [
++ "asn1-rs",
++]
++
+ [[package]]
+ name = "olpc-cjson"
+ version = "0.1.4"
+@@ -2935,6 +3028,16 @@ dependencies = [
+  "serde",
+ ]
+ 
++[[package]]
++name = "pem"
++version = "3.0.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
++dependencies = [
++ "base64",
++ "serde_core",
++]
++
+ [[package]]
+ name = "percent-encoding"
+ version = "2.3.2"
+@@ -3155,7 +3258,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
+ dependencies = [
+  "bit-set",
+- "bit-vec",
++ "bit-vec 0.8.0",
+  "bitflags",
+  "num-traits",
+  "rand 0.9.5",
+@@ -3507,6 +3610,20 @@ dependencies = [
+  "crossbeam-utils",
+ ]
+ 
++[[package]]
++name = "rcgen"
++version = "0.14.8"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "57f6d249aad744e274e682777a50283a225a32705394ee6d5fcc01efa25e4055"
++dependencies = [
++ "pem",
++ "ring",
++ "rustls-pki-types",
++ "time",
++ "x509-parser",
++ "yasna",
++]
++
+ [[package]]
+ name = "redis"
+ version = "0.27.6"
+@@ -3707,6 +3824,15 @@ dependencies = [
+  "semver",
+ ]
+ 
++[[package]]
++name = "rusticata-macros"
++version = "4.1.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "faf0c4a6ece9950b9abdb62b1cfcf2a68b3b67a10ba445b3bb85be2a293d0632"
++dependencies = [
++ "nom",
++]
++
+ [[package]]
+ name = "rustix"
+ version = "1.1.4"
+@@ -5560,6 +5686,28 @@ dependencies = [
+  "wash-runtime",
+ ]
+ 
++[[package]]
++name = "wamn-identity"
++version = "0.1.0"
++dependencies = [
++ "bytes",
++ "clap",
++ "http-body-util",
++ "hyper",
++ "hyper-util",
++ "rcgen",
++ "reqwest",
++ "rustls",
++ "serde_json",
++ "tokio",
++ "tokio-postgres",
++ "tokio-rustls",
++ "url",
++ "wamn-control-provision",
++ "wamn-pg-core",
++ "wamn-platform-identity",
++]
++
+ [[package]]
+ name = "wamn-pg-core"
+ version = "0.1.0"
+@@ -5568,8 +5716,11 @@ version = "0.1.0"
+ name = "wamn-platform-identity"
+ version = "0.1.0"
+ dependencies = [
++ "base64",
+  "hex",
+  "ring",
++ "serde",
++ "serde_json",
+  "sha2 0.11.0",
+  "subtle",
+  "tokio",
+@@ -5753,12 +5904,15 @@ dependencies = [
+  "opentelemetry-otlp",
+  "opentelemetry_sdk",
+  "rand_core 0.10.1",
++ "rcgen",
+  "reqwest",
++ "rustls",
+  "serde",
+  "serde_json",
+  "sha2 0.11.0",
+  "tokio",
+  "tokio-postgres",
++ "tokio-rustls",
+  "tracing",
+  "tracing-opentelemetry",
+  "tracing-subscriber",
+@@ -7200,6 +7354,34 @@ version = "0.6.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+ 
++[[package]]
++name = "x509-parser"
++version = "0.18.1"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "d43b0f71ce057da06bc0851b23ee24f3f86190b07203dd8f567d0b706a185202"
++dependencies = [
++ "asn1-rs",
++ "data-encoding",
++ "der-parser",
++ "lazy_static",
++ "nom",
++ "oid-registry",
++ "ring",
++ "rusticata-macros",
++ "thiserror 2.0.20",
++ "time",
++]
++
++[[package]]
++name = "yasna"
++version = "0.6.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b5f6765e852b9b4dc8e2a76843e4d64d1cea8e79bcde0b6901aea8e7c7f08282"
++dependencies = [
++ "bit-vec 0.9.1",
++ "time",
++]
++
+ [[package]]
+ name = "yoke"
+ version = "0.8.3"
+diff --git a/Cargo.toml b/Cargo.toml
+index 964e95e6..21964493 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,6 @@
+ [workspace]
+ resolver = "2"
+-members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "crates/client/receiving", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state"]
++members = ["services/host", "services/identity", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "crates/client/receiving", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state"]
+ default-members = [
+   "crates/authoring/model",
+   "crates/catalog/model",
+@@ -19,6 +19,7 @@ default-members = [
+   "crates/scenarios/model",
+   "services/executor",
+   "services/host",
++  "services/identity",
+   "services/scenario-worker",
+ ]
+ # Guest components are built separately for wasm32-wasip2 (see components/*).
+@@ -159,6 +160,7 @@ proptest = { version = "1.11", default-features = false, features = ["std", "bit
+ rand_core = "0.10"
+ reqwest = { version = "0.13", default-features = false }
+ ring = "0.17"
++rcgen = "0.14.8"
+ rustls = { version = "0.23", default-features = false }
+ rustix = { version = "1", features = ["fs", "process"] }
+ schemars = "0.8"
+@@ -168,6 +170,7 @@ sha2 = "0.11"
+ subtle = "2"
+ tokio = "1"
+ tokio-postgres = "0.7"
++tokio-rustls = "0.26"
+ tracing = "0.1"
+ tracing-opentelemetry = { version = "0.32", default-features = false }
+ tracing-subscriber = "0.3"
+@@ -190,6 +193,7 @@ wamn-component-virtualizer = { path = "crates/platform/component-virtualizer", v
+ wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
+ wamn-control-registry = { path = "crates/control/registry", version = "0.1.0" }
+ wamn-ctl = { path = "services/ctl", version = "0.1.0" }
++wamn-identity = { path = "services/identity", version = "0.1.0" }
+ wamn-dispatcher = { path = "services/dispatcher", version = "0.1.0" }
+ wamn-event-reg = { path = "components/events/registration", version = "0.1.0" }
+ wamn-event-wire = { path = "components/events/wire", version = "0.1.0" }
+diff --git a/Dockerfile b/Dockerfile
+index 760138e6..e7c7eb33 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -6,6 +6,7 @@
+ #   docker build --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
+ #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
+ #   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
++#   docker build --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
+ #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
+ # Later invocations reuse one cargo-chef recipe and shared, locked BuildKit
+ # registry, Git, and target caches. Each retained native image cooks and builds
+@@ -99,6 +100,12 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
+     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-cdc-reader
+ 
++FROM root-recipe AS cook-identity
++RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
++    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
++    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
++    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-identity
++
+ FROM root-planner AS root-source
+ COPY .cargo/config.toml ./.cargo/config.toml
+ # The canonical deploy DDL is consumed by the ctl reconcilers and exact package
+@@ -168,9 +175,17 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
+     cargo build --locked --release -p wamn-cdc-reader \
+  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
+ 
++FROM cook-identity AS build-identity
++COPY --from=root-source /build /build
++RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
++    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
++    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
++    cargo build --locked --release -p wamn-identity \
++ && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
++
+ # The proof image is outside the retained MVP image set. It remains a separate,
+ # package-scoped build and reuses the same locked caches without adding an
+-# eighth production cook stage.
++# additional production cook stage.
+ FROM root-source AS build-gates
+ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+@@ -256,6 +271,13 @@ COPY --from=build-waker /native-output/wamn-waker /usr/local/bin/wamn-waker
+ ENV HOME=/tmp
+ ENTRYPOINT ["/usr/local/bin/wamn-waker"]
+ 
++# ---- identity image: separate signing authority and public JWKS ------------
++FROM debian:trixie-slim AS identity
++RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
++COPY --from=build-identity /native-output/wamn-identity /usr/local/bin/wamn-identity
++ENV HOME=/tmp
++ENTRYPOINT ["/usr/local/bin/wamn-identity"]
++
+ # ---- gates image: the host stage + the gate suite + wasm fixtures -----------
+ FROM host AS gates
+ COPY --from=build-gates /native-output/wamn-gates /usr/local/bin/wamn-gates
+diff --git a/architecture/package-roles.json b/architecture/package-roles.json
+index 37bdf0a3..2783c913 100644
+--- a/architecture/package-roles.json
++++ b/architecture/package-roles.json
+@@ -242,6 +242,23 @@
+         "exit_condition": "Retain while wasmCloud washlet and host-plugin integration require a native runtime process; replace only with an equivalent platform runtime boundary."
+       }
+     },
++    {
++      "workspace": "root",
++      "name": "wamn-identity",
++      "manifest_path": "services/identity/Cargo.toml",
++      "role": "native",
++      "target_class": "native",
++      "bounded_context": "identity",
++      "deployable": true,
++      "native": {
++        "native_kind": "capability",
++        "native_reason": "The system-database-backed signing authority is a separate security boundary; guests, hosts, and the authoring Gate must never receive its private signing keys.",
++        "owner": "wamn-ctc8.15.1 / identity owners",
++        "credential_failure_scope": "The identity process alone holds its issuer-scoped key-table credential and HTTPS listener key. Hosts receive public JWKS only; PAT minting remains on the provisioning CLI.",
++        "tested_boundary": "Key lifecycle, public-only HTTPS JWKS, and scoped-credential tests own this boundary. Local tests do not establish deployed isolation or the later two-host token-admission proof.",
++        "exit_condition": "Retain while session issuance and later OIDC federation require an isolated signing authority; replace only with an equivalent boundary that keeps private keys out of hosts and the authoring Gate."
++      }
++    },
+     {
+       "workspace": "components",
+       "name": "wamn-materializer",
+diff --git a/architecture/protected-writes.json b/architecture/protected-writes.json
+index 774ea857..c82abad2 100644
+--- a/architecture/protected-writes.json
++++ b/architecture/protected-writes.json
+@@ -132,6 +132,83 @@
+         "row-security:enabled=false;forced=false"
+       ]
+     },
++    {
++      "scope": "production-control-database",
++      "relation": "identity.session_keys",
++      "ops": false,
++      "installer": "platform-identity",
++      "owner": "platform-identity",
++      "mechanisms": [
++        "direct-dml"
++      ],
++      "roles": [
++        {
++          "role": "wamn_identity_issuer",
++          "basis": "grant",
++          "operations": [
++            "delete",
++            "insert",
++            "update"
++          ]
++        },
++        {
++          "role": "wamn_system",
++          "basis": "owner",
++          "operations": [
++            "delete",
++            "insert",
++            "truncate",
++            "update"
++          ]
++        }
++      ],
++      "author-reachable": "no",
++      "guards": [
++        "constraint:session_keys_issuer_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (btrim(issuer) <> ''::text)",
++        "constraint:session_keys_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (issuer, kid)",
++        "constraint:session_keys_public_key_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (octet_length(public_key) = 32)",
++        "constraint:session_keys_retirement_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((signing_cutoff IS NULL) = (private_pkcs8 IS NOT NULL))",
++        "row-security:enabled=false;forced=false"
++      ]
++    },
++    {
++      "scope": "production-control-database",
++      "relation": "identity.session_signing_state",
++      "ops": false,
++      "installer": "platform-identity",
++      "owner": "platform-identity",
++      "mechanisms": [
++        "direct-dml"
++      ],
++      "roles": [
++        {
++          "role": "wamn_identity_issuer",
++          "basis": "grant",
++          "operations": [
++            "delete",
++            "insert",
++            "update"
++          ]
++        },
++        {
++          "role": "wamn_system",
++          "basis": "owner",
++          "operations": [
++            "delete",
++            "insert",
++            "truncate",
++            "update"
++          ]
++        }
++      ],
++      "author-reachable": "no",
++      "guards": [
++        "constraint:session_signing_state_issuer_active_kid_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (issuer, active_kid) REFERENCES identity.session_keys(issuer, kid)",
++        "constraint:session_signing_state_issuer_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (btrim(issuer) <> ''::text)",
++        "constraint:session_signing_state_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (issuer)",
++        "row-security:enabled=false;forced=false"
++      ]
++    },
+     {
+       "scope": "production-control-database",
+       "relation": "provisioning.sagas",
+diff --git a/architecture/state-owners.json b/architecture/state-owners.json
+index b56bbf99..f17c90d5 100644
+--- a/architecture/state-owners.json
++++ b/architecture/state-owners.json
+@@ -507,6 +507,40 @@
+       "compatibility_horizon": "platform-schema-major",
+       "drift_gate": "SR13:generate-and-structurally-compare"
+     },
++    {
++      "id": "identity.session_keys",
++      "plane": "control",
++      "semantic_owner": "platform-identity",
++      "migration_owners": [
++        "platform-identity"
++      ],
++      "schema_source": "deploy/sql/system-schema.sql",
++      "writers": [
++        "platform-identity"
++      ],
++      "readers": [
++        "platform-identity"
++      ],
++      "compatibility_horizon": "platform-schema-major",
++      "drift_gate": "SR13:generate-and-structurally-compare"
++    },
++    {
++      "id": "identity.session_signing_state",
++      "plane": "control",
++      "semantic_owner": "platform-identity",
++      "migration_owners": [
++        "platform-identity"
++      ],
++      "schema_source": "deploy/sql/system-schema.sql",
++      "writers": [
++        "platform-identity"
++      ],
++      "readers": [
++        "platform-identity"
++      ],
++      "compatibility_horizon": "platform-schema-major",
++      "drift_gate": "SR13:generate-and-structurally-compare"
++    },
+     {
+       "id": "catalog.packages",
+       "plane": "control",
+diff --git a/architecture/workspace-tiers.json b/architecture/workspace-tiers.json
+index 14e06922..2464dd01 100644
+--- a/architecture/workspace-tiers.json
++++ b/architecture/workspace-tiers.json
+@@ -3,14 +3,14 @@
+   "selection": {
+     "mechanism": "root-default-members-plus-named-explicit-selectors",
+     "default_members_selected": true,
+-    "reason": "Bare root Cargo commands select the exact 18-package developer floor. Named selectors retain the 29-package production loop and explicit 36-package full-CI coverage; --workspace remains required for the exhaustive root pass.",
++    "reason": "Bare root Cargo commands select the exact 19-package developer floor. Named selectors retain the 30-package production loop and explicit 37-package full-CI coverage; --workspace remains required for the exhaustive root pass.",
+     "package_classification_source": "architecture/package-roles.json",
+     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
+   },
+   "source_inventory": {
+     "root_workspace": {
+       "manifest": "Cargo.toml",
+-      "package_count": 36
++      "package_count": 37
+     },
+     "component_workspaces": [
+       {
+@@ -46,6 +46,7 @@
+         "wamn-execution-host",
+         "wamn-executor",
+         "wamn-host",
++        "wamn-identity",
+         "wamn-pg-core",
+         "wamn-platform-identity",
+         "wamn-project-state",
+@@ -109,6 +110,7 @@
+         "wamn-gate-harness",
+         "wamn-gates",
+         "wamn-host",
++        "wamn-identity",
+         "wamn-pg-core",
+         "wamn-platform-identity",
+         "wamn-project-state",
+@@ -153,7 +155,7 @@
+         "wamn-wms-data-access"
+       ],
+       "non_cargo_inputs": [],
+-      "command_semantics": "Test all 36 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build every component package through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
++      "command_semantics": "Test all 37 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build every component package through explicit selectors for wasm32-wasip2 across both component workspaces, post-link normalize the declared component allowlist, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
+     },
+     "deployed_system_proof": {
+       "root_packages": [
+@@ -164,6 +166,7 @@
+         "wamn-gate-harness",
+         "wamn-gates",
+         "wamn-host",
++        "wamn-identity",
+         "wamn-proof-conformance",
+         "wamn-proof-integration",
+         "wamn-proof-system",
+@@ -206,6 +209,7 @@
+         "wamn-executor",
+         "wamn-gates",
+         "wamn-host",
++        "wamn-identity",
+         "wamn-scenario-worker",
+         "wamn-waker"
+       ],
+@@ -247,11 +251,11 @@
+         "wamn-ctl/ops"
+       ],
+       "expected_package_counts": {
+-        "m1": 19,
+-        "m2": 21,
+-        "deploy": 29,
+-        "full": 36,
+-        "ops": 36
++        "m1": 20,
++        "m2": 22,
++        "deploy": 30,
++        "full": 37,
++        "ops": 37
+       }
+     },
+     "components": {
+@@ -271,8 +275,8 @@
+         "cargo check",
+         "cargo test"
+       ],
+-      "selected_packages": "exactly 18 root default members",
+-      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 36 root members and full-CI target coverage"
++      "selected_packages": "exactly 19 root default members",
++      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 37 root members and full-CI target coverage"
+     },
+     {
+       "working_directory": "components",
+diff --git a/crates/control/provision/src/lib.rs b/crates/control/provision/src/lib.rs
+index 67baee98..bb0e8454 100644
+--- a/crates/control/provision/src/lib.rs
++++ b/crates/control/provision/src/lib.rs
+@@ -59,6 +59,7 @@ pub mod database;
+ #[cfg(feature = "ops")]
+ pub mod dump;
+ mod error;
++pub mod identity_issuer;
+ pub mod management_admitter;
+ mod name;
+ pub mod operation_grants;
+diff --git a/crates/control/provision/src/sql.rs b/crates/control/provision/src/sql.rs
+index c10750aa..e6539ce7 100644
+--- a/crates/control/provision/src/sql.rs
++++ b/crates/control/provision/src/sql.rs
+@@ -572,7 +572,10 @@ pub fn ensure_effect_writer_acl_role_sql() -> String {
+ 
+ /// Idempotently create or harden one stable workload ACL role as NOLOGIN.
+ pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
+-    let role = family.acl_role();
++    ensure_acl_role_sql(family.acl_role())
++}
++
++pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
+     format!(
+         "DO $workload_acl$ DECLARE role_name text := {role_lit}; BEGIN \
+            PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+@@ -1214,12 +1217,16 @@ pub fn retire_workload_generation_sql(
+     database: &str,
+     role: &str,
+ ) -> String {
++    retire_acl_generation_sql(family.acl_role(), database, role)
++}
++
++pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &str) -> String {
+     let role_ident = quote_ident(role);
+     format!(
+         "REVOKE {acl_role} FROM {role_ident}; \
+          REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
+          ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
+-        acl_role = quote_ident(family.acl_role()),
++        acl_role = quote_ident(acl_role),
+         database = quote_ident(database),
+     )
+ }
+diff --git a/crates/control/provision/tests/control_storage.rs b/crates/control/provision/tests/control_storage.rs
+index b65d748c..2be49b25 100644
+--- a/crates/control/provision/tests/control_storage.rs
++++ b/crates/control/provision/tests/control_storage.rs
+@@ -1006,7 +1006,7 @@ DO $$ DECLARE tbls text; BEGIN
+   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
+     INTO tbls FROM information_schema.tables
+     WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
+-  ASSERT tbls = 'identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs',
++  ASSERT tbls = 'identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,identity.session_keys,identity.session_signing_state,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs',
+     format('unexpected control-plane table set (invariant 3): %s', tbls);
+ END $$;
+ 
+diff --git a/crates/identity/platform/Cargo.toml b/crates/identity/platform/Cargo.toml
+index 2b936001..4e0928dc 100644
+--- a/crates/identity/platform/Cargo.toml
++++ b/crates/identity/platform/Cargo.toml
+@@ -6,15 +6,18 @@ edition.workspace = true
+ license.workspace = true
+ 
+ [dependencies]
++base64 = { workspace = true }
+ hex = { workspace = true }
+ ring = { workspace = true }
++serde = { workspace = true, features = ["derive"] }
++serde_json = { workspace = true }
+ sha2 = { workspace = true }
+ subtle = { workspace = true }
+ tokio = { workspace = true, features = ["rt"] }
+ tokio-postgres = { workspace = true }
+ 
+ [dev-dependencies]
+-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
++tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }
+ 
+ [lints]
+ workspace = true
+diff --git a/crates/identity/platform/src/lib.rs b/crates/identity/platform/src/lib.rs
+index fc75f46a..34eca67c 100644
+--- a/crates/identity/platform/src/lib.rs
++++ b/crates/identity/platform/src/lib.rs
+@@ -3,8 +3,8 @@
+ //! MVP outcome: management auth.
+ //!
+ //! This crate owns human and service principals, project-role assignments,
+-//! project-environment memberships, and opaque personal access tokens.
+-//! It deliberately contains no HTTP, OIDC, JWT,
++//! project-environment memberships, opaque personal access tokens, and session keys.
++//! It owns the fixed session-token profile but contains no HTTP, OIDC,
+ //! or per-project `app_system` authority: every function here is
+ //! transport-neutral and takes an already-open client. An OIDC adapter may
+ //! resolve an externally authenticated subject through [`resolve_subject`].
+@@ -17,6 +17,9 @@ use sha2::{Digest as _, Sha256};
+ use subtle::ConstantTimeEq as _;
+ use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
+ 
++pub mod session_keys;
++pub mod session_token;
++
+ #[cfg(test)]
+ const PRINCIPAL_COLUMNS: &str = "id::text, kind, subject, display_name, status";
+ #[cfg(test)]
+diff --git a/crates/platform/runtime/Cargo.toml b/crates/platform/runtime/Cargo.toml
+index a721efcf..02073329 100644
+--- a/crates/platform/runtime/Cargo.toml
++++ b/crates/platform/runtime/Cargo.toml
+@@ -63,6 +63,9 @@ wasmtime-wasi = { workspace = true }
+ wasmtime-wasi-http = { workspace = true }
+ 
+ [dev-dependencies]
++rcgen = { workspace = true }
++rustls = { workspace = true, features = ["aws_lc_rs"] }
++tokio-rustls = { workspace = true }
+ wamn-run-state = { workspace = true, features = ["native", "test-util"] }
+ # wamn-0h0g.20.14: the live effect-authority proof bootstraps the two stable
+ # effect-ledger ACL roles from the REAL provisioning builder rather than a copy,
+diff --git a/crates/platform/runtime/src/lib.rs b/crates/platform/runtime/src/lib.rs
+index 4df68c30..f8cec407 100644
+--- a/crates/platform/runtime/src/lib.rs
++++ b/crates/platform/runtime/src/lib.rs
+@@ -14,6 +14,7 @@ mod registry_transport;
+ pub mod release_manifest;
+ pub mod release_manifest_artifact;
+ pub mod release_manifest_source;
++pub mod session_keys;
+ pub mod wiring_doorbell;
+ pub mod wiring_lowering;
+ 
+diff --git a/deploy/platform/wamn-sysdb.yaml b/deploy/platform/wamn-sysdb.yaml
+index d6237ec5..f54774d8 100644
+--- a/deploy/platform/wamn-sysdb.yaml
++++ b/deploy/platform/wamn-sysdb.yaml
+@@ -6,11 +6,14 @@
+ # model -> wamn-q3n.3 tables), provisioning-saga state (10.1), platform RBAC
+ # (8.1), plan/quota definitions, billing rollups, and platform-level audit.
+ # EXCLUDES by design (docs/archive/platform/postgres-topology.md §T1): NO tenant data (catalogs,
+-# run state, payloads, application users live in org/pool clusters), NO
+-# credentials (R8b — the registry stores Secret *references*; actual material
+-# lives in K8s Secrets resolved by RBAC-holding components), and NO request-path
+-# reads (system-cluster-down freezes provisioning/promotions, never the data
+-# plane).
++# run state, payloads, application users live in org/pool clusters), NO tenant
++# database credentials (R8b — the registry stores Secret *references*; actual material
++# lives in K8s Secrets resolved by RBAC-holding components).
++# Scoped identity readers perform fresh PAT authentication here.
++# Identity database failure also prevents fresh JWKS publication.
++# Identity signing keys are the owner-approved exception (wamn-ctc8.15.1).
++# They stay in this database under the dedicated identity issuer authority.
++# Hosts and the authoring Gate receive no private signing keys.
+ #
+ # DISTINCT PLANE — this is a SEPARATE cluster from the T3 trials pool
+ # (deploy/infra/cnpg-cluster.yaml `wamn-pg`) and the legacy S2–S6 gate pod
+diff --git a/deploy/sql/system-schema.sql b/deploy/sql/system-schema.sql
+index e5392414..050209c3 100644
+--- a/deploy/sql/system-schema.sql
++++ b/deploy/sql/system-schema.sql
+@@ -38,14 +38,14 @@
+ --
+ -- THE FOUR INVARIANTS for T1, and how this schema
+ -- encodes / makes each testable:
+---   (1) request-path-free  — an ARCHITECTURAL property, not a DB constraint. No
+---       data-plane workload (gateway/runner/dispatcher/webhook) may reference
+---       this cluster or DB; only control-plane tooling connects here. A static
+---       manifest grep (crates/control/registry/tests/storage.rs) guards it.
++--   (1) control-plane authority: tenant workloads cannot connect here.
++--       Scoped identity readers perform fresh PAT authentication.
++--       The separate identity issuer reads and mutates only its key tables.
+ --   (2) no tenant-database credentials (R8b) — `project_envs` stores a Secret
+ --       *reference* (secret_name + optional secret_namespace) and NO tenant DB
+ --       credential column (no url/password/dsn). First-party human login hashes
+---       live separately under `identity`; plaintext secrets never do.
++--       live separately under `identity`. Session signing keys are the explicit
++--       authority-only exception: only wamn-identity receives their private part.
+ --   (3) no tenant data — the only tables here are the control-plane set below
+ --       (registry + provisioning + first-party platform identity). No catalogs,
+ --       run state, payloads, or per-project application users. The live-apply
+@@ -71,7 +71,7 @@
+ -- `provisioning` = the saga state that orchestrates it (10.1's
+ -- exactly-once/resumable steps); `identity` = first-party platform principals,
+ -- local human credential hashes, project-role assignments (wamn-ctc8.6), and
+--- personal-access-token digests (wamn-ctc8.7).
++-- personal-access-token digests (wamn-ctc8.7), and signing generations (wamn-ctc8.15.1).
+ -- Distinct schemas keep each control-plane subsystem namespaced.
+ -- Owned by the `wamn_system` role the T1 cluster bootstraps (wamn-q3n.2).
+ -- ---------------------------------------------------------------------------
+@@ -271,6 +271,38 @@ CREATE TABLE identity.pats (
+ 
+ CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
+ 
++-- Session signing authority (wamn-ctc8.15.1). This is key-generation state,
++-- never per-session state. A fresh UUID kid is generated for each publication;
++-- rotation never reuses the credential machinery's A/B slot names as kids.
++-- Only the identity authority receives table access. Hosts receive a public
++-- projection through JWKS, never a database grant or private key material.
++--
++-- Signers hold a SHARE lock on their issuer's signing-state row through the
++-- signature. Activation and compromise removal hold UPDATE locks on that row.
++-- After old signers drain, activation records clock_timestamp() as a proven
++-- signing cutoff and erases the old private key in the same transaction.
++-- The public key remains valid through cutoff + 930 seconds (900 + 30).
++-- A failed flip rolls back both state and cutoff; no last-use/token writes are
++-- needed. Compromise removal deletes the key immediately and never falls back.
++CREATE TABLE identity.session_keys (
++    issuer         text NOT NULL CHECK (btrim(issuer) <> ''),
++    kid            uuid NOT NULL DEFAULT gen_random_uuid(),
++    public_key     bytea NOT NULL CHECK (octet_length(public_key) = 32),
++    private_pkcs8  bytea,
++    published_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
++    signing_cutoff timestamptz,
++    PRIMARY KEY (issuer, kid),
++    CONSTRAINT session_keys_retirement_check
++        CHECK ((signing_cutoff IS NULL) = (private_pkcs8 IS NOT NULL))
++);
++
++CREATE TABLE identity.session_signing_state (
++    issuer     text PRIMARY KEY CHECK (btrim(issuer) <> ''),
++    active_kid uuid,
++    FOREIGN KEY (issuer, active_kid)
++        REFERENCES identity.session_keys (issuer, kid)
++);
++
+ -- ---------------------------------------------------------------------------
+ -- Project-envs — the registry LEAF: one provisioned (org, project, env)
+ -- database, keyed by the identity triple, with a REFERENCE to its credential
+diff --git a/docs/architecture/wamn_jwt_proposal.md b/docs/architecture/wamn_jwt_proposal.md
+index 1b9c303a..ae2cb6cf 100644
+--- a/docs/architecture/wamn_jwt_proposal.md
++++ b/docs/architecture/wamn_jwt_proposal.md
+@@ -124,6 +124,36 @@ revocation is a separate proposal with its own consistency rules.
+   `jwks_max_age`; repeat with the JWKS endpoint unavailable — both refuse at
+   the deadline rather than keep trusting the stale key.
+ 
++### Owner rulings, 2026-09-08
++
++The owner approved these foundation choices in `wamn-ctc8.24` through `.28`.
++They clarify this proposal without removing any §8 proof.
++
++The retirement clock starts at a proven stop-signing barrier.
++The barrier prevents successful issuance with the old key after its cutoff.
++A successful database commit must precede the return of a signed token.
++Retain the old public key for 930 seconds after that cutoff.
++This bound requires no per-token database writes or durable last-signature timestamp.
++Compromised-key removal remains immediate and does not activate a replacement.
++
++The fixed JWT profile uses `ring` for Ed25519 signatures.
++The wire algorithm remains exactly `Ed25519`, and the type remains `wamn-session+jwt`.
++There is no generic JWT framework or alternate algorithm.
++
++The service uses cluster-internal HTTPS with a configured issuer and trusted CA.
++This foundation adds no external ingress or trust root.
++The later TUI work owns the external connection path.
++
++Each configured issuer permits one JWKS request at a time.
++Request starts remain at least one second apart.
++Each fetch has a five-second total timeout and a 65,536-byte response limit.
++These limits never extend the 300-second freshness deadline.
++
++`wamn-ctc8.15.1` owns the deployed service boundary, key lifecycle, and public-key cache proofs.
++`wamn-ctc8.15.3` owns the actual two-host session-token acceptance and refusal proofs.
++Those proofs include both reachable and unreachable JWKS.
++Session activation remains blocked until those proofs and the fresh-only operation proof pass.
++
+ ## 5. Minting
+ 
+ - `POST /session`: a valid **human** PAT → one token for one requested `aud`.
+diff --git a/docs/exe-model.md b/docs/exe-model.md
+index 57c9c6f7..be40d1d5 100644
+--- a/docs/exe-model.md
++++ b/docs/exe-model.md
+@@ -199,6 +199,17 @@ a proof rewritten to poll for that refusal would be a proof of a race. The way
+ to make an authorization path fast is to make its reads cheap, which is what
+ reducing them from nine round trips to three did; it is not to stop making them.
+ 
++The owner approved a scoped session exception on 2026-09-07 and clarified it on 2026-09-08.
++The [JWT proposal](architecture/wamn_jwt_proposal.md) controls that exception.
++Fresh PAT authentication still reads identity, membership or service scope, and tenant permissions on every request.
++Session tokens carry signed identity and environment-role evidence for at most 900 seconds, plus 30 seconds of clock tolerance.
++Hosts read tenant operation permissions fresh for every new request.
++They accept public signing keys only within the configured issuer's 300-second evidence window.
++Private signing keys stay with the separate `wamn-identity` authority and its system database.
++The fresh-only restriction belongs to each registered operation and survives nested calls.
++Session routes remain disabled until the two-host and fresh-only proofs pass.
++This foundation adds keys and JWKS only, not a session admission path.
++
+ Per-tenant roles imply pools per credential. Connection multiplication is the
+ pooler trigger, not an alternative identity model.
+ 
+diff --git a/docs/operations/build-and-test.md b/docs/operations/build-and-test.md
+index fd637c65..55046669 100644
+--- a/docs/operations/build-and-test.md
++++ b/docs/operations/build-and-test.md
+@@ -1217,6 +1217,124 @@ this mode.
+ The [2026-09-07 evidence](evidence/ctc8-19-premerge-20260907/README.md) preserves
+ both deployed runs and the workspace sweep at their recorded source commits.
+ 
++### `[IDENTITY-JWKS]` public signing keys
++
++This foundation gate covers `wamn-ctc8.15.1`.
++The separate `wamn-identity` service exposes HTTPS JWKS and health routes.
++It does not expose `/session`, `/authoring`, or host execution.
++Signing keys stay in the system database under a dedicated identity credential.
++The gate observes public keys only and receives no database credential.
++
++Run the deterministic token and HTTPS cache proofs:
++
++```bash
++cargo test --locked --offline -p wamn-platform-identity --test session_token
++cargo test --locked --offline -p wamn-runtime --features test-util \
++  --test session_keys -- --test-threads=1
++```
++
++Each live suite requires its own disposable PostgreSQL 18 server.
++The URL must name `wamn_system`.
++Do not use a shared server because the fixtures replace schemas and cluster-wide roles.
++The grant fixtures also revoke the public database connection privilege.
++
++```bash
++WAMN_SESSION_KEYS_PG_URL="$WAMN_OWNED_PG18_URL" \
++WAMN_SESSION_KEYS_ALLOW_SCHEMA_RESET=1 \
++  cargo test --locked --offline -p wamn-platform-identity \
++  --test session_keys_live -- --include-ignored --nocapture --test-threads=1
++WAMN_IDENTITY_ISSUER_PG_URL="$WAMN_OWNED_PG18_URL" \
++WAMN_IDENTITY_ISSUER_ALLOW_SCHEMA_RESET=1 \
++  cargo test --locked --offline -p wamn-control-provision \
++  --test identity_issuer_live -- --include-ignored --nocapture --test-threads=1
++WAMN_IDENTITY_SERVICE_PG_URL="$WAMN_OWNED_PG18_URL" \
++WAMN_IDENTITY_SERVICE_ALLOW_SCHEMA_RESET=1 \
++  cargo test --locked --offline -p wamn-identity \
++  --test https_surface -- --include-ignored --nocapture --test-threads=1
++WAMN_IDENTITY_ISSUER_CLI_PG_URL="$WAMN_OWNED_PG18_URL" \
++WAMN_IDENTITY_ISSUER_CLI_ALLOW_SCHEMA_RESET=1 \
++  cargo test --locked --offline -p wamn-ctl \
++  --test identity_issuer_live -- --include-ignored --nocapture --test-threads=1
++```
++
++Replace the disposable server and URL before each command.
++The key proof covers committed publication, activation, signing locks, retirement, and compromised-key removal.
++The credential proofs cover narrow grants, atomic Secret output, rollback, and A/B retirement.
++The HTTPS proof uses the compiled identity CLI and the production listener.
++The cache proofs use real TLS with controlled evidence clocks.
++They cover complete replacement, removal, outages, prior HTTP Age, cancellation, fetch limits, and exact freshness deadlines.
++
++Run the deployed gate from a clean worktree:
++
++```bash
++tools/identity-jwks-journey-run --apply \
++  --evidence-dir docs/perf/2026.09/ctc8-15-1-identity/deployed-001
++```
++
++The journey builds the standard `identity` and `gates` Dockerfile stages.
++It installs the actual identity chart in a disposable kind cluster.
++Its test CA is local to that cluster and does not change production trust.
++It retains image identities, Job verdicts, Pod states, and public key receipts.
++It removes only its own cluster and temporary credentials.
++The two-host session-token proof remains mandatory in `wamn-ctc8.15.3`.
++Public-key cache tests do not establish host admission.
++
++### Identity foundation rollout
++
++For an existing database, install the two key tables as the `wamn_system` owner.
++Use the `identity.session_keys` and `identity.session_signing_state` definitions from `deploy/sql/system-schema.sql`.
++Do not replay the complete bootstrap against an existing database.
++Before credential preparation, apply the existing cluster policy that removes public database connection privileges.
++Remove public temporary-table privileges on `wamn_system`.
++The provisioner refuses an open policy and does not modify unrelated databases.
++
++Prepare the first issuer credential:
++
++```bash
++wamn-ctl provision-identity-issuer --issuer "$WAMN_IDENTITY_ISSUER" \
++  --prepare-generation a --emit-secret /secure/identity-db.json
++kubectl --context "$WAMN_CONTEXT" -n wamn-system apply -f /secure/identity-db.json
++```
++
++The command reads the administrator URL from `WAMN_SYSTEM_ADMIN_URL`.
++It emits a scoped credential with a finite 30-day lifetime and mode 0600.
++The service refuses an owner credential or a credential for another issuer before connection.
++Credential rotation uses the existing A/B slots, not signing-key identifiers.
++Before retiring the old slot, start the replacement service with the new credential.
++The provisioner requires a live replacement connection and then drains the old connections.
++
++Install the service with an existing trusted serving certificate:
++
++```bash
++helm upgrade --install wamn-identity deploy/platform/identity \
++  --kube-context "$WAMN_CONTEXT" --namespace wamn-system \
++  -f deploy/platform/values-identity-default.yaml \
++  --set-string issuer="$WAMN_IDENTITY_ISSUER" \
++  --set-string tlsSecret="$WAMN_IDENTITY_TLS_SECRET"
++```
++
++Configure the intended identity image tag in the deployment values before installation.
++The chart requires HTTPS and operator-provided database and serving certificate Secrets.
++It adds no ingress, service-account privilege, or trust root.
++The default database example contains an unusable placeholder.
++
++Publish a signing key through the deployed identity binary:
++
++```bash
++kubectl --context "$WAMN_CONTEXT" -n wamn-system exec deployment/wamn-identity \
++  -- wamn-identity publish
++kubectl --context "$WAMN_CONTEXT" -n wamn-system exec deployment/wamn-identity \
++  -- wamn-identity activate --kid "$WAMN_PUBLISHED_KID"
++```
++
++Use the public `kid` from the publication result for activation.
++Publication must commit before activation.
++Rotation erases the old private key after existing signers drain.
++Its public key remains available for 930 seconds after that cutoff.
++The `retire` command removes expired generations.
++The `remove --kid` command removes a compromised key immediately and selects no replacement.
++Neither command creates a session record.
++
+ ### `[WAMN-DEV-LIVE]` — clean twelve-stage product command and cleanup
+ 
+ This gate runs the literal `wamn dev` product command through all twelve
+diff --git a/services/ctl/src/lib.rs b/services/ctl/src/lib.rs
+index 358ee16a..7d142ca2 100644
+--- a/services/ctl/src/lib.rs
++++ b/services/ctl/src/lib.rs
+@@ -22,6 +22,7 @@ pub mod dump_project_env;
+ pub mod enable_cdc_project_env;
+ mod env_policies;
+ mod ident;
++pub mod identity_issuer;
+ #[cfg(feature = "ops")]
+ mod ops_schema;
+ pub mod print_release_env;
+diff --git a/services/ctl/src/main.rs b/services/ctl/src/main.rs
+index 83e60141..4ec1bbdc 100644
+--- a/services/ctl/src/main.rs
++++ b/services/ctl/src/main.rs
+@@ -4,10 +4,11 @@ use std::str::FromStr as _;
+ 
+ use clap::{Parser, Subcommand};
+ use wamn_ctl::{
+-    apply_package, author_wiring, bind_connection, enable_cdc_project_env, print_release_env,
+-    project_env_membership, promote, provision, provision_org, provision_project_env,
+-    publish_release, push_component, push_release_manifest, reconcile_package_data_access,
+-    reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
++    apply_package, author_wiring, bind_connection, enable_cdc_project_env, identity_issuer,
++    print_release_env, project_env_membership, promote, provision, provision_org,
++    provision_project_env, publish_release, push_component, push_release_manifest,
++    reconcile_package_data_access, reconcile_replica_identity, reconcile_run_plane,
++    terminalize_effect_uncertain,
+ };
+ 
+ #[derive(Parser)]
+@@ -29,6 +30,8 @@ enum Command {
+     ProvisionOrg(provision_org::ProvisionOrgArgs),
+     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
+     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
++    /// Provision the scoped database credential for the identity service.
++    ProvisionIdentityIssuer(identity_issuer::IdentityIssuerArgs),
+     /// Grant one human access to one project environment.
+     GrantProjectEnvMembership(project_env_membership::ProjectEnvMembershipArgs),
+     /// Revoke one human's access to one project environment.
+@@ -84,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
+         Command::ProvisionProject(args) => provision::run(args).await,
+         Command::ProvisionOrg(args) => provision_org::run(args).await,
+         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
++        Command::ProvisionIdentityIssuer(args) => identity_issuer::run(args).await,
+         Command::GrantProjectEnvMembership(args) => project_env_membership::grant(args).await,
+         Command::RevokeProjectEnvMembership(args) => project_env_membership::revoke(args).await,
+         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
+diff --git a/services/ctl/src/provision_project_env.rs b/services/ctl/src/provision_project_env.rs
+index 718f92ed..4130616e 100644
+--- a/services/ctl/src/provision_project_env.rs
++++ b/services/ctl/src/provision_project_env.rs
+@@ -3134,7 +3134,7 @@ fn create_secret_temp(path: &Path) -> anyhow::Result<(PathBuf, File)> {
+     )
+ }
+ 
+-fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
++pub(crate) fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
+     let mut bytes = serde_json::to_vec_pretty(doc).context("serialize Secret JSON")?;
+     bytes.push(b'\n');
+     let (temp_path, mut file) = create_secret_temp(path)?;
+diff --git a/services/ctl/tests/protected_relations_live.rs b/services/ctl/tests/protected_relations_live.rs
+index a534fa7f..f58dc14a 100644
+--- a/services/ctl/tests/protected_relations_live.rs
++++ b/services/ctl/tests/protected_relations_live.rs
+@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
+ use serde::{Deserialize, Serialize};
+ use tokio_postgres::{Client, NoTls};
+ 
++use wamn_control_provision::identity_issuer::{
++    IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
++};
+ use wamn_control_provision::sql;
+ use wamn_ctl::apply_package::{self, ApplyPackageArgs};
+ use wamn_ctl::reconcile_run_plane;
+@@ -283,9 +286,48 @@ async fn install_control_database(client: &Client) {
+         .batch_execute(&system_install)
+         .await
+         .expect("install canonical control-plane schema");
++    client
++        .batch_execute(&grant_identity_issuer_surface_sql())
++        .await
++        .expect("install canonical identity issuer key-table authority");
++    // The mutation inventory intentionally omits SELECT. Prove it here along
++    // with the absence of TRUNCATE before deriving the real catalog ACL rows.
++    for table in IDENTITY_ISSUER_TABLES {
++        let relation = format!("identity.{table}");
++        let privileges: bool = client
++            .query_one(
++                "SELECT has_table_privilege($1, $2, 'SELECT') \
++                    AND has_table_privilege($1, $2, 'INSERT') \
++                    AND has_table_privilege($1, $2, 'UPDATE') \
++                    AND has_table_privilege($1, $2, 'DELETE') \
++                    AND NOT has_table_privilege($1, $2, 'TRUNCATE')",
++                &[&IDENTITY_ISSUER_ROLE, &relation],
++            )
++            .await
++            .expect("read identity issuer key-table privileges")
++            .get(0);
++        assert!(
++            privileges,
++            "identity issuer privilege boundary drifted on {relation}"
++        );
++    }
+ }
+ 
+ async fn install_project_database(client: &Client, url: &str, repository: &Path) {
++    // Package DDL runs as the production database owner, not the administrator.
++    client
++        .batch_execute(sql::ensure_db_owner_role_sql())
++        .await
++        .expect("ensure the canonical project database owner");
++    let database: String = client
++        .query_one("SELECT current_database()", &[])
++        .await
++        .expect("read the disposable project database name")
++        .get(0);
++    client
++        .batch_execute(&sql::set_database_owner_sql(&database))
++        .await
++        .expect("assign the canonical project database owner before package installation");
+     client
+         .batch_execute(
+             "DROP SCHEMA IF EXISTS catalog CASCADE; \
+@@ -911,6 +953,16 @@ async fn protected_relations_match_reconciled_postgres() {
+         support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+     let repository = repository();
+     let client = connect(&url).await;
++    let version: String = client
++        .query_one("SELECT current_setting('server_version_num')", &[])
++        .await
++        .expect("read protected-relation probe server version")
++        .get(0);
++    let version: u32 = version.parse().expect("server_version_num is numeric");
++    assert!(
++        (180_000..190_000).contains(&version),
++        "protected-relation derivation requires PostgreSQL 18, found {version}"
++    );
+     prepare_scratch_database(&client).await;
+     let declarations = declared_relations(&repository);
+     install_control_database(&client).await;
+diff --git a/tests/conformance/src/docker_component_provenance.rs b/tests/conformance/src/docker_component_provenance.rs
+index 221ecb23..fac7c86c 100644
+--- a/tests/conformance/src/docker_component_provenance.rs
++++ b/tests/conformance/src/docker_component_provenance.rs
+@@ -89,6 +89,7 @@ fn every_embedded_component_comes_from_the_locked_builder() {
+     // regression, and `stage` fails closed when a stage name disappears.
+     for image_stage in [
+         "host",
++        "identity",
+         "executor",
+         "ctl",
+         "dispatcher",
+@@ -126,6 +127,12 @@ fn every_embedded_component_comes_from_the_locked_builder() {
+ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
+     let packages = [
+         ("host", "wamn-host", "host", &["wamn-host"][..]),
++        (
++            "identity",
++            "wamn-identity",
++            "identity",
++            &["wamn-identity"][..],
++        ),
+         (
+             "executor",
+             "wamn-executor",
+@@ -162,7 +169,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
+     assert_eq!(
+         DOCKERFILE.matches("cargo chef cook").count(),
+         packages.len(),
+-        "only the seven retained native package cooks may exist"
++        "only the eight retained native package cooks may exist"
+     );
+ 
+     for (stage_name, package, image_stage, outputs) in packages {
+diff --git a/tests/conformance/tests/package_architecture.rs b/tests/conformance/tests/package_architecture.rs
+index 808f60f9..eff247be 100644
+--- a/tests/conformance/tests/package_architecture.rs
++++ b/tests/conformance/tests/package_architecture.rs
+@@ -16,7 +16,7 @@ const COMPONENT_WORKSPACES: [(&str, &str, usize); 2] = [
+     ("components", "components/Cargo.toml", 17),
+     ("components-no-std", "components/no-std/Cargo.toml", 4),
+ ];
+-const ROOT_MEMBER_COUNT: usize = 36;
++const ROOT_MEMBER_COUNT: usize = 37;
+ 
+ #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+ #[serde(rename_all = "snake_case")]
+diff --git a/tests/conformance/tests/profile_selectors.rs b/tests/conformance/tests/profile_selectors.rs
+index e1ca1785..ba75c73a 100644
+--- a/tests/conformance/tests/profile_selectors.rs
++++ b/tests/conformance/tests/profile_selectors.rs
+@@ -318,7 +318,7 @@ fn profile_contract_matches_locked_metadata() {
+     // than written down, and adding a package moves none of these
+     // (wamn-10yt.10.39).
+     let derived = package_components(&root);
+-    assert_eq!(root_members.len(), 36);
++    assert_eq!(root_members.len(), 37);
+     assert_eq!(component_members.len(), 21 + derived.len());
+     assert_unique("root workspace metadata", &root_members);
+     assert_unique("component workspace metadata", &component_members);
+@@ -363,11 +363,11 @@ fn profile_contract_matches_locked_metadata() {
+     );
+ 
+     let profile_counts = [
+-        ("m1", 19),
+-        ("m2", 21),
+-        ("deploy", 29),
+-        ("full", 36),
+-        ("ops", 36),
++        ("m1", 20),
++        ("m2", 22),
++        ("deploy", 30),
++        ("full", 37),
++        ("ops", 37),
+     ];
+     let mut profiles = BTreeMap::new();
+     for (profile, expected_count) in profile_counts {
+diff --git a/tests/conformance/tests/repo_lint.rs b/tests/conformance/tests/repo_lint.rs
+index e28d58ba..36d0e9ea 100644
+--- a/tests/conformance/tests/repo_lint.rs
++++ b/tests/conformance/tests/repo_lint.rs
+@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
+ use wamn_proof_conformance::package_inventory;
+ 
+ const TOOL: &str = "tools/repo-lint";
+-const ROOT_MEMBER_COUNT: usize = 36;
++const ROOT_MEMBER_COUNT: usize = 37;
+ /// The component member counts are the PLATFORM half. A package declares its
+ /// own components, so a component workspace also holds however many of those
+ /// actually live in it, and adding a package must not move these numbers
+diff --git a/tests/conformance/tests/retained_root_outcomes.rs b/tests/conformance/tests/retained_root_outcomes.rs
+index 2df8f8a1..c843218d 100644
+--- a/tests/conformance/tests/retained_root_outcomes.rs
++++ b/tests/conformance/tests/retained_root_outcomes.rs
+@@ -44,6 +44,7 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
+     ("wamn-gate-harness", "test-support/harness/src/lib.rs"),
+     ("wamn-gates", "tests/orchestrator/src/main.rs"),
+     ("wamn-host", "services/host/src/main.rs"),
++    ("wamn-identity", "services/identity/src/lib.rs"),
+     ("wamn-pg-core", "crates/platform/pg-core/src/lib.rs"),
+     (
+         "wamn-platform-identity",
+diff --git a/tests/conformance/tests/workspace_tiers.rs b/tests/conformance/tests/workspace_tiers.rs
+index f68a87b9..824c23f5 100644
+--- a/tests/conformance/tests/workspace_tiers.rs
++++ b/tests/conformance/tests/workspace_tiers.rs
+@@ -19,7 +19,7 @@ const COMPONENT_WORKSPACES: [(&str, &str); 2] = [
+ const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
+ const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
+ const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
+-const ROOT_DEFAULT_MEMBER_PATHS: [&str; 18] = [
++const ROOT_DEFAULT_MEMBER_PATHS: [&str; 19] = [
+     "crates/authoring/model",
+     "crates/catalog/model",
+     "crates/client/core",
+@@ -37,6 +37,7 @@ const ROOT_DEFAULT_MEMBER_PATHS: [&str; 18] = [
+     "crates/scenarios/model",
+     "services/executor",
+     "services/host",
++    "services/identity",
+     "services/scenario-worker",
+ ];
+ 
+diff --git a/tests/integration/Cargo.toml b/tests/integration/Cargo.toml
+index 2998b3ba..9bc6f437 100644
+--- a/tests/integration/Cargo.toml
++++ b/tests/integration/Cargo.toml
+@@ -22,7 +22,7 @@ reqwest = { workspace = true, features = ["rustls"] }
+ schemars = { workspace = true }
+ serde = { workspace = true, features = ["derive"] }
+ serde_json = { workspace = true }
+-tokio = { workspace = true, features = ["io-util", "net", "process", "sync", "time", "rt", "macros"] }
++tokio = { workspace = true, features = ["fs", "io-util", "net", "process", "sync", "time", "rt", "macros"] }
+ tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
+ tracing = { workspace = true }
+ tracing-opentelemetry = { workspace = true }
+diff --git a/tests/integration/src/lib.rs b/tests/integration/src/lib.rs
+index a9fd7495..af92e49f 100644
+--- a/tests/integration/src/lib.rs
++++ b/tests/integration/src/lib.rs
+@@ -12,6 +12,7 @@ pub mod cdcbench;
+ mod claim_law_live;
+ pub mod dashproof;
+ mod hot_route_trace;
++pub mod identity_keys_proof;
+ mod measurement_schema;
+ pub mod membershipproof;
+ pub mod provisionbench;
+diff --git a/tests/orchestrator/src/main.rs b/tests/orchestrator/src/main.rs
+index 9198eeeb..b9a727f3 100644
+--- a/tests/orchestrator/src/main.rs
++++ b/tests/orchestrator/src/main.rs
+@@ -10,7 +10,9 @@
+ // Each proof implementation is owned and compiled by its tier package. This
+ // binary is only the stable deploy-facing command router.
+ use wamn_proof_conformance::socketguard;
+-use wamn_proof_integration::{dashproof, membershipproof, readerbench, retention};
++use wamn_proof_integration::{
++    dashproof, identity_keys_proof, membershipproof, readerbench, retention,
++};
+ use wamn_proof_system::traceproof;
+ 
+ use std::str::FromStr as _;
+@@ -30,6 +32,9 @@ struct Cli {
+ 
+ #[derive(Subcommand)]
+ enum Command {
++    /// Prove public JWKS and cache evidence through deployed identity HTTPS.
++    #[command(name = "identity-jwks")]
++    IdentityJwks(identity_keys_proof::IdentityKeysProofArgs),
+     /// Prove fresh human membership through a deployed Receiving HTTP route.
+     Membershipproof(membershipproof::MembershipProofArgs),
+     /// Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
+@@ -60,6 +65,7 @@ async fn async_main() -> anyhow::Result<()> {
+         wash_runtime::observability::initialize_observability(level, false, false)?;
+ 
+     let result = match cli.command {
++        Command::IdentityJwks(args) => identity_keys_proof::run(args).await,
+         Command::Membershipproof(args) => membershipproof::run(args).await,
+         Command::Retention(args) => retention::run(args).await,
+         Command::Readerbench(args) => readerbench::run(args).await,
+diff --git a/tests/system/tests/deploy_platform_inventory.rs b/tests/system/tests/deploy_platform_inventory.rs
+index 6879e7fa..fb9d7611 100644
+--- a/tests/system/tests/deploy_platform_inventory.rs
++++ b/tests/system/tests/deploy_platform_inventory.rs
+@@ -26,6 +26,7 @@
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::fs;
+ use std::path::{Path, PathBuf};
++use std::process::{Command, Output};
+ 
+ /// The tier this proof owns.
+ const PLATFORM: &str = "deploy/platform";
+@@ -47,7 +48,7 @@ type BillOfMaterialsRow = (
+ /// separately: every object is `wamn-system` except the per-environment
+ /// templates, which carry a substitution placeholder.
+ #[rustfmt::skip]
+-const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
++const BILL_OF_MATERIALS: [BillOfMaterialsRow; 21] = [
+     // The dispatcher's projects Secret carries its database principal INSIDE
+     // the file — the tier's only credential with no separate DB-URL Secret.
+     ("dispatcher-projects.example.yaml",
+@@ -88,6 +89,13 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
+     ("http-route-workload.example.yaml",
+         &[("Service", "flow-http"), ("WorkloadDeployment", "flow-http")],
+         &["registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev"]),
++    // This row is the chart's rendered output, not its template source.
++    ("identity",
++        &[("Service", "wamn-identity"), ("Deployment", "wamn-identity")],
++        &["wamn-identity:dev"]),
++    ("identity-db.example.yaml",
++        &[("Secret", "wamn-identity-db")],
++        &[]),
+     ("materializer.example.yaml",
+         &[("WorkloadDeployment", "materializer-demo")],
+         &["registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev"]),
+@@ -143,10 +151,19 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
+ /// keys (`registry` + `repository` + `tag`), which is why it cannot be scanned
+ /// for an `image:` line like the rest.
+ const HOST_VALUES_FILE: &str = "values-host-default.yaml";
+-const HELM_VALUES_FILES: [&str; 3] = [
++const HELM_VALUES_FILES: [&str; 4] = [
+     HOST_VALUES_FILE,
+     "values-host-receiving-pat.yaml",
+     "values-host-wms-pat.yaml",
++    "values-identity-default.yaml",
++];
++const IDENTITY_ISSUER: &str = "https://wamn-identity.wamn-system.svc";
++const IDENTITY_TLS_SECRET: &str = "wamn-identity-serving-tls";
++const IDENTITY_CHART_FILES: [&str; 4] = [
++    "Chart.yaml",
++    "templates/deployment.yaml",
++    "templates/service.yaml",
++    "values.yaml",
+ ];
+ const HELM_VALUES_IMAGE_PARTS: [(&str, &str); 3] = [
+     ("registry", "\"\""),
+@@ -199,7 +216,11 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
+ /// `wamn-http-admitter-db` `wamn-0h0g.22.11` added, so all three are DECLARED
+ /// rows in the table above rather than prerequisites of it. Every database
+ /// credential in this tier ships a carrier again.
+-const EXTERNAL_PREREQUISITES: [(&str, &str); 2] = [
++const EXTERNAL_PREREQUISITES: [(&str, &str); 3] = [
++    (
++        IDENTITY_TLS_SECRET,
++        "operator-configured serving certificate from the existing issuer/CA",
++    ),
+     // READ by registry.yaml's namespaced CA Issuer (`spec.ca.secretName`) and
+     // minted by the runtime-operator Helm release, not by anything here. The
+     // chart hard-codes a 365-day CA and nothing renews it (wamn-ob2f).
+@@ -386,10 +407,345 @@ fn platform_files(root: &Path) -> BTreeSet<String> {
+ }
+ 
+ fn read(root: &Path, file: &str) -> String {
++    if file == "identity" {
++        let output = render_identity(root, Some(IDENTITY_ISSUER), Some(IDENTITY_TLS_SECRET));
++        assert!(
++            output.status.success(),
++            "render identity chart: {}",
++            String::from_utf8_lossy(&output.stderr)
++        );
++        return String::from_utf8(output.stdout).expect("Helm output is UTF-8");
++    }
+     let path = root.join(PLATFORM).join(file);
+     fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+ }
+ 
++fn render_identity(root: &Path, issuer: Option<&str>, tls_secret: Option<&str>) -> Output {
++    let mut command = Command::new("helm");
++    command.current_dir(root).args([
++        "template",
++        "wamn-identity",
++        "deploy/platform/identity",
++        "--namespace",
++        "wamn-system",
++        "-f",
++        "deploy/platform/values-identity-default.yaml",
++    ]);
++    if let Some(issuer) = issuer {
++        command.args(["--set-string", &format!("issuer={issuer}")]);
++    }
++    if let Some(tls_secret) = tls_secret {
++        command.args(["--set-string", &format!("tlsSecret={tls_secret}")]);
++    }
++    command
++        .output()
++        .expect("run Helm to render the identity chart")
++}
++
++fn chart_files(directory: &Path, prefix: &str) -> BTreeSet<String> {
++    let mut files = BTreeSet::new();
++    for entry in fs::read_dir(directory).expect("read identity chart directory") {
++        let entry = entry.expect("read identity chart entry");
++        let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
++        let kind = entry.file_type().expect("read identity chart file type");
++        if kind.is_dir() {
++            files.extend(chart_files(&entry.path(), &format!("{name}/")));
++        } else {
++            assert!(kind.is_file(), "identity chart contains a non-file: {name}");
++            files.insert(name);
++        }
++    }
++    files
++}
++
++#[test]
++fn the_identity_chart_requires_operator_inputs_and_renders_its_https_boundary() {
++    let root = repository_root();
++    assert_eq!(
++        chart_files(&root.join(PLATFORM).join("identity"), ""),
++        IDENTITY_CHART_FILES
++            .map(str::to_owned)
++            .into_iter()
++            .collect()
++    );
++    for (issuer, tls, reason) in [
++        (None, Some(IDENTITY_TLS_SECRET), "Set issuer"),
++        (Some(IDENTITY_ISSUER), None, "Set tlsSecret"),
++        (
++            Some("http://identity.invalid"),
++            Some(IDENTITY_TLS_SECRET),
++            "issuer must use HTTPS",
++        ),
++    ] {
++        let output = render_identity(&root, issuer, tls);
++        assert!(
++            !output.status.success(),
++            "missing or insecure identity input rendered"
++        );
++        assert!(String::from_utf8_lossy(&output.stderr).contains(reason));
++    }
++    let source = read(&root, "identity");
++    let rendered = documents(&source);
++    let deployment = rendered
++        .iter()
++        .find(|document| {
++            object(document, "identity").is_some_and(|object| object.kind == "Deployment")
++        })
++        .expect("rendered identity Deployment");
++    let service = rendered
++        .iter()
++        .find(|document| {
++            object(document, "identity").is_some_and(|object| object.kind == "Service")
++        })
++        .expect("rendered identity Service");
++    for (key, expected) in [
++        ("type", "ClusterIP"),
++        ("port", "443"),
++        ("targetPort", "https"),
++    ] {
++        assert!(
++            service
++                .iter()
++                .any(|line| scalar_after(line, key) == Some(expected)),
++            "identity Service {key}"
++        );
++    }
++    for (key, expected) in [
++        ("automountServiceAccountToken", "false"),
++        ("args", "[serve]"),
++        ("containerPort", "8443"),
++        ("scheme", "HTTPS"),
++        ("path", "/healthz"),
++        ("mountPath", "/var/run/wamn-identity/tls"),
++        ("readOnly", "true"),
++        ("secretName", IDENTITY_TLS_SECRET),
++    ] {
++        assert!(
++            deployment
++                .iter()
++                .any(|line| scalar_after(line, key) == Some(expected)),
++            "identity Deployment {key}"
++        );
++    }
++    let environment: BTreeSet<&str> = deployment
++        .iter()
++        .filter_map(|line| {
++            scalar_after(line.trim().strip_prefix("- ").unwrap_or(line), "name")
++                .filter(|name| name.starts_with("WAMN_"))
++        })
++        .collect();
++    assert_eq!(
++        environment,
++        [
++            "WAMN_IDENTITY_BIND",
++            "WAMN_IDENTITY_ISSUER",
++            "WAMN_IDENTITY_DATABASE_URL",
++            "WAMN_IDENTITY_TLS_CERT",
++            "WAMN_IDENTITY_TLS_KEY",
++        ]
++        .into_iter()
++        .collect()
++    );
++}
++
++// Read fields from block or flow-style manifest lines, never from comments.
++fn manifest_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
++    line.split(['{', '}', ',']).find_map(|part| {
++        let part = part
++            .trim()
++            .trim_start_matches("- ")
++            .trim_matches(['[', ']']);
++        scalar_after(part, key)
++    })
++}
++
++fn secret_references(source: &str, file: &str) -> BTreeSet<String> {
++    let lines = significant(source);
++    let mut names = BTreeSet::new();
++    for (index, line) in lines.iter().enumerate() {
++        if let Some(name) = manifest_field(line, "secretName") {
++            names.insert(name.to_owned());
++        }
++        let fields: Vec<_> = line.split(['{', '}', ',']).collect();
++        for (field_index, field) in fields.iter().enumerate() {
++            if !matches!(
++                field
++                    .trim()
++                    .trim_start_matches("- ")
++                    .trim_matches(['[', ']']),
++                "secretKeyRef:" | "secretRef:" | "secret:"
++            ) {
++                continue;
++            }
++            let name = fields[field_index + 1..]
++                .iter()
++                .find_map(|part| {
++                    scalar_after(part, "name").or_else(|| scalar_after(part, "secretName"))
++                })
++                .or_else(|| {
++                    lines[index + 1..]
++                        .iter()
++                        .take_while(|following| indent(following) > indent(line))
++                        .find_map(|following| {
++                            scalar_after(following, "name")
++                                .or_else(|| scalar_after(following, "secretName"))
++                        })
++                })
++                .unwrap_or_else(|| panic!("{file}: Secret reference names nothing"));
++            names.insert(name.to_owned());
++        }
++    }
++    names
++}
++
++fn environment_secret_bindings(source: &str, file: &str) -> BTreeMap<String, (String, String)> {
++    let lines = significant(source);
++    let mut bindings = BTreeMap::new();
++    for (index, line) in lines.iter().enumerate() {
++        if line.trim() != "secretKeyRef:" {
++            continue;
++        }
++        let entry = lines[..index]
++            .iter()
++            .rev()
++            .find(|entry| indent(entry) + 4 == indent(line))
++            .and_then(|entry| entry.trim().strip_prefix("- "))
++            .and_then(|entry| scalar_after(entry, "name"))
++            .unwrap_or_else(|| panic!("{file}: credential reference has no environment entry"));
++        let reference: Vec<_> = lines[index + 1..]
++            .iter()
++            .take_while(|following| indent(following) > indent(line))
++            .collect();
++        let name = reference
++            .iter()
++            .find_map(|line| scalar_after(line, "name"))
++            .unwrap_or_else(|| panic!("{file}: credential Secret has no name"));
++        let key = reference
++            .iter()
++            .find_map(|line| scalar_after(line, "key"))
++            .unwrap_or_else(|| panic!("{file}: credential Secret has no key"));
++        assert!(
++            bindings
++                .insert(entry.to_owned(), (name.to_owned(), key.to_owned()))
++                .is_none(),
++            "{file}: duplicate credential environment entry {entry}"
++        );
++    }
++    bindings
++}
++
++#[test]
++fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_classes() {
++    let root = repository_root();
++    let mut issuer_secret_consumers = Vec::new();
++    let mut issuer_url_consumers = Vec::new();
++    let mut identity_image_consumers = Vec::new();
++    for file in BILL_OF_MATERIALS
++        .iter()
++        .map(|(file, _, _)| *file)
++        .chain(HELM_VALUES_FILES)
++    {
++        let source = read(&root, file);
++        let references = secret_references(&source, file);
++        if references.contains("wamn-identity-db") {
++            issuer_secret_consumers.push(file);
++        }
++        if significant(&source)
++            .iter()
++            .any(|line| manifest_field(line, "name") == Some("WAMN_IDENTITY_DATABASE_URL"))
++        {
++            issuer_url_consumers.push(file);
++        }
++        if images(&source)
++            .iter()
++            .any(|image| image.starts_with("wamn-identity:"))
++        {
++            identity_image_consumers.push(file);
++        }
++        if file != "identity" {
++            assert!(
++                !references.contains(IDENTITY_TLS_SECRET),
++                "{file} mounts identity's private serving TLS key"
++            );
++        }
++    }
++    assert_eq!(issuer_secret_consumers, ["identity"]);
++    assert_eq!(issuer_url_consumers, ["identity"]);
++    assert_eq!(identity_image_consumers, ["identity"]);
++    for (file, project) in [
++        ("values-host-default.yaml", None),
++        ("values-host-receiving-pat.yaml", Some("receiving")),
++        ("values-host-wms-pat.yaml", Some("wms")),
++    ] {
++        let source = read(&root, file);
++        let mut expected = BTreeMap::from([(
++            "WAMN_PG_URL".to_owned(),
++            ("wamn-host-db".to_owned(), "url".to_owned()),
++        )]);
++        if let Some(project) = project {
++            for (variable, class) in [
++                ("WAMN_SYSTEM_URL", "identity-reader"),
++                ("WAMN_EXECUTOR_PLATFORM_PG_URL", "executor-platform"),
++                ("WAMN_HTTP_ADMITTER_PG_URL", "http-admitter"),
++                ("WAMN_EVENT_MATERIALIZER_PG_URL", "event-materializer"),
++            ] {
++                expected.insert(
++                    variable.to_owned(),
++                    (
++                        format!("wamn-{class}-acme--{project}--dev"),
++                        "url".to_owned(),
++                    ),
++                );
++            }
++            assert!(
++                !significant(&source)
++                    .iter()
++                    .any(|line| line.trim() == "image:" || manifest_field(line, "image").is_some()),
++                "{file} must retain the base host image, not add a different process"
++            );
++        }
++        assert_eq!(
++            environment_secret_bindings(&source, file),
++            expected,
++            "{file} credential classes changed"
++        );
++    }
++    let gate = read(&root, "scenario-worker.yaml");
++    let expected = [
++        (
++            "WAMN_SYSTEM_URL",
++            "wamn-identity-reader-acme--receiving--dev",
++        ),
++        (
++            "WAMN_CONTROL_AUTHORING_PG_URL",
++            "wamn-authoring-acme--receiving--dev",
++        ),
++        (
++            "WAMN_MANAGEMENT_ADMISSION_PG_URL",
++            "wamn-mgmt-admitter-acme--receiving--dev",
++        ),
++    ]
++    .into_iter()
++    .map(|(name, secret)| (name.to_owned(), (secret.to_owned(), "url".to_owned())))
++    .collect();
++    assert_eq!(
++        environment_secret_bindings(&gate, "scenario-worker.yaml"),
++        expected,
++        "the authoring Gate must retain its three existing database authorities"
++    );
++    assert_eq!(
++        images(&gate),
++        BTreeSet::from(["wamn-scenario-worker:dev".to_owned()])
++    );
++    assert_eq!(
++        environment_secret_bindings(&read(&root, "identity"), "identity"),
++        BTreeMap::from([(
++            "WAMN_IDENTITY_DATABASE_URL".to_owned(),
++            ("wamn-identity-db".to_owned(), "url".to_owned())
++        )])
++    );
++}
++
+ /// THE BILL OF MATERIALS IS EXACT.
+ ///
+ /// Three equalities, and the first is the one that matters: the tier's file set
+diff --git a/tools/profile b/tools/profile
+index db3eae1a..8896660d 100755
+--- a/tools/profile
++++ b/tools/profile
+@@ -82,7 +82,7 @@ WAMN_PLAN="$(
+     | ($contract.tiers[$profiles.deploy_inventory_tier].root_packages) as $deploy_inventory
+     | select($contract.schema_version == "0.1")
+     | select($profiles.default_source == "cargo_metadata_workspace_default_members")
+-    | select($defaults | length == 18 and length == (unique | length))
++    | select($defaults | length == 19 and length == (unique | length))
+     | select($members | length == $contract.source_inventory.root_workspace.package_count)
+     | select($members | length == (unique | length))
+     | select($all_additions

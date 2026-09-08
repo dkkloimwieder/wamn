@@ -1,0 +1,103 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Service",
+      "metadata": {
+        "name": "identity-postgres",
+        "namespace": "wamn-identity-jwks"
+      },
+      "spec": {
+        "selector": {
+          "app": "identity-postgres"
+        },
+        "ports": [
+          {
+            "port": 5432,
+            "targetPort": 5432
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "identity-postgres",
+        "namespace": "wamn-identity-jwks"
+      },
+      "spec": {
+        "replicas": 1,
+        "selector": {
+          "matchLabels": {
+            "app": "identity-postgres"
+          }
+        },
+        "template": {
+          "metadata": {
+            "labels": {
+              "app": "identity-postgres"
+            }
+          },
+          "spec": {
+            "automountServiceAccountToken": false,
+            "containers": [
+              {
+                "name": "postgres",
+                "image": "postgres:18",
+                "env": [
+                  {
+                    "name": "POSTGRES_DB",
+                    "value": "wamn_system"
+                  },
+                  {
+                    "name": "POSTGRES_PASSWORD",
+                    "valueFrom": {
+                      "secretKeyRef": {
+                        "name": "identity-postgres-admin",
+                        "key": "password"
+                      }
+                    }
+                  }
+                ],
+                "ports": [
+                  {
+                    "containerPort": 5432
+                  }
+                ],
+                "readinessProbe": {
+                  "exec": {
+                    "command": [
+                      "pg_isready",
+                      "-h",
+                      "127.0.0.1",
+                      "-U",
+                      "postgres",
+                      "-d",
+                      "wamn_system"
+                    ]
+                  },
+                  "periodSeconds": 2
+                },
+                "volumeMounts": [
+                  {
+                    "name": "data",
+                    "mountPath": "/var/lib/postgresql"
+                  }
+                ]
+              }
+            ],
+            "volumes": [
+              {
+                "name": "data",
+                "emptyDir": {}
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

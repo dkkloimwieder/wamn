@@ -1,0 +1,239 @@
+   Compiling tokio-rustls v0.26.4
+   Compiling wasmparser v0.252.0
+   Compiling postgres-types v0.2.14
+   Compiling opentelemetry-http v0.31.0
+   Compiling hyper-rustls v0.27.9
+   Compiling tonic v0.14.6
+   Compiling tokio-postgres v0.7.18
+   Compiling reqwest v0.13.4
+   Compiling oci-client v0.17.0
+   Compiling async-nats v0.49.1
+   Compiling tonic-prost v0.14.6
+   Compiling opentelemetry-proto v0.31.0
+   Compiling oci-wasm v0.6.0
+   Compiling opentelemetry-otlp v0.31.1
+   Compiling tracing-opentelemetry v0.32.1
+   Compiling opentelemetry-appender-tracing v0.31.1
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/catalog/model)
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/execution/run-state)
+   Compiling wasmprinter v0.252.0
+   Compiling object_store v0.14.1
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wasmtime-environ v47.0.4
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling deadpool-postgres v0.14.2
+   Compiling wamn-router v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/execution/router)
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/identity/platform)
+   Compiling wasmtime-internal-unwinder v47.0.4
+   Compiling wasmtime-internal-cache v47.0.4
+   Compiling wasmtime-internal-fiber v47.0.4
+   Compiling wasmtime-internal-cranelift v47.0.4
+   Compiling wasmtime v47.0.4
+   Compiling wasmtime-wasi-io v47.0.4
+   Compiling wiggle v47.0.4
+   Compiling wasmtime-wasi v47.0.4
+   Compiling wasmtime-wasi-http v47.0.4
+   Compiling wash-runtime v2.8.0 (https://github.com/dkkloimwieder/wasmCloud?rev=735b57982545358409a7d965a22549b08487ca09#735b5798)
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/platform/runtime)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:51:7
+   |
+51 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:111:1
+    |
+111 | / pub struct ConnectionHttp {
+112 | |     postgres: Arc<WamnPostgres>,
+113 | |     vault: Arc<WamnCredentials>,
+114 | |     tenant: Box<str>,
+...   |
+130 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+131 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:50:1
+    |
+ 50 | / pub struct WamnPostgres {
+ 51 | |     /// Resolves a project id → its database connection + policy.
+ 52 | |     provider: Arc<dyn CredentialProvider>,
+ 53 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+116 | |     pub(super) bind_counters: super::BindCounters,
+117 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+   Compiling wamn-proof-system v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/tests/system)
+warning: `wamn-runtime` (lib) generated 16 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 57s
+     Running tests/deploy_platform_inventory.rs (target/debug/deps/deploy_platform_inventory-cd334f8652c67e2e)
+
+running 8 tests
+test the_rendered_execution_target_agrees_across_dispatcher_and_waker ... ok
+test the_platform_tier_carries_no_retired_artifact ... ok
+test every_mounted_secret_is_declared_here_or_named_a_prerequisite ... FAILED
+test the_platform_tier_holds_exactly_the_bill_of_materials ... ok
+test the_readiness_contract_is_provisioned_once ... ok
+test every_platform_object_is_namespaced_to_wamn_system_or_templated ... ok
+test only_identity_receives_issuer_credentials_and_other_consumers_keep_their_classes ... ok
+test the_identity_chart_requires_operator_inputs_and_renders_its_https_boundary ... ok
+
+failures:
+
+---- every_mounted_secret_is_declared_here_or_named_a_prerequisite stdout ----
+
+thread 'every_mounted_secret_is_declared_here_or_named_a_prerequisite' (3140410) panicked at tests/system/tests/deploy_platform_inventory.rs:981:5:
+deploy/platform mounts Secrets it neither declares nor names as a prerequisite: [("wamn-object-store-credentials-acme--wms--dev", {"values-host-wms-pat.yaml"})]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    every_mounted_secret_is_declared_here_or_named_a_prerequisite
+
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+error: test failed, to rerun pass `-p wamn-proof-system --test deploy_platform_inventory`

@@ -1,0 +1,1205 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 18.95kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/debian:trixie-slim
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/rust:1.98-trixie
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 245B done
+#4 DONE 0.0s
+
+#5 [host 1/3] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [chef 1/4] FROM docker.io/library/rust:1.98-trixie
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 7.18MB 0.1s done
+#7 DONE 0.1s
+
+#8 [chef 3/4] WORKDIR /build
+#8 CACHED
+
+#9 [component-toolchain 2/6] COPY .cargo/config.toml /build/.cargo/config.toml
+#9 CACHED
+
+#10 [component-toolchain 6/6] WORKDIR /build/components
+#10 CACHED
+
+#11 [component-toolchain 1/6] RUN rustup target add --toolchain 1.97.0 wasm32-wasip2
+#11 CACHED
+
+#12 [chef 2/4] RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
+#12 CACHED
+
+#13 [component-toolchain 3/6] COPY Cargo.toml /build/Cargo.toml
+#13 CACHED
+
+#14 [chef 4/4] RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-chef-cargo-git,target=/usr/local/cargo/git,sharing=locked     cargo install cargo-chef --version 0.1.77 --locked
+#14 CACHED
+
+#15 [component-toolchain 5/6] COPY components /build/components
+#15 CACHED
+
+#16 [component-toolchain 4/6] COPY crates /build/crates
+#16 CACHED
+
+#17 [component-builder 1/1] RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-component-target,target=/build/components/target,sharing=locked     cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p http-route -p materializer       -p busyloop -p connection-http-standard -p sockprobe  && install -d /component-output  && for artifact in       http_route materializer       busyloop connection_http_standard sockprobe; do       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm"         "/component-output/${artifact}.wasm";     done
+#17 CACHED
+
+#18 [root-planner 7/7] RUN cargo chef prepare --recipe-path root-recipe.json
+#18 CACHED
+
+#19 [root-recipe 1/3] COPY .cargo/config.toml ./.cargo/config.toml
+#19 CACHED
+
+#20 [root-planner 4/7] COPY services ./services
+#20 CACHED
+
+#21 [root-recipe 2/3] COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
+#21 CACHED
+
+#22 [root-planner 5/7] COPY test-support ./test-support
+#22 CACHED
+
+#23 [root-planner 2/7] COPY crates ./crates
+#23 CACHED
+
+#24 [root-planner 3/7] COPY components ./components
+#24 CACHED
+
+#25 [root-planner 6/7] COPY tests ./tests
+#25 CACHED
+
+#26 [root-planner 1/7] COPY Cargo.toml Cargo.lock ./
+#26 CACHED
+
+#27 [root-source 1/2] COPY .cargo/config.toml ./.cargo/config.toml
+#27 CACHED
+
+#28 [root-recipe 3/3] COPY components ./components
+#28 CACHED
+
+#29 [root-source 2/2] COPY deploy ./deploy
+#29 CACHED
+
+#30 [cook-host 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-host
+#30 ...
+
+#31 [cook-ctl 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-ctl
+#31 1.107    Compiling wamn-event-wire v0.1.0 (/build/components/events/wire)
+#31 1.113    Compiling wamn-execution-contract v0.1.0 (/build/components/execution/contract)
+#31 1.118    Compiling wamn-component-policy v0.0.1 (/build/crates/platform/component-policy)
+#31 1.123    Compiling wamn-pg-core v0.0.1 (/build/crates/platform/pg-core)
+#31 1.142    Compiling wamn-schema-introspection v0.0.1 (/build/crates/schema/introspection)
+#31 1.150    Compiling wamn-control-registry v0.0.1 (/build/crates/control/registry)
+#31 1.173    Compiling wamn-platform-identity v0.0.1 (/build/crates/identity/platform)
+#31 1.179    Compiling wamn-client-terminal v0.0.1 (/build/crates/client/terminal)
+#31 1.199    Compiling wamn-authoring-model v0.0.1 (/build/crates/authoring/model)
+#31 1.399    Compiling wamn-run-state v0.0.1 (/build/crates/execution/run-state)
+#31 1.422    Compiling wamn-catalog v0.0.1 (/build/crates/catalog/model)
+#31 1.449    Compiling wamn-schema-generator v0.0.1 (/build/crates/schema/generator)
+#31 1.475    Compiling wamn-event-reg v0.1.0 (/build/components/events/registration)
+#31 1.646    Compiling wamn-router v0.0.1 (/build/crates/execution/router)
+#31 1.674    Compiling wamn-runtime v0.0.1 (/build/crates/platform/runtime)
+#31 1.709    Compiling wamn-schema-control v0.0.1 (/build/crates/schema/control)
+#31 1.739    Compiling wamn-control-provision v0.0.1 (/build/crates/control/provision)
+#31 1.771    Compiling wamn-ctl v0.0.1 (/build/services/ctl)
+#31 5.645     Finished `release` profile [optimized] target(s) in 5.32s
+#31 DONE 6.4s
+
+#32 [cook-dispatcher 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-dispatcher
+#32 ...
+
+#33 [build-ctl 1/2] COPY --from=root-source /build /build
+#33 DONE 0.2s
+
+#34 [cook-cdc-reader 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-cdc-reader
+#34 ...
+
+#35 [build-ctl 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-ctl  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl  && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops
+#35 ...
+
+#36 [build-gates 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-gates  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
+#36 ...
+
+#32 [cook-dispatcher 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-dispatcher
+#32 6.996    Compiling wamn-execution-contract v0.1.0 (/build/components/execution/contract)
+#32 6.996    Compiling wamn-pg-core v0.0.1 (/build/crates/platform/pg-core)
+#32 7.002    Compiling wamn-control-registry v0.0.1 (/build/crates/control/registry)
+#32 7.002    Compiling wamn-scheduler v0.0.1 (/build/crates/execution/scheduler)
+#32 7.243    Compiling wamn-run-state v0.0.1 (/build/crates/execution/run-state)
+#32 7.259    Compiling wamn-dispatcher v0.0.1 (/build/services/dispatcher)
+#32 10.36     Finished `release` profile [optimized] target(s) in 3.73s
+#32 DONE 11.0s
+
+#36 [build-gates 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-gates  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
+#36 ...
+
+#37 [build-dispatcher 1/2] COPY --from=root-source /build /build
+#37 DONE 0.2s
+
+#36 [build-gates 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-gates  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
+#36 ...
+
+#38 [build-dispatcher 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-dispatcher  && install -D -m 0755 target/release/wamn-dispatcher /native-output/wamn-dispatcher
+#38 ...
+
+#36 [build-gates 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-gates  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
+#36 11.79    Compiling wamn-component-policy v0.1.0 (/build/crates/platform/component-policy)
+#36 11.80    Compiling wamn-pg-core v0.1.0 (/build/crates/platform/pg-core)
+#36 11.80    Compiling wamn-control-registry v0.1.0 (/build/crates/control/registry)
+#36 11.81    Compiling wamn-router v0.1.0 (/build/crates/execution/router)
+#36 11.90    Compiling wamn-catalog v0.1.0 (/build/crates/catalog/model)
+#36 12.11    Compiling wamn-run-state v0.1.0 (/build/crates/execution/run-state)
+#36 13.06    Compiling wamn-platform-identity v0.1.0 (/build/crates/identity/platform)
+#36 13.26 warning: function `canonical_serialized` is never used
+#36 13.26    --> crates/catalog/model/src/lib.rs:791:4
+#36 13.26     |
+#36 13.26 791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+#36 13.26     |    ^^^^^^^^^^^^^^^^^^^^
+#36 13.26     |
+#36 13.26     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#36 13.26 
+#36 14.52    Compiling wamn-runtime v0.1.0 (/build/crates/platform/runtime)
+#36 15.22    Compiling wamn-schema-introspection v0.1.0 (/build/crates/schema/introspection)
+#36 15.31    Compiling wamn-authoring-model v0.1.0 (/build/crates/authoring/model)
+#36 15.95 warning: the item `Future` is imported redundantly
+#36 15.95  --> crates/platform/runtime/src/connection_authority.rs:3:5
+#36 15.95   |
+#36 15.95 3 | use std::future::Future;
+#36 15.95   |     ^^^^^^^^^^^^^^^^^^^
+#36 15.95   |
+#36 15.95  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#36 15.95   |
+#36 15.95   = note: the item `Future` is already defined here
+#36 15.95   |
+#36 15.95   = note: requested on the command line with `-W redundant-imports`
+#36 15.95 
+#36 15.97 warning: the item `Future` is imported redundantly
+#36 15.97  --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+#36 15.97   |
+#36 15.97 7 | use std::future::Future;
+#36 15.97   |     ^^^^^^^^^^^^^^^^^^^
+#36 15.97   |
+#36 15.97  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#36 15.97   |
+#36 15.97   = note: the item `Future` is already defined here
+#36 15.97 
+#36 19.87    Compiling wamn-schema-generator v0.1.0 (/build/crates/schema/generator)
+#36 21.19 warning: `wamn-catalog` (lib) generated 1 warning
+#36 21.19    Compiling wamn-client-terminal v0.1.0 (/build/crates/client/terminal)
+#36 21.35    Compiling wamn-gate-harness v0.1.0 (/build/test-support/harness)
+#36 21.59    Compiling wamn-proof-system v0.1.0 (/build/tests/system)
+#36 21.61 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 21.61   --> test-support/harness/src/ceiling.rs:72:1
+#36 21.61    |
+#36 21.61 72 | / pub struct Ramp {
+#36 21.61 73 | |     tolerance: f64,
+#36 21.61 74 | |     max_levels: usize,
+#36 21.61 75 | |     levels: Vec<LevelStats>,
+#36 21.61 ...  |
+#36 21.61 82 | |     retrying: bool,
+#36 21.61 83 | | }
+#36 21.61    | |_^
+#36 21.61    |
+#36 21.61    = note: requested on the command line with `-W missing-debug-implementations`
+#36 21.61 
+#36 21.76    Compiling wamn-test-infrastructure v0.1.0 (/build/test-support/infrastructure)
+#36 22.94 warning: `wamn-gate-harness` (lib) generated 1 warning
+#36 24.80 warning: constant `HTTP_CONTRACT` is never used
+#36 24.80   --> crates/platform/runtime/src/plugins/connection_http.rs:51:7
+#36 24.80    |
+#36 24.80 51 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+#36 24.80    |       ^^^^^^^^^^^^^
+#36 24.80    |
+#36 24.80    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#36 24.80 
+#36 24.83 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.83    --> crates/platform/runtime/src/plugins/connection_http.rs:111:1
+#36 24.83     |
+#36 24.83 111 | / pub struct ConnectionHttp {
+#36 24.83 112 | |     postgres: Arc<WamnPostgres>,
+#36 24.83 113 | |     vault: Arc<WamnCredentials>,
+#36 24.83 114 | |     tenant: Box<str>,
+#36 24.83 ...   |
+#36 24.83 130 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+#36 24.83 131 | | }
+#36 24.83     | |_^
+#36 24.83     |
+#36 24.83     = note: requested on the command line with `-W missing-debug-implementations`
+#36 24.83 
+#36 24.85 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.85   --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+#36 24.85    |
+#36 24.85 27 | / pub struct WamnCredentials {
+#36 24.85 28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+#36 24.85 29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+#36 24.85 30 | |     /// config-shaped).
+#36 24.85 ...  |
+#36 24.85 33 | |     projects: HashMap<String, HashMap<String, String>>,
+#36 24.85 34 | | }
+#36 24.85    | |_^
+#36 24.85 
+#36 24.85 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.85    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+#36 24.85     |
+#36 24.85 544 | / pub struct WamnJetstream {
+#36 24.85 545 | |     nats_url: Option<String>,
+#36 24.85 546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+#36 24.85 547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+#36 24.85 ...   |
+#36 24.85 569 | |     dlq_depth: Arc<DeadLetterDepth>,
+#36 24.85 570 | | }
+#36 24.85     | |_^
+#36 24.85 
+#36 24.85 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.85     --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+#36 24.85      |
+#36 24.85 1209 | / pub struct JsConsumer {
+#36 24.85 1210 | |     consumer: Consumer<PullConfig>,
+#36 24.85 1211 | |     dead_letter: Option<DeadLetterIdentity>,
+#36 24.85 1212 | | }
+#36 24.85      | |_^
+#36 24.85 
+#36 24.85 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.85     --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+#36 24.85      |
+#36 24.85 1216 | / pub struct JsMessage {
+#36 24.85 1217 | |     msg: async_nats::jetstream::Message,
+#36 24.85 1218 | |     dead_letter: Option<DeadLetterIdentity>,
+#36 24.85 1219 | | }
+#36 24.85      | |_^
+#36 24.85 
+#36 24.85 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.85    --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+#36 24.85     |
+#36 24.85 213 | / pub struct Capture {
+#36 24.85 214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+#36 24.85 215 | | }
+#36 24.85     | |_^
+#36 24.85 
+#36 24.85 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.85    --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+#36 24.85     |
+#36 24.85 235 | / pub struct WamnLogging {
+#36 24.85 236 | |     /// component id → host-trusted {tenant, project}.
+#36 24.85 237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+#36 24.85 238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+#36 24.85 ...   |
+#36 24.85 243 | |     _drain: tokio::task::JoinHandle<()>,
+#36 24.85 244 | | }
+#36 24.85     | |_^
+#36 24.85 
+#36 24.86 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.86    --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:50:1
+#36 24.86     |
+#36 24.86  50 | / pub struct WamnPostgres {
+#36 24.86  51 | |     /// Resolves a project id → its database connection + policy.
+#36 24.86  52 | |     provider: Arc<dyn CredentialProvider>,
+#36 24.86  53 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+#36 24.86 ...   |
+#36 24.86 116 | |     pub(super) bind_counters: super::BindCounters,
+#36 24.86 117 | | }
+#36 24.86     | |_^
+#36 24.86 
+#36 24.86 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.86    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+#36 24.86     |
+#36 24.86 339 | / pub struct StaticCredentialProvider {
+#36 24.86 340 | |     projects: HashMap<String, ProjectConfig>,
+#36 24.86 341 | | }
+#36 24.86     | |_^
+#36 24.86 
+#36 24.86 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.86    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+#36 24.86     |
+#36 24.86 514 | / pub struct K8sSecretProvider {
+#36 24.86 515 | |     pub namespace: String,
+#36 24.86 516 | | }
+#36 24.86     | |_^
+#36 24.86 
+#36 24.86 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.86    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+#36 24.86     |
+#36 24.86  99 | / pub struct PgTransaction {
+#36 24.86 100 | |     state: SharedTxnState,
+#36 24.86 101 | |     destroyed: Arc<AtomicU64>,
+#36 24.86 102 | |     cursor_seq: u32,
+#36 24.86 103 | |     /// Row limit of the project this transaction's connection belongs to.
+#36 24.86 104 | |     row_limit: u64,
+#36 24.86 105 | | }
+#36 24.86     | |_^
+#36 24.86 
+#36 24.86 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.86    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+#36 24.86     |
+#36 24.86 145 | / pub struct PgCursor {
+#36 24.86 146 | |     state: SharedTxnState,
+#36 24.86 147 | |     destroyed: Arc<AtomicU64>,
+#36 24.86 148 | |     name: String,
+#36 24.86 149 | | }
+#36 24.86     | |_^
+#36 24.86 
+#36 24.87 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 24.87    --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+#36 24.87     |
+#36 24.87 145 | / pub struct WiringDoorbellListener {
+#36 24.87 146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+#36 24.87 147 | |     task: tokio::task::JoinHandle<()>,
+#36 24.87 148 | | }
+#36 24.87     | |_^
+#36 24.87 
+#36 25.06    Compiling wamn-schema-control v0.1.0 (/build/crates/schema/control)
+#36 25.06    Compiling wamn-control-provision v0.1.0 (/build/crates/control/provision)
+#36 33.83    Compiling wamn-ctl v0.1.0 (/build/services/ctl)
+#36 34.38    Compiling wamn-scenario-worker v0.1.0 (/build/services/scenario-worker)
+#36 35.30 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 35.30    --> services/scenario-worker/src/authoring.rs:218:1
+#36 35.30     |
+#36 35.30 218 | / pub struct InternalAuthoringBackend {
+#36 35.30 219 | |     authority: InternalDevAdmin,
+#36 35.30 220 | |     client: Client,
+#36 35.30 221 | |     connection_task: tokio::task::JoinHandle<()>,
+#36 35.30 222 | |     tenant_id: Box<str>,
+#36 35.30 223 | |     source_schema: BareSchemaName,
+#36 35.30 224 | | }
+#36 35.30     | |_^
+#36 35.30     |
+#36 35.30     = note: requested on the command line with `-W missing-debug-implementations`
+#36 35.30 
+#36 35.31 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 35.31    --> services/scenario-worker/src/store/admission.rs:316:1
+#36 35.31     |
+#36 35.31 316 | / pub struct AdmissionSurface {
+#36 35.31 317 | |     /// The explicit credential and exact server-side predicates are retained so
+#36 35.31 318 | |     /// every replacement physical connection is checked identically.
+#36 35.31 319 | |     probe: CredentialExactnessProbe,
+#36 35.31 ...   |
+#36 35.31 322 | |     tenant_id: Box<str>,
+#36 35.31 323 | | }
+#36 35.31     | |_^
+#36 35.31 
+#36 40.47 warning: function `run_once_stages` is never used
+#36 40.47    --> services/ctl/src/dev.rs:551:10
+#36 40.47     |
+#36 40.47 551 | async fn run_once_stages<R>(
+#36 40.47     |          ^^^^^^^^^^^^^^^
+#36 40.47     |
+#36 40.47     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#36 40.47 
+#36 40.47 warning: function `verify_source_package_with_client` is never used
+#36 40.47     --> services/ctl/src/push_component.rs:1228:10
+#36 40.47      |
+#36 40.47 1228 | async fn verify_source_package_with_client(
+#36 40.47      |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#36 40.47 
+#36 47.33 warning: `wamn-scenario-worker` (lib) generated 2 warnings
+#36 47.33    Compiling wamn-execution-host v0.1.0 (/build/crates/execution/host)
+#36 55.12    Compiling wamn-proof-integration v0.1.0 (/build/tests/integration)
+#36 55.77 warning: `wamn-runtime` (lib) generated 16 warnings
+#36 55.77    Compiling wamn-proof-conformance v0.1.0 (/build/tests/conformance)
+#36 56.22 warning: type does not implement `Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 56.22   --> tests/conformance/src/socketguard.rs:26:1
+#36 56.22    |
+#36 56.22 26 | pub struct SocketGuardArgs {}
+#36 56.22    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#36 56.22    |
+#36 56.22    = note: requested on the command line with `-W missing-debug-implementations`
+#36 56.22 
+#36 58.22 warning: function `models` is never used
+#36 58.22   --> tests/integration/src/measurement_schema.rs:25:8
+#36 58.22    |
+#36 58.22 25 | pub fn models(schema: &str) -> Vec<ManagedModel> {
+#36 58.22    |        ^^^^^^
+#36 58.22    |
+#36 58.22    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#36 58.22 
+#36 58.22 warning: field `release` is never read
+#36 58.22    --> tests/integration/src/trusted_http_route.rs:109:16
+#36 58.22     |
+#36 58.22 104 | pub struct TrustedHttpRoute {
+#36 58.22     |            ---------------- field in this struct
+#36 58.22 ...
+#36 58.22 109 |     pub(crate) release: Arc<ReleaseManifestWeld>,
+#36 58.22     |                ^^^^^^^
+#36 58.22 
+#36 58.27 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#36 58.27    --> tests/integration/src/trusted_http_route.rs:104:1
+#36 58.27     |
+#36 58.27 104 | / pub struct TrustedHttpRoute {
+#36 58.27 105 | |     pub driver: Arc<RouterDriver>,
+#36 58.27 106 | |     /// The same welded release the driver authorizes. Callers that exercise a
+#36 58.27 107 | |     /// release-owned ingress plugin must share this exact weld rather than mint
+#36 58.27 ...   |
+#36 58.27 115 | |     pub wiring_hash: String,
+#36 58.27 116 | | }
+#36 58.27     | |_^
+#36 58.27     |
+#36 58.27     = note: requested on the command line with `-W missing-debug-implementations`
+#36 58.27 
+#36 58.66 warning: `wamn-proof-conformance` (lib) generated 1 warning
+#36 72.33 warning: `wamn-ctl` (lib) generated 2 warnings
+#36 78.95 warning: `wamn-proof-integration` (lib) generated 3 warnings
+#36 80.64    Compiling wamn-gates v0.1.0 (/build/tests/orchestrator)
+#36 199.5     Finished `release` profile [optimized] target(s) in 3m 08s
+#36 DONE 199.6s
+
+#35 [build-ctl 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-ctl  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl  && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops
+#35 193.6 warning: function `canonical_serialized` is never used
+#35 193.6    --> crates/catalog/model/src/lib.rs:791:4
+#35 193.6     |
+#35 193.6 791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+#35 193.6     |    ^^^^^^^^^^^^^^^^^^^^
+#35 193.6     |
+#35 193.6     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#35 193.6 
+#35 193.6 warning: `wamn-catalog` (lib) generated 1 warning
+#35 193.6    Compiling wamn-schema-introspection v0.1.0 (/build/crates/schema/introspection)
+#35 193.6    Compiling wamn-router v0.1.0 (/build/crates/execution/router)
+#35 193.6    Compiling wamn-platform-identity v0.1.0 (/build/crates/identity/platform)
+#35 194.3    Compiling wamn-runtime v0.1.0 (/build/crates/platform/runtime)
+#35 194.5    Compiling wamn-schema-generator v0.1.0 (/build/crates/schema/generator)
+#35 195.2 warning: the item `Future` is imported redundantly
+#35 195.2  --> crates/platform/runtime/src/connection_authority.rs:3:5
+#35 195.2   |
+#35 195.2 3 | use std::future::Future;
+#35 195.2   |     ^^^^^^^^^^^^^^^^^^^
+#35 195.2   |
+#35 195.2  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#35 195.2   |
+#35 195.2   = note: the item `Future` is already defined here
+#35 195.2   |
+#35 195.2   = note: requested on the command line with `-W redundant-imports`
+#35 195.2 
+#35 195.2 warning: the item `Future` is imported redundantly
+#35 195.2  --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+#35 195.2   |
+#35 195.2 7 | use std::future::Future;
+#35 195.2   |     ^^^^^^^^^^^^^^^^^^^
+#35 195.2   |
+#35 195.2  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#35 195.2   |
+#35 195.2   = note: the item `Future` is already defined here
+#35 195.2 
+#35 198.9    Compiling wamn-schema-control v0.1.0 (/build/crates/schema/control)
+#35 198.9    Compiling wamn-control-provision v0.1.0 (/build/crates/control/provision)
+#35 202.2 warning: constant `HTTP_CONTRACT` is never used
+#35 202.2   --> crates/platform/runtime/src/plugins/connection_http.rs:51:7
+#35 202.2    |
+#35 202.2 51 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+#35 202.2    |       ^^^^^^^^^^^^^
+#35 202.2    |
+#35 202.2    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/connection_http.rs:111:1
+#35 202.2     |
+#35 202.2 111 | / pub struct ConnectionHttp {
+#35 202.2 112 | |     postgres: Arc<WamnPostgres>,
+#35 202.2 113 | |     vault: Arc<WamnCredentials>,
+#35 202.2 114 | |     tenant: Box<str>,
+#35 202.2 ...   |
+#35 202.2 130 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+#35 202.2 131 | | }
+#35 202.2     | |_^
+#35 202.2     |
+#35 202.2     = note: requested on the command line with `-W missing-debug-implementations`
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2   --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+#35 202.2    |
+#35 202.2 27 | / pub struct WamnCredentials {
+#35 202.2 28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+#35 202.2 29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+#35 202.2 30 | |     /// config-shaped).
+#35 202.2 ...  |
+#35 202.2 33 | |     projects: HashMap<String, HashMap<String, String>>,
+#35 202.2 34 | | }
+#35 202.2    | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+#35 202.2     |
+#35 202.2 544 | / pub struct WamnJetstream {
+#35 202.2 545 | |     nats_url: Option<String>,
+#35 202.2 546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+#35 202.2 547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+#35 202.2 ...   |
+#35 202.2 569 | |     dlq_depth: Arc<DeadLetterDepth>,
+#35 202.2 570 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2     --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+#35 202.2      |
+#35 202.2 1209 | / pub struct JsConsumer {
+#35 202.2 1210 | |     consumer: Consumer<PullConfig>,
+#35 202.2 1211 | |     dead_letter: Option<DeadLetterIdentity>,
+#35 202.2 1212 | | }
+#35 202.2      | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2     --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+#35 202.2      |
+#35 202.2 1216 | / pub struct JsMessage {
+#35 202.2 1217 | |     msg: async_nats::jetstream::Message,
+#35 202.2 1218 | |     dead_letter: Option<DeadLetterIdentity>,
+#35 202.2 1219 | | }
+#35 202.2      | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+#35 202.2     |
+#35 202.2 213 | / pub struct Capture {
+#35 202.2 214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+#35 202.2 215 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+#35 202.2     |
+#35 202.2 235 | / pub struct WamnLogging {
+#35 202.2 236 | |     /// component id → host-trusted {tenant, project}.
+#35 202.2 237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+#35 202.2 238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+#35 202.2 ...   |
+#35 202.2 243 | |     _drain: tokio::task::JoinHandle<()>,
+#35 202.2 244 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:50:1
+#35 202.2     |
+#35 202.2  50 | / pub struct WamnPostgres {
+#35 202.2  51 | |     /// Resolves a project id → its database connection + policy.
+#35 202.2  52 | |     provider: Arc<dyn CredentialProvider>,
+#35 202.2  53 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+#35 202.2 ...   |
+#35 202.2 116 | |     pub(super) bind_counters: super::BindCounters,
+#35 202.2 117 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+#35 202.2     |
+#35 202.2 339 | / pub struct StaticCredentialProvider {
+#35 202.2 340 | |     projects: HashMap<String, ProjectConfig>,
+#35 202.2 341 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+#35 202.2     |
+#35 202.2 514 | / pub struct K8sSecretProvider {
+#35 202.2 515 | |     pub namespace: String,
+#35 202.2 516 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+#35 202.2     |
+#35 202.2  99 | / pub struct PgTransaction {
+#35 202.2 100 | |     state: SharedTxnState,
+#35 202.2 101 | |     destroyed: Arc<AtomicU64>,
+#35 202.2 102 | |     cursor_seq: u32,
+#35 202.2 103 | |     /// Row limit of the project this transaction's connection belongs to.
+#35 202.2 104 | |     row_limit: u64,
+#35 202.2 105 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+#35 202.2     |
+#35 202.2 145 | / pub struct PgCursor {
+#35 202.2 146 | |     state: SharedTxnState,
+#35 202.2 147 | |     destroyed: Arc<AtomicU64>,
+#35 202.2 148 | |     name: String,
+#35 202.2 149 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 202.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 202.2    --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+#35 202.2     |
+#35 202.2 145 | / pub struct WiringDoorbellListener {
+#35 202.2 146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+#35 202.2 147 | |     task: tokio::task::JoinHandle<()>,
+#35 202.2 148 | | }
+#35 202.2     | |_^
+#35 202.2 
+#35 207.5    Compiling wamn-ctl v0.1.0 (/build/services/ctl)
+#35 213.8 warning: function `run_once_stages` is never used
+#35 213.8    --> services/ctl/src/dev.rs:551:10
+#35 213.8     |
+#35 213.8 551 | async fn run_once_stages<R>(
+#35 213.8     |          ^^^^^^^^^^^^^^^
+#35 213.8     |
+#35 213.8     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#35 213.8 
+#35 213.8 warning: function `verify_source_package_with_client` is never used
+#35 213.8     --> services/ctl/src/push_component.rs:1228:10
+#35 213.8      |
+#35 213.8 1228 | async fn verify_source_package_with_client(
+#35 213.8      |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#35 213.8 
+#35 222.0 warning: `wamn-runtime` (lib) generated 16 warnings
+#35 231.7 warning: `wamn-ctl` (lib) generated 2 warnings
+#35 526.9     Finished `release` profile [optimized] target(s) in 5m 33s
+#35 527.8 warning: function `canonical_serialized` is never used
+#35 527.8    --> crates/catalog/model/src/lib.rs:791:4
+#35 527.8     |
+#35 527.8 791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+#35 527.8     |    ^^^^^^^^^^^^^^^^^^^^
+#35 527.8     |
+#35 527.8     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#35 527.8 
+#35 527.8 warning: `wamn-catalog` (lib) generated 1 warning
+#35 527.8 warning: the item `Future` is imported redundantly
+#35 527.8  --> crates/platform/runtime/src/connection_authority.rs:3:5
+#35 527.8   |
+#35 527.8 3 | use std::future::Future;
+#35 527.8   |     ^^^^^^^^^^^^^^^^^^^
+#35 527.8   |
+#35 527.8  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#35 527.8   |
+#35 527.8   = note: the item `Future` is already defined here
+#35 527.8   |
+#35 527.8   = note: requested on the command line with `-W redundant-imports`
+#35 527.8 
+#35 527.8 warning: the item `Future` is imported redundantly
+#35 527.8  --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+#35 527.8   |
+#35 527.8 7 | use std::future::Future;
+#35 527.8   |     ^^^^^^^^^^^^^^^^^^^
+#35 527.8   |
+#35 527.8  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#35 527.8   |
+#35 527.8   = note: the item `Future` is already defined here
+#35 527.8 
+#35 527.8 warning: constant `HTTP_CONTRACT` is never used
+#35 527.8   --> crates/platform/runtime/src/plugins/connection_http.rs:51:7
+#35 527.8    |
+#35 527.8 51 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+#35 527.8    |       ^^^^^^^^^^^^^
+#35 527.8    |
+#35 527.8    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/connection_http.rs:111:1
+#35 527.8     |
+#35 527.8 111 | / pub struct ConnectionHttp {
+#35 527.8 112 | |     postgres: Arc<WamnPostgres>,
+#35 527.8 113 | |     vault: Arc<WamnCredentials>,
+#35 527.8 114 | |     tenant: Box<str>,
+#35 527.8 ...   |
+#35 527.8 130 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+#35 527.8 131 | | }
+#35 527.8     | |_^
+#35 527.8     |
+#35 527.8     = note: requested on the command line with `-W missing-debug-implementations`
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8   --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+#35 527.8    |
+#35 527.8 27 | / pub struct WamnCredentials {
+#35 527.8 28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+#35 527.8 29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+#35 527.8 30 | |     /// config-shaped).
+#35 527.8 ...  |
+#35 527.8 33 | |     projects: HashMap<String, HashMap<String, String>>,
+#35 527.8 34 | | }
+#35 527.8    | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+#35 527.8     |
+#35 527.8 544 | / pub struct WamnJetstream {
+#35 527.8 545 | |     nats_url: Option<String>,
+#35 527.8 546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+#35 527.8 547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+#35 527.8 ...   |
+#35 527.8 569 | |     dlq_depth: Arc<DeadLetterDepth>,
+#35 527.8 570 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8     --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+#35 527.8      |
+#35 527.8 1209 | / pub struct JsConsumer {
+#35 527.8 1210 | |     consumer: Consumer<PullConfig>,
+#35 527.8 1211 | |     dead_letter: Option<DeadLetterIdentity>,
+#35 527.8 1212 | | }
+#35 527.8      | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8     --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+#35 527.8      |
+#35 527.8 1216 | / pub struct JsMessage {
+#35 527.8 1217 | |     msg: async_nats::jetstream::Message,
+#35 527.8 1218 | |     dead_letter: Option<DeadLetterIdentity>,
+#35 527.8 1219 | | }
+#35 527.8      | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+#35 527.8     |
+#35 527.8 213 | / pub struct Capture {
+#35 527.8 214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+#35 527.8 215 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+#35 527.8     |
+#35 527.8 235 | / pub struct WamnLogging {
+#35 527.8 236 | |     /// component id → host-trusted {tenant, project}.
+#35 527.8 237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+#35 527.8 238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+#35 527.8 ...   |
+#35 527.8 243 | |     _drain: tokio::task::JoinHandle<()>,
+#35 527.8 244 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:50:1
+#35 527.8     |
+#35 527.8  50 | / pub struct WamnPostgres {
+#35 527.8  51 | |     /// Resolves a project id → its database connection + policy.
+#35 527.8  52 | |     provider: Arc<dyn CredentialProvider>,
+#35 527.8  53 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+#35 527.8 ...   |
+#35 527.8 116 | |     pub(super) bind_counters: super::BindCounters,
+#35 527.8 117 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+#35 527.8     |
+#35 527.8 339 | / pub struct StaticCredentialProvider {
+#35 527.8 340 | |     projects: HashMap<String, ProjectConfig>,
+#35 527.8 341 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+#35 527.8     |
+#35 527.8 514 | / pub struct K8sSecretProvider {
+#35 527.8 515 | |     pub namespace: String,
+#35 527.8 516 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+#35 527.8     |
+#35 527.8  99 | / pub struct PgTransaction {
+#35 527.8 100 | |     state: SharedTxnState,
+#35 527.8 101 | |     destroyed: Arc<AtomicU64>,
+#35 527.8 102 | |     cursor_seq: u32,
+#35 527.8 103 | |     /// Row limit of the project this transaction's connection belongs to.
+#35 527.8 104 | |     row_limit: u64,
+#35 527.8 105 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+#35 527.8     |
+#35 527.8 145 | / pub struct PgCursor {
+#35 527.8 146 | |     state: SharedTxnState,
+#35 527.8 147 | |     destroyed: Arc<AtomicU64>,
+#35 527.8 148 | |     name: String,
+#35 527.8 149 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#35 527.8    --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+#35 527.8     |
+#35 527.8 145 | / pub struct WiringDoorbellListener {
+#35 527.8 146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+#35 527.8 147 | |     task: tokio::task::JoinHandle<()>,
+#35 527.8 148 | | }
+#35 527.8     | |_^
+#35 527.8 
+#35 527.8 warning: `wamn-runtime` (lib) generated 16 warnings
+#35 527.8    Compiling wamn-control-provision v0.1.0 (/build/crates/control/provision)
+#35 528.5    Compiling wamn-ctl v0.1.0 (/build/services/ctl)
+#35 534.1 warning: function `run_once_stages` is never used
+#35 534.1    --> services/ctl/src/dev.rs:551:10
+#35 534.1     |
+#35 534.1 551 | async fn run_once_stages<R>(
+#35 534.1     |          ^^^^^^^^^^^^^^^
+#35 534.1     |
+#35 534.1     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#35 534.1 
+#35 534.1 warning: function `verify_source_package_with_client` is never used
+#35 534.1     --> services/ctl/src/push_component.rs:1228:10
+#35 534.1      |
+#35 534.1 1228 | async fn verify_source_package_with_client(
+#35 534.1      |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#35 534.1 
+#35 551.1 warning: `wamn-ctl` (lib) generated 2 warnings
+#35 602.2     Finished `release` profile [optimized] target(s) in 1m 15s
+#35 DONE 602.4s
+
+#34 [cook-cdc-reader 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-cdc-reader
+#34 609.7    Compiling wamn-execution-contract v0.1.0 (/build/components/execution/contract)
+#34 609.7    Compiling wamn-event-wire v0.1.0 (/build/components/events/wire)
+#34 609.7    Compiling wamn-component-policy v0.0.1 (/build/crates/platform/component-policy)
+#34 609.7    Compiling wamn-schema-introspection v0.0.1 (/build/crates/schema/introspection)
+#34 609.8    Compiling wamn-pg-core v0.0.1 (/build/crates/platform/pg-core)
+#34 609.8    Compiling wamn-control-registry v0.0.1 (/build/crates/control/registry)
+#34 610.1    Compiling wamn-run-state v0.0.1 (/build/crates/execution/run-state)
+#34 610.4    Compiling wamn-catalog v0.0.1 (/build/crates/catalog/model)
+#34 610.5    Compiling wamn-schema-generator v0.0.1 (/build/crates/schema/generator)
+#34 610.5    Compiling wamn-control-provision v0.0.1 (/build/crates/control/provision)
+#34 610.5    Compiling wamn-cdc-reader v0.0.1 (/build/services/cdc-reader)
+#34 614.2     Finished `release` profile [optimized] target(s) in 4.92s
+#34 DONE 614.9s
+
+#30 [cook-host 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-host
+#30 ...
+
+#39 [build-cdc-reader 1/2] COPY --from=root-source /build /build
+#39 DONE 0.2s
+
+#30 [cook-host 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-host
+#30 ...
+
+#40 [build-cdc-reader 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-cdc-reader  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
+#40 ...
+
+#30 [cook-host 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-host
+#30 615.8    Compiling wamn-execution-contract v0.1.0 (/build/components/execution/contract)
+#30 615.8    Compiling wamn-event-wire v0.1.0 (/build/components/events/wire)
+#30 615.8    Compiling wamn-component-policy v0.0.1 (/build/crates/platform/component-policy)
+#30 615.8    Compiling wamn-pg-core v0.0.1 (/build/crates/platform/pg-core)
+#30 615.8    Compiling wamn-control-registry v0.0.1 (/build/crates/control/registry)
+#30 615.8    Compiling wamn-platform-identity v0.0.1 (/build/crates/identity/platform)
+#30 615.9    Compiling wamn-schema-introspection v0.0.1 (/build/crates/schema/introspection)
+#30 616.1    Compiling wamn-run-state v0.0.1 (/build/crates/execution/run-state)
+#30 616.5    Compiling wamn-catalog v0.0.1 (/build/crates/catalog/model)
+#30 616.5    Compiling wamn-router v0.0.1 (/build/crates/execution/router)
+#30 616.5    Compiling wamn-runtime v0.0.1 (/build/crates/platform/runtime)
+#30 616.6    Compiling wamn-schema-generator v0.0.1 (/build/crates/schema/generator)
+#30 616.6    Compiling wamn-execution-host v0.0.1 (/build/crates/execution/host)
+#30 616.6    Compiling wamn-control-provision v0.0.1 (/build/crates/control/provision)
+#30 616.8    Compiling wamn-host v0.0.1 (/build/services/host)
+#30 619.6     Finished `release` profile [optimized] target(s) in 4.44s
+#30 DONE 620.3s
+
+#41 [build-host 1/2] COPY --from=root-source /build /build
+#41 DONE 0.2s
+
+#40 [build-cdc-reader 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-cdc-reader  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
+#40 ...
+
+#42 [build-host 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-host  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host
+#42 ...
+
+#38 [build-dispatcher 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-dispatcher  && install -D -m 0755 target/release/wamn-dispatcher /native-output/wamn-dispatcher
+#38 609.6    Compiling wamn-pg-core v0.1.0 (/build/crates/platform/pg-core)
+#38 609.6    Compiling wamn-control-registry v0.1.0 (/build/crates/control/registry)
+#38 609.6    Compiling wamn-scheduler v0.1.0 (/build/crates/execution/scheduler)
+#38 609.6    Compiling wamn-run-state v0.1.0 (/build/crates/execution/run-state)
+#38 610.6    Compiling wamn-dispatcher v0.1.0 (/build/services/dispatcher)
+#38 611.1 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#38 611.1    --> services/dispatcher/src/lib.rs:293:1
+#38 611.1     |
+#38 611.1 293 | / pub struct ProjectState {
+#38 611.1 294 | |     pub spec: ProjectSpec,
+#38 611.1 295 | |     client: Client,
+#38 611.1 296 | |     _conn: tokio::task::JoinHandle<()>,
+#38 611.1 ...   |
+#38 611.1 299 | |     pub last_sweep_ms: i64,
+#38 611.1 300 | | }
+#38 611.1     | |_^
+#38 611.1     |
+#38 611.1     = note: requested on the command line with `-W missing-debug-implementations`
+#38 611.1 
+#38 611.1 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#38 611.1    --> services/dispatcher/src/lib.rs:318:1
+#38 611.1     |
+#38 611.1 318 | / pub struct DispatcherConfig {
+#38 611.1 319 | |     /// The validated adaptive poll cadence: an inverted `min > max` band is
+#38 611.1 320 | |     /// rejected at [`Cadence::new`], so the dispatcher's interval math can never
+#38 611.1 321 | |     /// see one (R13-hardening — inverted ranges are unrepresentable here).
+#38 611.1 322 | |     pub cadence: Cadence,
+#38 611.1 323 | |     pub batch: usize,
+#38 611.1 324 | | }
+#38 611.1     | |_^
+#38 611.1 
+#38 611.1 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#38 611.1    --> services/dispatcher/src/lib.rs:352:1
+#38 611.1     |
+#38 611.1 352 | / pub struct Dispatcher {
+#38 611.1 353 | |     pub projects: Vec<ProjectState>,
+#38 611.1 354 | |     nats: Option<async_nats::Client>,
+#38 611.1 355 | |     cfg: DispatcherConfig,
+#38 611.1 ...   |
+#38 611.1 358 | |     depth: DepthRegistry,
+#38 611.1 359 | | }
+#38 611.1     | |_^
+#38 611.1 
+#38 613.6 warning: `wamn-dispatcher` (lib) generated 3 warnings
+#38 654.2     Finished `release` profile [optimized] target(s) in 44.92s
+#38 DONE 654.2s
+
+#40 [build-cdc-reader 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-cdc-reader  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
+#40 50.82    Compiling wamn-component-policy v0.1.0 (/build/crates/platform/component-policy)
+#40 50.82    Compiling wamn-schema-introspection v0.1.0 (/build/crates/schema/introspection)
+#40 50.83    Compiling wamn-run-state v0.1.0 (/build/crates/execution/run-state)
+#40 50.83    Compiling wamn-control-registry v0.1.0 (/build/crates/control/registry)
+#40 51.07    Compiling wamn-catalog v0.1.0 (/build/crates/catalog/model)
+#40 52.35 warning: function `canonical_serialized` is never used
+#40 52.35    --> crates/catalog/model/src/lib.rs:791:4
+#40 52.35     |
+#40 52.35 791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+#40 52.35     |    ^^^^^^^^^^^^^^^^^^^^
+#40 52.35     |
+#40 52.35     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#40 52.35 
+#40 53.21    Compiling wamn-schema-generator v0.1.0 (/build/crates/schema/generator)
+#40 56.36 warning: `wamn-catalog` (lib) generated 1 warning
+#40 57.57    Compiling wamn-control-provision v0.1.0 (/build/crates/control/provision)
+#40 59.48    Compiling wamn-cdc-reader v0.1.0 (/build/services/cdc-reader)
+#40 101.7     Finished `release` profile [optimized] target(s) in 51.15s
+#40 DONE 101.8s
+
+#42 [build-host 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-host  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host
+#42 97.02    Compiling wamn-catalog v0.1.0 (/build/crates/catalog/model)
+#42 97.02    Compiling wamn-run-state v0.1.0 (/build/crates/execution/run-state)
+#42 97.02    Compiling wamn-control-registry v0.1.0 (/build/crates/control/registry)
+#42 97.03    Compiling wamn-router v0.1.0 (/build/crates/execution/router)
+#42 98.18    Compiling wamn-schema-introspection v0.1.0 (/build/crates/schema/introspection)
+#42 98.22 warning: function `canonical_serialized` is never used
+#42 98.22    --> crates/catalog/model/src/lib.rs:791:4
+#42 98.22     |
+#42 98.22 791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+#42 98.22     |    ^^^^^^^^^^^^^^^^^^^^
+#42 98.22     |
+#42 98.22     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#42 98.22 
+#42 99.30    Compiling wamn-platform-identity v0.1.0 (/build/crates/identity/platform)
+#42 99.79    Compiling wamn-schema-generator v0.1.0 (/build/crates/schema/generator)
+#42 101.0    Compiling wamn-runtime v0.1.0 (/build/crates/platform/runtime)
+#42 102.1 warning: the item `Future` is imported redundantly
+#42 102.1  --> crates/platform/runtime/src/connection_authority.rs:3:5
+#42 102.1   |
+#42 102.1 3 | use std::future::Future;
+#42 102.1   |     ^^^^^^^^^^^^^^^^^^^
+#42 102.1   |
+#42 102.1  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#42 102.1   |
+#42 102.1   = note: the item `Future` is already defined here
+#42 102.1   |
+#42 102.1   = note: requested on the command line with `-W redundant-imports`
+#42 102.1 
+#42 102.1 warning: the item `Future` is imported redundantly
+#42 102.1  --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+#42 102.1   |
+#42 102.1 7 | use std::future::Future;
+#42 102.1   |     ^^^^^^^^^^^^^^^^^^^
+#42 102.1   |
+#42 102.1  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#42 102.1   |
+#42 102.1   = note: the item `Future` is already defined here
+#42 102.1 
+#42 104.4 warning: `wamn-catalog` (lib) generated 1 warning
+#42 104.8    Compiling wamn-control-provision v0.1.0 (/build/crates/control/provision)
+#42 110.4 warning: constant `HTTP_CONTRACT` is never used
+#42 110.4   --> crates/platform/runtime/src/plugins/connection_http.rs:51:7
+#42 110.4    |
+#42 110.4 51 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+#42 110.4    |       ^^^^^^^^^^^^^
+#42 110.4    |
+#42 110.4    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#42 110.4 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/connection_http.rs:111:1
+#42 110.5     |
+#42 110.5 111 | / pub struct ConnectionHttp {
+#42 110.5 112 | |     postgres: Arc<WamnPostgres>,
+#42 110.5 113 | |     vault: Arc<WamnCredentials>,
+#42 110.5 114 | |     tenant: Box<str>,
+#42 110.5 ...   |
+#42 110.5 130 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+#42 110.5 131 | | }
+#42 110.5     | |_^
+#42 110.5     |
+#42 110.5     = note: requested on the command line with `-W missing-debug-implementations`
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5   --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+#42 110.5    |
+#42 110.5 27 | / pub struct WamnCredentials {
+#42 110.5 28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+#42 110.5 29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+#42 110.5 30 | |     /// config-shaped).
+#42 110.5 ...  |
+#42 110.5 33 | |     projects: HashMap<String, HashMap<String, String>>,
+#42 110.5 34 | | }
+#42 110.5    | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+#42 110.5     |
+#42 110.5 544 | / pub struct WamnJetstream {
+#42 110.5 545 | |     nats_url: Option<String>,
+#42 110.5 546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+#42 110.5 547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+#42 110.5 ...   |
+#42 110.5 569 | |     dlq_depth: Arc<DeadLetterDepth>,
+#42 110.5 570 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5     --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+#42 110.5      |
+#42 110.5 1209 | / pub struct JsConsumer {
+#42 110.5 1210 | |     consumer: Consumer<PullConfig>,
+#42 110.5 1211 | |     dead_letter: Option<DeadLetterIdentity>,
+#42 110.5 1212 | | }
+#42 110.5      | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5     --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+#42 110.5      |
+#42 110.5 1216 | / pub struct JsMessage {
+#42 110.5 1217 | |     msg: async_nats::jetstream::Message,
+#42 110.5 1218 | |     dead_letter: Option<DeadLetterIdentity>,
+#42 110.5 1219 | | }
+#42 110.5      | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+#42 110.5     |
+#42 110.5 213 | / pub struct Capture {
+#42 110.5 214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+#42 110.5 215 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+#42 110.5     |
+#42 110.5 235 | / pub struct WamnLogging {
+#42 110.5 236 | |     /// component id → host-trusted {tenant, project}.
+#42 110.5 237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+#42 110.5 238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+#42 110.5 ...   |
+#42 110.5 243 | |     _drain: tokio::task::JoinHandle<()>,
+#42 110.5 244 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:50:1
+#42 110.5     |
+#42 110.5  50 | / pub struct WamnPostgres {
+#42 110.5  51 | |     /// Resolves a project id → its database connection + policy.
+#42 110.5  52 | |     provider: Arc<dyn CredentialProvider>,
+#42 110.5  53 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+#42 110.5 ...   |
+#42 110.5 116 | |     pub(super) bind_counters: super::BindCounters,
+#42 110.5 117 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+#42 110.5     |
+#42 110.5 339 | / pub struct StaticCredentialProvider {
+#42 110.5 340 | |     projects: HashMap<String, ProjectConfig>,
+#42 110.5 341 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+#42 110.5     |
+#42 110.5 514 | / pub struct K8sSecretProvider {
+#42 110.5 515 | |     pub namespace: String,
+#42 110.5 516 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+#42 110.5     |
+#42 110.5  99 | / pub struct PgTransaction {
+#42 110.5 100 | |     state: SharedTxnState,
+#42 110.5 101 | |     destroyed: Arc<AtomicU64>,
+#42 110.5 102 | |     cursor_seq: u32,
+#42 110.5 103 | |     /// Row limit of the project this transaction's connection belongs to.
+#42 110.5 104 | |     row_limit: u64,
+#42 110.5 105 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+#42 110.5     |
+#42 110.5 145 | / pub struct PgCursor {
+#42 110.5 146 | |     state: SharedTxnState,
+#42 110.5 147 | |     destroyed: Arc<AtomicU64>,
+#42 110.5 148 | |     name: String,
+#42 110.5 149 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 110.5 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#42 110.5    --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+#42 110.5     |
+#42 110.5 145 | / pub struct WiringDoorbellListener {
+#42 110.5 146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+#42 110.5 147 | |     task: tokio::task::JoinHandle<()>,
+#42 110.5 148 | | }
+#42 110.5     | |_^
+#42 110.5 
+#42 114.5    Compiling wamn-execution-host v0.1.0 (/build/crates/execution/host)
+#42 129.2 warning: `wamn-runtime` (lib) generated 16 warnings
+#42 137.1    Compiling wamn-host v0.1.0 (/build/services/host)
+#42 399.1     Finished `release` profile [optimized] target(s) in 5m 02s
+#42 DONE 399.3s
+
+#43 [host 2/3] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+#43 CACHED
+
+#44 [host 3/3] COPY --from=build-host /native-output/wamn-host /usr/local/bin/wamn-host
+#44 DONE 0.1s
+
+#45 [gates  1/10] COPY --from=build-gates /native-output/wamn-gates /usr/local/bin/wamn-gates
+#45 DONE 0.1s
+
+#46 [gates  2/10] COPY --from=build-ctl /native-output/wamn-ctl /usr/local/bin/wamn-ctl
+#46 DONE 0.1s
+
+#47 [gates  3/10] COPY --from=build-ctl /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
+#47 DONE 0.1s
+
+#48 [gates  4/10] COPY --from=build-cdc-reader /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
+#48 DONE 0.1s
+
+#49 [gates  5/10] COPY --from=build-dispatcher /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
+#49 DONE 0.1s
+
+#50 [gates  6/10] COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
+#50 DONE 0.1s
+
+#51 [gates  7/10] COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
+#51 DONE 0.1s
+
+#52 [gates  8/10] COPY --from=component-builder /component-output/http_route.wasm /bench/http-route.wasm
+#52 DONE 0.1s
+
+#53 [gates  9/10] COPY --from=component-builder /component-output/materializer.wasm /bench/materializer.wasm
+#53 DONE 0.1s
+
+#54 [gates 10/10] COPY --from=component-builder /component-output/connection_http_standard.wasm /bench/connection-http-standard.wasm
+#54 DONE 0.1s
+
+#55 exporting to image
+#55 exporting layers
+#55 exporting layers 0.6s done
+#55 writing image sha256:f79dbf19e8f235336c3da78a021009d7becedff3c409a7e42b5aae4435bd70ae done
+#55 naming to docker.io/library/wamn-gates:jwks-9ab1c62278e9-3144219 0.0s done
+#55 DONE 0.6s

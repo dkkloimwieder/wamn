@@ -1,0 +1,1 @@
+cargo test --locked --offline -p wamn-proof-conformance --test package_architecture --test profile_selectors --test retained_root_outcomes --test repo_lint --test workspace_tiers --test protected_relations 

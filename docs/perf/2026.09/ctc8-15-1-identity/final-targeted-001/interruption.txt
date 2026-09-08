@@ -1,0 +1,4 @@
+The detached shell stopped before it recorded a Cargo command or exit code.
+The source patch is incomplete.
+No test result is claimed for this run.
+The next run uses a separate process session.

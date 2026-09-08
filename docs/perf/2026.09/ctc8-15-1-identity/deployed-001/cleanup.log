@@ -1,0 +1,6 @@
+Deleting cluster "wamn-identity-jwks-9ab1c62278e9-3144219" ...
+Deleted nodes: ["wamn-identity-jwks-9ab1c62278e9-3144219-control-plane"]
+Untagged: wamn-identity:jwks-9ab1c62278e9-3144219
+Deleted: sha256:6d7e01c8efdb85c004da7c5924b7b83a8489f3ab97b55a0aaeed45601e795e77
+Untagged: wamn-gates:jwks-9ab1c62278e9-3144219
+Deleted: sha256:f79dbf19e8f235336c3da78a021009d7becedff3c409a7e42b5aae4435bd70ae

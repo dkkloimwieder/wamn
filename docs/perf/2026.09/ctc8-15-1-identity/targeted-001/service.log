@@ -1,0 +1,121 @@
+   Compiling jobserver v0.1.35
+   Compiling smallvec v1.15.2
+   Compiling serde_core v1.0.229
+   Compiling errno v0.3.14
+   Compiling cc v1.4.4
+   Compiling signal-hook-registry v1.4.8
+   Compiling dunce v1.0.5
+   Compiling tokio v1.53.1
+   Compiling cmake v0.1.58
+   Compiling pkg-config v0.3.34
+   Compiling fs_extra v1.3.0
+   Compiling futures-task v0.3.34
+   Compiling aws-lc-sys v0.44.0
+   Compiling slab v0.4.12
+   Compiling futures-util v0.3.34
+   Compiling serde_json v1.0.151
+   Compiling serde v1.0.229
+   Compiling icu_normalizer v2.3.0
+   Compiling zeroize v1.9.0
+   Compiling aws-lc-rs v1.18.0
+   Compiling idna_adapter v1.2.2
+   Compiling rustls-pki-types v1.15.1
+   Compiling idna v1.1.0
+   Compiling http v1.5.0
+   Compiling url v2.5.8
+   Compiling parking_lot_core v0.9.12
+   Compiling httparse v1.10.1
+   Compiling rustls v0.23.43
+   Compiling schemars v0.8.22
+   Compiling parking_lot v0.12.5
+   Compiling http-body v1.1.0
+   Compiling chrono v0.4.45
+   Compiling postgres-types v0.2.14
+   Compiling tokio-util v0.7.19
+   Compiling tower-service v0.3.3
+   Compiling try-lock v0.2.5
+   Compiling want v0.3.1
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/components/execution/contract)
+   Compiling tokio-postgres v0.7.18
+   Compiling ring v0.17.14
+   Compiling tracing-core v0.1.36
+   Compiling utf8parse v0.2.2
+   Compiling atomic-waker v1.1.2
+   Compiling httpdate v1.0.3
+   Compiling boon v0.6.1
+   Compiling hyper v1.11.0
+   Compiling anstyle-parse v1.0.0
+   Compiling tracing v0.1.44
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/components/events/wire)
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling ipnet v2.12.1
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle v1.0.14
+   Compiling hyper-util v0.1.20
+   Compiling anstream v1.0.0
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/catalog/model)
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/schema/introspection)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling heck v0.5.0
+   Compiling strsim v0.11.1
+   Compiling clap_lex v1.1.0
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/execution/run-state)
+   Compiling clap_builder v4.6.6
+   Compiling clap_derive v4.6.4
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/schema/generator)
+   Compiling http-body-util v0.1.5
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/control/registry)
+   Compiling sync_wrapper v1.0.2
+   Compiling openssl-probe v0.2.1
+   Compiling num-conv v0.2.2
+   Compiling time-core v0.1.9
+   Compiling deranged v0.5.8
+   Compiling tower-layer v0.3.3
+   Compiling powerfmt v0.2.0
+   Compiling tower v0.5.3
+   Compiling rustls-native-certs v0.8.4
+   Compiling time v0.3.55
+   Compiling clap v4.6.6
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/identity/platform)
+   Compiling bitflags v2.13.1
+   Compiling tower-http v0.6.11
+   Compiling yasna v0.6.0
+   Compiling pem v3.0.6
+   Compiling rcgen v0.14.8
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/crates/control/provision)
+   Compiling rustls-webpki v0.103.15
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling hyper-rustls v0.27.9
+   Compiling wamn-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-session-foundation-20260908/services/identity)
+   Compiling reqwest v0.13.4
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 49.20s
+     Running unittests src/lib.rs (target/debug/deps/wamn_identity-21d8467c0dfc09bb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/wamn_identity-abf96d7877bef86d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/https_surface.rs (target/debug/deps/https_surface-ca95a79a523a7c1d)
+
+running 2 tests
+test identity_https_has_only_public_jwks_and_health ... ignored, requires an explicitly armed disposable wamn_system PostgreSQL database
+test cli_and_validated_configuration_debug_do_not_disclose_database_credentials ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

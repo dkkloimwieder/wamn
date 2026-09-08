@@ -1,0 +1,133 @@
+{
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"identity-jwks-activated-b\",\"namespace\":\"wamn-identity-jwks\"},\"spec\":{\"activeDeadlineSeconds\":120,\"backoffLimit\":0,\"template\":{\"metadata\":{\"labels\":{\"app\":\"identity-jwks\"}},\"spec\":{\"automountServiceAccountToken\":false,\"containers\":[{\"args\":[\"identity-jwks\"],\"env\":[{\"name\":\"WAMN_IDENTITY_ISSUER\",\"value\":\"https://wamn-identity.wamn-identity-jwks.svc.cluster.local\"},{\"name\":\"WAMN_IDENTITY_JWKS_URL\",\"value\":\"https://wamn-identity.wamn-identity-jwks.svc.cluster.local/.well-known/jwks.json\"},{\"name\":\"WAMN_IDENTITY_CA_FILE\",\"value\":\"/etc/wamn-identity-ca/ca.crt\"},{\"name\":\"WAMN_IDENTITY_WRONG_CA_FILE\",\"value\":\"/etc/wamn-identity-ca/wrong-ca.crt\"},{\"name\":\"WAMN_IDENTITY_EXPECTED_KIDS\",\"value\":\"[\\\"b44ddcb0-b61a-4daa-94a0-c879b14c9729\\\",\\\"16ea9768-b25d-4999-a1de-c8af6f7a7783\\\"]\"}],\"image\":\"wamn-gates:jwks-8cbf57c885c9-3195773\",\"imagePullPolicy\":\"Never\",\"name\":\"identity-jwks\",\"volumeMounts\":[{\"mountPath\":\"/etc/wamn-identity-ca\",\"name\":\"public-ca\",\"readOnly\":true}]}],\"restartPolicy\":\"Never\",\"volumes\":[{\"configMap\":{\"name\":\"identity-jwks-public\"},\"name\":\"public-ca\"}]}}}}\n"
+        },
+        "creationTimestamp": "2026-09-08T15:44:41Z",
+        "generation": 1,
+        "labels": {
+            "app": "identity-jwks",
+            "batch.kubernetes.io/controller-uid": "a892336a-d617-4e56-bc92-a15437b4e7bf",
+            "batch.kubernetes.io/job-name": "identity-jwks-activated-b",
+            "controller-uid": "a892336a-d617-4e56-bc92-a15437b4e7bf",
+            "job-name": "identity-jwks-activated-b"
+        },
+        "name": "identity-jwks-activated-b",
+        "namespace": "wamn-identity-jwks",
+        "resourceVersion": "770",
+        "uid": "a892336a-d617-4e56-bc92-a15437b4e7bf"
+    },
+    "spec": {
+        "activeDeadlineSeconds": 120,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "TerminatingOrFailed",
+        "selector": {
+            "matchLabels": {
+                "batch.kubernetes.io/controller-uid": "a892336a-d617-4e56-bc92-a15437b4e7bf"
+            }
+        },
+        "suspend": false,
+        "template": {
+            "metadata": {
+                "labels": {
+                    "app": "identity-jwks",
+                    "batch.kubernetes.io/controller-uid": "a892336a-d617-4e56-bc92-a15437b4e7bf",
+                    "batch.kubernetes.io/job-name": "identity-jwks-activated-b",
+                    "controller-uid": "a892336a-d617-4e56-bc92-a15437b4e7bf",
+                    "job-name": "identity-jwks-activated-b"
+                }
+            },
+            "spec": {
+                "automountServiceAccountToken": false,
+                "containers": [
+                    {
+                        "args": [
+                            "identity-jwks"
+                        ],
+                        "env": [
+                            {
+                                "name": "WAMN_IDENTITY_ISSUER",
+                                "value": "https://wamn-identity.wamn-identity-jwks.svc.cluster.local"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_JWKS_URL",
+                                "value": "https://wamn-identity.wamn-identity-jwks.svc.cluster.local/.well-known/jwks.json"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_CA_FILE",
+                                "value": "/etc/wamn-identity-ca/ca.crt"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_WRONG_CA_FILE",
+                                "value": "/etc/wamn-identity-ca/wrong-ca.crt"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_EXPECTED_KIDS",
+                                "value": "[\"b44ddcb0-b61a-4daa-94a0-c879b14c9729\",\"16ea9768-b25d-4999-a1de-c8af6f7a7783\"]"
+                            }
+                        ],
+                        "image": "wamn-gates:jwks-8cbf57c885c9-3195773",
+                        "imagePullPolicy": "Never",
+                        "name": "identity-jwks",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/etc/wamn-identity-ca",
+                                "name": "public-ca",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "terminationGracePeriodSeconds": 30,
+                "volumes": [
+                    {
+                        "configMap": {
+                            "defaultMode": 420,
+                            "name": "identity-jwks-public"
+                        },
+                        "name": "public-ca"
+                    }
+                ]
+            }
+        }
+    },
+    "status": {
+        "completionTime": "2026-09-08T15:44:44Z",
+        "conditions": [
+            {
+                "lastProbeTime": "2026-09-08T15:44:44Z",
+                "lastTransitionTime": "2026-09-08T15:44:44Z",
+                "message": "Reached expected number of succeeded pods",
+                "reason": "CompletionsReached",
+                "status": "True",
+                "type": "SuccessCriteriaMet"
+            },
+            {
+                "lastProbeTime": "2026-09-08T15:44:44Z",
+                "lastTransitionTime": "2026-09-08T15:44:44Z",
+                "message": "Reached expected number of succeeded pods",
+                "reason": "CompletionsReached",
+                "status": "True",
+                "type": "Complete"
+            }
+        ],
+        "ready": 0,
+        "startTime": "2026-09-08T15:44:41Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+    }
+}
