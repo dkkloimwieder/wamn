@@ -1,0 +1,119 @@
+---
+# Source: wamn-identity/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: wamn-identity
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: wamn-identity
+    app.kubernetes.io/instance: wamn-identity
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: wamn-identity
+    app.kubernetes.io/instance: wamn-identity
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+
+---
+# Source: wamn-identity/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wamn-identity
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: wamn-identity
+    app.kubernetes.io/instance: wamn-identity
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wamn-identity
+      app.kubernetes.io/instance: wamn-identity
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wamn-identity
+        app.kubernetes.io/instance: wamn-identity
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: identity
+          image: "wamn-identity:dev"
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --session-target
+            - "/var/run/wamn-identity/targets/0/target.json"
+            - --session-target
+            - "/var/run/wamn-identity/targets/1/target.json"
+          env:
+            - name: WAMN_IDENTITY_BIND
+              value: "0.0.0.0:8443"
+            - name: WAMN_IDENTITY_ISSUER
+              value: "https://identity.static-proof.internal"
+            - name: WAMN_IDENTITY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: "identity-static-issuer"
+                  key: url
+                  optional: false
+            - name: WAMN_IDENTITY_TLS_CERT
+              value: /var/run/wamn-identity/tls/tls.crt
+            - name: WAMN_IDENTITY_TLS_KEY
+              value: /var/run/wamn-identity/tls/tls.key
+          ports:
+            - name: https
+              containerPort: 8443
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              path: /healthz
+              port: https
+          volumeMounts:
+            - name: serving-tls
+              mountPath: /var/run/wamn-identity/tls
+              readOnly: true
+            - name: session-target-0
+              mountPath: "/var/run/wamn-identity/targets/0"
+              readOnly: true
+            - name: session-target-1
+              mountPath: "/var/run/wamn-identity/targets/1"
+              readOnly: true
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: serving-tls
+          secret:
+            secretName: "identity-static-tls"
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: session-target-0
+          secret:
+            secretName: "identity-static-acme-dev"
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: target.json
+                path: target.json
+        - name: session-target-1
+          secret:
+            secretName: "identity-static-other-dev"
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: target.json
+                path: target.json

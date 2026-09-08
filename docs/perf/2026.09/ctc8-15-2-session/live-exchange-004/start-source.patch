@@ -1,0 +1,13 @@
+diff --git a/services/identity/src/session.rs b/services/identity/src/session.rs
+index 7de2e6e6..25fe7888 100644
+--- a/services/identity/src/session.rs
++++ b/services/identity/src/session.rs
+@@ -23,7 +23,7 @@ const CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_
+     WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4)";
+ const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM app_system.users u \
+     JOIN app_system.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+-    WHERE u.tenant_id = $1 AND u.id = $2::text::uuid AND u.status = 'active' \
++    WHERE ($1::text IS NOT NULL) AND u.id = $2::text::uuid AND u.status = 'active' \
+     ORDER BY r.role_name";
+ 
+ #[derive(Deserialize)]

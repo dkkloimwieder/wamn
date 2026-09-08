@@ -1,0 +1,26 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-2-session-exchange-20260908/services/identity)
+error[E0603]: module `name` is private
+  --> services/identity/tests/session_exchange.rs:19:29
+   |
+19 | use wamn_control_provision::name::project_env_database_name;
+   |                             ^^^^  ------------------------- function `project_env_database_name` is not publicly re-exported
+   |                             |
+   |                             private module
+   |
+note: the module `name` is defined here
+  --> crates/control/provision/src/lib.rs:64:1
+   |
+64 | mod name;
+   | ^^^^^^^^
+
+For more information about this error, try `rustc --explain E0603`.
+error: could not compile `wamn-identity` (test "session_exchange") due to 1 previous error

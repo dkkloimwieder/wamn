@@ -1,0 +1,86 @@
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "name": "identity-session-initial",
+    "namespace": "wamn-identity-jwks"
+  },
+  "spec": {
+    "backoffLimit": 0,
+    "activeDeadlineSeconds": 120,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "identity-session"
+        }
+      },
+      "spec": {
+        "restartPolicy": "Never",
+        "automountServiceAccountToken": false,
+        "containers": [
+          {
+            "name": "identity-session",
+            "image": "wamn-gates:jwks-6766a6026230-4101634",
+            "imagePullPolicy": "Never",
+            "args": [
+              "identity-session"
+            ],
+            "env": [
+              {
+                "name": "WAMN_IDENTITY_ISSUER",
+                "value": "https://wamn-identity.wamn-identity-jwks.svc.cluster.local"
+              },
+              {
+                "name": "WAMN_IDENTITY_CA_FILE",
+                "value": "/etc/wamn-identity-ca/ca.crt"
+              },
+              {
+                "name": "WAMN_IDENTITY_SESSION_CASES_FILE",
+                "value": "/etc/wamn-identity-cases/cases.json"
+              }
+            ],
+            "volumeMounts": [
+              {
+                "name": "public-ca",
+                "mountPath": "/etc/wamn-identity-ca",
+                "readOnly": true
+              },
+              {
+                "name": "cases",
+                "mountPath": "/etc/wamn-identity-cases",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "name": "public-ca",
+            "configMap": {
+              "name": "identity-jwks-public",
+              "items": [
+                {
+                  "key": "ca.crt",
+                  "path": "ca.crt"
+                }
+              ]
+            }
+          },
+          {
+            "name": "cases",
+            "secret": {
+              "secretName": "identity-session-cases-initial",
+              "defaultMode": 256,
+              "items": [
+                {
+                  "key": "cases.json",
+                  "path": "cases.json"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

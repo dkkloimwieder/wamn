@@ -1,0 +1,36 @@
+[
+  {
+    "name": "human-dev",
+    "audience": "urn:wamn:project-env:acme:shared:dev:k3m9x2p7",
+    "expected_status": 200,
+    "subject": "e00011ba-b82a-40e7-b5ca-aef6f3ab96d9",
+    "org": "acme",
+    "roles": [
+      "member"
+    ]
+  },
+  {
+    "name": "human-prod-no-membership",
+    "audience": "urn:wamn:project-env:acme:shared:prod:p7x2m9k3",
+    "expected_status": 401,
+    "subject": "",
+    "org": "",
+    "roles": []
+  },
+  {
+    "name": "human-wrong-org",
+    "audience": "urn:wamn:project-env:other:shared:dev:q2n5r8t4",
+    "expected_status": 401,
+    "subject": "",
+    "org": "",
+    "roles": []
+  },
+  {
+    "name": "service-pat",
+    "audience": "urn:wamn:project-env:acme:shared:dev:k3m9x2p7",
+    "expected_status": 401,
+    "subject": "",
+    "org": "",
+    "roles": []
+  }
+]

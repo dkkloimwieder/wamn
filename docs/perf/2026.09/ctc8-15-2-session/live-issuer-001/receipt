@@ -1,0 +1,1 @@
+PASS suite=issuer tests=1 ignored=0 named-live-witness=scoped_issuer_grants_and_generation_retirement_execute_on_postgres

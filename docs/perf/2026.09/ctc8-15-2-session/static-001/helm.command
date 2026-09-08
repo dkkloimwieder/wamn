@@ -1,0 +1,1 @@
+helm template wamn-identity deploy/platform/identity --namespace wamn-system --set-string issuer=https://identity.static-proof.internal --set-string databaseSecret=identity-static-issuer --set-string tlsSecret=identity-static-tls --set-string sessionTargetSecrets\[0\]=identity-static-acme-dev --set-string sessionTargetSecrets\[1\]=identity-static-other-dev 

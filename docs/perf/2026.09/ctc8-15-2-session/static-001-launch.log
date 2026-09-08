@@ -1,0 +1,11 @@
+diff-check exit=0
+bash-syntax exit=0
+helm exit=0
+cargo-preflight exit=0
+architecture exit=0
+platform exit=101
+clippy exit=0
+source-head-unchanged exit=0
+source-status-unchanged exit=0
+source-diff-unchanged exit=0
+STATIC exit=101 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-2-session/static-001

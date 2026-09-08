@@ -1,0 +1,18 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-2-session-exchange-20260908/services/identity)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.78s
+     Running tests/session_exchange.rs (target/debug/deps/session_exchange-84f39e6677a4f6de)
+
+running 1 test
+test session_exchange_uses_fresh_scoped_authority_without_session_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.48s
+

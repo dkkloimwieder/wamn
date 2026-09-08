@@ -1,0 +1,1567 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 8e4dc860..da5e8727 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -5480,6 +5480,7 @@ version = "0.1.0"
+ dependencies = [
+  "chrono",
+  "hex",
++ "serde",
+  "serde_json",
+  "sha2 0.11.0",
+  "url",
+@@ -5697,13 +5698,16 @@ dependencies = [
+  "hyper-util",
+  "rcgen",
+  "reqwest",
++ "ring",
+  "rustls",
++ "serde",
+  "serde_json",
+  "tokio",
+  "tokio-postgres",
+  "tokio-rustls",
+  "url",
+  "wamn-control-provision",
++ "wamn-control-registry",
+  "wamn-pg-core",
+  "wamn-platform-identity",
+ ]
+diff --git a/architecture/package-roles.json b/architecture/package-roles.json
+index 2783c913..52d65026 100644
+--- a/architecture/package-roles.json
++++ b/architecture/package-roles.json
+@@ -253,9 +253,9 @@
+       "native": {
+         "native_kind": "capability",
+         "native_reason": "The system-database-backed signing authority is a separate security boundary; guests, hosts, and the authoring Gate must never receive its private signing keys.",
+-        "owner": "wamn-ctc8.15.1 / identity owners",
+-        "credential_failure_scope": "The identity process alone holds its issuer-scoped key-table credential and HTTPS listener key. Hosts receive public JWKS only; PAT minting remains on the provisioning CLI.",
+-        "tested_boundary": "Key lifecycle, public-only HTTPS JWKS, and scoped-credential tests own this boundary. Local tests do not establish deployed isolation or the later two-host token-admission proof.",
++        "owner": "wamn-ctc8.15.1 and wamn-ctc8.15.2 / identity owners",
++        "credential_failure_scope": "The identity process holds its signing credential, required system identity reads, and dedicated user/role readers for configured audiences. It has no tenant writes or execution grants. Hosts receive public JWKS only; PAT minting remains on the CLI.",
++        "tested_boundary": "Key lifecycle, HTTPS session exchange, public JWKS, and real scoped-credential tests own this boundary. Local tests do not establish deployed isolation or the later two-host token-admission proof.",
+         "exit_condition": "Retain while session issuance and later OIDC federation require an isolated signing authority; replace only with an equivalent boundary that keeps private keys out of hosts and the authoring Gate."
+       }
+     },
+diff --git a/crates/control/provision/Cargo.toml b/crates/control/provision/Cargo.toml
+index 0cbb95b7..cb2e2c53 100644
+--- a/crates/control/provision/Cargo.toml
++++ b/crates/control/provision/Cargo.toml
+@@ -25,6 +25,7 @@ path = "tests/restore.rs"
+ required-features = ["ops"]
+ 
+ [dependencies]
++serde = { workspace = true, features = ["derive"] }
+ # The projects-file entry (the `WAMN_PG_PROJECTS_FILE` format the plugin's
+ # StaticCredentialProvider parses) and the per-project credential Secret render
+ # as JSON (kubectl apply accepts JSON manifests). No schemars — this is a
+diff --git a/crates/control/provision/src/identity_issuer.rs b/crates/control/provision/src/identity_issuer.rs
+index f39426fd..6db3d576 100644
+--- a/crates/control/provision/src/identity_issuer.rs
++++ b/crates/control/provision/src/identity_issuer.rs
+@@ -16,8 +16,37 @@ use crate::CredentialGeneration;
+ pub const IDENTITY_ISSUER_ROLE: &str = "wamn_identity_issuer";
+ /// Exact database served by the identity authority.
+ pub const IDENTITY_ISSUER_DATABASE: &str = "wamn_system";
+-/// The only tables accessible to the signing authority in this foundation.
++/// The only tables the signing authority may mutate.
+ pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_state"];
++/// Fresh PAT, membership and current environment-incarnation inputs to exchange.
++pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 4] = [
++    (
++        "identity",
++        "principals",
++        &["id", "kind", "subject", "display_name", "status"],
++    ),
++    (
++        "identity",
++        "pats",
++        &[
++            "principal_id",
++            "token_prefix",
++            "token_hash",
++            "revoked_at",
++            "expires_at",
++        ],
++    ),
++    (
++        "identity",
++        "project_env_memberships",
++        &["principal_id", "org", "project", "env"],
++    ),
++    (
++        "registry",
++        "project_envs",
++        &["org", "project", "env", "instance_suffix"],
++    ),
++];
+ 
+ /// Which input predicate refused an identity credential.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+@@ -220,18 +249,31 @@ pub fn parse_identity_issuer_url(
+     ))
+ }
+ 
+-/// Create the stable role and grant only schema use and key-table mutations.
++/// Grant key-table mutations and the fresh system inputs required by exchange.
+ ///
+ /// The driver must first refuse unexpected grants, ownership, or memberships.
+ /// Live tests exercise the resulting permissions, not the SQL text.
+ pub fn grant_identity_issuer_surface_sql() -> String {
+-    format!(
+-        "{} GRANT USAGE ON SCHEMA identity TO {role}; \
++    let role = quote_ident(IDENTITY_ISSUER_ROLE);
++    let mut sql = format!(
++        "{} GRANT USAGE ON SCHEMA identity, registry TO {role}; \
+          GRANT SELECT, INSERT, UPDATE, DELETE ON \
+            identity.session_keys, identity.session_signing_state TO {role};",
+         crate::sql::ensure_acl_role_sql(IDENTITY_ISSUER_ROLE),
+-        role = quote_ident(IDENTITY_ISSUER_ROLE),
+-    )
++    );
++    for (schema, table, columns) in IDENTITY_ISSUER_READ_COLUMNS {
++        let columns = columns
++            .iter()
++            .map(|column| quote_ident(column))
++            .collect::<Vec<_>>()
++            .join(", ");
++        sql.push_str(&format!(
++            " GRANT SELECT ({columns}) ON TABLE {schema}.{table} TO {role};",
++            schema = quote_ident(schema),
++            table = quote_ident(table),
++        ));
++    }
++    sql
+ }
+ 
+ /// Prepare an inactive login after the driver checks its exact role state.
+diff --git a/crates/control/provision/src/lib.rs b/crates/control/provision/src/lib.rs
+index bb0e8454..6f8258f1 100644
+--- a/crates/control/provision/src/lib.rs
++++ b/crates/control/provision/src/lib.rs
+@@ -68,6 +68,8 @@ pub mod org;
+ pub mod restore;
+ pub mod saga;
+ pub mod secret;
++pub mod session_role_reader;
++pub mod session_target;
+ pub mod sql;
+ #[cfg(feature = "ops")]
+ pub mod state;
+diff --git a/crates/control/provision/src/secret.rs b/crates/control/provision/src/secret.rs
+index 769b3f88..31c30cd5 100644
+--- a/crates/control/provision/src/secret.rs
++++ b/crates/control/provision/src/secret.rs
+@@ -20,6 +20,7 @@ use crate::name::{
+     APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_secret_name, secret_name,
+     workload_secret_name,
+ };
++use crate::session_target::{SESSION_TARGET_KEY, SessionTarget};
+ use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyKind};
+ 
+ /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
+@@ -95,7 +96,7 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
+ 
+ /// The body one workload credential `Secret` carries.
+ ///
+-/// Three SHAPES, closed — not one variant per family. Which shape a family
++/// Four shapes, not one variant per family. Which shape a family
+ /// takes is [`WorkloadRoleFamily::secret_body_kind`], so an admitted family
+ /// gets the plain single-`url` Secret with no edit here.
+ #[derive(Debug, Clone, Copy)]
+@@ -122,6 +123,8 @@ pub enum WorkloadSecretBody<'a> {
+     /// `subPath`, so an atomic Secret projection update can be observed after
+     /// the wrapper drains/reloads pools.
+     EffectWriterCredential(&'a EffectWriterCredential),
++    /// The checked audience binding and reader credential in `target.json`.
++    SessionTarget(&'a SessionTarget),
+ }
+ 
+ impl WorkloadSecretBody<'_> {
+@@ -130,6 +133,7 @@ impl WorkloadSecretBody<'_> {
+             Self::Url(_) => WorkloadSecretBodyKind::Url,
+             Self::TenantUrl { .. } => WorkloadSecretBodyKind::TenantUrl,
+             Self::EffectWriterCredential(_) => WorkloadSecretBodyKind::EffectWriterCredential,
++            Self::SessionTarget(_) => WorkloadSecretBodyKind::SessionTarget,
+         }
+     }
+ }
+@@ -184,6 +188,9 @@ pub fn render_workload_secret_manifest(
+                     .expect("effect-writer credential serializes"),
+             })
+         }
++        WorkloadSecretBody::SessionTarget(target) => json!({
++            (SESSION_TARGET_KEY): target.to_json().expect("validated session target serializes"),
++        }),
+     };
+     json!({
+         "apiVersion": "v1",
+@@ -194,8 +201,7 @@ pub fn render_workload_secret_manifest(
+     })
+ }
+ 
+-/// The effect-writer credential's own annotation block — the one family whose
+-/// Secret carries a frozen document rather than a url.
++/// The effect-writer credential's annotation block.
+ fn effect_writer_annotations(
+     credential: &EffectWriterCredential,
+ ) -> serde_json::Map<String, Value> {
+@@ -362,6 +368,46 @@ mod tests {
+     use super::*;
+     use std::time::SystemTime;
+ 
++    #[test]
++    fn session_reader_secret_round_trips_the_checked_target() {
++        let triple = Triple::new("acme", "receiving", "dev");
++        let database = crate::project_env_database_name("acme", "receiving", "dev", "k3m9x2p7");
++        let role = crate::workload_generation_role(
++            WorkloadRoleFamily::SessionRoleReader,
++            crate::WorkloadRoleScope::ProjectEnvironment {
++                org: "acme",
++                project: "receiving",
++                environment: "dev",
++                database: &database,
++            },
++            crate::CredentialGeneration::A,
++        )
++        .unwrap();
++        let url = format!("postgres://{role}:fixture-password@database.invalid/{database}");
++        let target = SessionTarget::new(&triple, "k3m9x2p7", "t1", &url).unwrap();
++        let secret = render_workload_secret_manifest(
++            WorkloadRoleFamily::SessionRoleReader,
++            &triple,
++            "wamn-system",
++            WorkloadSecretBody::SessionTarget(&target),
++        );
++        let data = secret["stringData"].as_object().unwrap();
++        assert_eq!(data.len(), 1);
++        let parsed =
++            SessionTarget::from_json(data[SESSION_TARGET_KEY].as_str().unwrap().as_bytes())
++                .unwrap();
++        assert_eq!(
++            parsed.audience(),
++            "urn:wamn:project-env:acme:receiving:dev:k3m9x2p7"
++        );
++        assert_eq!(parsed.tenant_id(), "t1");
++        assert_eq!(parsed.connection().url(), url);
++        assert!(
++            !format!("{:?}", WorkloadSecretBody::SessionTarget(&target))
++                .contains("fixture-password")
++        );
++    }
++
+     use chrono::{DateTime, Utc};
+     use wamn_run_state::{
+         CredentialGeneration, EFFECT_WRITER_CREDENTIAL_PATH, EffectWriterCredentialScope,
+diff --git a/crates/control/provision/src/sql.rs b/crates/control/provision/src/sql.rs
+index e6539ce7..3237e831 100644
+--- a/crates/control/provision/src/sql.rs
++++ b/crates/control/provision/src/sql.rs
+@@ -10,7 +10,7 @@
+ use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
+ use crate::workload_role::{
+     EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, MANAGEMENT_ADMITTER_ROLE,
+-    PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
++    PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
+ };
+ pub(crate) use wamn_pg_core::quote_ident;
+ use wamn_pg_core::quote_literal;
+@@ -837,6 +837,41 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
+     sql
+ }
+ 
++/// Converge the session role reader onto six columns and no execution authority.
++///
++/// Apply after the project schemas exist. The existing platform RLS arm admits
++/// these reads; consumers must bind the target tenant explicitly. Revoke column
++/// ACLs as well as table ACLs so replay removes a widened read or write.
++pub fn grant_session_role_reader_surface_sql() -> String {
++    let role = quote_ident(SESSION_ROLE_READER_ROLE);
++    format!(
++        "{ensure} \
++         REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
++         REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
++         REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
++         DO $session_column_acl$ DECLARE target record; BEGIN \
++           FOR target IN \
++             SELECT n.nspname, c.relname, a.attname \
++               FROM pg_catalog.pg_attribute a \
++               JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
++               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
++              WHERE n.nspname IN ('catalog', 'app_system', 'wamn_run', 'wamn_authority') \
++                AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
++                AND a.attnum > 0 AND NOT a.attisdropped AND a.attacl IS NOT NULL \
++           LOOP \
++             EXECUTE format('REVOKE ALL PRIVILEGES (%I) ON TABLE %I.%I FROM %I', \
++               target.attname, target.nspname, target.relname, {role_literal}); \
++           END LOOP; \
++         END $session_column_acl$; \
++         REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_run, wamn_authority FROM {role}; \
++         GRANT USAGE ON SCHEMA app_system TO {role}; \
++         GRANT SELECT (tenant_id, id, status) ON TABLE app_system.users TO {role}; \
++         GRANT SELECT (tenant_id, user_id, role_name) ON TABLE app_system.user_roles TO {role};",
++        ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::SessionRoleReader),
++        role_literal = quote_literal(SESSION_ROLE_READER_ROLE),
++    )
++}
++
+ /// Converge the stable executor-platform role to its exact claim surface
+ /// (`wamn-0h0g.22.37`).
+ ///
+@@ -1119,6 +1154,7 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
+             Some(grant_executor_platform_surface_sql("wamn_run"))
+         }
+         WorkloadRoleFamily::HttpAdmitter => Some(grant_http_admitter_surface_sql("wamn_run")),
++        WorkloadRoleFamily::SessionRoleReader => Some(grant_session_role_reader_surface_sql()),
+         WorkloadRoleFamily::RegistryReader => Some(grant_registry_reader_surface_sql()),
+         WorkloadRoleFamily::IdentityReader => Some(grant_identity_reader_surface_sql()),
+         WorkloadRoleFamily::EventMaterializer => {
+diff --git a/crates/control/provision/src/workload_role.rs b/crates/control/provision/src/workload_role.rs
+index cddb4291..1e85de9b 100644
+--- a/crates/control/provision/src/workload_role.rs
++++ b/crates/control/provision/src/workload_role.rs
+@@ -54,6 +54,10 @@ const EVENT_MATERIALIZER_GENERATION_PREFIX: &str = "wamn_materializer";
+ pub const REGISTRY_READER_ROLE: &str = "wamn_registry_reader";
+ /// Stable NOLOGIN role used by control-identity reader generations.
+ pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
++/// Stable NOLOGIN role for the identity service's environment role reads.
++pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
++/// Keep the 40-hex scope digest and A/B suffix within PostgreSQL's 63 bytes.
++const SESSION_ROLE_READER_GENERATION_PREFIX: &str = "wamn_session_roles";
+ 
+ /// The shared NOLOGIN group role every non-guest tenant-floor arm targets
+ /// (`wamn-0h0g.22.17`).
+@@ -93,6 +97,8 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
+ /// and `identity.project_roles` — one
+ /// family for both is how one role gets widened to the union. Only the
+ /// families land here; the grants, Secrets and consumers are those two beads.
++/// `wamn-ctc8.15.2` adds a dedicated project-environment session role reader;
++/// it carries no runtime authority class and no operation-permission read.
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum WorkloadRoleFamily {
+     EffectWriter,
+@@ -107,6 +113,7 @@ pub enum WorkloadRoleFamily {
+     EventMaterializer,
+     RegistryReader,
+     IdentityReader,
++    SessionRoleReader,
+ }
+ 
+ impl WorkloadRoleFamily {
+@@ -116,7 +123,7 @@ impl WorkloadRoleFamily {
+     /// provisioning's flag set, action dispatch and Secret naming are all
+     /// derived by walking it, so an admitted family reaches every one of them
+     /// without a list anywhere being appended to by hand.
+-    pub const ALL: [Self; 12] = [
++    pub const ALL: [Self; 13] = [
+         Self::EffectWriter,
+         Self::ControlAuthor,
+         Self::ManagementAdmitter,
+@@ -129,6 +136,7 @@ impl WorkloadRoleFamily {
+         Self::EventMaterializer,
+         Self::RegistryReader,
+         Self::IdentityReader,
++        Self::SessionRoleReader,
+     ];
+ 
+     /// Stable NOLOGIN ACL role inherited by this family's generations.
+@@ -146,6 +154,7 @@ impl WorkloadRoleFamily {
+             Self::EventMaterializer => EVENT_MATERIALIZER_ROLE,
+             Self::RegistryReader => REGISTRY_READER_ROLE,
+             Self::IdentityReader => IDENTITY_READER_ROLE,
++            Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
+         }
+     }
+ 
+@@ -155,7 +164,8 @@ impl WorkloadRoleFamily {
+     /// fits the PostgreSQL identifier cap once the scope digest and generation
+     /// suffix are appended. `ManagementAdmitter` (`wamn-0h0g.13.62`),
+     /// `ExecutorPlatform` and `EventMaterializer` (`wamn-0fqa`) do not, so each
+-    /// carries its own shorter frozen prefix. `RegistryReader` and
++    /// carries its own shorter frozen prefix. `SessionRoleReader` also needs
++    /// a shorter prefix. `RegistryReader` and
+     /// `IdentityReader` (`wamn-0h0g.13.63`) are the first families to fit
+     /// EXACTLY: their 20-byte role names mint 63-byte logins, the largest
+     /// PostgreSQL stores untruncated, so they take the wildcard arm and the
+@@ -165,6 +175,7 @@ impl WorkloadRoleFamily {
+             Self::ManagementAdmitter => MANAGEMENT_ADMITTER_GENERATION_PREFIX,
+             Self::ExecutorPlatform => EXECUTOR_PLATFORM_GENERATION_PREFIX,
+             Self::EventMaterializer => EVENT_MATERIALIZER_GENERATION_PREFIX,
++            Self::SessionRoleReader => SESSION_ROLE_READER_GENERATION_PREFIX,
+             _ => self.acl_role(),
+         }
+     }
+@@ -178,6 +189,7 @@ impl WorkloadRoleFamily {
+             | Self::ServiceReader
+             | Self::ExecutorPlatform
+             | Self::HttpAdmitter
++            | Self::SessionRoleReader
+             | Self::EventMaterializer => WorkloadRoleScopeKind::ProjectEnvironment,
+             // Scope follows the RESOURCE PLANE, not the consumer's home: these
+             // credentials reach the CONTROL database (`wamn-0h0g.13.63`).
+@@ -211,7 +223,7 @@ impl WorkloadRoleFamily {
+     ///   its four ledgers through PER-RELATION arms naming it directly in
+     ///   `deploy/sql/run-state.sql` instead — not through this group.
+     ///
+-    /// Everything else — the seven families whose credentials reach a
++    /// Everything else — the eight families whose credentials reach a
+     /// project-environment or tenant database, are not the guest, and are not
+     /// under that guard — is a member. `EventMaterializer` exercises that edge
+     /// through its two catalog reads. `ServiceReader` remains the empty-surface
+@@ -272,7 +284,7 @@ impl WorkloadRoleFamily {
+ 
+     /// Which body this family's credential Secret carries.
+     ///
+-    /// A closed three-value vocabulary of SHAPES, not a per-family list: an
++    /// A closed vocabulary of SHAPES, not a per-family list: an
+     /// admitted family lands on the plain single-`url` Secret every consumer
+     /// already mounts through `secretKeyRef … key: url`, with no edit here.
+     pub fn secret_body_kind(self) -> WorkloadSecretBodyKind {
+@@ -282,6 +294,8 @@ impl WorkloadRoleFamily {
+             // The guest credential IS the tenant authority, so its Secret
+             // carries the tenant key that keys every governed predicate.
+             Self::App => WorkloadSecretBodyKind::TenantUrl,
++            // The credential and trusted target coordinates publish atomically.
++            Self::SessionRoleReader => WorkloadSecretBodyKind::SessionTarget,
+             _ => WorkloadSecretBodyKind::Url,
+         }
+     }
+@@ -314,6 +328,7 @@ impl WorkloadRoleFamily {
+             Self::EventMaterializer => b"wamn.event-materializer.scope.v0.1",
+             Self::RegistryReader => b"wamn.registry-reader.scope.v0.1",
+             Self::IdentityReader => b"wamn.identity-reader.scope.v0.1",
++            Self::SessionRoleReader => b"wamn.session-role-reader.scope.v0.1",
+         }
+     }
+ }
+@@ -351,6 +366,8 @@ pub enum WorkloadSecretBodyKind {
+     TenantUrl,
+     /// The frozen effect-writer `credential.json` document.
+     EffectWriterCredential,
++    /// One validated environment target and credential in `target.json`.
++    SessionTarget,
+ }
+ 
+ /// The three admitted provisioning scope shapes.
+@@ -648,8 +665,8 @@ mod tests {
+     }
+ 
+     /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
+-    /// `wamn-0h0g.13.63`: ten to twelve).
+-    const FAMILIES: [WorkloadRoleFamily; 12] = [
++    /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen).
++    const FAMILIES: [WorkloadRoleFamily; 13] = [
+         WorkloadRoleFamily::EffectWriter,
+         WorkloadRoleFamily::ControlAuthor,
+         WorkloadRoleFamily::ManagementAdmitter,
+@@ -662,11 +679,12 @@ mod tests {
+         WorkloadRoleFamily::EventMaterializer,
+         WorkloadRoleFamily::RegistryReader,
+         WorkloadRoleFamily::IdentityReader,
++        WorkloadRoleFamily::SessionRoleReader,
+     ];
+ 
+     #[test]
+     fn family_set_and_scope_classes_are_closed() {
+-        // A thirteenth variant fails to compile here as well as in the
++        // A fourteenth variant fails to compile here as well as in the
+         // implementation, so the pinned vocabulary cannot silently grow.
+         for (index, family) in FAMILIES.into_iter().enumerate() {
+             let pinned = match family {
+@@ -682,6 +700,7 @@ mod tests {
+                 WorkloadRoleFamily::EventMaterializer => 9,
+                 WorkloadRoleFamily::RegistryReader => 10,
+                 WorkloadRoleFamily::IdentityReader => 11,
++                WorkloadRoleFamily::SessionRoleReader => 12,
+             };
+             assert_eq!(index, pinned, "{family:?}");
+         }
+@@ -700,6 +719,7 @@ mod tests {
+                 WorkloadRoleScopeKind::ProjectEnvironment,
+                 WorkloadRoleScopeKind::Control,
+                 WorkloadRoleScopeKind::Control,
++                WorkloadRoleScopeKind::ProjectEnvironment,
+             ],
+         );
+         assert_eq!(
+@@ -717,6 +737,7 @@ mod tests {
+                 "wamn_event_materializer",
+                 "wamn_registry_reader",
+                 "wamn_identity_reader",
++                "wamn_session_role_reader",
+             ],
+         );
+     }
+@@ -843,6 +864,15 @@ mod tests {
+                     database: "control",
+                 },
+             ),
++            (
++                WorkloadRoleFamily::SessionRoleReader,
++                WorkloadRoleScope::ProjectEnvironment {
++                    org: "o",
++                    project: "p",
++                    environment: "dev",
++                    database: "db",
++                },
++            ),
+         ];
+         assert_eq!(scopes.len(), FAMILIES.len());
+         for (family, scope) in scopes {
+diff --git a/crates/control/provision/tests/family_denial_matrix.rs b/crates/control/provision/tests/family_denial_matrix.rs
+index 28706773..64d5a2c0 100644
+--- a/crates/control/provision/tests/family_denial_matrix.rs
++++ b/crates/control/provision/tests/family_denial_matrix.rs
+@@ -175,7 +175,7 @@ struct FamilyReach {
+     routines: &'static [&'static str],
+ }
+ 
+-/// The nine families whose credentials reach a project-environment database.
++/// The ten families whose credentials reach a project-environment database.
+ ///
+ /// `ControlAuthor`, `RegistryReader` and `IdentityReader` are absent because
+ /// their scope is [`WorkloadRoleScopeKind::Control`]: their credentials reach
+@@ -183,7 +183,7 @@ struct FamilyReach {
+ /// different plane. `wamn_scenario_author` is absent because it is a host group,
+ /// not a [`WorkloadRoleFamily`] — it has no generation lifecycle to mint a
+ /// principal from.
+-const MATRIX: [FamilyReach; 9] = [
++const MATRIX: [FamilyReach; 10] = [
+     FamilyReach {
+         family: WorkloadRoleFamily::App,
+         relations: &[
+@@ -295,6 +295,14 @@ const MATRIX: [FamilyReach; 9] = [
+         ],
+         routines: &[],
+     },
++    FamilyReach {
++        family: WorkloadRoleFamily::SessionRoleReader,
++        relations: &[
++            "app_system.user_roles|SELECT|column",
++            "app_system.users|SELECT|column",
++        ],
++        routines: &[],
++    },
+     FamilyReach {
+         family: WorkloadRoleFamily::DispatchReader,
+         relations: &[
+@@ -860,6 +868,11 @@ fn the_http_admitter_family_is_refused_the_other_families_operations() {
+     assert_family_row(WorkloadRoleFamily::HttpAdmitter);
+ }
+ 
++#[test]
++fn the_session_role_reader_is_refused_the_other_families_operations() {
++    assert_family_row(WorkloadRoleFamily::SessionRoleReader);
++}
++
+ #[test]
+ fn the_dispatch_reader_family_is_refused_the_other_families_operations() {
+     assert_family_row(WorkloadRoleFamily::DispatchReader);
+@@ -950,12 +963,14 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
+ /// pairs the matrix cannot speak for, so it is spelled out rather than left to
+ /// be counted. Pairs naming the MEASURED-EMPTY family as the object
+ /// are excluded: those are asserted separately, by name, above.
+-const CONTAINED_PAIRS: [(&str, &str); 5] = [
++const CONTAINED_PAIRS: [(&str, &str); 7] = [
+     ("app", "event-materializer"),
+     ("app", "http-admitter"),
+     ("app", "retention"),
++    ("app", "session-role-reader"),
+     ("effect-writer", "dispatch-reader"),
+     ("executor-platform", "dispatch-reader"),
++    ("http-admitter", "session-role-reader"),
+ ];
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/crates/control/provision/tests/identity_issuer_live.rs b/crates/control/provision/tests/identity_issuer_live.rs
+index a57dc84b..19987467 100644
+--- a/crates/control/provision/tests/identity_issuer_live.rs
++++ b/crates/control/provision/tests/identity_issuer_live.rs
+@@ -197,6 +197,24 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
+         assert_eq!(
+             acl,
+             [
++                "column|identity|pats.expires_at|SELECT|f",
++                "column|identity|pats.principal_id|SELECT|f",
++                "column|identity|pats.revoked_at|SELECT|f",
++                "column|identity|pats.token_hash|SELECT|f",
++                "column|identity|pats.token_prefix|SELECT|f",
++                "column|identity|principals.display_name|SELECT|f",
++                "column|identity|principals.id|SELECT|f",
++                "column|identity|principals.kind|SELECT|f",
++                "column|identity|principals.status|SELECT|f",
++                "column|identity|principals.subject|SELECT|f",
++                "column|identity|project_env_memberships.env|SELECT|f",
++                "column|identity|project_env_memberships.org|SELECT|f",
++                "column|identity|project_env_memberships.principal_id|SELECT|f",
++                "column|identity|project_env_memberships.project|SELECT|f",
++                "column|registry|project_envs.env|SELECT|f",
++                "column|registry|project_envs.instance_suffix|SELECT|f",
++                "column|registry|project_envs.org|SELECT|f",
++                "column|registry|project_envs.project|SELECT|f",
+                 "relation|identity|session_keys|DELETE|f",
+                 "relation|identity|session_keys|INSERT|f",
+                 "relation|identity|session_keys|SELECT|f",
+@@ -206,6 +224,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
+                 "relation|identity|session_signing_state|SELECT|f",
+                 "relation|identity|session_signing_state|UPDATE|f",
+                 "schema|identity|identity|USAGE|f",
++                "schema|registry|registry|USAGE|f",
+             ]
+             .join("\n")
+         );
+@@ -216,6 +235,41 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
+                AND has_table_privilege(current_user, c.oid, 'SELECT') ORDER BY c.relname",
+         );
+         assert_eq!(actual, "session_keys\nsession_signing_state");
++        for url in [&a_url, &b_url] {
++            // Execute each fresh-read shape as the actual scoped issuer login.
++            run(
++                url,
++                "SELECT p.id::text, p.kind, p.subject, p.display_name, p.status, t.token_hash, \
++                (t.revoked_at IS NULL AND t.expires_at > now()) AS usable \
++                FROM identity.pats t JOIN identity.principals p ON p.id = t.principal_id \
++                WHERE t.token_prefix = 'absent-fixture-token';",
++            );
++            assert_eq!(
++                run(
++                    url,
++                    "SELECT EXISTS(SELECT 1 FROM identity.project_env_memberships \
++                WHERE principal_id = '00000000-0000-0000-0000-000000000001' \
++                  AND org = 'acme' AND project = 'receiving' AND env = 'dev');"
++                ),
++                "f"
++            );
++            run(
++                url,
++                "SELECT org, project, env, instance_suffix FROM registry.project_envs \
++                WHERE org = 'acme' AND project = 'receiving' AND env = 'dev';",
++            );
++            for statement in [
++                "SELECT secret_name FROM registry.project_envs",
++                "SELECT * FROM identity.project_roles",
++                "SELECT label FROM identity.pats",
++                "UPDATE identity.principals SET status = 'disabled'",
++                "DELETE FROM identity.pats",
++                "DELETE FROM identity.project_env_memberships",
++                "UPDATE registry.project_envs SET instance_suffix = 'z9z9z9z9'",
++            ] {
++                denied(url, statement);
++            }
++        }
+         run(
+             &a_url,
+             &format!(
+diff --git a/deploy/platform/identity/templates/deployment.yaml b/deploy/platform/identity/templates/deployment.yaml
+index e14d010b..3b0cdd0a 100644
+--- a/deploy/platform/identity/templates/deployment.yaml
++++ b/deploy/platform/identity/templates/deployment.yaml
+@@ -29,7 +29,12 @@ spec:
+         - name: identity
+           image: {{ printf "%s:%s" .Values.image.repository .Values.image.tag | quote }}
+           imagePullPolicy: {{ .Values.image.pullPolicy }}
+-          args: [serve]
++          args:
++            - serve
++            {{- range $index, $secret := .Values.sessionTargetSecrets }}
++            - --session-target
++            - {{ printf "/var/run/wamn-identity/targets/%d/target.json" $index | quote }}
++            {{- end }}
+           env:
+             - name: WAMN_IDENTITY_BIND
+               value: "0.0.0.0:8443"
+@@ -57,6 +62,11 @@ spec:
+             - name: serving-tls
+               mountPath: /var/run/wamn-identity/tls
+               readOnly: true
++            {{- range $index, $secret := .Values.sessionTargetSecrets }}
++            - name: {{ printf "session-target-%d" $index }}
++              mountPath: {{ printf "/var/run/wamn-identity/targets/%d" $index | quote }}
++              readOnly: true
++            {{- end }}
+           resources:
+ {{ toYaml .Values.resources | indent 12 }}
+       volumes:
+@@ -70,3 +80,13 @@ spec:
+                 path: tls.crt
+               - key: tls.key
+                 path: tls.key
++        {{- range $index, $secret := .Values.sessionTargetSecrets }}
++        - name: {{ printf "session-target-%d" $index }}
++          secret:
++            secretName: {{ required "Each sessionTargetSecrets entry must name a prepared Secret." $secret | quote }}
++            optional: false
++            defaultMode: 0400
++            items:
++              - key: target.json
++                path: target.json
++        {{- end }}
+diff --git a/deploy/platform/identity/values.yaml b/deploy/platform/identity/values.yaml
+index fc88d39a..28e6a414 100644
+--- a/deploy/platform/identity/values.yaml
++++ b/deploy/platform/identity/values.yaml
+@@ -9,6 +9,10 @@ issuer: ""
+ databaseSecret: ""
+ tlsSecret: ""
+ 
++# Each Secret contains one provisioner-generated target.json document.
++# Empty keeps POST /session disabled. Restart after credential rotation.
++sessionTargetSecrets: []
++
+ resources:
+   requests:
+     cpu: 100m
+diff --git a/deploy/platform/values-identity-default.yaml b/deploy/platform/values-identity-default.yaml
+index 3628c9e2..aadf6a25 100644
+--- a/deploy/platform/values-identity-default.yaml
++++ b/deploy/platform/values-identity-default.yaml
+@@ -12,3 +12,5 @@
+ issuer: ""
+ databaseSecret: wamn-identity-db
+ tlsSecret: ""
++# Add prepared SessionRoleReader Secrets to enable their exact session audiences.
++sessionTargetSecrets: []
+diff --git a/services/ctl/src/identity_issuer.rs b/services/ctl/src/identity_issuer.rs
+index 8b322bb7..5352871c 100644
+--- a/services/ctl/src/identity_issuer.rs
++++ b/services/ctl/src/identity_issuer.rs
+@@ -4,6 +4,7 @@
+ //! does not install the Secret or access session signing keys. Retirement
+ //! requires a live session on the replacement generation.
+ 
++use std::collections::BTreeSet;
+ use std::fmt;
+ use std::path::PathBuf;
+ 
+@@ -16,8 +17,8 @@ use tokio_postgres::{Client, Config, GenericClient, NoTls, Row};
+ use url::Url;
+ use wamn_control_provision::CredentialGeneration;
+ use wamn_control_provision::identity_issuer::{
+-    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES,
+-    identity_issuer_generation_role, parse_identity_issuer_url,
++    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_READ_COLUMNS, IDENTITY_ISSUER_ROLE,
++    IDENTITY_ISSUER_TABLES, identity_issuer_generation_role, parse_identity_issuer_url,
+     prepare_identity_issuer_generation_sql, retire_identity_issuer_generation_sql,
+     validate_identity_issuer,
+ };
+@@ -245,10 +246,24 @@ async fn exact_grants(
+     let rows = client
+         .query(sql::role_database_acl_inventory_sql(), &[&role])
+         .await?;
++    let schemas: BTreeSet<_> = std::iter::once("identity")
++        .chain(
++            IDENTITY_ISSUER_READ_COLUMNS
++                .iter()
++                .map(|(schema, _, _)| *schema),
++        )
++        .collect();
+     let count = match expected {
+         Grants::None => 0,
+         Grants::Generation => 1,
+-        Grants::Stable => 9,
++        Grants::Stable => {
++            schemas.len()
++                + IDENTITY_ISSUER_TABLES.len() * 4
++                + IDENTITY_ISSUER_READ_COLUMNS
++                    .iter()
++                    .map(|(_, _, columns)| columns.len())
++                    .sum::<usize>()
++        }
+     };
+     anyhow::ensure!(
+         rows.len() == count
+@@ -266,14 +281,24 @@ async fn exact_grants(
+                                 && privilege == "CONNECT"
+                         }
+                         Grants::Stable => {
+-                            schema == "identity"
+-                                && (kind == "schema"
+-                                    && object == "identity"
+-                                    && privilege == "USAGE"
+-                                    || kind == "relation"
+-                                        && IDENTITY_ISSUER_TABLES.contains(&object)
+-                                        && ["SELECT", "INSERT", "UPDATE", "DELETE"]
+-                                            .contains(&privilege))
++                            kind == "schema"
++                                && schemas.contains(schema)
++                                && object == schema
++                                && privilege == "USAGE"
++                                || kind == "relation"
++                                    && schema == "identity"
++                                    && IDENTITY_ISSUER_TABLES.contains(&object)
++                                    && ["SELECT", "INSERT", "UPDATE", "DELETE"].contains(&privilege)
++                                || kind == "column"
++                                    && privilege == "SELECT"
++                                    && IDENTITY_ISSUER_READ_COLUMNS.iter().any(
++                                        |(expected_schema, table, columns)| {
++                                            schema == *expected_schema
++                                                && columns.iter().any(|column| {
++                                                    object == format!("{table}.{column}")
++                                                })
++                                        },
++                                    )
+                         }
+                     }
+             }),
+diff --git a/services/ctl/src/provision_project_env.rs b/services/ctl/src/provision_project_env.rs
+index 4130616e..3f714568 100644
+--- a/services/ctl/src/provision_project_env.rs
++++ b/services/ctl/src/provision_project_env.rs
+@@ -74,6 +74,7 @@ use tokio_postgres::{Config as PgConfig, GenericClient, NoTls};
+ use url::Url;
+ 
+ use wamn_control_provision::SystemReader;
++use wamn_control_provision::session_target::{SessionTarget, validate_session_tenant_id};
+ use wamn_control_provision::tenant_key::tenant_key;
+ use wamn_control_provision::{
+     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EffectWriterCredentialScope,
+@@ -187,7 +188,12 @@ pub struct ProvisionProjectEnvArgs {
+     /// Explicit target project-database admin URL for the generation actions that
+     /// address the project-env database (effect-writer, management-admitter).
+     /// Provisioning authority only: never persisted or emitted.
+-    #[arg(long, value_name = "URL")]
++    #[arg(
++        long,
++        env = "WAMN_TARGET_ADMIN_DATABASE_URL",
++        hide_env_values = true,
++        value_name = "URL"
++    )]
+     pub target_admin_database_url: Option<String>,
+ 
+     /// The workload-generation actions and their credential Secrets, DERIVED
+@@ -1117,6 +1123,9 @@ async fn run_workload_action(
+         environment,
+         tenant,
+     } = identity;
++    if family == WorkloadRoleFamily::SessionRoleReader {
++        validate_session_tenant_id(tenant)?;
++    }
+     let triple = Triple::new(org, project, environment);
+     let system_url = args
+         .system_database_url
+@@ -1127,7 +1136,7 @@ async fn run_workload_action(
+     // already names; every other family addresses the project environment's own
+     // database, whose instance suffix is READ from the registry rather than
+     // typed. One derivation over the scope grain, not a branch per family.
+-    let (admin_url, database, admin_config) = if family.scope_kind()
++    let (admin_url, database, admin_config, instance) = if family.scope_kind()
+         == WorkloadRoleScopeKind::Control
+     {
+         anyhow::ensure!(
+@@ -1139,7 +1148,7 @@ async fn run_workload_action(
+             .get_dbname()
+             .expect("named_database_config requires a database name")
+             .to_string();
+-        (system_url, database, config)
++        (system_url, database, config, None)
+     } else {
+         let instance = read_project_env_instance(system_url, &triple).await?;
+         let database = project_env_database_name(org, project, environment, &instance);
+@@ -1147,7 +1156,7 @@ async fn run_workload_action(
+             format!("{label} generation actions require --target-admin-database-url")
+         })?;
+         let config = exact_project_database_config(admin_url, &database)?;
+-        (admin_url, database, config)
++        (admin_url, database, config, Some(instance))
+     };
+     let lifecycle = workload_lifecycle(family, identity, &database);
+ 
+@@ -1229,6 +1238,20 @@ async fn run_workload_action(
+                             }
+                             secret
+                         }
++                        WorkloadSecretBodyKind::SessionTarget => {
++                            let target = SessionTarget::new(
++                                &triple,
++                                instance.as_deref().expect("session readers use project-environment scope"),
++                                tenant,
++                                &credential_url,
++                            )?;
++                            render_workload_secret_manifest(
++                                family,
++                                &triple,
++                                &args.namespace,
++                                WorkloadSecretBody::SessionTarget(&target),
++                            )
++                        }
+                     };
+                     write_secret_json(secret_path, &secret)
+                         .with_context(|| format!("write authenticated {label} Secret"))
+@@ -1966,6 +1989,7 @@ fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
+         WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
+         WorkloadRoleFamily::RegistryReader => Some(StableGrantSet::RegistryReader),
+         WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
++        WorkloadRoleFamily::SessionRoleReader => Some(StableGrantSet::SessionRoleReader),
+         WorkloadRoleFamily::Retention => Some(StableGrantSet::Retention),
+         WorkloadRoleFamily::DispatchReader => Some(StableGrantSet::DispatchReader),
+         // `wamn-0h0g.22.37`: both families acquired authority, so both acquire
+@@ -1987,6 +2011,7 @@ enum StableGrantSet {
+     ManagementAdmitter,
+     RegistryReader,
+     IdentityReader,
++    SessionRoleReader,
+     Retention,
+     DispatchReader,
+     ExecutorPlatform,
+@@ -2030,6 +2055,12 @@ impl StableGrantSet {
+                 required_database,
+                 inventory,
+             ),
++            Self::SessionRoleReader => verify_session_role_reader_acl_role_inventory(
++                role,
++                database,
++                required_database,
++                inventory,
++            ),
+             Self::Retention => verify_retention_acl_role_inventory(role, database, inventory),
+             Self::DispatchReader => {
+                 verify_dispatch_reader_acl_role_inventory(role, database, inventory)
+@@ -2493,6 +2524,46 @@ fn acl_tuples(inventory: &[RoleAcl]) -> BTreeSet<(String, String, String, String
+         .collect()
+ }
+ 
++/// Check the reader's two column-scoped reads and no other direct grants.
++fn verify_session_role_reader_acl_role_inventory(
++    role: &str,
++    database: &str,
++    required_database: &str,
++    inventory: &[RoleAcl],
++) -> anyhow::Result<()> {
++    if inventory.is_empty() {
++        anyhow::ensure!(
++            database != required_database,
++            "stable role {role:?} has no session-role reader ACL in required database {database:?}"
++        );
++        return Ok(());
++    }
++    let mut expected = BTreeSet::from([(
++        "schema".to_string(),
++        "app_system".to_string(),
++        "app_system".to_string(),
++        "USAGE".to_string(),
++    )]);
++    for (relation, columns) in [
++        ("users", ["tenant_id", "id", "status"]),
++        ("user_roles", ["tenant_id", "user_id", "role_name"]),
++    ] {
++        for column in columns {
++            expected.insert((
++                "column".to_string(),
++                "app_system".to_string(),
++                format!("{relation}.{column}"),
++                "SELECT".to_string(),
++            ));
++        }
++    }
++    anyhow::ensure!(
++        inventory.iter().all(|acl| !acl.grantable) && acl_tuples(inventory) == expected,
++        "stable role {role:?} ACLs in database {database:?} are not the exact session-role reader grant set"
++    );
++    Ok(())
++}
++
+ /// THE EXECUTOR-PLATFORM DENIAL MATRIX (`wamn-0h0g.22.37`).
+ ///
+ /// EQUALITY against the server's own `aclexplode` answer, never containment: a
+@@ -4418,7 +4489,8 @@ mod tests {
+                 WorkloadRoleFamily::HttpAdmitter,
+                 WorkloadRoleFamily::EventMaterializer,
+                 WorkloadRoleFamily::RegistryReader,
+-                WorkloadRoleFamily::IdentityReader
++                WorkloadRoleFamily::IdentityReader,
++                WorkloadRoleFamily::SessionRoleReader,
+             ],
+             "a family acquired a grant set without acquiring authority"
+         );
+@@ -4437,6 +4509,7 @@ mod tests {
+             WorkloadRoleFamily::EventMaterializer,
+             WorkloadRoleFamily::RegistryReader,
+             WorkloadRoleFamily::IdentityReader,
++            WorkloadRoleFamily::SessionRoleReader,
+         ] {
+             assert!(sql::stable_surface_sql(family).is_some(), "{family:?}");
+         }
+@@ -4450,6 +4523,7 @@ mod tests {
+                     | WorkloadRoleFamily::EventMaterializer
+                     | WorkloadRoleFamily::RegistryReader
+                     | WorkloadRoleFamily::IdentityReader
++                    | WorkloadRoleFamily::SessionRoleReader
+             ) {
+                 assert!(sql::stable_surface_sql(family).is_none(), "{family:?}");
+             }
+@@ -4657,6 +4731,58 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn session_reader_acl_inventory_refuses_missing_and_wider_grants() {
++        let mut exact = vec![role_acl("schema", "app_system", "app_system", "USAGE")];
++        for column in [
++            "users.tenant_id",
++            "users.id",
++            "users.status",
++            "user_roles.tenant_id",
++            "user_roles.user_id",
++            "user_roles.role_name",
++        ] {
++            exact.push(role_acl("column", "app_system", column, "SELECT"));
++        }
++        let verify = |rows: &[RoleAcl]| {
++            verify_session_role_reader_acl_role_inventory(
++                "wamn_session_role_reader",
++                "project-db",
++                "project-db",
++                rows,
++            )
++        };
++        assert!(verify(&exact).is_ok());
++        for index in 0..exact.len() {
++            let mut missing = exact.clone();
++            missing.remove(index);
++            assert!(verify(&missing).is_err());
++        }
++        for extra in [
++            role_acl("relation", "app_system", "users", "SELECT"),
++            role_acl("column", "app_system", "users.email", "SELECT"),
++            role_acl("column", "app_system", "users.status", "UPDATE"),
++            role_acl("relation", "app_system", "permissions", "SELECT"),
++            role_acl("schema", "catalog", "catalog", "USAGE"),
++        ] {
++            let mut widened = exact.clone();
++            widened.push(extra);
++            assert!(verify(&widened).is_err());
++        }
++        let mut grantable = exact.clone();
++        grantable[0].grantable = true;
++        assert!(verify(&grantable).is_err());
++        assert!(
++            verify_session_role_reader_acl_role_inventory(
++                "wamn_session_role_reader",
++                "other-db",
++                "project-db",
++                &[],
++            )
++            .is_ok()
++        );
++    }
++
+     #[test]
+     fn materializer_acl_inventory_is_exactly_the_two_production_reads() {
+         let mut exact = vec![role_acl("schema", "catalog", "catalog", "USAGE")];
+diff --git a/services/identity/Cargo.toml b/services/identity/Cargo.toml
+index eac6d542..dd2b8463 100644
+--- a/services/identity/Cargo.toml
++++ b/services/identity/Cargo.toml
+@@ -12,14 +12,17 @@ http-body-util = { workspace = true }
+ hyper = { workspace = true, features = ["server", "http1"] }
+ hyper-util = { workspace = true, features = ["tokio"] }
+ rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
++ring = { workspace = true }
++serde = { workspace = true, features = ["derive"] }
+ serde_json = { workspace = true }
+-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "time"] }
++tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal", "sync", "time"] }
+ tokio-postgres = { workspace = true }
+ tokio-rustls = { workspace = true }
+ wamn-control-provision = { workspace = true }
+ wamn-platform-identity = { workspace = true }
+ 
+ [dev-dependencies]
++wamn-control-registry = { workspace = true }
+ tokio = { workspace = true, features = ["process"] }
+ url = { workspace = true }
+ wamn-pg-core = { workspace = true }
+diff --git a/services/identity/src/cli.rs b/services/identity/src/cli.rs
+index 708f1493..2de2f262 100644
+--- a/services/identity/src/cli.rs
++++ b/services/identity/src/cli.rs
+@@ -6,7 +6,9 @@ use std::path::PathBuf;
+ 
+ use clap::{Parser, Subcommand};
+ use serde_json::json;
++use tokio::io::AsyncReadExt as _;
+ use tokio::net::TcpListener;
++use wamn_control_provision::session_target::SessionTarget;
+ use wamn_platform_identity::session_keys::{
+     activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
+ };
+@@ -45,7 +47,7 @@ impl fmt::Debug for Cli {
+ 
+ #[derive(Debug, Subcommand)]
+ enum Command {
+-    /// Serve only public JWKS and health over HTTPS.
++    /// Serve public keys and explicitly configured human PAT exchanges over HTTPS.
+     Serve {
+         #[arg(long, env = "WAMN_IDENTITY_BIND", default_value = "0.0.0.0:8443")]
+         bind: SocketAddr,
+@@ -53,6 +55,9 @@ enum Command {
+         tls_cert: PathBuf,
+         #[arg(long, env = "WAMN_IDENTITY_TLS_KEY")]
+         tls_key: PathBuf,
++        /// Mounted provisioner-generated target file; repeat for each admitted audience.
++        #[arg(long)]
++        session_target: Vec<PathBuf>,
+     },
+     /// Commit a new public generation without activating it.
+     Publish,
+@@ -84,8 +89,32 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
+         bind,
+         tls_cert,
+         tls_key,
++        session_target,
+     } = cli.command
+     {
++        let mut targets = Vec::with_capacity(session_target.len());
++        for path in session_target {
++            // Bound startup parsing even if a mounted file is malformed or grows.
++            const MAX_TARGET_BYTES: u64 = 65_536;
++            let file = tokio::fs::File::open(path)
++                .await
++                .map_err(|_| IdentityServiceError::new("read identity session target failed"))?;
++            let mut bytes = Vec::new();
++            file.take(MAX_TARGET_BYTES + 1)
++                .read_to_end(&mut bytes)
++                .await
++                .map_err(|_| IdentityServiceError::new("read identity session target failed"))?;
++            if bytes.len() as u64 > MAX_TARGET_BYTES {
++                return Err(IdentityServiceError::new(
++                    "identity session target is too large",
++                ));
++            }
++            targets.push(
++                SessionTarget::from_json(&bytes)
++                    .map_err(|_| IdentityServiceError::new("identity session target refused"))?,
++            );
++        }
++        let config = config.with_session_targets(targets)?;
+         let certificate = tokio::fs::read(tls_cert)
+             .await
+             .map_err(|_| IdentityServiceError::new("read identity TLS certificate failed"))?;
+diff --git a/services/identity/src/lib.rs b/services/identity/src/lib.rs
+index 8ed67c6e..a040a7dc 100644
+--- a/services/identity/src/lib.rs
++++ b/services/identity/src/lib.rs
+@@ -1,7 +1,9 @@
+-//! The separate identity authority exposes only public JWKS and HTTPS health.
++//! The separate identity authority serves public keys and configured PAT exchanges.
+ 
+ pub mod cli;
++mod session;
+ 
++use std::collections::BTreeMap;
+ use std::convert::Infallible;
+ use std::fmt;
+ use std::sync::Arc;
+@@ -17,12 +19,14 @@ use hyper_util::rt::{TokioIo, TokioTimer};
+ use rustls::pki_types::pem::PemObject as _;
+ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+ use tokio::net::TcpListener;
++use tokio::sync::Mutex;
+ use tokio::task::{JoinHandle, JoinSet};
+ use tokio_postgres::{Client, NoTls};
+ use tokio_rustls::TlsAcceptor;
+ use wamn_control_provision::identity_issuer::{
+     IdentityIssuerConnection, parse_identity_issuer_url,
+ };
++use wamn_control_provision::session_target::SessionTarget;
+ use wamn_platform_identity::session_keys::session_jwks;
+ 
+ // Match the public-key client's total fetch bound. No retry or stale response
+@@ -34,6 +38,7 @@ const IO_TIMEOUT: Duration = Duration::from_secs(5);
+ pub struct IdentityConfig {
+     issuer: String,
+     connection: IdentityIssuerConnection,
++    targets: BTreeMap<String, SessionTarget>,
+ }
+ 
+ impl IdentityConfig {
+@@ -44,8 +49,28 @@ impl IdentityConfig {
+         Ok(Self {
+             issuer: issuer.to_owned(),
+             connection,
++            targets: BTreeMap::new(),
+         })
+     }
++
++    /// Enable exchanges only for explicitly provisioned, nonduplicated audiences.
++    pub fn with_session_targets(
++        mut self,
++        targets: Vec<SessionTarget>,
++    ) -> Result<Self, IdentityServiceError> {
++        for target in targets {
++            if self
++                .targets
++                .insert(target.audience().to_owned(), target)
++                .is_some()
++            {
++                return Err(IdentityServiceError::new(
++                    "duplicate identity session audience",
++                ));
++            }
++        }
++        Ok(self)
++    }
+ }
+ 
+ /// Shared service state containing no exported private key material.
+@@ -58,6 +83,9 @@ pub struct IdentityService {
+ struct Inner {
+     issuer: String,
+     database: Database,
++    // Key reads remain available while a signer waits on the rotation barrier.
++    signing: Option<Mutex<Database>>,
++    targets: BTreeMap<String, SessionTarget>,
+ }
+ 
+ pub(crate) struct Database {
+@@ -83,13 +111,16 @@ impl Drop for Database {
+ pub(crate) async fn connect(config: &IdentityConfig) -> Result<Database, IdentityServiceError> {
+     // The parsed capability is the only URL passed to the driver. NoTls is the
+     // repository's existing internal system-database transport contract.
+-    let (client, connection) = tokio::time::timeout(
+-        IO_TIMEOUT,
+-        tokio_postgres::connect(config.connection.url(), NoTls),
+-    )
+-    .await
+-    .map_err(|_| IdentityServiceError::new("identity database connection timed out"))?
+-    .map_err(|_| IdentityServiceError::new("identity database connection failed"))?;
++    connect_database(config.connection.url()).await
++}
++
++// Callers supply only an already parsed issuer or session-reader capability.
++pub(crate) async fn connect_database(url: &str) -> Result<Database, IdentityServiceError> {
++    let (client, connection) =
++        tokio::time::timeout(IO_TIMEOUT, tokio_postgres::connect(url, NoTls))
++            .await
++            .map_err(|_| IdentityServiceError::new("identity database connection timed out"))?
++            .map_err(|_| IdentityServiceError::new("identity database connection failed"))?;
+     let driver = tokio::spawn(async move {
+         let _ = connection.await;
+     });
+@@ -100,10 +131,17 @@ impl IdentityService {
+     /// Connect using already validated issuer-scoped authority.
+     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
+         let database = connect(&config).await?;
++        let signing = if config.targets.is_empty() {
++            None
++        } else {
++            Some(Mutex::new(connect(&config).await?))
++        };
+         Ok(Self {
+             inner: Arc::new(Inner {
+                 issuer: config.issuer,
+                 database,
++                signing,
++                targets: config.targets,
+             }),
+         })
+     }
+@@ -112,6 +150,13 @@ impl IdentityService {
+         &self,
+         request: Request<Incoming>,
+     ) -> Result<Response<Full<Bytes>>, Infallible> {
++        if request.method() == Method::POST
++            && request.uri().path() == "/session"
++            && request.uri().query().is_none()
++            && !self.inner.targets.is_empty()
++        {
++            return Ok(session::respond(&self.inner, request).await);
++        }
+         let response = if request.method() != Method::GET || request.uri().query().is_some() {
+             response(StatusCode::NOT_FOUND, "text/plain", b"not found\n".to_vec())
+         } else {
+@@ -197,7 +242,7 @@ pub fn tls_config(
+     Ok(config)
+ }
+ 
+-/// Serve the two public routes; dropping this future closes owned connections.
++/// Serve public keys and configured exchanges; dropping this future closes connections.
+ pub async fn serve(
+     listener: TcpListener,
+     service: IdentityService,
+diff --git a/tests/integration/src/lib.rs b/tests/integration/src/lib.rs
+index af92e49f..c49c1d95 100644
+--- a/tests/integration/src/lib.rs
++++ b/tests/integration/src/lib.rs
+@@ -13,6 +13,7 @@ mod claim_law_live;
+ pub mod dashproof;
+ mod hot_route_trace;
+ pub mod identity_keys_proof;
++pub mod identity_session_proof;
+ mod measurement_schema;
+ pub mod membershipproof;
+ pub mod provisionbench;
+diff --git a/tests/orchestrator/src/main.rs b/tests/orchestrator/src/main.rs
+index b9a727f3..2a266e36 100644
+--- a/tests/orchestrator/src/main.rs
++++ b/tests/orchestrator/src/main.rs
+@@ -11,7 +11,7 @@
+ // binary is only the stable deploy-facing command router.
+ use wamn_proof_conformance::socketguard;
+ use wamn_proof_integration::{
+-    dashproof, identity_keys_proof, membershipproof, readerbench, retention,
++    dashproof, identity_keys_proof, identity_session_proof, membershipproof, readerbench, retention,
+ };
+ use wamn_proof_system::traceproof;
+ 
+@@ -35,6 +35,12 @@ enum Command {
+     /// Prove public JWKS and cache evidence through deployed identity HTTPS.
+     #[command(name = "identity-jwks")]
+     IdentityJwks(identity_keys_proof::IdentityKeysProofArgs),
++    /// Prove fresh PAT exchange and signed environment claims through HTTPS.
++    #[command(name = "identity-session")]
++    IdentitySession(identity_session_proof::IdentitySessionProofArgs),
++    /// Mint private credentials only inside an explicitly armed disposable fixture.
++    #[command(name = "identity-session-fixture")]
++    IdentitySessionFixture(identity_session_proof::IdentitySessionFixtureArgs),
+     /// Prove fresh human membership through a deployed Receiving HTTP route.
+     Membershipproof(membershipproof::MembershipProofArgs),
+     /// Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
+@@ -66,6 +72,8 @@ async fn async_main() -> anyhow::Result<()> {
+ 
+     let result = match cli.command {
+         Command::IdentityJwks(args) => identity_keys_proof::run(args).await,
++        Command::IdentitySession(args) => identity_session_proof::run(args).await,
++        Command::IdentitySessionFixture(args) => identity_session_proof::fixture(args).await,
+         Command::Membershipproof(args) => membershipproof::run(args).await,
+         Command::Retention(args) => retention::run(args).await,
+         Command::Readerbench(args) => readerbench::run(args).await,
+diff --git a/tools/identity-jwks-journey-run b/tools/identity-jwks-journey-run
+index 872c177f..c427ed0d 100755
+--- a/tools/identity-jwks-journey-run
++++ b/tools/identity-jwks-journey-run
+@@ -5,8 +5,9 @@ umask 077
+ 
+ usage() {
+   printf '%s\n' \
+-    'usage: identity-jwks-journey-run [--apply] --evidence-dir DIR' \
++    'usage: identity-jwks-journey-run [--apply] [--session-exchange] --evidence-dir DIR' \
+     'Without --apply, print the plan without building or creating resources.' \
++    '--session-exchange adds the session proof after all five unconfigured JWKS stages.' \
+     'DIR must be new and under docs/perf/ in this worktree or its shared checkout.' \
+     'The run creates and removes its own named kind cluster and image tags.' \
+     'No existing cluster, database, ingress, or production trust root is used.' >&2
+@@ -14,10 +15,12 @@ usage() {
+ 
+ fail() { printf 'identity-jwks journey: %s\n' "$*" >&2; exit 2; }
+ apply=false
++session_exchange=false
+ evidence_dir=
+ while (($#)); do
+   case "$1" in
+     --apply) apply=true; shift ;;
++    --session-exchange) session_exchange=true; shift ;;
+     --evidence-dir)
+       (($# >= 2)) && [[ -n "$2" ]] || fail '--evidence-dir needs a directory'
+       evidence_dir=$2; shift 2 ;;
+@@ -64,6 +67,10 @@ if [[ "$apply" != true ]]; then
+   printf 'evidence=%s\nshared_checkout=%s\n' "${evidence_dir:-not specified}" "$shared_root"
+   printf '%s\n' 'order=canonical identity build; serial component-builder prewarm; canonical gates build; own kind+PG18; production credential CLI; actual identity chart; five key-set Jobs; named cleanup' \
+     'proof=public HTTPS JWKS and key evidence only; token_admission=not_proven expiry_outage=not_proven'
++  if [[ "$session_exchange" == true ]]; then
++    printf '%s\n' 'session_order=registry and app fixtures; protected PAT fixture; actual reader credential and membership CLI; configured identity chart; signed-claim and refusal Job; membership revoke; next-exchange refusal Job' \
++      'session_proof=exchange only; host_admission=not_proven'
++  fi
+   exit 0
+ fi
+ 
+@@ -94,6 +101,7 @@ cluster_owned=false
+ identity_owned=false
+ gates_owned=false
+ completed=false
++session_completed=false
+ 
+ record_command() {
+   printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$commands_record"
+@@ -113,10 +121,12 @@ capture_cluster() {
+   run timeout 30s "${kube[@]}" -n "$namespace" get jobs,pods,deployments,services -o json \
+     >"$evidence_dir/final-resources.json" 2>"$evidence_dir/final-capture-errors.log" || return 1
+   run timeout 30s "${kube[@]}" -n "$namespace" get events -o json >"$evidence_dir/final-events.json" 2>>"$evidence_dir/final-capture-errors.log" || return 1
+-  local job
++  local job container
+   while IFS= read -r job; do
+-    [[ "$job" =~ ^identity-jwks-[a-z0-9-]+$ ]] || return 1
+-    run timeout 30s "${kube[@]}" -n "$namespace" logs "job/$job" -c identity-jwks \
++    [[ "$job" =~ ^identity-(jwks|session)-[a-z0-9-]+$ ]] || return 1
++    container=identity-jwks
++    [[ "$job" != identity-session-* ]] || container=identity-session
++    run timeout 30s "${kube[@]}" -n "$namespace" logs "job/$job" -c "$container" \
+       >"$evidence_dir/final-$job.log" 2>>"$evidence_dir/final-capture-errors.log" || true
+   done < <(jq -r '.items[] | select(.kind == "Job") | .metadata.name' "$evidence_dir/final-resources.json")
+ }
+@@ -148,7 +158,9 @@ cleanup() {
+   [[ "$completed" == true && "$cleanup_failed" == false ]] || { ((status != 0)) || status=1; }
+   jq -n --arg source "$head" --arg cluster "$cluster" --argjson exit "$status" \
+     --argjson cleanup_failed "$cleanup_failed" --argjson completed "$completed" \
+-    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,exit_code:$exit,token_admission:"not_proven",expiry_outage:"not_proven"}' \
++    --argjson session_exchange "$session_exchange" --argjson session_completed "$session_completed" \
++    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,exit_code:$exit,token_admission:"not_proven",expiry_outage:"not_proven"}
++      + (if $session_exchange then {session_exchange_completed:$session_completed,host_admission:"not_proven"} else {} end)' \
+     >"$evidence_dir/journey-verdict.json"
+   printf 'IDENTITY-JWKS journey exit=%s cleanup_failed=%s evidence=%s\n' "$status" "$cleanup_failed" "$evidence_dir"
+   exit "$status"
+@@ -164,6 +176,9 @@ sha256sum Cargo.lock Dockerfile tools/identity-jwks-journey-run \
+   deploy/platform/identity/Chart.yaml deploy/platform/identity/values.yaml \
+   deploy/platform/identity/templates/deployment.yaml deploy/platform/identity/templates/service.yaml \
+   >"$evidence_dir/source-inputs.sha256"
++if [[ "$session_exchange" == true ]]; then
++  sha256sum deploy/sql/app-schema.sql >>"$evidence_dir/source-inputs.sha256"
++fi
+ identity_owned=true
+ run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
+   --target identity --tag "$identity_image" --label "wamn.dev/source-head=$head" "$repo_root" \
+@@ -307,6 +322,144 @@ gate() {
+   sed -n '/^IDENTITY_JWKS/p' "$evidence_dir/$name.log" >"$evidence_dir/$name-receipts.txt"
+   cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-receipts.txt"
+ }
++session_gate() {
++  local stage=$1 cases_file=$2 name secret count spec status=0
++  name=identity-session-$stage
++  secret=identity-session-cases-$stage
++  [[ "$name" =~ ^identity-session-[a-z0-9-]+$ && ${#name} -le 63 ]] || fail 'invalid session Job name'
++  [[ "$cases_file" == "$work_dir"/* && -f "$cases_file" ]] || fail 'session cases must stay in the private fixture directory'
++  jq -e 'type == "array" and length > 0 and all(.[];
++    (.name | type == "string" and test("^[a-z0-9_-]{1,64}$"))
++    and (.expected_status == 200 or .expected_status == 401))
++    and (map(.name) | length == (unique | length))' "$cases_file" >/dev/null
++  count=$(jq -er 'length' "$cases_file")
++  # The public plan deliberately excludes the PAT. The Job gets that material
++  # only through its Secret volume, never its arguments or environment values.
++  jq 'map({name,audience,expected_status,subject,org,roles})' "$cases_file" >"$evidence_dir/$name-cases.json"
++  run "${kube[@]}" -n "$namespace" create secret generic "$secret" --from-file="cases.json=$cases_file"
++  jq -n --arg ns "$namespace" --arg name "$name" --arg image "$gates_image" --arg issuer "$issuer" --arg secret "$secret" \
++    '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-session"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-session",image:$image,imagePullPolicy:"Never",args:["identity-session"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_SESSION_CASES_FILE",value:"/etc/wamn-identity-cases/cases.json"}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true},{name:"cases",mountPath:"/etc/wamn-identity-cases",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public",items:[{key:"ca.crt",path:"ca.crt"}]}},{name:"cases",secret:{secretName:$secret,defaultMode:256,items:[{key:"cases.json",path:"cases.json"}]}}]}}}}' \
++    >"$evidence_dir/$name.json"
++  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg receipt "IDENTITY_SESSION result=pass cases=$count host_admission=not_proven" \
++    '{name:$name,container:"identity-session",expectation:"positive",exit_code:0,image:$image,log_contains:$receipt}')
++  run env KUBECTL="$work_dir/kubectl" "$repo_root/tools/kubernetes-gate-run" \
++    --namespace "$namespace" --timeout-secs 180 --manifest "$evidence_dir/$name.json" \
++    --verdict-record "$evidence_dir/$name-verdict.json" --job "$spec" \
++    2>&1 | tee "$evidence_dir/$name-run.log" || status=$?
++  run "${kube[@]}" -n "$namespace" get job "$name" -o json >"$evidence_dir/$name-state.json"
++  run "${kube[@]}" -n "$namespace" get pods -l "job-name=$name" -o json >"$evidence_dir/$name-pods.json"
++  run "${kube[@]}" -n "$namespace" logs "job/$name" -c identity-session >"$evidence_dir/$name.log"
++  ((status == 0)) || return "$status"
++  {
++    jq -r '.[] | "IDENTITY_SESSION case=\(.name) result=pass"' "$cases_file"
++    printf 'IDENTITY_SESSION result=pass cases=%s host_admission=not_proven\n' "$count"
++  } >"$evidence_dir/$name-expected.txt"
++  sed -n '/^IDENTITY_SESSION /p' "$evidence_dir/$name.log" >"$evidence_dir/$name-receipts.txt"
++  cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-receipts.txt"
++}
++session_target() {
++  local org=$1 environment=$2 instance=$3 tenant=$4 role=$5 database label pod admin_secret target_secret
++  database=wamn-db-$org--shared--$environment--$instance
++  label=$org-$environment
++  pod=identity-session-provision-$label
++  admin_secret=identity-session-admin-$label
++  target_secret=wamn-session-role-reader-$org--shared--$environment
++  run "${kube[@]}" -n "$namespace" exec "deployment/$postgres" -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 \
++    -c "CREATE DATABASE \"$database\"" >"$evidence_dir/session-$label-create.log" 2>&1
++  run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
++    <"$repo_root/deploy/sql/app-schema.sql" >"$evidence_dir/session-$label-schema.log" 2>&1
++  printf '%s\n' "CREATE SCHEMA catalog; CREATE SCHEMA wamn_run;" \
++    "REVOKE CONNECT, TEMPORARY ON DATABASE \"$database\" FROM PUBLIC;" \
++    "INSERT INTO app_system.users (tenant_id,id,email) VALUES ('$tenant','$session_human_id','session@example.invalid');" \
++    "INSERT INTO app_system.roles (tenant_id,name) VALUES ('$tenant','$role');" \
++    "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('$tenant','$session_human_id','$role');" \
++    >"$evidence_dir/session-$label-data.sql"
++  run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
++    <"$evidence_dir/session-$label-data.sql" >"$evidence_dir/session-$label-data.log" 2>&1
++  # Rebind only the fixture administrator's database. Neither URL passes in
++  # argv: the existing CLI consumes both through Secret-backed environment.
++  jq -Rj --arg database "$database" 'sub("/wamn_system$"; "/" + $database)' \
++    <"$work_dir/system-admin-url" >"$work_dir/session-$label-admin-url"
++  run "${kube[@]}" -n "$namespace" create secret generic "$admin_secret" \
++    --from-file="url=$work_dir/session-$label-admin-url"
++  jq -n --arg ns "$namespace" --arg name "$pod" --arg image "$gates_image" --arg admin "$admin_secret" \
++    '{apiVersion:"v1",kind:"Pod",metadata:{name:$name,namespace:$ns},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"provisioner",image:$image,imagePullPolicy:"Never",command:["sleep","1800"],env:[{name:"WAMN_SYSTEM_ADMIN_URL",valueFrom:{secretKeyRef:{name:"identity-postgres-admin",key:"url"}}},{name:"WAMN_TARGET_ADMIN_DATABASE_URL",valueFrom:{secretKeyRef:{name:$admin,key:"url"}}}]}]}}' \
++    >"$evidence_dir/session-$label-provisioner.json"
++  run "${kube[@]}" apply -f "$evidence_dir/session-$label-provisioner.json"
++  run "${kube[@]}" -n "$namespace" wait --for=condition=Ready "pod/$pod" --timeout=180s
++  run "${kube[@]}" -n "$namespace" exec "$pod" -- /usr/local/bin/wamn-ctl provision-project-env \
++    --org "$org" --project shared --env "$environment" --tenant "$tenant" --namespace "$namespace" \
++    --prepare-session-role-reader-generation a --emit-session-role-reader-secret /tmp/session-target.json \
++    >"$evidence_dir/session-$label-provision.log" 2>&1
++  run "${kube[@]}" -n "$namespace" exec "$pod" -- cat /tmp/session-target.json >"$work_dir/session-$label-target.json"
++  jq -e --arg name "$target_secret" --arg ns "$namespace" \
++    '.kind == "Secret" and .metadata.name == $name and .metadata.namespace == $ns and (.stringData | keys == ["target.json"])' \
++    "$work_dir/session-$label-target.json" >/dev/null
++  run "${kube[@]}" apply -f "$work_dir/session-$label-target.json"
++  session_target_secrets+=("$target_secret")
++  session_audiences+=("$(jq -er '.stringData["target.json"] | fromjson | .audience' "$work_dir/session-$label-target.json")")
++  run "${kube[@]}" -n "$namespace" delete pod "$pod" --wait=true --timeout=60s
++  run "${kube[@]}" -n "$namespace" delete secret "$admin_secret" --wait=true --timeout=60s
++}
++session_journey() {
++  local session_human_id session_kid index
++  local -a session_target_secrets=() session_audiences=()
++  # Registry rows and app roles are fixture data in the owned PG18 server.
++  # Raw PATs are created below by the production identity library, not SQL.
++  printf '%s\n' \
++    "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;" \
++    "INSERT INTO registry.orgs (id,placement_kind,pool_cluster) VALUES ('acme','pooled','fixture'),('other','pooled','fixture');" \
++    "INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'),('acme','prod','\"own\"',1,1,'1Gi','1','1Gi','postgres:18'),('other','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18');" \
++    "INSERT INTO registry.projects (org,id) VALUES ('acme','shared'),('other','shared');" \
++    "INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix) VALUES ('acme','shared','dev','fixture-acme-dev','k3m9x2p7'),('acme','shared','prod','fixture-acme-prod','p7x2m9k3'),('other','shared','dev','fixture-other-dev','q2n5r8t4');" \
++    >"$evidence_dir/session-registry.sql"
++  run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 \
++    <"$evidence_dir/session-registry.sql" >"$evidence_dir/session-registry.log" 2>&1
++  run "${kube[@]}" apply -f "$evidence_dir/provisioner.json"
++  run "${kube[@]}" -n "$namespace" wait --for=condition=Ready "pod/$provisioner" --timeout=180s
++  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- env WAMN_SESSION_FIXTURE_ALLOW=1 \
++    /usr/local/bin/wamn-gates identity-session-fixture --output /tmp/identity-session.json \
++    >"$evidence_dir/session-pat-fixture.log" 2>&1
++  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- cat /tmp/identity-session.json >"$work_dir/identity-session.json"
++  session_human_id=$(jq -er '.human_id | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$work_dir/identity-session.json")
++  jq '{human_id,service_id}' "$work_dir/identity-session.json" >"$evidence_dir/session-principals.json"
++  session_target acme dev k3m9x2p7 t1 member
++  session_target acme prod p7x2m9k3 t2 administrator
++  session_target other dev q2n5r8t4 t3 outsider
++  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl grant-project-env-membership \
++    --org acme --project shared --env dev --principal-id "$session_human_id" \
++    >"$evidence_dir/session-grant-membership.log" 2>&1
++  # The five foundation Jobs ran with no target files, including their absent
++  # /session assertion. Configure exchange only after those Jobs have passed.
++  key_command session-published publish
++  session_kid=$(jq -er '.kid | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$evidence_dir/session-published.json")
++  key_command session-activated activate --kid "$session_kid"
++  jq -e --arg kid "$session_kid" '.activated == true and .kid == $kid' "$evidence_dir/session-activated.json" >/dev/null
++  for index in "${!session_target_secrets[@]}"; do
++    helm_args+=(--set-string "sessionTargetSecrets[$index]=${session_target_secrets[$index]}")
++  done
++  run helm template "$release" "$repo_root/deploy/platform/identity" "${helm_args[@]}" >"$evidence_dir/identity-session-rendered.yaml"
++  run helm upgrade --install "$release" "$repo_root/deploy/platform/identity" "${helm_args[@]}" --wait --timeout 180s \
++    2>&1 | tee "$evidence_dir/identity-session-install.log"
++  run "${kube[@]}" -n "$namespace" get deployment "$release" -o json >"$evidence_dir/identity-session-deployment.json"
++  jq -n --slurpfile fixture "$work_dir/identity-session.json" \
++    --arg dev "${session_audiences[0]}" --arg prod "${session_audiences[1]}" --arg other "${session_audiences[2]}" \
++    '$fixture[0] as $f | [
++      {name:"human-dev",pat:$f.human_pat,audience:$dev,expected_status:200,subject:$f.human_id,org:"acme",roles:["member"]},
++      {name:"human-prod-no-membership",pat:$f.human_pat,audience:$prod,expected_status:401,subject:"",org:"",roles:[]},
++      {name:"human-wrong-org",pat:$f.human_pat,audience:$other,expected_status:401,subject:"",org:"",roles:[]},
++      {name:"service-pat",pat:$f.service_pat,audience:$dev,expected_status:401,subject:"",org:"",roles:[]}
++    ]' >"$work_dir/session-initial-cases.json"
++  session_gate initial "$work_dir/session-initial-cases.json"
++  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl revoke-project-env-membership \
++    --org acme --project shared --env dev --principal-id "$session_human_id" \
++    >"$evidence_dir/session-revoke-membership.log" 2>&1
++  jq '[.[] | select(.name == "human-dev") | .name="membership-revoked" | .expected_status=401 | .subject="" | .org="" | .roles=[]]' \
++    "$work_dir/session-initial-cases.json" >"$work_dir/session-revoked-cases.json"
++  session_gate revoked "$work_dir/session-revoked-cases.json"
++  run "${kube[@]}" -n "$namespace" delete pod "$provisioner" --wait=true --timeout=60s
++  session_completed=true
++}
+ key_command() {
+   local receipt=$1; shift
+   run "${kube[@]}" -n "$namespace" exec "deployment/$release" -c identity -- \
+@@ -331,5 +484,8 @@ gate removed-a "$(jq -nc --arg b "$kid_b" '[$b]')"
+ key_command removed-b remove --kid "$kid_b"
+ jq -e --arg kid "$kid_b" '.removed == true and .kid == $kid' "$evidence_dir/removed-b.json" >/dev/null
+ gate removed-b '[]'
++if [[ "$session_exchange" == true ]]; then
++  session_journey
++fi
+ assert_clean_source
+ completed=true

@@ -1,0 +1,13 @@
+diff --git a/services/identity/src/session.rs b/services/identity/src/session.rs
+index 7de2e6e6..3ab8487b 100644
+--- a/services/identity/src/session.rs
++++ b/services/identity/src/session.rs
+@@ -139,7 +139,7 @@ async fn mint_for_principal(
+     let principal = principal.principal();
+     let target = &configured.binding;
+     let triple = target.triple();
+-    if !has_project_env_membership(
++    if false && !has_project_env_membership(
+         &inner.database.client,
+         principal.id(),
+         &triple.org,

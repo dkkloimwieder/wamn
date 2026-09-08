@@ -1,0 +1,8 @@
+Release "wamn-identity" has been upgraded. Happy Helming!
+NAME: wamn-identity
+LAST DEPLOYED: Tue Sep  8 16:38:56 2026
+NAMESPACE: wamn-identity-jwks
+STATUS: deployed
+REVISION: 2
+DESCRIPTION: Upgrade complete
+TEST SUITE: None

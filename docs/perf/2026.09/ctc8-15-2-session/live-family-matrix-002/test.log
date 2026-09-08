@@ -1,0 +1,55 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-2-session-exchange-20260908/crates/control/provision)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.66s
+     Running tests/family_denial_matrix.rs (target/debug/deps/family_denial_matrix-ab2186ddb6362d5f)
+
+running 20 tests
+test a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say ... ok
+test every_governed_relation_carries_the_tenant_key_expression_index ... ok
+test every_ordered_pair_of_matrix_families_is_covered_exactly_once ... ok
+test the_authority_derivations_match_their_pinned_definition_digest ... ok
+test the_dispatch_reader_family_is_refused_the_other_families_operations ... ok
+test the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers ... ok
+test the_effect_writer_family_is_refused_the_other_families_operations ... ok
+test the_event_materializer_family_is_refused_the_other_families_operations ... ok
+test the_executor_platform_family_is_refused_the_other_families_operations ... ok
+test the_guest_family_reads_its_own_tenant_and_only_its_own ... ok
+test the_guest_sql_family_is_refused_the_other_families_operations ... 
+thread 'the_guest_sql_family_is_refused_the_other_families_operations' (4039996) panicked at crates/control/provision/tests/family_denial_matrix.rs:804:5:
+assertion `left == right` failed: the app family's relation reach is not its pinned surface — it over-holds or under-holds somewhere in the matrix universe
+  left: ["app_system.permissions|SELECT|table", "app_system.user_roles|SELECT|table", "app_system.users|SELECT|table", "catalog.component_library|SELECT|table", "catalog.connection_bindings|SELECT|table", "catalog.connection_generations|SELECT|table", "catalog.connection_instances|SELECT|table", "catalog.connection_requirements|SELECT|table", "catalog.effective_release_heads|SELECT|table", "catalog.effective_release_packages|SELECT|table", "catalog.event_registrations|SELECT|table", "catalog.event_registrations|UPDATE|column", "catalog.packages|SELECT|table", "catalog.release_components|SELECT|table", "catalog.release_manifest_v3_snapshots|SELECT|table", "catalog.wiring_activation|SELECT|table", "catalog.wiring_tombstones|SELECT|table", "catalog.wirings|SELECT|table", "wamn_run.effect_attempt_dispatches|SELECT|table", "wamn_run.effect_attempt_outcomes|SELECT|table", "wamn_run.effect_attempts|SELECT|table", "wamn_run.environment_policies|SELECT|table", "wamn_run.runs|DELETE|table", "wamn_run.runs|SELECT|table"]
+ right: ["app_system.permissions|SELECT|table", "app_system.user_roles|SELECT|table", "app_system.users|SELECT|table", "catalog.component_library|SELECT|table", "catalog.connection_bindings|SELECT|table", "catalog.connection_generations|SELECT|table", "catalog.connection_instances|SELECT|table", "catalog.connection_requirements|SELECT|table", "catalog.effective_release_heads|SELECT|table", "catalog.effective_release_packages|SELECT|table", "catalog.event_registrations|SELECT|table", "catalog.packages|SELECT|table", "catalog.release_components|SELECT|table", "catalog.release_manifest_v3_snapshots|SELECT|table", "catalog.wiring_activation|SELECT|table", "catalog.wiring_tombstones|SELECT|table", "catalog.wirings|SELECT|table", "wamn_run.effect_attempt_dispatches|SELECT|table", "wamn_run.effect_attempt_outcomes|SELECT|table", "wamn_run.effect_attempts|SELECT|table", "wamn_run.environment_policies|SELECT|table", "wamn_run.runs|DELETE|table", "wamn_run.runs|SELECT|table"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test the_http_admitter_family_is_refused_the_other_families_operations ... ok
+test the_management_admitter_family_is_refused_the_other_families_operations ... 
+thread 'the_management_admitter_family_is_refused_the_other_families_operations' (4040016) panicked at crates/control/provision/tests/family_denial_matrix.rs:804:5:
+assertion `left == right` failed: the management-admitter family's relation reach is not its pinned surface — it over-holds or under-holds somewhere in the matrix universe
+  left: ["catalog.component_library|SELECT|table", "catalog.wirings|INSERT|column", "catalog.wirings|SELECT|table", "wamn_run.environment_policies|SELECT|table", "wamn_run.run_queue|INSERT|column", "wamn_run.run_queue|SELECT|column", "wamn_run.runs|INSERT|column", "wamn_run.runs|SELECT|column"]
+ right: ["catalog.component_library|SELECT|table", "catalog.connection_bindings|SELECT|table", "catalog.connection_generations|SELECT|table", "catalog.connection_instances|SELECT|table", "catalog.connection_requirements|SELECT|table", "catalog.effective_release_heads|SELECT|table", "catalog.effective_release_packages|SELECT|table", "catalog.wirings|INSERT|column", "catalog.wirings|SELECT|table", "wamn_run.environment_policies|SELECT|table", "wamn_run.run_queue|INSERT|column", "wamn_run.run_queue|SELECT|column", "wamn_run.runs|INSERT|column", "wamn_run.runs|SELECT|column"]
+FAILED
+test the_platform_group_members_are_exactly_the_derived_families ... ok
+test the_retention_family_is_refused_the_other_families_operations ... ok
+test the_run_plane_guards_are_still_public_execute ... ok
+test the_scenario_author_has_no_platform_membership_or_project_reads ... ok
+test the_service_reader_family_is_refused_the_other_families_operations ... ok
+test the_session_role_reader_is_refused_the_other_families_operations ... ok
+test the_tenant_scoped_platform_member_reads_nothing_outside_its_grants ... ok
+
+failures:
+
+failures:
+    the_guest_sql_family_is_refused_the_other_families_operations
+    the_management_admitter_family_is_refused_the_other_families_operations
+
+test result: FAILED. 18 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.69s
+
+error: test failed, to rerun pass `-p wamn-control-provision --test family_denial_matrix`

@@ -1,0 +1,12 @@
+{
+  "gate": "IDENTITY-JWKS",
+  "source": "6766a6026230932c5ef61eabcb36f50f568c3a8c",
+  "cluster": "wamn-identity-jwks-6766a6026230-4101634",
+  "completed": true,
+  "cleanup_failed": false,
+  "exit_code": 0,
+  "token_admission": "not_proven",
+  "expiry_outage": "not_proven",
+  "session_exchange_completed": true,
+  "host_admission": "not_proven"
+}

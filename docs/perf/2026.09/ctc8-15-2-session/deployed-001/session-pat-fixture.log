@@ -1,0 +1,2 @@
+Defaulted container "provisioner" out of: provisioner, wait-postgres (init)
+IDENTITY_SESSION_FIXTURE result=pass principals=2

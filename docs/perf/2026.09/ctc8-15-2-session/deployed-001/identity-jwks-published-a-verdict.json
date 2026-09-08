@@ -1,0 +1,43 @@
+{
+  "schema_version": "0.1",
+  "protocol": "wamn-kubernetes-gate-verdict/v0.1",
+  "manifest": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-2-session/deployed-001/identity-jwks-published-a.json",
+  "namespace": "wamn-identity-jwks",
+  "run_started_at": "2026-09-08T20:36:24.584752799Z",
+  "timeout_seconds": 180,
+  "verdict": "pass",
+  "failure_classes": [],
+  "jobs": [
+    {
+      "name": "identity-jwks-published-a",
+      "container": "identity-jwks",
+      "expectation": "positive",
+      "expected_exit_code": 0,
+      "expected_image": "wamn-gates:jwks-6766a6026230-4101634",
+      "observed": {
+        "uid": "59c052b3-0430-4613-8628-2a123099e143",
+        "previous_uid": "",
+        "created_at": "2026-09-08T20:36:24Z",
+        "condition": "complete",
+        "condition_transition_at": "2026-09-08T20:36:28Z",
+        "logs_sha256": "7e3bac70b9001d5f807bb3c6ed5a24b9519b554aa2c671c6bb928d6239311456",
+        "pods": [
+          {
+            "name": "identity-jwks-published-a-5dhsq",
+            "uid": "3e492b6f-c2a5-45ae-b84f-fd4630361028",
+            "node": "wamn-identity-jwks-6766a6026230-4101634-control-plane",
+            "created_at": "2026-09-08T20:36:24Z",
+            "started_at": "2026-09-08T20:36:24Z",
+            "phase": "Succeeded",
+            "init_exit_codes": [],
+            "container_exit_code": 0,
+            "image_id": "sha256:567ec4482e6f3f20833f0f9ea337e77bbafc6f9f628d069f18cb2d80fb7bbab1"
+          }
+        ]
+      },
+      "verdict": "pass",
+      "failure_classes": []
+    }
+  ],
+  "snapshot_probe": null
+}

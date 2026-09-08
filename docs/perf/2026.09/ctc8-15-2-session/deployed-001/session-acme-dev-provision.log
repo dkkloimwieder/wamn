@@ -1,0 +1,3 @@
+[2m2026-09-08T20:37:09.448743Z[0m [32m INFO[0m [2mtokio_postgres::connection[0m[2m:[0m WARNING: role "wamn_session_role_reader" has not been granted membership in role "wamn_platform" by role "postgres"
+[2m2026-09-08T20:37:09.448780Z[0m [32m INFO[0m [2mtokio_postgres::connection[0m[2m:[0m WARNING: role "wamn_session_roles_3605d0137e079d28a8ee3bec72ae5ec67f71afe3_a" has not been granted membership in role "wamn_session_role_reader" by role "postgres"
+prepared and authenticated session-role-reader credential generation a for acme/shared/dev; wrote /tmp/session-target.json

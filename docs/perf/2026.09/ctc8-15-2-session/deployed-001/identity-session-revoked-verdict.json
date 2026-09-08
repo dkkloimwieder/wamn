@@ -1,0 +1,43 @@
+{
+  "schema_version": "0.1",
+  "protocol": "wamn-kubernetes-gate-verdict/v0.1",
+  "manifest": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-2-session/deployed-001/identity-session-revoked.json",
+  "namespace": "wamn-identity-jwks",
+  "run_started_at": "2026-09-08T20:39:08.651939089Z",
+  "timeout_seconds": 180,
+  "verdict": "pass",
+  "failure_classes": [],
+  "jobs": [
+    {
+      "name": "identity-session-revoked",
+      "container": "identity-session",
+      "expectation": "positive",
+      "expected_exit_code": 0,
+      "expected_image": "wamn-gates:jwks-6766a6026230-4101634",
+      "observed": {
+        "uid": "dae27cea-1477-45dc-8e35-b4c4a8b1f7ab",
+        "previous_uid": "",
+        "created_at": "2026-09-08T20:39:08Z",
+        "condition": "complete",
+        "condition_transition_at": "2026-09-08T20:39:12Z",
+        "logs_sha256": "2aec185366c5d572fbde430c044ff90d3a14c569569cf4d824a4b6e010b5754d",
+        "pods": [
+          {
+            "name": "identity-session-revoked-p74gh",
+            "uid": "d54d3dd6-95b1-4e3f-891b-e9becd02c9f6",
+            "node": "wamn-identity-jwks-6766a6026230-4101634-control-plane",
+            "created_at": "2026-09-08T20:39:08Z",
+            "started_at": "2026-09-08T20:39:09Z",
+            "phase": "Succeeded",
+            "init_exit_codes": [],
+            "container_exit_code": 0,
+            "image_id": "sha256:567ec4482e6f3f20833f0f9ea337e77bbafc6f9f628d069f18cb2d80fb7bbab1"
+          }
+        ]
+      },
+      "verdict": "pass",
+      "failure_classes": []
+    }
+  ],
+  "snapshot_probe": null
+}

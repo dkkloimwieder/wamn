@@ -1,0 +1,1182 @@
+{
+  "schema_version": 1,
+  "scope": "Historical .15.1 workspace baseline only. No current .15.2 workspace result is claimed.",
+  "evidence_directory": "docs/perf/2026.09/ctc8-15-1-identity/integration-001",
+  "source": {
+    "commit": "9f16600d6d91f5d943f4230ea7f7eb4ee09f508a",
+    "commit_file": "docs/perf/2026.09/ctc8-15-1-identity/integration-001/source-head",
+    "status_file": "docs/perf/2026.09/ctc8-15-1-identity/integration-001/source-status",
+    "recorded_status": "?? docs/perf/2026.09/ctc8-15-1-identity/\n"
+  },
+  "command": {
+    "text": "cargo test --locked --offline --workspace --no-fail-fast -- --include-ignored --test-threads=1",
+    "file": "docs/perf/2026.09/ctc8-15-1-identity/integration-001/workspace.command"
+  },
+  "workspace_exit": {
+    "code": 101,
+    "file": "docs/perf/2026.09/ctc8-15-1-identity/integration-001/workspace.exit"
+  },
+  "outer_runner_exit": {
+    "code": 1,
+    "file": "docs/perf/2026.09/ctc8-15-1-identity/integration-001/exit",
+    "note": "This is the enclosing capture exit, not the Cargo workspace exit."
+  },
+  "log": {
+    "file": "docs/perf/2026.09/ctc8-15-1-identity/integration-001/workspace.log",
+    "sha256": "cf782c049d805be94305740139e49797e6335c2c234a300397714f49d1d980df"
+  },
+  "counts": {
+    "test_targets": 165,
+    "failed_test_targets": 28,
+    "passed_tests": 1876,
+    "failed_tests": 59,
+    "ignored_tests": 0,
+    "doctest_targets": 34,
+    "passed_doctests": 6,
+    "failed_doctests": 0,
+    "ignored_doctests": 0,
+    "raw_summary_lines": 200,
+    "excluded_nested_summary_lines": 1
+  },
+  "evidence_limits": {
+    "environment_snapshot": null,
+    "test_binary_sha256": null,
+    "visible_self_skip_log_lines": [],
+    "notes": [
+      "No environment snapshot or executable hashes were retained for this workspace capture.",
+      "The command includes ignored tests but does not use --nocapture. Passing-test stdout is hidden, so absence of visible self-skip output does not prove live execution.",
+      "Missing fixture inputs and arming variables are failures here, not evidence of successful live behavior. Referenced variable names below are not environment values or a complete environment snapshot.",
+      "Each target uses its final summary. The earlier nested subprocess summary is excluded to avoid double counting."
+    ],
+    "prior_cause_classification": "docs/perf/2026.09/ctc8-15-1-identity/integration-001/workspace-classification.json"
+  },
+  "excluded_nested_summaries": [
+    {
+      "parent_binary": "target/debug/deps/wamn_runtime-ad80be7ff1d50f6d",
+      "parent_running_line": 2863,
+      "parent_summary_line": 3203,
+      "summary": {
+        "line": 3099,
+        "result": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 299
+      }
+    }
+  ],
+  "failed_target_footer": {
+    "line": 4150,
+    "declared_count": 28
+  },
+  "failed_targets": [
+    {
+      "package": "wamn-catalog",
+      "target": "--test wiring_activation_live",
+      "running": {
+        "description": "tests/wiring_activation_live.rs",
+        "binary_path": "target/debug/deps/wiring_activation_live-afb51782d8030c74",
+        "line": 573
+      },
+      "summary": {
+        "line": 597,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 2,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-catalog --test wiring_activation_live",
+      "rerun_line": 599,
+      "failed_target_footer_line": 4151,
+      "failed_tests": [
+        {
+          "name": "the_terminal_document_reaches_a_converged_database_and_survives_the_column",
+          "failed_receipt_line": 576,
+          "stdout_header_line": 581,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CATALOG_PG_URL"
+          ]
+        },
+        {
+          "name": "wiring_activation_live",
+          "failed_receipt_line": 577,
+          "stdout_header_line": 587,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CATALOG_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-control-provision",
+      "target": "--test control_portable_store",
+      "running": {
+        "description": "tests/control_portable_store.rs",
+        "binary_path": "target/debug/deps/control_portable_store-e89187f1b7275697",
+        "line": 925
+      },
+      "summary": {
+        "line": 945,
+        "result": "FAILED",
+        "passed": 3,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-control-provision --test control_portable_store",
+      "rerun_line": 947,
+      "failed_target_footer_line": 4152,
+      "failed_tests": [
+        {
+          "name": "current_database_connect_posture_is_exactly_scoped",
+          "failed_receipt_line": 930,
+          "stdout_header_line": 935,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CONTROL_PORTABLE_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-control-provision",
+      "target": "--test identity_issuer_live",
+      "running": {
+        "description": "tests/identity_issuer_live.rs",
+        "binary_path": "target/debug/deps/identity_issuer_live-1bdd9487b3e9b2c7",
+        "line": 1023
+      },
+      "summary": {
+        "line": 1040,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-control-provision --test identity_issuer_live",
+      "rerun_line": 1042,
+      "failed_target_footer_line": 4153,
+      "failed_tests": [
+        {
+          "name": "scoped_issuer_grants_and_generation_retirement_execute_on_postgres",
+          "failed_receipt_line": 1026,
+          "stdout_header_line": 1030,
+          "referenced_fixture_environment_variables": [
+            "WAMN_IDENTITY_ISSUER_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--lib",
+      "running": {
+        "description": "unittests src/lib.rs",
+        "binary_path": "target/debug/deps/wamn_ctl-18f919327143ebdb",
+        "line": 1159
+      },
+      "summary": {
+        "line": 1407,
+        "result": "FAILED",
+        "passed": 203,
+        "failed": 5,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-ctl --lib",
+      "rerun_line": 1409,
+      "failed_target_footer_line": 4154,
+      "failed_tests": [
+        {
+          "name": "dev::verification_database::tests::disposable_postgres_proves_freshness_cleanup_and_confinement",
+          "failed_receipt_line": 1239,
+          "stdout_header_line": 1373,
+          "referenced_fixture_environment_variables": [
+            "WAMN_DEV_VERIFICATION_PG_URL"
+          ]
+        },
+        {
+          "name": "dev::verification_world::tests::lifecycle_bootstraps_then_accepts_packages_and_one_exact_admission",
+          "failed_receipt_line": 1246,
+          "stdout_header_line": 1379,
+          "referenced_fixture_environment_variables": [
+            "WAMN_DEV_VERIFICATION_PG_URL"
+          ]
+        },
+        {
+          "name": "publish_release::effective_release_live::fresh_base_and_overlay_mint_byte_identically_and_refuse_drift",
+          "failed_receipt_line": 1314,
+          "stdout_header_line": 1384,
+          "referenced_fixture_environment_variables": [
+            "WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL"
+          ]
+        },
+        {
+          "name": "push_component::tests::production_publisher_and_puller_round_trip_exact_bytes",
+          "failed_receipt_line": 1335,
+          "stdout_header_line": 1389,
+          "referenced_fixture_environment_variables": [
+            "WAMN_COMPONENT_ARTIFACT_BASE"
+          ]
+        },
+        {
+          "name": "push_release_manifest::tests::production_publisher_exact_retry_is_a_no_push",
+          "failed_receipt_line": 1348,
+          "stdout_header_line": 1394,
+          "referenced_fixture_environment_variables": [
+            "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test author_wiring_gate_report_live",
+      "running": {
+        "description": "tests/author_wiring_gate_report_live.rs",
+        "binary_path": "target/debug/deps/author_wiring_gate_report_live-207bb56a1c99d14b",
+        "line": 1430
+      },
+      "summary": {
+        "line": 1447,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-ctl --test author_wiring_gate_report_live",
+      "rerun_line": 1449,
+      "failed_target_footer_line": 4155,
+      "failed_tests": [
+        {
+          "name": "a_wiring_is_authored_only_under_a_green_report_for_its_own_hash",
+          "failed_receipt_line": 1433,
+          "stdout_header_line": 1437,
+          "referenced_fixture_environment_variables": [
+            "WAMN_AUTHOR_WIRING_PROJECT_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test bind_connection_live",
+      "running": {
+        "description": "tests/bind_connection_live.rs",
+        "binary_path": "target/debug/deps/bind_connection_live-0201bf89a584e6e1",
+        "line": 1450
+      },
+      "summary": {
+        "line": 1467,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-ctl --test bind_connection_live",
+      "rerun_line": 1469,
+      "failed_target_footer_line": 4156,
+      "failed_tests": [
+        {
+          "name": "bind_connection_round_trips_through_the_plugins_own_resolution",
+          "failed_receipt_line": 1453,
+          "stdout_header_line": 1457,
+          "referenced_fixture_environment_variables": [
+            "WAMN_BIND_CONNECTION_PROJECT_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test effect_writer_generation_live",
+      "running": {
+        "description": "tests/effect_writer_generation_live.rs",
+        "binary_path": "target/debug/deps/effect_writer_generation_live-bf15b41ed7610e2c",
+        "line": 1490
+      },
+      "summary": {
+        "line": 1507,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-ctl --test effect_writer_generation_live",
+      "rerun_line": 1509,
+      "failed_target_footer_line": 4157,
+      "failed_tests": [
+        {
+          "name": "effect_writer_generation_lifecycle_is_exact_and_fail_closed",
+          "failed_receipt_line": 1493,
+          "stdout_header_line": 1497,
+          "referenced_fixture_environment_variables": [
+            "WAMN_EFFECT_WRITER_PG18_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test identity_issuer_live",
+      "running": {
+        "description": "tests/identity_issuer_live.rs",
+        "binary_path": "target/debug/deps/identity_issuer_live-19a98c1fbddbf823",
+        "line": 1517
+      },
+      "summary": {
+        "line": 1535,
+        "result": "FAILED",
+        "passed": 1,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-ctl --test identity_issuer_live",
+      "rerun_line": 1537,
+      "failed_target_footer_line": 4158,
+      "failed_tests": [
+        {
+          "name": "compiled_cli_publishes_rolls_back_and_retires_identity_generations",
+          "failed_receipt_line": 1520,
+          "stdout_header_line": 1525,
+          "referenced_fixture_environment_variables": [
+            "WAMN_IDENTITY_ISSUER_CLI_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test management_admitter_generation_live",
+      "running": {
+        "description": "tests/management_admitter_generation_live.rs",
+        "binary_path": "target/debug/deps/management_admitter_generation_live-ecd02b55d8d7e189",
+        "line": 1538
+      },
+      "summary": {
+        "line": 1555,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-ctl --test management_admitter_generation_live",
+      "rerun_line": 1557,
+      "failed_target_footer_line": 4159,
+      "failed_tests": [
+        {
+          "name": "management_admitter_generation_lifecycle_converges_and_rotates",
+          "failed_receipt_line": 1541,
+          "stdout_header_line": 1545,
+          "referenced_fixture_environment_variables": [
+            "WAMN_MANAGEMENT_ADMITTER_PG18_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test run_plane_live",
+      "running": {
+        "description": "tests/run_plane_live.rs",
+        "binary_path": "target/debug/deps/run_plane_live-57b9fa36c0461923",
+        "line": 1589
+      },
+      "summary": {
+        "line": 1658,
+        "result": "FAILED",
+        "passed": 10,
+        "failed": 7,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-ctl --test run_plane_live",
+      "rerun_line": 1660,
+      "failed_target_footer_line": 4160,
+      "failed_tests": [
+        {
+          "name": "effect_writer_cutover_live",
+          "failed_receipt_line": 1595,
+          "stdout_header_line": 1612,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CTL_PG_URL"
+          ]
+        },
+        {
+          "name": "failure_detail_cutover_live",
+          "failed_receipt_line": 1597,
+          "stdout_header_line": 1618,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CTL_PG_URL"
+          ]
+        },
+        {
+          "name": "frame_identity_cutover_live",
+          "failed_receipt_line": 1598,
+          "stdout_header_line": 1623,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CTL_PG_URL"
+          ]
+        },
+        {
+          "name": "partition_plane_active_lease_refusal_live",
+          "failed_receipt_line": 1599,
+          "stdout_header_line": 1628,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CTL_PG_URL"
+          ]
+        },
+        {
+          "name": "partition_plane_cutover_live",
+          "failed_receipt_line": 1600,
+          "stdout_header_line": 1633,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CTL_PG_URL"
+          ]
+        },
+        {
+          "name": "provisioner_minted_generation_live",
+          "failed_receipt_line": 1601,
+          "stdout_header_line": 1638,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CTL_PG_URL"
+          ]
+        },
+        {
+          "name": "two_plane_residency_live",
+          "failed_receipt_line": 1608,
+          "stdout_header_line": 1643,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CTL_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-identity",
+      "target": "--test https_surface",
+      "running": {
+        "description": "tests/https_surface.rs",
+        "binary_path": "target/debug/deps/https_surface-ff2626e8d8670f6e",
+        "line": 1819
+      },
+      "summary": {
+        "line": 1839,
+        "result": "FAILED",
+        "passed": 1,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-identity --test https_surface",
+      "rerun_line": 1841,
+      "failed_target_footer_line": 4161,
+      "failed_tests": [
+        {
+          "name": "identity_https_has_only_public_jwks_and_health",
+          "failed_receipt_line": 1823,
+          "stdout_header_line": 1827,
+          "referenced_fixture_environment_variables": []
+        }
+      ]
+    },
+    {
+      "package": "wamn-platform-identity",
+      "target": "--test session_keys_live",
+      "running": {
+        "description": "tests/session_keys_live.rs",
+        "binary_path": "target/debug/deps/session_keys_live-3980b3d6a1e302fe",
+        "line": 1891
+      },
+      "summary": {
+        "line": 1919,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 2,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-platform-identity --test session_keys_live",
+      "rerun_line": 1921,
+      "failed_target_footer_line": 4162,
+      "failed_tests": [
+        {
+          "name": "session_key_lifecycle_on_postgres",
+          "failed_receipt_line": 1894,
+          "stdout_header_line": 1899,
+          "referenced_fixture_environment_variables": []
+        },
+        {
+          "name": "signer_backend_loss_before_commit_does_not_issue_token",
+          "failed_receipt_line": 1895,
+          "stdout_header_line": 1907,
+          "referenced_fixture_environment_variables": []
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-conformance",
+      "target": "--test chart_seam_governance",
+      "running": {
+        "description": "tests/chart_seam_governance.rs",
+        "binary_path": "target/debug/deps/chart_seam_governance-42f99eafd480aa34",
+        "line": 2049
+      },
+      "summary": {
+        "line": 2079,
+        "result": "FAILED",
+        "passed": 11,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-proof-conformance --test chart_seam_governance",
+      "rerun_line": 2081,
+      "failed_target_footer_line": 4163,
+      "failed_tests": [
+        {
+          "name": "receiving_pat_overlay_renders_a_complete_scoped_host",
+          "failed_receipt_line": 2056,
+          "stdout_header_line": 2067,
+          "referenced_fixture_environment_variables": []
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-conformance",
+      "target": "--test guest_workspace_closure",
+      "running": {
+        "description": "tests/guest_workspace_closure.rs",
+        "binary_path": "target/debug/deps/guest_workspace_closure-e46c5cc55f43bec6",
+        "line": 2154
+      },
+      "summary": {
+        "line": 2173,
+        "result": "FAILED",
+        "passed": 2,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-proof-conformance --test guest_workspace_closure",
+      "rerun_line": 2175,
+      "failed_target_footer_line": 4164,
+      "failed_tests": [
+        {
+          "name": "one_commit_built_in_two_checkouts_yields_identical_guest_digests",
+          "failed_receipt_line": 2158,
+          "stdout_header_line": 2163,
+          "referenced_fixture_environment_variables": [
+            "WAMN_DIGEST_REPRO_A"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "target": "--lib",
+      "running": {
+        "description": "unittests src/lib.rs",
+        "binary_path": "target/debug/deps/wamn_proof_integration-ac7d45968725e490",
+        "line": 2352
+      },
+      "summary": {
+        "line": 2509,
+        "result": "FAILED",
+        "passed": 40,
+        "failed": 17,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-proof-integration --lib",
+      "rerun_line": 2511,
+      "failed_target_footer_line": 4165,
+      "failed_tests": [
+        {
+          "name": "claim_law_live::a_changed_request_under_a_live_key_refuses_with_idempotency_conflict",
+          "failed_receipt_line": 2361,
+          "stdout_header_line": 2415,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CLAIM_LAW_PG_URL"
+          ]
+        },
+        {
+          "name": "claim_law_live::a_claim_that_updates_on_conflict_fails_both_emitted_cases",
+          "failed_receipt_line": 2362,
+          "stdout_header_line": 2421,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CLAIM_LAW_PG_URL"
+          ]
+        },
+        {
+          "name": "claim_law_live::a_replay_returns_the_immutable_original_result_and_writes_nothing",
+          "failed_receipt_line": 2363,
+          "stdout_header_line": 2427,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CLAIM_LAW_PG_URL"
+          ]
+        },
+        {
+          "name": "hot_route_trace::tests::an_incoming_traceparent_reaches_the_outbound_socket_under_the_same_trace",
+          "failed_receipt_line": 2366,
+          "stdout_header_line": 2433,
+          "referenced_fixture_environment_variables": [
+            "WAMN_HOTROUTE_PG_URL"
+          ]
+        },
+        {
+          "name": "provisionbench::tests::legacy_converges_database_authority_on_postgres",
+          "failed_receipt_line": 2371,
+          "stdout_header_line": 2439,
+          "referenced_fixture_environment_variables": [
+            "WAMN_PG_ADMIN_URL"
+          ]
+        },
+        {
+          "name": "provisionbench::tests::project_env_replay_uses_the_stored_instance_suffix",
+          "failed_receipt_line": 2372,
+          "stdout_header_line": 2444,
+          "referenced_fixture_environment_variables": [
+            "WAMN_PG_ADMIN_URL"
+          ]
+        },
+        {
+          "name": "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18",
+          "failed_receipt_line": 2373,
+          "stdout_header_line": 2449,
+          "referenced_fixture_environment_variables": [
+            "WAMN_RECEIVING_PG_URL"
+          ]
+        },
+        {
+          "name": "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup",
+          "failed_receipt_line": 2377,
+          "stdout_header_line": 2455,
+          "referenced_fixture_environment_variables": [
+            "WAMN_ROUTE_PG18_URL"
+          ]
+        },
+        {
+          "name": "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once",
+          "failed_receipt_line": 2378,
+          "stdout_header_line": 2458,
+          "referenced_fixture_environment_variables": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ]
+        },
+        {
+          "name": "route_authentication_live::production_route_caller_authentication_and_operation_authorization",
+          "failed_receipt_line": 2379,
+          "stdout_header_line": 2461,
+          "referenced_fixture_environment_variables": [
+            "WAMN_ROUTE_AUTH_PG18_URL"
+          ]
+        },
+        {
+          "name": "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes",
+          "failed_receipt_line": 2380,
+          "stdout_header_line": 2466,
+          "referenced_fixture_environment_variables": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ]
+        },
+        {
+          "name": "router_tap_live::tests::the_released_router_bridge_emits_accepted_and_settled_previews",
+          "failed_receipt_line": 2383,
+          "stdout_header_line": 2469,
+          "referenced_fixture_environment_variables": [
+            "WAMN_ROUTER_TAP_NATS_URL"
+          ]
+        },
+        {
+          "name": "throughput_bench_live::tests::every_layer_ran_the_whole_sweep_and_its_knee_is_recorded",
+          "failed_receipt_line": 2393,
+          "stdout_header_line": 2472,
+          "referenced_fixture_environment_variables": [
+            "WAMN_THROUGHPUT_EVIDENCE_DIR"
+          ]
+        },
+        {
+          "name": "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+          "failed_receipt_line": 2394,
+          "stdout_header_line": 2477,
+          "referenced_fixture_environment_variables": [
+            "WAMN_STD_VIRTUALIZATION_COMPONENT_WASM"
+          ]
+        },
+        {
+          "name": "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+          "failed_receipt_line": 2395,
+          "stdout_header_line": 2480,
+          "referenced_fixture_environment_variables": [
+            "WAMN_STD_VIRTUALIZATION_SENTINEL"
+          ]
+        },
+        {
+          "name": "wms_runtime_live::contention_and_replay_through_the_composed_route",
+          "failed_receipt_line": 2400,
+          "stdout_header_line": 2483,
+          "referenced_fixture_environment_variables": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ]
+        },
+        {
+          "name": "wms_runtime_live::the_remaining_operations_serve_their_released_routes",
+          "failed_receipt_line": 2404,
+          "stdout_header_line": 2486,
+          "referenced_fixture_environment_variables": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-system",
+      "target": "--test deploy_platform_inventory",
+      "running": {
+        "description": "tests/deploy_platform_inventory.rs",
+        "binary_path": "target/debug/deps/deploy_platform_inventory-4bed76be916c0240",
+        "line": 2541
+      },
+      "summary": {
+        "line": 2565,
+        "result": "FAILED",
+        "passed": 7,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-proof-system --test deploy_platform_inventory",
+      "rerun_line": 2567,
+      "failed_target_footer_line": 4166,
+      "failed_tests": [
+        {
+          "name": "every_mounted_secret_is_declared_here_or_named_a_prerequisite",
+          "failed_receipt_line": 2544,
+          "stdout_header_line": 2555,
+          "referenced_fixture_environment_variables": []
+        }
+      ]
+    },
+    {
+      "package": "wamn-run-state",
+      "target": "--test admission_live",
+      "running": {
+        "description": "tests/admission_live.rs",
+        "binary_path": "target/debug/deps/admission_live-20c9c2b8b394ec73",
+        "line": 2760
+      },
+      "summary": {
+        "line": 2777,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-run-state --test admission_live",
+      "rerun_line": 2779,
+      "failed_target_footer_line": 4167,
+      "failed_tests": [
+        {
+          "name": "surviving_authority_matrix_live",
+          "failed_receipt_line": 2763,
+          "stdout_header_line": 2767,
+          "referenced_fixture_environment_variables": [
+            "WAMN_RUN_STORE_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-run-state",
+      "target": "--test effect_writer_live",
+      "running": {
+        "description": "tests/effect_writer_live.rs",
+        "binary_path": "target/debug/deps/effect_writer_live-6ff2bc9e5d95c70c",
+        "line": 2780
+      },
+      "summary": {
+        "line": 2797,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-run-state --test effect_writer_live",
+      "rerun_line": 2799,
+      "failed_target_footer_line": 4168,
+      "failed_tests": [
+        {
+          "name": "native_effect_writer_live",
+          "failed_receipt_line": 2783,
+          "stdout_header_line": 2787,
+          "referenced_fixture_environment_variables": [
+            "WAMN_RUN_STORE_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-run-state",
+      "target": "--test run_state_live",
+      "running": {
+        "description": "tests/run_state_live.rs",
+        "binary_path": "target/debug/deps/run_state_live-cb2cb43a8069a3f3",
+        "line": 2823
+      },
+      "summary": {
+        "line": 2840,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-run-state --test run_state_live",
+      "rerun_line": 2842,
+      "failed_target_footer_line": 4169,
+      "failed_tests": [
+        {
+          "name": "run_state_live",
+          "failed_receipt_line": 2826,
+          "stdout_header_line": 2830,
+          "referenced_fixture_environment_variables": [
+            "WAMN_RUN_STORE_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--lib",
+      "running": {
+        "description": "unittests src/lib.rs",
+        "binary_path": "target/debug/deps/wamn_runtime-ad80be7ff1d50f6d",
+        "line": 2863
+      },
+      "summary": {
+        "line": 3203,
+        "result": "FAILED",
+        "passed": 296,
+        "failed": 4,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-runtime --lib",
+      "rerun_line": 3205,
+      "failed_target_footer_line": 4170,
+      "failed_tests": [
+        {
+          "name": "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream",
+          "failed_receipt_line": 3026,
+          "stdout_header_line": 3175,
+          "referenced_fixture_environment_variables": [
+            "WAMN_ROUTER_TAP_NATS_URL"
+          ]
+        },
+        {
+          "name": "plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving",
+          "failed_receipt_line": 3073,
+          "stdout_header_line": 3181,
+          "referenced_fixture_environment_variables": [
+            "WAMN_POOL_LIFECYCLE_PG_URL"
+          ]
+        },
+        {
+          "name": "plugins::wamn_postgres::types::tests::live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells",
+          "failed_receipt_line": 3139,
+          "stdout_header_line": 3186,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CARRIER_SPELLING_PG_URL"
+          ]
+        },
+        {
+          "name": "plugins::wamn_postgres::types::tests::live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer",
+          "failed_receipt_line": 3140,
+          "stdout_header_line": 3191,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CARRIER_SPELLING_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test executor_platform_surface_live",
+      "running": {
+        "description": "tests/executor_platform_surface_live.rs",
+        "binary_path": "target/debug/deps/executor_platform_surface_live-b2b3a86eef116aec",
+        "line": 3240
+      },
+      "summary": {
+        "line": 3257,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-runtime --test executor_platform_surface_live",
+      "rerun_line": 3259,
+      "failed_target_footer_line": 4171,
+      "failed_tests": [
+        {
+          "name": "executor_platform_surface_live",
+          "failed_receipt_line": 3243,
+          "stdout_header_line": 3247,
+          "referenced_fixture_environment_variables": [
+            "WAMN_EXEC_PLATFORM_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test production_claim_durable_live",
+      "running": {
+        "description": "tests/production_claim_durable_live.rs",
+        "binary_path": "target/debug/deps/production_claim_durable_live-0fe57051b7ade3a9",
+        "line": 3317
+      },
+      "summary": {
+        "line": 3334,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-runtime --test production_claim_durable_live",
+      "rerun_line": 3336,
+      "failed_target_footer_line": 4172,
+      "failed_tests": [
+        {
+          "name": "production_claim_durable_live",
+          "failed_receipt_line": 3320,
+          "stdout_header_line": 3324,
+          "referenced_fixture_environment_variables": [
+            "WAMN_DURABLE_TIER_PG_URL",
+            "WAMN_PRODUCTION_CLAIM_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test production_claim_live",
+      "running": {
+        "description": "tests/production_claim_live.rs",
+        "binary_path": "target/debug/deps/production_claim_live-bd37d3256c3a4a99",
+        "line": 3337
+      },
+      "summary": {
+        "line": 3355,
+        "result": "FAILED",
+        "passed": 1,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-runtime --test production_claim_live",
+      "rerun_line": 3357,
+      "failed_target_footer_line": 4173,
+      "failed_tests": [
+        {
+          "name": "production_claim_live",
+          "failed_receipt_line": 3340,
+          "stdout_header_line": 3345,
+          "referenced_fixture_environment_variables": [
+            "WAMN_PRODUCTION_CLAIM_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test release_manifest_source",
+      "running": {
+        "description": "tests/release_manifest_source.rs",
+        "binary_path": "target/debug/deps/release_manifest_source-c5787690aca9bf16",
+        "line": 3367
+      },
+      "summary": {
+        "line": 3392,
+        "result": "FAILED",
+        "passed": 8,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-runtime --test release_manifest_source",
+      "rerun_line": 3394,
+      "failed_target_footer_line": 4174,
+      "failed_tests": [
+        {
+          "name": "a_published_release_pulls_back_byte_exact_and_welds_the_release_it_names",
+          "failed_receipt_line": 3374,
+          "stdout_header_line": 3382,
+          "referenced_fixture_environment_variables": [
+            "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test sqlx_transaction_live",
+      "running": {
+        "description": "tests/sqlx_transaction_live.rs",
+        "binary_path": "target/debug/deps/sqlx_transaction_live-c6a2a82bc0ae042b",
+        "line": 3414
+      },
+      "summary": {
+        "line": 3431,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-runtime --test sqlx_transaction_live",
+      "rerun_line": 3433,
+      "failed_target_footer_line": 4175,
+      "failed_tests": [
+        {
+          "name": "sqlx_command_commits_rolls_back_and_obeys_current_user_rls",
+          "failed_receipt_line": 3417,
+          "stdout_header_line": 3421,
+          "referenced_fixture_environment_variables": [
+            "WAMN_SQLX_TRANSACTION_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test wiring_doorbell_live",
+      "running": {
+        "description": "tests/wiring_doorbell_live.rs",
+        "binary_path": "target/debug/deps/wiring_doorbell_live-9c58bfa52951e31a",
+        "line": 3434
+      },
+      "summary": {
+        "line": 3451,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-runtime --test wiring_doorbell_live",
+      "rerun_line": 3453,
+      "failed_target_footer_line": 4176,
+      "failed_tests": [
+        {
+          "name": "a_pointer_flip_makes_the_cache_serve_the_new_active_version",
+          "failed_receipt_line": 3437,
+          "stdout_header_line": 3441,
+          "referenced_fixture_environment_variables": [
+            "WAMN_CATALOG_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-scenario-worker",
+      "target": "--test management_live",
+      "running": {
+        "description": "tests/management_live.rs",
+        "binary_path": "target/debug/deps/management_live-f36106d2b8ca7a22",
+        "line": 3517
+      },
+      "summary": {
+        "line": 3537,
+        "result": "FAILED",
+        "passed": 3,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-scenario-worker --test management_live",
+      "rerun_line": 3539,
+      "failed_target_footer_line": 4177,
+      "failed_tests": [
+        {
+          "name": "management_surface_authenticates_and_attributes_authoring_commands",
+          "failed_receipt_line": 3521,
+          "stdout_header_line": 3527,
+          "referenced_fixture_environment_variables": [
+            "WAMN_PLATFORM_IDENTITY_PG_URL"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "wamn-schema-introspection",
+      "target": "--test postgres_live",
+      "running": {
+        "description": "tests/postgres_live.rs",
+        "binary_path": "target/debug/deps/postgres_live-c7f1e18080b34f8a",
+        "line": 3870
+      },
+      "summary": {
+        "line": 3887,
+        "result": "FAILED",
+        "passed": 0,
+        "failed": 1,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 0
+      },
+      "rerun_selector": "-p wamn-schema-introspection --test postgres_live",
+      "rerun_line": 3889,
+      "failed_target_footer_line": 4178,
+      "failed_tests": [
+        {
+          "name": "receiving_migration_round_trips_and_refuses_unsupported_server_objects",
+          "failed_receipt_line": 3873,
+          "stdout_header_line": 3877,
+          "referenced_fixture_environment_variables": [
+            "WAMN_SCHEMA_INTROSPECTION_PG_URL"
+          ]
+        }
+      ]
+    }
+  ]
+}
