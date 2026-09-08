@@ -412,9 +412,13 @@ const SHARED_PORTABLE_RELATIONS: [&str; 7] = [
 /// project-side and no project installer recreates these, so they have no
 /// project fingerprint by design. Comparing them across planes is what
 /// manufactured the seven-relation drift this list retires.
-const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 4] = [
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 5] = [
     "catalog.authoring_command_audit",
     "catalog.deployment_attestations",
+    // The projected environment identity is a CONTROL fact: the project plane
+    // has no `registry.project_envs` to project from, and its own catalog is
+    // recreated per run (wamn-10yt.38).
+    "catalog.tenant_environments",
     "wamn_run.gate_reports",
     "wamn_authority.author_login_tenants",
 ];

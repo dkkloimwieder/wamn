@@ -615,7 +615,7 @@
         "constraint:component_library_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:component_library_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:component_library_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER component_library_immutable BEFORE DELETE OR UPDATE ON catalog.component_library FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
+        "trigger:component_library_immutable;mode=origin;function=catalog.reject_durable_component_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER component_library_immutable BEFORE DELETE OR UPDATE ON catalog.component_library FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_component_fact_change()"
       ]
     },
     {
@@ -651,7 +651,7 @@
         "policy:connection_requirements_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:connection_requirements_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:connection_requirements_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER connection_requirements_immutable BEFORE DELETE OR UPDATE ON catalog.connection_requirements FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
+        "trigger:connection_requirements_immutable;mode=origin;function=catalog.reject_durable_component_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER connection_requirements_immutable BEFORE DELETE OR UPDATE ON catalog.connection_requirements FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_component_fact_change()"
       ]
     },
     {
@@ -867,6 +867,39 @@
         "row-security:enabled=true;forced=true",
         "trigger:packages_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER packages_immutable BEFORE DELETE OR UPDATE ON catalog.packages FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()",
         "unique-index:packages_one_successor_per_version;valid=true;ready=true;definition=CREATE UNIQUE INDEX packages_one_successor_per_version ON catalog.packages USING btree (tenant_id, package_id, predecessor_version) WHERE predecessor_version IS NOT NULL"
+      ]
+    },
+    {
+      "scope": "production-control-database-portable-store",
+      "relation": "catalog.tenant_environments",
+      "ops": false,
+      "installer": "control-portable-store-installer",
+      "owner": "registry-store",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "wamn_system",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:tenant_environments_env_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (env <> ''::text)",
+        "constraint:tenant_environments_instance_suffix_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (instance_suffix ~ '^[a-z0-9]{8}$'::text)",
+        "constraint:tenant_environments_org_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (org <> ''::text)",
+        "constraint:tenant_environments_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id)",
+        "constraint:tenant_environments_project_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (project <> ''::text)",
+        "constraint:tenant_environments_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:tenant_environments_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
+        "row-security:enabled=true;forced=true"
       ]
     },
     {
