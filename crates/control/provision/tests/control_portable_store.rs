@@ -638,6 +638,35 @@ DO $source_refusal$ BEGIN
   END;
 END
 $source_refusal$;
+
+-- wamn-10yt.51. A DISPOSABLE environment attests what it deployed THIS run.
+-- Its effective release id never moves, so a second dev run mints a different
+-- manifest under the same coordinate and the frozen row would refuse forever.
+-- The condition is provisioning's projection, never anything the caller says.
+SELECT catalog.project_tenant_environment(
+  'tenant-a', 'acme', 'billing', 'prod', 'abcd1234', true);
+DO $disposable_reattests$ BEGIN
+  PERFORM ({conflicting});
+  ASSERT (SELECT count(*) FROM catalog.deployment_attestations) = 1,
+    'the disposable re-attestation inserted a second row';
+  ASSERT (SELECT deployed_manifest_hash FROM catalog.deployment_attestations
+           WHERE tenant_id = 'tenant-a') = '{other_hash}',
+    'the disposable environment kept the superseded manifest';
+END
+$disposable_reattests$;
+
+-- And the same store refreezes the moment the marker says durable.
+SELECT catalog.project_tenant_environment(
+  'tenant-a', 'acme', 'billing', 'prod', 'abcd1234', false);
+DO $durable_refreezes$ BEGIN
+  BEGIN
+    PERFORM ({write});
+    ASSERT false, 'a durable environment replaced its own attestation';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'WAMN-RUST-DURABLE-REFREEZE % %', SQLSTATE, SQLERRM;
+  END;
+END
+$durable_refreezes$;
 RESET ROLE;
 "#,
             project = render(&project),
@@ -645,6 +674,7 @@ RESET ROLE;
             write = render(&write),
             conflicting = render(&conflicting_write),
             conflicting_source = render(&conflicting_source_write),
+            other_hash = other_hash,
         ),
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -674,5 +704,12 @@ RESET ROLE;
             wamn_schema_control::attestation::CONTENT_CONFLICT
         )),
         "the server accepted conflicting source provenance:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "WAMN-RUST-DURABLE-REFREEZE 23505 {}",
+            wamn_schema_control::attestation::CONTENT_CONFLICT
+        )),
+        "the store stayed replaceable after the marker said durable:\n{stderr}"
     );
 }

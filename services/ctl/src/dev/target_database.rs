@@ -234,7 +234,7 @@ fn read_database_acl(path: &Path) -> Result<String, TargetDatabaseError> {
 /// Every statement is issued on a maintenance connection to `postgres`, because
 /// a session connected to the target cannot drop it, and `CREATE DATABASE`
 /// cannot run inside the database it creates.
-pub async fn recreate(config: &DevConfig) -> Result<(), TargetDatabaseError> {
+pub async fn recreate(config: &DevConfig) -> Result<String, TargetDatabaseError> {
     let spec = TargetSpec::from_config(config)?;
     let template =
         Identifier::new(config.target_template_database().to_owned()).map_err(|source| {
@@ -281,7 +281,7 @@ async fn recreate_with_client(
     template: &Identifier,
     fingerprint: &str,
     acl: &str,
-) -> Result<(), TargetDatabaseError> {
+) -> Result<String, TargetDatabaseError> {
     // The lease is session-scoped and keyed by the database name, so two dev
     // loops pointed at one target refuse rather than drop each other's database
     // mid-run.
@@ -322,23 +322,30 @@ async fn recreate_with_client(
             )
             .with_source(source)
         })?;
-    outcome?;
+    let instance = outcome?;
     if !released {
         return Err(TargetDatabaseError::new(
             TargetDatabaseErrorKind::LeaseFailed,
             "ensure the target credential keeps its maintenance session through the recreate",
         ));
     }
-    Ok(())
+    Ok(instance)
 }
 
+/// Returns the INSTANCE identity of the database this call created.
+///
+/// A recreated database is a different target, and anything the control plane
+/// keys to this environment has to say which creation it means (wamn-10yt.51).
+/// PostgreSQL already mints exactly that: `CREATE DATABASE` assigns a fresh oid,
+/// so the server is the authority and nothing here invents a value. A timestamp
+/// would have been a guess about identity; this is the identity itself.
 async fn replace_database(
     client: &Client,
     spec: &TargetSpec,
     template: &Identifier,
     fingerprint: &str,
     acl: &str,
-) -> Result<(), TargetDatabaseError> {
+) -> Result<String, TargetDatabaseError> {
     // A missing template is a stale standup and not a lifecycle failure. It is
     // checked before the drop, so a run that cannot restore the database never
     // destroys it.
@@ -422,5 +429,20 @@ async fn replace_database(
             "re-emit the environment database ACL with wamn dev up",
         )
         .with_source(source)
-    })
+    })?;
+    let instance: u32 = client
+        .query_one(
+            "SELECT oid FROM pg_catalog.pg_database WHERE datname = $1",
+            &[&spec.database.as_str()],
+        )
+        .await
+        .map(|row| row.get(0))
+        .map_err(|source| {
+            TargetDatabaseError::new(
+                TargetDatabaseErrorKind::CreateFailed,
+                "grant the target credential CREATEDB authority for its disposable database",
+            )
+            .with_source(source)
+        })?;
+    Ok(instance.to_string())
 }

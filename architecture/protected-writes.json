@@ -615,7 +615,7 @@
         "constraint:component_library_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:component_library_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:component_library_immutable;mode=origin;function=catalog.reject_durable_component_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER component_library_immutable BEFORE DELETE OR UPDATE ON catalog.component_library FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_component_fact_change()"
+        "trigger:component_library_immutable;mode=origin;function=catalog.reject_durable_environment_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER component_library_immutable BEFORE DELETE OR UPDATE ON catalog.component_library FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_environment_fact_change()"
       ]
     },
     {
@@ -651,7 +651,7 @@
         "policy:connection_requirements_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:connection_requirements_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:connection_requirements_immutable;mode=origin;function=catalog.reject_durable_component_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER connection_requirements_immutable BEFORE DELETE OR UPDATE ON catalog.connection_requirements FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_component_fact_change()"
+        "trigger:connection_requirements_immutable;mode=origin;function=catalog.reject_durable_environment_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER connection_requirements_immutable BEFORE DELETE OR UPDATE ON catalog.connection_requirements FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_environment_fact_change()"
       ]
     },
     {
@@ -688,7 +688,7 @@
         "constraint:deployment_attestations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:deployment_attestations_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:deployment_attestations_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER deployment_attestations_immutable BEFORE DELETE OR UPDATE ON catalog.deployment_attestations FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
+        "trigger:deployment_attestations_immutable;mode=origin;function=catalog.reject_durable_environment_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER deployment_attestations_immutable BEFORE DELETE OR UPDATE ON catalog.deployment_attestations FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_environment_fact_change()"
       ]
     },
     {

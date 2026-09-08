@@ -388,7 +388,7 @@ REVOKE ALL ON FUNCTION catalog.project_tenant_environment(
 -- FAIL-CLOSED by construction: a caller that has not claimed `app.tenant` sees
 -- no row through the projection's RLS policy and is refused, exactly as a
 -- tenant with no projected environment is.
-CREATE OR REPLACE FUNCTION catalog.reject_durable_component_fact_change()
+CREATE OR REPLACE FUNCTION catalog.reject_durable_environment_fact_change()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -404,7 +404,7 @@ BEGIN
         MESSAGE = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME || ' is immutable';
 END
 $$;
-REVOKE ALL ON FUNCTION catalog.reject_durable_component_fact_change() FROM PUBLIC;
+REVOKE ALL ON FUNCTION catalog.reject_durable_environment_fact_change() FROM PUBLIC;
 
 CREATE TABLE catalog.authoring_command_audit (
     tenant_id         text        NOT NULL CHECK (tenant_id <> ''),
@@ -542,6 +542,28 @@ BEGIN
        AND source_commit IS NOT DISTINCT FROM p_source_commit;
 
     IF stored_attested_at IS NULL THEN
+        -- A disposable environment attests what it deployed THIS run. Its
+        -- effective release id is fixed, so a second run mints a different
+        -- manifest under the same coordinate and the frozen row would refuse
+        -- forever. Same rule as the component fact, at a third site: the
+        -- condition is the TARGET, read from provisioning's projection, and a
+        -- tenant with no projected row stays frozen.
+        IF coalesce((
+            SELECT disposable FROM catalog.tenant_environments
+             WHERE tenant_id = p_tenant_id
+        ), false) THEN
+            UPDATE catalog.deployment_attestations
+               SET deployed_manifest_hash = p_deployed_manifest_hash,
+                   source_commit = p_source_commit,
+                   attested_at = p_attested_at
+             WHERE tenant_id = p_tenant_id
+               AND effective_release_id = p_effective_release_id
+               AND org_id = p_org_id
+               AND project_id = p_project_id
+               AND environment = p_environment
+            RETURNING attested_at INTO stored_attested_at;
+            RETURN stored_attested_at;
+        END IF;
         RAISE EXCEPTION USING ERRCODE = '23505',
             MESSAGE = 'deployment-attestation-content-conflict';
     END IF;
@@ -585,7 +607,7 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.packages', 'catalog.package_migrations',
         'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.authoring_command_audit', 'catalog.deployment_attestations',
+        'catalog.authoring_command_audit',
         'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -595,15 +617,17 @@ BEGIN
         );
     END LOOP;
 
-    -- The component fact and its requirements carry the SAME freeze, conditioned
-    -- on the row's own environment (wamn-10yt.38). Same trigger names, so the
-    -- refusal an author already knows keeps its spelling.
+    -- These carry the SAME freeze, conditioned on the row's own environment
+    -- (wamn-10yt.38, wamn-10yt.51). Same trigger names, so the refusal an author
+    -- already knows keeps its spelling. A durable environment is unchanged: the
+    -- condition reads provisioning's projection, and absence means durable.
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.component_library', 'catalog.connection_requirements'
+        'catalog.component_library', 'catalog.connection_requirements',
+        'catalog.deployment_attestations'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
         EXECUTE format(
-            'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_component_fact_change()',
+            'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_environment_fact_change()',
             trigger_name, relation_name
         );
     END LOOP;
