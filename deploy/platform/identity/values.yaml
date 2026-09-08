@@ -1,0 +1,17 @@
+image:
+  repository: wamn-identity
+  tag: dev
+  pullPolicy: IfNotPresent
+
+# Set the configured HTTPS issuer and existing Secret names before installation.
+# The Secrets must exist in the release namespace.
+issuer: ""
+databaseSecret: ""
+tlsSecret: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

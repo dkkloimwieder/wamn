@@ -134,6 +134,83 @@
     },
     {
       "scope": "production-control-database",
+      "relation": "identity.session_keys",
+      "ops": false,
+      "installer": "platform-identity",
+      "owner": "platform-identity",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "wamn_identity_issuer",
+          "basis": "grant",
+          "operations": [
+            "delete",
+            "insert",
+            "update"
+          ]
+        },
+        {
+          "role": "wamn_system",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:session_keys_issuer_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (btrim(issuer) <> ''::text)",
+        "constraint:session_keys_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (issuer, kid)",
+        "constraint:session_keys_public_key_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (octet_length(public_key) = 32)",
+        "constraint:session_keys_retirement_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((signing_cutoff IS NULL) = (private_pkcs8 IS NOT NULL))",
+        "row-security:enabled=false;forced=false"
+      ]
+    },
+    {
+      "scope": "production-control-database",
+      "relation": "identity.session_signing_state",
+      "ops": false,
+      "installer": "platform-identity",
+      "owner": "platform-identity",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "wamn_identity_issuer",
+          "basis": "grant",
+          "operations": [
+            "delete",
+            "insert",
+            "update"
+          ]
+        },
+        {
+          "role": "wamn_system",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:session_signing_state_issuer_active_kid_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (issuer, active_kid) REFERENCES identity.session_keys(issuer, kid)",
+        "constraint:session_signing_state_issuer_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (btrim(issuer) <> ''::text)",
+        "constraint:session_signing_state_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (issuer)",
+        "row-security:enabled=false;forced=false"
+      ]
+    },
+    {
+      "scope": "production-control-database",
       "relation": "provisioning.sagas",
       "ops": false,
       "installer": "provision-store",

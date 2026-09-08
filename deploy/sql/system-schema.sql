@@ -38,14 +38,14 @@
 --
 -- THE FOUR INVARIANTS for T1, and how this schema
 -- encodes / makes each testable:
---   (1) request-path-free  — an ARCHITECTURAL property, not a DB constraint. No
---       data-plane workload (gateway/runner/dispatcher/webhook) may reference
---       this cluster or DB; only control-plane tooling connects here. A static
---       manifest grep (crates/control/registry/tests/storage.rs) guards it.
+--   (1) control-plane authority: tenant workloads cannot connect here.
+--       Scoped identity readers perform fresh PAT authentication.
+--       The separate identity issuer reads and mutates only its key tables.
 --   (2) no tenant-database credentials (R8b) — `project_envs` stores a Secret
 --       *reference* (secret_name + optional secret_namespace) and NO tenant DB
 --       credential column (no url/password/dsn). First-party human login hashes
---       live separately under `identity`; plaintext secrets never do.
+--       live separately under `identity`. Session signing keys are the explicit
+--       authority-only exception: only wamn-identity receives their private part.
 --   (3) no tenant data — the only tables here are the control-plane set below
 --       (registry + provisioning + first-party platform identity). No catalogs,
 --       run state, payloads, or per-project application users. The live-apply
@@ -71,7 +71,7 @@
 -- `provisioning` = the saga state that orchestrates it (10.1's
 -- exactly-once/resumable steps); `identity` = first-party platform principals,
 -- local human credential hashes, project-role assignments (wamn-ctc8.6), and
--- personal-access-token digests (wamn-ctc8.7).
+-- personal-access-token digests (wamn-ctc8.7), and signing generations (wamn-ctc8.15.1).
 -- Distinct schemas keep each control-plane subsystem namespaced.
 -- Owned by the `wamn_system` role the T1 cluster bootstraps (wamn-q3n.2).
 -- ---------------------------------------------------------------------------
@@ -270,6 +270,38 @@ CREATE TABLE identity.pats (
 );
 
 CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
+
+-- Session signing authority (wamn-ctc8.15.1). This is key-generation state,
+-- never per-session state. A fresh UUID kid is generated for each publication;
+-- rotation never reuses the credential machinery's A/B slot names as kids.
+-- Only the identity authority receives table access. Hosts receive a public
+-- projection through JWKS, never a database grant or private key material.
+--
+-- Signers hold a SHARE lock on their issuer's signing-state row through the
+-- signature. Activation and compromise removal hold UPDATE locks on that row.
+-- After old signers drain, activation records clock_timestamp() as a proven
+-- signing cutoff and erases the old private key in the same transaction.
+-- The public key remains valid through cutoff + 930 seconds (900 + 30).
+-- A failed flip rolls back both state and cutoff; no last-use/token writes are
+-- needed. Compromise removal deletes the key immediately and never falls back.
+CREATE TABLE identity.session_keys (
+    issuer         text NOT NULL CHECK (btrim(issuer) <> ''),
+    kid            uuid NOT NULL DEFAULT gen_random_uuid(),
+    public_key     bytea NOT NULL CHECK (octet_length(public_key) = 32),
+    private_pkcs8  bytea,
+    published_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
+    signing_cutoff timestamptz,
+    PRIMARY KEY (issuer, kid),
+    CONSTRAINT session_keys_retirement_check
+        CHECK ((signing_cutoff IS NULL) = (private_pkcs8 IS NOT NULL))
+);
+
+CREATE TABLE identity.session_signing_state (
+    issuer     text PRIMARY KEY CHECK (btrim(issuer) <> ''),
+    active_kid uuid,
+    FOREIGN KEY (issuer, active_kid)
+        REFERENCES identity.session_keys (issuer, kid)
+);
 
 -- ---------------------------------------------------------------------------
 -- Project-envs — the registry LEAF: one provisioned (org, project, env)

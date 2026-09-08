@@ -572,7 +572,10 @@ pub fn ensure_effect_writer_acl_role_sql() -> String {
 
 /// Idempotently create or harden one stable workload ACL role as NOLOGIN.
 pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
-    let role = family.acl_role();
+    ensure_acl_role_sql(family.acl_role())
+}
+
+pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
     format!(
         "DO $workload_acl$ DECLARE role_name text := {role_lit}; BEGIN \
            PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
@@ -1214,12 +1217,16 @@ pub fn retire_workload_generation_sql(
     database: &str,
     role: &str,
 ) -> String {
+    retire_acl_generation_sql(family.acl_role(), database, role)
+}
+
+pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &str) -> String {
     let role_ident = quote_ident(role);
     format!(
         "REVOKE {acl_role} FROM {role_ident}; \
          REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
          ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
-        acl_role = quote_ident(family.acl_role()),
+        acl_role = quote_ident(acl_role),
         database = quote_ident(database),
     )
 }

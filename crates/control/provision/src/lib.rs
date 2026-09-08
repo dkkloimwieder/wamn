@@ -59,6 +59,7 @@ pub mod database;
 #[cfg(feature = "ops")]
 pub mod dump;
 mod error;
+pub mod identity_issuer;
 pub mod management_admitter;
 mod name;
 pub mod operation_grants;

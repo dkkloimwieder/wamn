@@ -1,0 +1,14 @@
+# Operator inputs for the separate identity service (wamn-ctc8.15.1).
+# Set issuer to the configured cluster-internal HTTPS authority URL.
+# Set tlsSecret to its serving certificate Secret from the existing issuer/CA.
+# The certificate must cover the issuer hostname.
+# Empty required values refuse Helm rendering until the operator supplies them.
+#
+# The chart creates no ingress, certificate authority, or credential material.
+# Install the prepared database and TLS Secrets in the release namespace first.
+#
+# helm upgrade --install -n wamn-system wamn-identity \
+#   deploy/platform/identity -f deploy/platform/values-identity-default.yaml
+issuer: ""
+databaseSecret: wamn-identity-db
+tlsSecret: ""

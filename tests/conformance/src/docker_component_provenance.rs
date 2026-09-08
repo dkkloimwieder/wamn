@@ -89,6 +89,7 @@ fn every_embedded_component_comes_from_the_locked_builder() {
     // regression, and `stage` fails closed when a stage name disappears.
     for image_stage in [
         "host",
+        "identity",
         "executor",
         "ctl",
         "dispatcher",
@@ -127,6 +128,12 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
     let packages = [
         ("host", "wamn-host", "host", &["wamn-host"][..]),
         (
+            "identity",
+            "wamn-identity",
+            "identity",
+            &["wamn-identity"][..],
+        ),
+        (
             "executor",
             "wamn-executor",
             "executor",
@@ -162,7 +169,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
     assert_eq!(
         DOCKERFILE.matches("cargo chef cook").count(),
         packages.len(),
-        "only the seven retained native package cooks may exist"
+        "only the eight retained native package cooks may exist"
     );
 
     for (stage_name, package, image_stage, outputs) in packages {

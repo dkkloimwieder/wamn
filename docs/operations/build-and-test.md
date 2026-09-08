@@ -1217,6 +1217,124 @@ this mode.
 The [2026-09-07 evidence](evidence/ctc8-19-premerge-20260907/README.md) preserves
 both deployed runs and the workspace sweep at their recorded source commits.
 
+### `[IDENTITY-JWKS]` public signing keys
+
+This foundation gate covers `wamn-ctc8.15.1`.
+The separate `wamn-identity` service exposes HTTPS JWKS and health routes.
+It does not expose `/session`, `/authoring`, or host execution.
+Signing keys stay in the system database under a dedicated identity credential.
+The gate observes public keys only and receives no database credential.
+
+Run the deterministic token and HTTPS cache proofs:
+
+```bash
+cargo test --locked --offline -p wamn-platform-identity --test session_token
+cargo test --locked --offline -p wamn-runtime --features test-util \
+  --test session_keys -- --test-threads=1
+```
+
+Each live suite requires its own disposable PostgreSQL 18 server.
+The URL must name `wamn_system`.
+Do not use a shared server because the fixtures replace schemas and cluster-wide roles.
+The grant fixtures also revoke the public database connection privilege.
+
+```bash
+WAMN_SESSION_KEYS_PG_URL="$WAMN_OWNED_PG18_URL" \
+WAMN_SESSION_KEYS_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-platform-identity \
+  --test session_keys_live -- --include-ignored --nocapture --test-threads=1
+WAMN_IDENTITY_ISSUER_PG_URL="$WAMN_OWNED_PG18_URL" \
+WAMN_IDENTITY_ISSUER_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-control-provision \
+  --test identity_issuer_live -- --include-ignored --nocapture --test-threads=1
+WAMN_IDENTITY_SERVICE_PG_URL="$WAMN_OWNED_PG18_URL" \
+WAMN_IDENTITY_SERVICE_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-identity \
+  --test https_surface -- --include-ignored --nocapture --test-threads=1
+WAMN_IDENTITY_ISSUER_CLI_PG_URL="$WAMN_OWNED_PG18_URL" \
+WAMN_IDENTITY_ISSUER_CLI_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-ctl \
+  --test identity_issuer_live -- --include-ignored --nocapture --test-threads=1
+```
+
+Replace the disposable server and URL before each command.
+The key proof covers committed publication, activation, signing locks, retirement, and compromised-key removal.
+The credential proofs cover narrow grants, atomic Secret output, rollback, and A/B retirement.
+The HTTPS proof uses the compiled identity CLI and the production listener.
+The cache proofs use real TLS with controlled evidence clocks.
+They cover complete replacement, removal, outages, prior HTTP Age, cancellation, fetch limits, and exact freshness deadlines.
+
+Run the deployed gate from a clean worktree:
+
+```bash
+tools/identity-jwks-journey-run --apply \
+  --evidence-dir docs/perf/2026.09/ctc8-15-1-identity/deployed-001
+```
+
+The journey builds the standard `identity` and `gates` Dockerfile stages.
+It installs the actual identity chart in a disposable kind cluster.
+Its test CA is local to that cluster and does not change production trust.
+It retains image identities, Job verdicts, Pod states, and public key receipts.
+It removes only its own cluster and temporary credentials.
+The two-host session-token proof remains mandatory in `wamn-ctc8.15.3`.
+Public-key cache tests do not establish host admission.
+
+### Identity foundation rollout
+
+For an existing database, install the two key tables as the `wamn_system` owner.
+Use the `identity.session_keys` and `identity.session_signing_state` definitions from `deploy/sql/system-schema.sql`.
+Do not replay the complete bootstrap against an existing database.
+Before credential preparation, apply the existing cluster policy that removes public database connection privileges.
+Remove public temporary-table privileges on `wamn_system`.
+The provisioner refuses an open policy and does not modify unrelated databases.
+
+Prepare the first issuer credential:
+
+```bash
+wamn-ctl provision-identity-issuer --issuer "$WAMN_IDENTITY_ISSUER" \
+  --prepare-generation a --emit-secret /secure/identity-db.json
+kubectl --context "$WAMN_CONTEXT" -n wamn-system apply -f /secure/identity-db.json
+```
+
+The command reads the administrator URL from `WAMN_SYSTEM_ADMIN_URL`.
+It emits a scoped credential with a finite 30-day lifetime and mode 0600.
+The service refuses an owner credential or a credential for another issuer before connection.
+Credential rotation uses the existing A/B slots, not signing-key identifiers.
+Before retiring the old slot, start the replacement service with the new credential.
+The provisioner requires a live replacement connection and then drains the old connections.
+
+Install the service with an existing trusted serving certificate:
+
+```bash
+helm upgrade --install wamn-identity deploy/platform/identity \
+  --kube-context "$WAMN_CONTEXT" --namespace wamn-system \
+  -f deploy/platform/values-identity-default.yaml \
+  --set-string issuer="$WAMN_IDENTITY_ISSUER" \
+  --set-string tlsSecret="$WAMN_IDENTITY_TLS_SECRET"
+```
+
+Configure the intended identity image tag in the deployment values before installation.
+The chart requires HTTPS and operator-provided database and serving certificate Secrets.
+It adds no ingress, service-account privilege, or trust root.
+The default database example contains an unusable placeholder.
+
+Publish a signing key through the deployed identity binary:
+
+```bash
+kubectl --context "$WAMN_CONTEXT" -n wamn-system exec deployment/wamn-identity \
+  -- wamn-identity publish
+kubectl --context "$WAMN_CONTEXT" -n wamn-system exec deployment/wamn-identity \
+  -- wamn-identity activate --kid "$WAMN_PUBLISHED_KID"
+```
+
+Use the public `kid` from the publication result for activation.
+Publication must commit before activation.
+Rotation erases the old private key after existing signers drain.
+Its public key remains available for 930 seconds after that cutoff.
+The `retire` command removes expired generations.
+The `remove --kid` command removes a compromised key immediately and selects no replacement.
+Neither command creates a session record.
+
 ### `[WAMN-DEV-LIVE]` — clean twelve-stage product command and cleanup
 
 This gate runs the literal `wamn dev` product command through all twelve

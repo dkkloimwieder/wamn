@@ -1,0 +1,6 @@
+apiVersion: v2
+name: wamn-identity
+description: Separate identity authority with public session verification keys.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

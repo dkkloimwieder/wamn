@@ -124,6 +124,36 @@ revocation is a separate proposal with its own consistency rules.
   `jwks_max_age`; repeat with the JWKS endpoint unavailable — both refuse at
   the deadline rather than keep trusting the stale key.
 
+### Owner rulings, 2026-09-08
+
+The owner approved these foundation choices in `wamn-ctc8.24` through `.28`.
+They clarify this proposal without removing any §8 proof.
+
+The retirement clock starts at a proven stop-signing barrier.
+The barrier prevents successful issuance with the old key after its cutoff.
+A successful database commit must precede the return of a signed token.
+Retain the old public key for 930 seconds after that cutoff.
+This bound requires no per-token database writes or durable last-signature timestamp.
+Compromised-key removal remains immediate and does not activate a replacement.
+
+The fixed JWT profile uses `ring` for Ed25519 signatures.
+The wire algorithm remains exactly `Ed25519`, and the type remains `wamn-session+jwt`.
+There is no generic JWT framework or alternate algorithm.
+
+The service uses cluster-internal HTTPS with a configured issuer and trusted CA.
+This foundation adds no external ingress or trust root.
+The later TUI work owns the external connection path.
+
+Each configured issuer permits one JWKS request at a time.
+Request starts remain at least one second apart.
+Each fetch has a five-second total timeout and a 65,536-byte response limit.
+These limits never extend the 300-second freshness deadline.
+
+`wamn-ctc8.15.1` owns the deployed service boundary, key lifecycle, and public-key cache proofs.
+`wamn-ctc8.15.3` owns the actual two-host session-token acceptance and refusal proofs.
+Those proofs include both reachable and unreachable JWKS.
+Session activation remains blocked until those proofs and the fresh-only operation proof pass.
+
 ## 5. Minting
 
 - `POST /session`: a valid **human** PAT → one token for one requested `aud`.

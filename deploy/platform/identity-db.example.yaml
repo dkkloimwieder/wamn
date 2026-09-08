@@ -1,0 +1,18 @@
+# Database credential carrier for the separate identity service (wamn-ctc8.15.1).
+# Copy the URL for the prepared, scoped wamn_identity_issuer LOGIN generation.
+# Do not use a system owner, authoring, host, or identity-reader credential.
+# Replace this unusable placeholder before applying the Secret.
+#
+# The chart only references this Secret, so chart upgrades cannot overwrite it.
+# TLS credentials belong to the separately configured serving certificate Secret.
+# Session signing keys stay in the system database, never in either Secret.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-identity-db
+  namespace: wamn-system
+  labels:
+    app.kubernetes.io/name: wamn-identity
+type: Opaque
+stringData:
+  url: REPLACE-WITH-THE-PREPARED-IDENTITY-ISSUER-DATABASE-URL

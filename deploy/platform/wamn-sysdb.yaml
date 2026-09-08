@@ -6,11 +6,14 @@
 # model -> wamn-q3n.3 tables), provisioning-saga state (10.1), platform RBAC
 # (8.1), plan/quota definitions, billing rollups, and platform-level audit.
 # EXCLUDES by design (docs/archive/platform/postgres-topology.md §T1): NO tenant data (catalogs,
-# run state, payloads, application users live in org/pool clusters), NO
-# credentials (R8b — the registry stores Secret *references*; actual material
-# lives in K8s Secrets resolved by RBAC-holding components), and NO request-path
-# reads (system-cluster-down freezes provisioning/promotions, never the data
-# plane).
+# run state, payloads, application users live in org/pool clusters), NO tenant
+# database credentials (R8b — the registry stores Secret *references*; actual material
+# lives in K8s Secrets resolved by RBAC-holding components).
+# Scoped identity readers perform fresh PAT authentication here.
+# Identity database failure also prevents fresh JWKS publication.
+# Identity signing keys are the owner-approved exception (wamn-ctc8.15.1).
+# They stay in this database under the dedicated identity issuer authority.
+# Hosts and the authoring Gate receive no private signing keys.
 #
 # DISTINCT PLANE — this is a SEPARATE cluster from the T3 trials pool
 # (deploy/infra/cnpg-cluster.yaml `wamn-pg`) and the legacy S2–S6 gate pod

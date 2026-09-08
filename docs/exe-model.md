@@ -199,6 +199,17 @@ a proof rewritten to poll for that refusal would be a proof of a race. The way
 to make an authorization path fast is to make its reads cheap, which is what
 reducing them from nine round trips to three did; it is not to stop making them.
 
+The owner approved a scoped session exception on 2026-09-07 and clarified it on 2026-09-08.
+The [JWT proposal](architecture/wamn_jwt_proposal.md) controls that exception.
+Fresh PAT authentication still reads identity, membership or service scope, and tenant permissions on every request.
+Session tokens carry signed identity and environment-role evidence for at most 900 seconds, plus 30 seconds of clock tolerance.
+Hosts read tenant operation permissions fresh for every new request.
+They accept public signing keys only within the configured issuer's 300-second evidence window.
+Private signing keys stay with the separate `wamn-identity` authority and its system database.
+The fresh-only restriction belongs to each registered operation and survives nested calls.
+Session routes remain disabled until the two-host and fresh-only proofs pass.
+This foundation adds keys and JWKS only, not a session admission path.
+
 Per-tenant roles imply pools per credential. Connection multiplication is the
 pooler trigger, not an alternative identity model.
 

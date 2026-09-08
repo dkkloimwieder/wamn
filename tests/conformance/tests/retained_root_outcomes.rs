@@ -44,6 +44,7 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-gate-harness", "test-support/harness/src/lib.rs"),
     ("wamn-gates", "tests/orchestrator/src/main.rs"),
     ("wamn-host", "services/host/src/main.rs"),
+    ("wamn-identity", "services/identity/src/lib.rs"),
     ("wamn-pg-core", "crates/platform/pg-core/src/lib.rs"),
     (
         "wamn-platform-identity",

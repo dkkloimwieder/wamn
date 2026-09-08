@@ -1,0 +1,335 @@
+#!/usr/bin/env bash
+# IDENTITY-JWKS: the actual chart and binaries on one owned disposable cluster.
+set -euo pipefail
+umask 077
+
+usage() {
+  printf '%s\n' \
+    'usage: identity-jwks-journey-run [--apply] --evidence-dir DIR' \
+    'Without --apply, print the plan without building or creating resources.' \
+    'DIR must be new and under docs/perf/ in this worktree or its shared checkout.' \
+    'The run creates and removes its own named kind cluster and image tags.' \
+    'No existing cluster, database, ingress, or production trust root is used.' >&2
+}
+
+fail() { printf 'identity-jwks journey: %s\n' "$*" >&2; exit 2; }
+apply=false
+evidence_dir=
+while (($#)); do
+  case "$1" in
+    --apply) apply=true; shift ;;
+    --evidence-dir)
+      (($# >= 2)) && [[ -n "$2" ]] || fail '--evidence-dir needs a directory'
+      evidence_dir=$2; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) usage; fail "unknown argument: $1" ;;
+  esac
+done
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+repo_root=$(cd -- "$script_dir/.." && pwd -P)
+cd -- "$repo_root"
+common_dir=$(realpath -e -- "$(git rev-parse --path-format=absolute --git-common-dir)")
+shared_root=$(cd -- "$common_dir/.." && pwd -P)
+[[ "$common_dir" == "$shared_root/.git" && $(git -C "$shared_root" rev-parse --show-toplevel) == "$shared_root" ]] \
+  || fail 'Git common directory does not name the shared checkout'
+head=$(git rev-parse --verify HEAD)
+run_id=${head:0:12}-$$
+cluster=wamn-identity-jwks-$run_id
+context=kind-$cluster
+namespace=wamn-identity-jwks
+release=wamn-identity
+postgres=identity-postgres
+provisioner=identity-provisioner
+identity_image=wamn-identity:jwks-$run_id
+gates_image=wamn-gates:jwks-$run_id
+issuer=https://$release.$namespace.svc.cluster.local
+for name in "$cluster" "$namespace" "$release" "$postgres" "$provisioner"; do
+  [[ ${#name} -le 63 && "$name" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail 'invalid owned target name'
+done
+[[ "$cluster" == wamn-identity-jwks-* && "$context" == kind-wamn-identity-jwks-* ]] || fail 'unexpected cluster target'
+source_pathspecs=(. ':(exclude).beads/issues.jsonl' ':(exclude).beads/interactions.jsonl')
+if [[ -n "$evidence_dir" ]]; then
+  [[ ! -e "$evidence_dir" && ! -L "$evidence_dir" ]] || fail 'evidence directory already exists'
+  evidence_dir=$(realpath -m -- "$evidence_dir")
+  [[ ( "$evidence_dir" == "$repo_root"/docs/perf/* || "$evidence_dir" == "$shared_root"/docs/perf/* ) && ! -e "$evidence_dir" ]] \
+    || fail 'evidence must be a new docs/perf directory in the source or shared checkout'
+  if [[ "$evidence_dir" == "$repo_root"/* ]]; then
+    source_pathspecs+=(":(exclude,literal)${evidence_dir#"$repo_root"/}")
+  fi
+fi
+if [[ "$apply" != true ]]; then
+  printf 'IDENTITY-JWKS dry-run (no mutation)\nsource=%s\ncluster=%s\ncontext=%s\n' "$head" "$cluster" "$context"
+  printf 'images=%s,%s\nissuer=%s\n' "$identity_image" "$gates_image" "$issuer"
+  printf 'evidence=%s\nshared_checkout=%s\n' "${evidence_dir:-not specified}" "$shared_root"
+  printf '%s\n' 'order=canonical identity build; serial component-builder prewarm; canonical gates build; own kind+PG18; production credential CLI; actual identity chart; five key-set Jobs; named cleanup' \
+    'proof=public HTTPS JWKS and key evidence only; token_admission=not_proven expiry_outage=not_proven'
+  exit 0
+fi
+
+[[ -n "$evidence_dir" ]] || { usage; fail 'an evidence directory is required'; }
+for required in awk bash chmod cmp cp date docker git helm jq kind kubectl mkdir mktemp openssl realpath rm sed sha256sum tee timeout; do
+  command -v "$required" >/dev/null 2>&1 || fail "missing executable: $required"
+done
+[[ $(uname -m) == x86_64 ]] || fail 'canonical Docker targets require an x86_64 build host'
+assert_clean_source() {
+  [[ $(git rev-parse HEAD) == "$head" ]] || fail 'source HEAD changed during the journey'
+  [[ -z $(git status --porcelain --untracked-files=normal -- "${source_pathspecs[@]}") ]] \
+    || fail 'commit the complete source before running the journey'
+}
+assert_clean_source
+clusters=$(kind get clusters)
+[[ -z $(printf '%s\n' "$clusters" | awk -v name="$cluster" '$0 == name { print }') ]] || fail 'owned cluster name already exists'
+if docker container inspect "$cluster-control-plane" >/dev/null 2>&1; then fail 'owned node name already exists'; fi
+for image in "$identity_image" "$gates_image"; do
+  if docker image inspect "$image" >/dev/null 2>&1; then fail 'owned image tag already exists'; fi
+done
+
+mkdir -p -m 0700 -- "$evidence_dir"
+work_dir=$(mktemp -d /tmp/wamn-identity-jwks.XXXXXXXX)
+kubeconfig=$work_dir/kubeconfig
+kube=(kubectl --kubeconfig "$kubeconfig" --context "$context")
+commands_record=$evidence_dir/commands.log
+cluster_owned=false
+identity_owned=false
+gates_owned=false
+completed=false
+
+record_command() {
+  printf '%s ' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$commands_record"
+  printf '%q ' "$@" >>"$commands_record"
+  printf '\n' >>"$commands_record"
+}
+run() {
+  local status=0
+  record_command "$@"
+  "$@" || status=$?
+  printf '%s exit=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" >>"$commands_record"
+  return "$status"
+}
+
+capture_cluster() {
+  [[ "$cluster_owned" == true && -s "$kubeconfig" ]] || return 0
+  run timeout 30s "${kube[@]}" -n "$namespace" get jobs,pods,deployments,services -o json \
+    >"$evidence_dir/final-resources.json" 2>"$evidence_dir/final-capture-errors.log" || return 1
+  run timeout 30s "${kube[@]}" -n "$namespace" get events -o json >"$evidence_dir/final-events.json" 2>>"$evidence_dir/final-capture-errors.log" || return 1
+  local job
+  while IFS= read -r job; do
+    [[ "$job" =~ ^identity-jwks-[a-z0-9-]+$ ]] || return 1
+    run timeout 30s "${kube[@]}" -n "$namespace" logs "job/$job" -c identity-jwks \
+      >"$evidence_dir/final-$job.log" 2>>"$evidence_dir/final-capture-errors.log" || true
+  done < <(jq -r '.items[] | select(.kind == "Job") | .metadata.name' "$evidence_dir/final-resources.json")
+}
+
+cleanup() {
+  local status=$? cleanup_failed=false
+  trap - EXIT HUP INT TERM
+  set +e
+  capture_cluster || cleanup_failed=true
+  if [[ "$cluster_owned" == true ]]; then
+    run timeout 120s kind delete cluster --name "$cluster" >>"$evidence_dir/cleanup.log" 2>&1 || cleanup_failed=true
+    clusters=$(kind get clusters 2>>"$evidence_dir/cleanup.log") || cleanup_failed=true
+    [[ -z $(printf '%s\n' "$clusters" | awk -v name="$cluster" '$0 == name { print }') ]] || cleanup_failed=true
+    docker container inspect "$cluster-control-plane" >/dev/null 2>&1 && cleanup_failed=true
+  fi
+  if [[ "$identity_owned" == true ]] && docker image inspect "$identity_image" >/dev/null 2>&1; then
+    run docker image rm "$identity_image" >>"$evidence_dir/cleanup.log" 2>&1 || cleanup_failed=true
+  fi
+  if [[ "$gates_owned" == true ]] && docker image inspect "$gates_image" >/dev/null 2>&1; then
+    run docker image rm "$gates_image" >>"$evidence_dir/cleanup.log" 2>&1 || cleanup_failed=true
+  fi
+  # This exact mktemp directory contains fixture credentials and TLS private
+  # keys. They are removed on success and failure, never copied into evidence.
+  if [[ "$work_dir" =~ ^/tmp/wamn-identity-jwks\.[[:alnum:]]+$ ]]; then
+    run rm -rf -- "$work_dir" >>"$evidence_dir/cleanup.log" 2>&1 || cleanup_failed=true
+  else
+    cleanup_failed=true
+  fi
+  [[ "$completed" == true && "$cleanup_failed" == false ]] || { ((status != 0)) || status=1; }
+  jq -n --arg source "$head" --arg cluster "$cluster" --argjson exit "$status" \
+    --argjson cleanup_failed "$cleanup_failed" --argjson completed "$completed" \
+    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,exit_code:$exit,token_admission:"not_proven",expiry_outage:"not_proven"}' \
+    >"$evidence_dir/journey-verdict.json"
+  printf 'IDENTITY-JWKS journey exit=%s cleanup_failed=%s evidence=%s\n' "$status" "$cleanup_failed" "$evidence_dir"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
+
+printf '%s\n' "$head" >"$evidence_dir/source-head.txt"
+git status --porcelain --untracked-files=normal -- "${source_pathspecs[@]}" >"$evidence_dir/source-status.txt"
+sha256sum Cargo.lock Dockerfile tools/identity-jwks-journey-run \
+  tools/kubernetes-gate-run deploy/sql/system-schema.sql \
+  deploy/platform/identity/Chart.yaml deploy/platform/identity/values.yaml \
+  deploy/platform/identity/templates/deployment.yaml deploy/platform/identity/templates/service.yaml \
+  >"$evidence_dir/source-inputs.sha256"
+identity_owned=true
+run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
+  --target identity --tag "$identity_image" --label "wamn.dev/source-head=$head" "$repo_root" \
+  2>&1 | tee "$evidence_dir/build-identity.log"
+# The gates DAG also needs these components. Their Cargo caches differ from
+# the native caches, so finish this branch before gates can schedule both.
+# Cache-only output retains no extra image or tag.
+run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
+  --target component-builder --output=type=cacheonly "$repo_root" \
+  2>&1 | tee "$evidence_dir/build-components.log"
+gates_owned=true
+run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
+  --target gates --tag "$gates_image" --label "wamn.dev/source-head=$head" "$repo_root" \
+  2>&1 | tee "$evidence_dir/build-gates.log"
+assert_clean_source
+run docker image inspect "$identity_image" "$gates_image" >"$evidence_dir/images.json"
+jq -e --arg head "$head" 'length == 2 and all(.[]; .Config.Labels["wamn.dev/source-head"] == $head and (.Id | startswith("sha256:")))' \
+  "$evidence_dir/images.json" >/dev/null
+
+cluster_owned=true
+run kind create cluster --name "$cluster" --kubeconfig "$kubeconfig" --wait 180s 2>&1 | tee "$evidence_dir/create-cluster.log"
+run "${kube[@]}" wait --for=condition=Ready nodes --all --timeout=180s
+run "${kube[@]}" get nodes -o json >"$evidence_dir/nodes.json"
+jq -e --arg node "$cluster-control-plane" '(.items | length) == 1 and .items[0].metadata.name == $node' "$evidence_dir/nodes.json" >/dev/null
+run kind load docker-image "$identity_image" "$gates_image" --name "$cluster" 2>&1 | tee "$evidence_dir/load-images.log"
+run docker exec "$cluster-control-plane" crictl inspecti -o json "$identity_image" >"$evidence_dir/identity-node-image.json"
+run docker exec "$cluster-control-plane" crictl inspecti -o json "$gates_image" >"$evidence_dir/gates-node-image.json"
+run "${kube[@]}" create namespace "$namespace"
+
+# Fixture-only administrator bytes are supplied by a Secret, not argv or logs.
+postgres_password=$(openssl rand -hex 24)
+printf '%s' "$postgres_password" >"$work_dir/postgres-password"
+unset postgres_password
+printf 'postgresql://postgres:%s@%s.%s.svc.cluster.local:5432/wamn_system' \
+  "$(<"$work_dir/postgres-password")" "$postgres" "$namespace" >"$work_dir/system-admin-url"
+run "${kube[@]}" -n "$namespace" create secret generic identity-postgres-admin \
+  --from-file=password="$work_dir/postgres-password" --from-file=url="$work_dir/system-admin-url"
+jq -n --arg ns "$namespace" --arg pg "$postgres" '{apiVersion:"v1",kind:"List",items:[
+  {apiVersion:"v1",kind:"Service",metadata:{name:$pg,namespace:$ns},spec:{selector:{app:$pg},ports:[{port:5432,targetPort:5432}]}},
+  {apiVersion:"apps/v1",kind:"Deployment",metadata:{name:$pg,namespace:$ns},spec:{replicas:1,selector:{matchLabels:{app:$pg}},template:{metadata:{labels:{app:$pg}},spec:{automountServiceAccountToken:false,containers:[{name:"postgres",image:"postgres:18",env:[{name:"POSTGRES_DB",value:"wamn_system"},{name:"POSTGRES_PASSWORD",valueFrom:{secretKeyRef:{name:"identity-postgres-admin",key:"password"}}}],ports:[{containerPort:5432}],readinessProbe:{exec:{command:["pg_isready","-h","127.0.0.1","-U","postgres","-d","wamn_system"]},periodSeconds:2},volumeMounts:[{name:"data",mountPath:"/var/lib/postgresql"}]}],volumes:[{name:"data",emptyDir:{}}]}}}}]}' \
+  >"$evidence_dir/postgres.json"
+run "${kube[@]}" apply -f "$evidence_dir/postgres.json"
+run "${kube[@]}" -n "$namespace" rollout status "deployment/$postgres" --timeout=180s
+# The image entrypoint's temporary server has only a Unix socket. Before any
+# schema install or provisioning, a separate Pod authenticates through the
+# exact Service DNS/TCP route that the real provisioning CLI will use.
+readiness_script='attempt=0; while [ "$attempt" -lt 30 ]; do
+  if result=$(timeout 2s psql -X -w -At -v ON_ERROR_STOP=1 -c "SELECT current_database(), current_setting('\''server_version_num'\'')" 2>/dev/null); then
+    case "$result" in wamn_system\|18[0-9][0-9][0-9][0-9]) printf "IDENTITY_JWKS_POSTGRES ready=pass transport=tcp database_version=%s\n" "$result"; exit 0;; esac
+  fi
+  attempt=$((attempt+1)); sleep 1
+done
+printf "IDENTITY_JWKS_POSTGRES ready=fail\n" >&2; exit 1'
+jq -n --arg ns "$namespace" --arg name "$provisioner" --arg image "$gates_image" \
+  --arg host "$postgres.$namespace.svc.cluster.local" --arg readiness "$readiness_script" \
+  '{apiVersion:"v1",kind:"Pod",metadata:{name:$name,namespace:$ns},spec:{restartPolicy:"Never",automountServiceAccountToken:false,
+    initContainers:[{name:"wait-postgres",image:"postgres:18",command:["sh","-ec",$readiness],env:[{name:"PGHOST",value:$host},{name:"PGPORT",value:"5432"},{name:"PGUSER",value:"postgres"},{name:"PGDATABASE",value:"wamn_system"},{name:"PGCONNECT_TIMEOUT",value:"2"},{name:"PGPASSWORD",valueFrom:{secretKeyRef:{name:"identity-postgres-admin",key:"password"}}}]}],
+    containers:[{name:"provisioner",image:$image,imagePullPolicy:"Never",command:["sleep","1800"],env:[{name:"WAMN_SYSTEM_ADMIN_URL",valueFrom:{secretKeyRef:{name:"identity-postgres-admin",key:"url"}}}]}]}}' \
+  >"$evidence_dir/provisioner.json"
+run "${kube[@]}" apply -f "$evidence_dir/provisioner.json"
+run "${kube[@]}" -n "$namespace" wait --for=condition=Ready "pod/$provisioner" --timeout=180s
+run "${kube[@]}" -n "$namespace" logs "$provisioner" -c wait-postgres >"$evidence_dir/postgres-tcp-ready.log"
+run "${kube[@]}" -n "$namespace" exec "deployment/$postgres" -- psql -U postgres -d wamn_system -At -c \
+  "SELECT current_database(), current_setting('server_version_num')" >"$evidence_dir/postgres-version.txt"
+[[ $(<"$evidence_dir/postgres-version.txt") =~ ^wamn_system\|18[0-9]{4}$ ]] || fail 'fixture is not PostgreSQL 18 on wamn_system'
+{
+  printf '%s\n' "CREATE ROLE wamn_system NOLOGIN; GRANT CREATE ON DATABASE wamn_system TO wamn_system;" \
+    "REVOKE CONNECT, TEMPORARY ON DATABASE wamn_system, postgres, template1 FROM PUBLIC; SET ROLE wamn_system;"
+  sed -n '1,$p' "$repo_root/deploy/sql/system-schema.sql"
+  printf '\nRESET ROLE;\n'
+} >"$evidence_dir/bootstrap.sql"
+run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- \
+  psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 <"$evidence_dir/bootstrap.sql" >"$evidence_dir/bootstrap.log" 2>&1
+
+run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl \
+  provision-identity-issuer --issuer "$issuer" --prepare-generation a --namespace "$namespace" \
+  --secret-name wamn-identity-db --emit-secret /tmp/identity-db.json \
+  >"$evidence_dir/provision-identity.log" 2>&1
+run "${kube[@]}" -n "$namespace" exec "$provisioner" -- cat /tmp/identity-db.json >"$work_dir/identity-db.json"
+jq -e --arg ns "$namespace" '.kind == "Secret" and .metadata.name == "wamn-identity-db" and .metadata.namespace == $ns and (.stringData.url | type == "string")' \
+  "$work_dir/identity-db.json" >/dev/null
+run "${kube[@]}" apply -f "$work_dir/identity-db.json"
+run "${kube[@]}" -n "$namespace" delete pod "$provisioner" --wait=true --timeout=60s
+
+# TLS fixture keys are distinct from session signing keys. No production CA is
+# consulted. The independent wrong CA drives a real TLS refusal in every Job.
+for ca in ca wrong-ca; do
+  run openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=IDENTITY-JWKS fixture $ca" \
+    -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign \
+    -keyout "$work_dir/$ca.key" -out "$work_dir/$ca.crt" >"$evidence_dir/tls-$ca.log" 2>&1
+done
+run openssl req -new -newkey rsa:2048 -nodes -subj "/CN=$release.$namespace.svc.cluster.local" \
+  -keyout "$work_dir/tls.key" -out "$work_dir/tls.csr" >"$evidence_dir/tls-request.log" 2>&1
+printf 'subjectAltName=DNS:%s.%s.svc.cluster.local\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n' "$release" "$namespace" >"$work_dir/tls.ext"
+run openssl x509 -req -days 1 -in "$work_dir/tls.csr" -CA "$work_dir/ca.crt" -CAkey "$work_dir/ca.key" \
+  -CAcreateserial -extfile "$work_dir/tls.ext" -out "$work_dir/tls.crt" >"$evidence_dir/tls-sign.log" 2>&1
+cp "$work_dir/ca.crt" "$evidence_dir/ca.crt"
+cp "$work_dir/wrong-ca.crt" "$evidence_dir/wrong-ca.crt"
+run "${kube[@]}" -n "$namespace" create secret tls identity-jwks-tls --cert="$work_dir/tls.crt" --key="$work_dir/tls.key"
+run "${kube[@]}" -n "$namespace" create configmap identity-jwks-public \
+  --from-file=ca.crt="$work_dir/ca.crt" --from-file=wrong-ca.crt="$work_dir/wrong-ca.crt"
+helm_args=(--kubeconfig "$kubeconfig" --kube-context "$context" --namespace "$namespace" \
+  --set-string "issuer=$issuer" --set-string databaseSecret=wamn-identity-db --set-string tlsSecret=identity-jwks-tls \
+  --set-string image.repository=wamn-identity --set-string "image.tag=jwks-$run_id" --set-string image.pullPolicy=Never)
+run helm template "$release" "$repo_root/deploy/platform/identity" "${helm_args[@]}" >"$evidence_dir/identity-rendered.yaml"
+run helm upgrade --install "$release" "$repo_root/deploy/platform/identity" "${helm_args[@]}" --wait --timeout 180s \
+  2>&1 | tee "$evidence_dir/identity-install.log"
+run "${kube[@]}" -n "$namespace" get deployment "$release" -o json >"$evidence_dir/identity-deployment.json"
+jq -e --arg image "$identity_image" '.spec.template.spec.automountServiceAccountToken == false and (.spec.template.spec.containers | length) == 1 and .spec.template.spec.containers[0].image == $image' \
+  "$evidence_dir/identity-deployment.json" >/dev/null
+
+# The generic gate runner receives this argv-only adapter so every command uses
+# the private kubeconfig AND explicit context; no current-context lookup occurs.
+printf '#!/usr/bin/env bash\nexec %q --kubeconfig %q --context %q "$@"\n' \
+  "$(command -v kubectl)" "$kubeconfig" "$context" >"$work_dir/kubectl"
+chmod 0700 "$work_dir/kubectl"
+gate() {
+  local stage=$1 expected=$2 count name spec status=0
+  name=identity-jwks-$stage
+  [[ "$name" =~ ^identity-jwks-[a-z0-9-]+$ && ${#name} -le 63 ]] || fail 'invalid gate Job name'
+  count=$(jq -er 'if type == "array" and all(.[]; type == "string") and length == (unique | length) then length else error("invalid expected kids") end' <<<"$expected")
+  jq -n --arg ns "$namespace" --arg name "$name" --arg image "$gates_image" --arg issuer "$issuer" --arg kids "$expected" \
+    '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-jwks"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-jwks",image:$image,imagePullPolicy:"Never",args:["identity-jwks"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_JWKS_URL",value:($issuer+"/.well-known/jwks.json")},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_WRONG_CA_FILE",value:"/etc/wamn-identity-ca/wrong-ca.crt"},{name:"WAMN_IDENTITY_EXPECTED_KIDS",value:$kids}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public"}}]}}}}' \
+    >"$evidence_dir/$name.json"
+  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg receipt "IDENTITY_JWKS result=pass expected_keys=$count token_admission=not_proven expiry_outage=not_proven" \
+    '{name:$name,container:"identity-jwks",expectation:"positive",exit_code:0,image:$image,log_contains:$receipt}')
+  run env KUBECTL="$work_dir/kubectl" "$repo_root/tools/kubernetes-gate-run" \
+    --namespace "$namespace" --timeout-secs 180 --manifest "$evidence_dir/$name.json" \
+    --verdict-record "$evidence_dir/$name-verdict.json" --job "$spec" \
+    2>&1 | tee "$evidence_dir/$name-run.log" || status=$?
+  run "${kube[@]}" -n "$namespace" get job "$name" -o json >"$evidence_dir/$name-state.json"
+  run "${kube[@]}" -n "$namespace" get pods -l "job-name=$name" -o json >"$evidence_dir/$name-pods.json"
+  run "${kube[@]}" -n "$namespace" logs "job/$name" -c identity-jwks >"$evidence_dir/$name.log"
+  ((status == 0)) || return "$status"
+  {
+    printf 'IDENTITY_JWKS case=%s result=pass\n' configuration_https public_set issuer_binding
+    if ((count > 0)); then printf 'IDENTITY_JWKS case=two_cache_evidence result=pass\n'; fi
+    printf 'IDENTITY_JWKS case=%s result=pass\n' unknown_kid wrong_ca plaintext absent_authority_routes
+    printf 'IDENTITY_JWKS result=pass expected_keys=%s token_admission=not_proven expiry_outage=not_proven\n' "$count"
+  } >"$evidence_dir/$name-expected.txt"
+  sed -n '/^IDENTITY_JWKS/p' "$evidence_dir/$name.log" >"$evidence_dir/$name-receipts.txt"
+  cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-receipts.txt"
+}
+key_command() {
+  local receipt=$1; shift
+  run "${kube[@]}" -n "$namespace" exec "deployment/$release" -c identity -- \
+    /usr/local/bin/wamn-identity "$@" >"$evidence_dir/$receipt.json"
+}
+key_command published-a publish
+kid_a=$(jq -er '.kid | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$evidence_dir/published-a.json")
+gate published-a "$(jq -nc --arg a "$kid_a" '[$a]')"
+key_command activated-a activate --kid "$kid_a"
+jq -e --arg kid "$kid_a" '.activated == true and .kid == $kid' "$evidence_dir/activated-a.json" >/dev/null
+key_command published-b publish
+kid_b=$(jq -er '.kid | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$evidence_dir/published-b.json")
+[[ "$kid_a" != "$kid_b" ]] || fail 'publication reused an immutable kid'
+both=$(jq -nc --arg a "$kid_a" --arg b "$kid_b" '[$a,$b]')
+gate published-b "$both"
+key_command activated-b activate --kid "$kid_b"
+jq -e --arg kid "$kid_b" '.activated == true and .kid == $kid' "$evidence_dir/activated-b.json" >/dev/null
+gate activated-b "$both"
+key_command removed-a remove --kid "$kid_a"
+jq -e --arg kid "$kid_a" '.removed == true and .kid == $kid' "$evidence_dir/removed-a.json" >/dev/null
+gate removed-a "$(jq -nc --arg b "$kid_b" '[$b]')"
+key_command removed-b remove --kid "$kid_b"
+jq -e --arg kid "$kid_b" '.removed == true and .kid == $kid' "$evidence_dir/removed-b.json" >/dev/null
+gate removed-b '[]'
+assert_clean_source
+completed=true

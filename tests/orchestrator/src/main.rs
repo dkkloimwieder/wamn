@@ -10,7 +10,9 @@
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
-use wamn_proof_integration::{dashproof, membershipproof, readerbench, retention};
+use wamn_proof_integration::{
+    dashproof, identity_keys_proof, membershipproof, readerbench, retention,
+};
 use wamn_proof_system::traceproof;
 
 use std::str::FromStr as _;
@@ -30,6 +32,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Prove public JWKS and cache evidence through deployed identity HTTPS.
+    #[command(name = "identity-jwks")]
+    IdentityJwks(identity_keys_proof::IdentityKeysProofArgs),
     /// Prove fresh human membership through a deployed Receiving HTTP route.
     Membershipproof(membershipproof::MembershipProofArgs),
     /// Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
@@ -60,6 +65,7 @@ async fn async_main() -> anyhow::Result<()> {
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = match cli.command {
+        Command::IdentityJwks(args) => identity_keys_proof::run(args).await,
         Command::Membershipproof(args) => membershipproof::run(args).await,
         Command::Retention(args) => retention::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use wamn_proof_conformance::package_inventory;
 
 const TOOL: &str = "tools/repo-lint";
-const ROOT_MEMBER_COUNT: usize = 36;
+const ROOT_MEMBER_COUNT: usize = 37;
 /// The component member counts are the PLATFORM half. A package declares its
 /// own components, so a component workspace also holds however many of those
 /// actually live in it, and adding a package must not move these numbers

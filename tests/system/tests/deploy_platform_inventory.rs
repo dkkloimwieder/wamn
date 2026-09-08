@@ -26,6 +26,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 /// The tier this proof owns.
 const PLATFORM: &str = "deploy/platform";
@@ -47,7 +48,7 @@ type BillOfMaterialsRow = (
 /// separately: every object is `wamn-system` except the per-environment
 /// templates, which carry a substitution placeholder.
 #[rustfmt::skip]
-const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
+const BILL_OF_MATERIALS: [BillOfMaterialsRow; 21] = [
     // The dispatcher's projects Secret carries its database principal INSIDE
     // the file — the tier's only credential with no separate DB-URL Secret.
     ("dispatcher-projects.example.yaml",
@@ -88,6 +89,13 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
     ("http-route-workload.example.yaml",
         &[("Service", "flow-http"), ("WorkloadDeployment", "flow-http")],
         &["registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev"]),
+    // This row is the chart's rendered output, not its template source.
+    ("identity",
+        &[("Service", "wamn-identity"), ("Deployment", "wamn-identity")],
+        &["wamn-identity:dev"]),
+    ("identity-db.example.yaml",
+        &[("Secret", "wamn-identity-db")],
+        &[]),
     ("materializer.example.yaml",
         &[("WorkloadDeployment", "materializer-demo")],
         &["registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev"]),
@@ -143,10 +151,19 @@ const BILL_OF_MATERIALS: [BillOfMaterialsRow; 19] = [
 /// keys (`registry` + `repository` + `tag`), which is why it cannot be scanned
 /// for an `image:` line like the rest.
 const HOST_VALUES_FILE: &str = "values-host-default.yaml";
-const HELM_VALUES_FILES: [&str; 3] = [
+const HELM_VALUES_FILES: [&str; 4] = [
     HOST_VALUES_FILE,
     "values-host-receiving-pat.yaml",
     "values-host-wms-pat.yaml",
+    "values-identity-default.yaml",
+];
+const IDENTITY_ISSUER: &str = "https://wamn-identity.wamn-system.svc";
+const IDENTITY_TLS_SECRET: &str = "wamn-identity-serving-tls";
+const IDENTITY_CHART_FILES: [&str; 4] = [
+    "Chart.yaml",
+    "templates/deployment.yaml",
+    "templates/service.yaml",
+    "values.yaml",
 ];
 const HELM_VALUES_IMAGE_PARTS: [(&str, &str); 3] = [
     ("registry", "\"\""),
@@ -199,7 +216,11 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// `wamn-http-admitter-db` `wamn-0h0g.22.11` added, so all three are DECLARED
 /// rows in the table above rather than prerequisites of it. Every database
 /// credential in this tier ships a carrier again.
-const EXTERNAL_PREREQUISITES: [(&str, &str); 2] = [
+const EXTERNAL_PREREQUISITES: [(&str, &str); 3] = [
+    (
+        IDENTITY_TLS_SECRET,
+        "operator-configured serving certificate from the existing issuer/CA",
+    ),
     // READ by registry.yaml's namespaced CA Issuer (`spec.ca.secretName`) and
     // minted by the runtime-operator Helm release, not by anything here. The
     // chart hard-codes a 365-day CA and nothing renews it (wamn-ob2f).
@@ -386,8 +407,343 @@ fn platform_files(root: &Path) -> BTreeSet<String> {
 }
 
 fn read(root: &Path, file: &str) -> String {
+    if file == "identity" {
+        let output = render_identity(root, Some(IDENTITY_ISSUER), Some(IDENTITY_TLS_SECRET));
+        assert!(
+            output.status.success(),
+            "render identity chart: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return String::from_utf8(output.stdout).expect("Helm output is UTF-8");
+    }
     let path = root.join(PLATFORM).join(file);
     fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+}
+
+fn render_identity(root: &Path, issuer: Option<&str>, tls_secret: Option<&str>) -> Output {
+    let mut command = Command::new("helm");
+    command.current_dir(root).args([
+        "template",
+        "wamn-identity",
+        "deploy/platform/identity",
+        "--namespace",
+        "wamn-system",
+        "-f",
+        "deploy/platform/values-identity-default.yaml",
+    ]);
+    if let Some(issuer) = issuer {
+        command.args(["--set-string", &format!("issuer={issuer}")]);
+    }
+    if let Some(tls_secret) = tls_secret {
+        command.args(["--set-string", &format!("tlsSecret={tls_secret}")]);
+    }
+    command
+        .output()
+        .expect("run Helm to render the identity chart")
+}
+
+fn chart_files(directory: &Path, prefix: &str) -> BTreeSet<String> {
+    let mut files = BTreeSet::new();
+    for entry in fs::read_dir(directory).expect("read identity chart directory") {
+        let entry = entry.expect("read identity chart entry");
+        let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+        let kind = entry.file_type().expect("read identity chart file type");
+        if kind.is_dir() {
+            files.extend(chart_files(&entry.path(), &format!("{name}/")));
+        } else {
+            assert!(kind.is_file(), "identity chart contains a non-file: {name}");
+            files.insert(name);
+        }
+    }
+    files
+}
+
+#[test]
+fn the_identity_chart_requires_operator_inputs_and_renders_its_https_boundary() {
+    let root = repository_root();
+    assert_eq!(
+        chart_files(&root.join(PLATFORM).join("identity"), ""),
+        IDENTITY_CHART_FILES
+            .map(str::to_owned)
+            .into_iter()
+            .collect()
+    );
+    for (issuer, tls, reason) in [
+        (None, Some(IDENTITY_TLS_SECRET), "Set issuer"),
+        (Some(IDENTITY_ISSUER), None, "Set tlsSecret"),
+        (
+            Some("http://identity.invalid"),
+            Some(IDENTITY_TLS_SECRET),
+            "issuer must use HTTPS",
+        ),
+    ] {
+        let output = render_identity(&root, issuer, tls);
+        assert!(
+            !output.status.success(),
+            "missing or insecure identity input rendered"
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains(reason));
+    }
+    let source = read(&root, "identity");
+    let rendered = documents(&source);
+    let deployment = rendered
+        .iter()
+        .find(|document| {
+            object(document, "identity").is_some_and(|object| object.kind == "Deployment")
+        })
+        .expect("rendered identity Deployment");
+    let service = rendered
+        .iter()
+        .find(|document| {
+            object(document, "identity").is_some_and(|object| object.kind == "Service")
+        })
+        .expect("rendered identity Service");
+    for (key, expected) in [
+        ("type", "ClusterIP"),
+        ("port", "443"),
+        ("targetPort", "https"),
+    ] {
+        assert!(
+            service
+                .iter()
+                .any(|line| scalar_after(line, key) == Some(expected)),
+            "identity Service {key}"
+        );
+    }
+    for (key, expected) in [
+        ("automountServiceAccountToken", "false"),
+        ("args", "[serve]"),
+        ("containerPort", "8443"),
+        ("scheme", "HTTPS"),
+        ("path", "/healthz"),
+        ("mountPath", "/var/run/wamn-identity/tls"),
+        ("readOnly", "true"),
+        ("secretName", IDENTITY_TLS_SECRET),
+    ] {
+        assert!(
+            deployment
+                .iter()
+                .any(|line| scalar_after(line, key) == Some(expected)),
+            "identity Deployment {key}"
+        );
+    }
+    let environment: BTreeSet<&str> = deployment
+        .iter()
+        .filter_map(|line| {
+            scalar_after(line.trim().strip_prefix("- ").unwrap_or(line), "name")
+                .filter(|name| name.starts_with("WAMN_"))
+        })
+        .collect();
+    assert_eq!(
+        environment,
+        [
+            "WAMN_IDENTITY_BIND",
+            "WAMN_IDENTITY_ISSUER",
+            "WAMN_IDENTITY_DATABASE_URL",
+            "WAMN_IDENTITY_TLS_CERT",
+            "WAMN_IDENTITY_TLS_KEY",
+        ]
+        .into_iter()
+        .collect()
+    );
+}
+
+// Read fields from block or flow-style manifest lines, never from comments.
+fn manifest_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    line.split(['{', '}', ',']).find_map(|part| {
+        let part = part
+            .trim()
+            .trim_start_matches("- ")
+            .trim_matches(['[', ']']);
+        scalar_after(part, key)
+    })
+}
+
+fn secret_references(source: &str, file: &str) -> BTreeSet<String> {
+    let lines = significant(source);
+    let mut names = BTreeSet::new();
+    for (index, line) in lines.iter().enumerate() {
+        if let Some(name) = manifest_field(line, "secretName") {
+            names.insert(name.to_owned());
+        }
+        let fields: Vec<_> = line.split(['{', '}', ',']).collect();
+        for (field_index, field) in fields.iter().enumerate() {
+            if !matches!(
+                field
+                    .trim()
+                    .trim_start_matches("- ")
+                    .trim_matches(['[', ']']),
+                "secretKeyRef:" | "secretRef:" | "secret:"
+            ) {
+                continue;
+            }
+            let name = fields[field_index + 1..]
+                .iter()
+                .find_map(|part| {
+                    scalar_after(part, "name").or_else(|| scalar_after(part, "secretName"))
+                })
+                .or_else(|| {
+                    lines[index + 1..]
+                        .iter()
+                        .take_while(|following| indent(following) > indent(line))
+                        .find_map(|following| {
+                            scalar_after(following, "name")
+                                .or_else(|| scalar_after(following, "secretName"))
+                        })
+                })
+                .unwrap_or_else(|| panic!("{file}: Secret reference names nothing"));
+            names.insert(name.to_owned());
+        }
+    }
+    names
+}
+
+fn environment_secret_bindings(source: &str, file: &str) -> BTreeMap<String, (String, String)> {
+    let lines = significant(source);
+    let mut bindings = BTreeMap::new();
+    for (index, line) in lines.iter().enumerate() {
+        if line.trim() != "secretKeyRef:" {
+            continue;
+        }
+        let entry = lines[..index]
+            .iter()
+            .rev()
+            .find(|entry| indent(entry) + 4 == indent(line))
+            .and_then(|entry| entry.trim().strip_prefix("- "))
+            .and_then(|entry| scalar_after(entry, "name"))
+            .unwrap_or_else(|| panic!("{file}: credential reference has no environment entry"));
+        let reference: Vec<_> = lines[index + 1..]
+            .iter()
+            .take_while(|following| indent(following) > indent(line))
+            .collect();
+        let name = reference
+            .iter()
+            .find_map(|line| scalar_after(line, "name"))
+            .unwrap_or_else(|| panic!("{file}: credential Secret has no name"));
+        let key = reference
+            .iter()
+            .find_map(|line| scalar_after(line, "key"))
+            .unwrap_or_else(|| panic!("{file}: credential Secret has no key"));
+        assert!(
+            bindings
+                .insert(entry.to_owned(), (name.to_owned(), key.to_owned()))
+                .is_none(),
+            "{file}: duplicate credential environment entry {entry}"
+        );
+    }
+    bindings
+}
+
+#[test]
+fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_classes() {
+    let root = repository_root();
+    let mut issuer_secret_consumers = Vec::new();
+    let mut issuer_url_consumers = Vec::new();
+    let mut identity_image_consumers = Vec::new();
+    for file in BILL_OF_MATERIALS
+        .iter()
+        .map(|(file, _, _)| *file)
+        .chain(HELM_VALUES_FILES)
+    {
+        let source = read(&root, file);
+        let references = secret_references(&source, file);
+        if references.contains("wamn-identity-db") {
+            issuer_secret_consumers.push(file);
+        }
+        if significant(&source)
+            .iter()
+            .any(|line| manifest_field(line, "name") == Some("WAMN_IDENTITY_DATABASE_URL"))
+        {
+            issuer_url_consumers.push(file);
+        }
+        if images(&source)
+            .iter()
+            .any(|image| image.starts_with("wamn-identity:"))
+        {
+            identity_image_consumers.push(file);
+        }
+        if file != "identity" {
+            assert!(
+                !references.contains(IDENTITY_TLS_SECRET),
+                "{file} mounts identity's private serving TLS key"
+            );
+        }
+    }
+    assert_eq!(issuer_secret_consumers, ["identity"]);
+    assert_eq!(issuer_url_consumers, ["identity"]);
+    assert_eq!(identity_image_consumers, ["identity"]);
+    for (file, project) in [
+        ("values-host-default.yaml", None),
+        ("values-host-receiving-pat.yaml", Some("receiving")),
+        ("values-host-wms-pat.yaml", Some("wms")),
+    ] {
+        let source = read(&root, file);
+        let mut expected = BTreeMap::from([(
+            "WAMN_PG_URL".to_owned(),
+            ("wamn-host-db".to_owned(), "url".to_owned()),
+        )]);
+        if let Some(project) = project {
+            for (variable, class) in [
+                ("WAMN_SYSTEM_URL", "identity-reader"),
+                ("WAMN_EXECUTOR_PLATFORM_PG_URL", "executor-platform"),
+                ("WAMN_HTTP_ADMITTER_PG_URL", "http-admitter"),
+                ("WAMN_EVENT_MATERIALIZER_PG_URL", "event-materializer"),
+            ] {
+                expected.insert(
+                    variable.to_owned(),
+                    (
+                        format!("wamn-{class}-acme--{project}--dev"),
+                        "url".to_owned(),
+                    ),
+                );
+            }
+            assert!(
+                !significant(&source)
+                    .iter()
+                    .any(|line| line.trim() == "image:" || manifest_field(line, "image").is_some()),
+                "{file} must retain the base host image, not add a different process"
+            );
+        }
+        assert_eq!(
+            environment_secret_bindings(&source, file),
+            expected,
+            "{file} credential classes changed"
+        );
+    }
+    let gate = read(&root, "scenario-worker.yaml");
+    let expected = [
+        (
+            "WAMN_SYSTEM_URL",
+            "wamn-identity-reader-acme--receiving--dev",
+        ),
+        (
+            "WAMN_CONTROL_AUTHORING_PG_URL",
+            "wamn-authoring-acme--receiving--dev",
+        ),
+        (
+            "WAMN_MANAGEMENT_ADMISSION_PG_URL",
+            "wamn-mgmt-admitter-acme--receiving--dev",
+        ),
+    ]
+    .into_iter()
+    .map(|(name, secret)| (name.to_owned(), (secret.to_owned(), "url".to_owned())))
+    .collect();
+    assert_eq!(
+        environment_secret_bindings(&gate, "scenario-worker.yaml"),
+        expected,
+        "the authoring Gate must retain its three existing database authorities"
+    );
+    assert_eq!(
+        images(&gate),
+        BTreeSet::from(["wamn-scenario-worker:dev".to_owned()])
+    );
+    assert_eq!(
+        environment_secret_bindings(&read(&root, "identity"), "identity"),
+        BTreeMap::from([(
+            "WAMN_IDENTITY_DATABASE_URL".to_owned(),
+            ("wamn-identity-db".to_owned(), "url".to_owned())
+        )])
+    );
 }
 
 /// THE BILL OF MATERIALS IS EXACT.

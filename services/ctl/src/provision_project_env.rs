@@ -3134,7 +3134,7 @@ fn create_secret_temp(path: &Path) -> anyhow::Result<(PathBuf, File)> {
     )
 }
 
-fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
+pub(crate) fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(doc).context("serialize Secret JSON")?;
     bytes.push(b'\n');
     let (temp_path, mut file) = create_secret_temp(path)?;

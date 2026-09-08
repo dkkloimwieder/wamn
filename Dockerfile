@@ -6,6 +6,7 @@
 #   docker build --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
 #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
 #   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
+#   docker build --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 # Later invocations reuse one cargo-chef recipe and shared, locked BuildKit
 # registry, Git, and target caches. Each retained native image cooks and builds
@@ -99,6 +100,12 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-cdc-reader
 
+FROM root-recipe AS cook-identity
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+    cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-identity
+
 FROM root-planner AS root-source
 COPY .cargo/config.toml ./.cargo/config.toml
 # The canonical deploy DDL is consumed by the ctl reconcilers and exact package
@@ -168,9 +175,17 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     cargo build --locked --release -p wamn-cdc-reader \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
 
+FROM cook-identity AS build-identity
+COPY --from=root-source /build /build
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+    cargo build --locked --release -p wamn-identity \
+ && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
+
 # The proof image is outside the retained MVP image set. It remains a separate,
 # package-scoped build and reuses the same locked caches without adding an
-# eighth production cook stage.
+# additional production cook stage.
 FROM root-source AS build-gates
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
@@ -255,6 +270,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build-waker /native-output/wamn-waker /usr/local/bin/wamn-waker
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-waker"]
+
+# ---- identity image: separate signing authority and public JWKS ------------
+FROM debian:trixie-slim AS identity
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build-identity /native-output/wamn-identity /usr/local/bin/wamn-identity
+ENV HOME=/tmp
+ENTRYPOINT ["/usr/local/bin/wamn-identity"]
 
 # ---- gates image: the host stage + the gate suite + wasm fixtures -----------
 FROM host AS gates

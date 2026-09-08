@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "crates/client/receiving", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state"]
+members = ["services/host", "services/identity", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "crates/client/receiving", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
@@ -19,6 +19,7 @@ default-members = [
   "crates/scenarios/model",
   "services/executor",
   "services/host",
+  "services/identity",
   "services/scenario-worker",
 ]
 # Guest components are built separately for wasm32-wasip2 (see components/*).
@@ -159,6 +160,7 @@ proptest = { version = "1.11", default-features = false, features = ["std", "bit
 rand_core = "0.10"
 reqwest = { version = "0.13", default-features = false }
 ring = "0.17"
+rcgen = "0.14.8"
 rustls = { version = "0.23", default-features = false }
 rustix = { version = "1", features = ["fs", "process"] }
 schemars = "0.8"
@@ -168,6 +170,7 @@ sha2 = "0.11"
 subtle = "2"
 tokio = "1"
 tokio-postgres = "0.7"
+tokio-rustls = "0.26"
 tracing = "0.1"
 tracing-opentelemetry = { version = "0.32", default-features = false }
 tracing-subscriber = "0.3"
@@ -190,6 +193,7 @@ wamn-component-virtualizer = { path = "crates/platform/component-virtualizer", v
 wamn-control-provision = { path = "crates/control/provision", version = "0.1.0" }
 wamn-control-registry = { path = "crates/control/registry", version = "0.1.0" }
 wamn-ctl = { path = "services/ctl", version = "0.1.0" }
+wamn-identity = { path = "services/identity", version = "0.1.0" }
 wamn-dispatcher = { path = "services/dispatcher", version = "0.1.0" }
 wamn-event-reg = { path = "components/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "components/events/wire", version = "0.1.0" }

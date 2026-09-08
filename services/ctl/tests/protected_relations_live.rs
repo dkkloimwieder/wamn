@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, NoTls};
 
+use wamn_control_provision::identity_issuer::{
+    IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
+};
 use wamn_control_provision::sql;
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_run_plane;
@@ -283,9 +286,48 @@ async fn install_control_database(client: &Client) {
         .batch_execute(&system_install)
         .await
         .expect("install canonical control-plane schema");
+    client
+        .batch_execute(&grant_identity_issuer_surface_sql())
+        .await
+        .expect("install canonical identity issuer key-table authority");
+    // The mutation inventory intentionally omits SELECT. Prove it here along
+    // with the absence of TRUNCATE before deriving the real catalog ACL rows.
+    for table in IDENTITY_ISSUER_TABLES {
+        let relation = format!("identity.{table}");
+        let privileges: bool = client
+            .query_one(
+                "SELECT has_table_privilege($1, $2, 'SELECT') \
+                    AND has_table_privilege($1, $2, 'INSERT') \
+                    AND has_table_privilege($1, $2, 'UPDATE') \
+                    AND has_table_privilege($1, $2, 'DELETE') \
+                    AND NOT has_table_privilege($1, $2, 'TRUNCATE')",
+                &[&IDENTITY_ISSUER_ROLE, &relation],
+            )
+            .await
+            .expect("read identity issuer key-table privileges")
+            .get(0);
+        assert!(
+            privileges,
+            "identity issuer privilege boundary drifted on {relation}"
+        );
+    }
 }
 
 async fn install_project_database(client: &Client, url: &str, repository: &Path) {
+    // Package DDL runs as the production database owner, not the administrator.
+    client
+        .batch_execute(sql::ensure_db_owner_role_sql())
+        .await
+        .expect("ensure the canonical project database owner");
+    let database: String = client
+        .query_one("SELECT current_database()", &[])
+        .await
+        .expect("read the disposable project database name")
+        .get(0);
+    client
+        .batch_execute(&sql::set_database_owner_sql(&database))
+        .await
+        .expect("assign the canonical project database owner before package installation");
     client
         .batch_execute(
             "DROP SCHEMA IF EXISTS catalog CASCADE; \
@@ -911,6 +953,16 @@ async fn protected_relations_match_reconciled_postgres() {
         support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
     let repository = repository();
     let client = connect(&url).await;
+    let version: String = client
+        .query_one("SELECT current_setting('server_version_num')", &[])
+        .await
+        .expect("read protected-relation probe server version")
+        .get(0);
+    let version: u32 = version.parse().expect("server_version_num is numeric");
+    assert!(
+        (180_000..190_000).contains(&version),
+        "protected-relation derivation requires PostgreSQL 18, found {version}"
+    );
     prepare_scratch_database(&client).await;
     let declarations = declared_relations(&repository);
     install_control_database(&client).await;

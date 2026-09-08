@@ -22,6 +22,7 @@ pub mod dump_project_env;
 pub mod enable_cdc_project_env;
 mod env_policies;
 mod ident;
+pub mod identity_issuer;
 #[cfg(feature = "ops")]
 mod ops_schema;
 pub mod print_release_env;

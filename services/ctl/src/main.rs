@@ -4,10 +4,11 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    apply_package, author_wiring, bind_connection, enable_cdc_project_env, print_release_env,
-    project_env_membership, promote, provision, provision_org, provision_project_env,
-    publish_release, push_component, push_release_manifest, reconcile_package_data_access,
-    reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
+    apply_package, author_wiring, bind_connection, enable_cdc_project_env, identity_issuer,
+    print_release_env, project_env_membership, promote, provision, provision_org,
+    provision_project_env, publish_release, push_component, push_release_manifest,
+    reconcile_package_data_access, reconcile_replica_identity, reconcile_run_plane,
+    terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -29,6 +30,8 @@ enum Command {
     ProvisionOrg(provision_org::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
+    /// Provision the scoped database credential for the identity service.
+    ProvisionIdentityIssuer(identity_issuer::IdentityIssuerArgs),
     /// Grant one human access to one project environment.
     GrantProjectEnvMembership(project_env_membership::ProjectEnvMembershipArgs),
     /// Revoke one human's access to one project environment.
@@ -84,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ProvisionProject(args) => provision::run(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
+        Command::ProvisionIdentityIssuer(args) => identity_issuer::run(args).await,
         Command::GrantProjectEnvMembership(args) => project_env_membership::grant(args).await,
         Command::RevokeProjectEnvMembership(args) => project_env_membership::revoke(args).await,
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,

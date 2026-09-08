@@ -3,8 +3,8 @@
 //! MVP outcome: management auth.
 //!
 //! This crate owns human and service principals, project-role assignments,
-//! project-environment memberships, and opaque personal access tokens.
-//! It deliberately contains no HTTP, OIDC, JWT,
+//! project-environment memberships, opaque personal access tokens, and session keys.
+//! It owns the fixed session-token profile but contains no HTTP, OIDC,
 //! or per-project `app_system` authority: every function here is
 //! transport-neutral and takes an already-open client. An OIDC adapter may
 //! resolve an externally authenticated subject through [`resolve_subject`].
@@ -16,6 +16,9 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
+
+pub mod session_keys;
+pub mod session_token;
 
 #[cfg(test)]
 const PRINCIPAL_COLUMNS: &str = "id::text, kind, subject, display_name, status";

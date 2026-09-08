@@ -1,0 +1,136 @@
+//! Local identity service and signing-key lifecycle commands.
+
+use std::fmt;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
+use serde_json::json;
+use tokio::net::TcpListener;
+use wamn_platform_identity::session_keys::{
+    activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
+};
+
+use crate::{IdentityConfig, IdentityService, IdentityServiceError, connect, serve, tls_config};
+
+/// Identity authority CLI; database credentials are absent from Debug and help values.
+#[derive(Parser)]
+#[command(name = "wamn-identity", version, about)]
+pub struct Cli {
+    /// Exact trusted HTTPS issuer.
+    #[arg(long, global = true, env = "WAMN_IDENTITY_ISSUER")]
+    issuer: Option<String>,
+    #[arg(
+        long,
+        global = true,
+        env = "WAMN_IDENTITY_DATABASE_URL",
+        hide = true,
+        hide_env_values = true
+    )]
+    database_url: Option<String>,
+    #[command(subcommand)]
+    command: Command,
+}
+
+impl fmt::Debug for Cli {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Cli")
+            .field("issuer", &self.issuer)
+            .field("database_url", &"[REDACTED]")
+            .field("command", &self.command)
+            .finish()
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Serve only public JWKS and health over HTTPS.
+    Serve {
+        #[arg(long, env = "WAMN_IDENTITY_BIND", default_value = "0.0.0.0:8443")]
+        bind: SocketAddr,
+        #[arg(long, env = "WAMN_IDENTITY_TLS_CERT")]
+        tls_cert: PathBuf,
+        #[arg(long, env = "WAMN_IDENTITY_TLS_KEY")]
+        tls_key: PathBuf,
+    },
+    /// Commit a new public generation without activating it.
+    Publish,
+    /// Activate an already committed public generation.
+    Activate {
+        #[arg(long)]
+        kid: String,
+    },
+    /// Remove compromised public and private material immediately.
+    Remove {
+        #[arg(long)]
+        kid: String,
+    },
+    /// Delete generations whose public retention window has expired.
+    Retire,
+}
+
+/// Run a local command; lifecycle output contains public metadata only.
+pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
+    let issuer = cli
+        .issuer
+        .ok_or_else(|| IdentityServiceError::new("identity issuer is required"))?;
+    let raw = cli
+        .database_url
+        .ok_or_else(|| IdentityServiceError::new("identity database credential is required"))?;
+    let config = IdentityConfig::new(&issuer, &raw)?;
+    drop(raw);
+    if let Command::Serve {
+        bind,
+        tls_cert,
+        tls_key,
+    } = cli.command
+    {
+        let certificate = tokio::fs::read(tls_cert)
+            .await
+            .map_err(|_| IdentityServiceError::new("read identity TLS certificate failed"))?;
+        let private_key = tokio::fs::read(tls_key)
+            .await
+            .map_err(|_| IdentityServiceError::new("read identity TLS private key failed"))?;
+        let tls = tls_config(&certificate, &private_key)?;
+        drop(private_key);
+        let service = IdentityService::connect(config).await?;
+        let listener = TcpListener::bind(bind)
+            .await
+            .map_err(|_| IdentityServiceError::new("bind identity HTTPS listener failed"))?;
+        return tokio::select! {
+            result = serve(listener, service, tls) => result,
+            result = tokio::signal::ctrl_c() => result.map_err(|_| IdentityServiceError::new("identity shutdown signal failed")),
+        };
+    }
+    let mut database = connect(&config).await?;
+    let output = match cli.command {
+        Command::Publish => serde_json::to_value(
+            publish_session_key(&mut database.client, &issuer)
+                .await
+                .map_err(|_| IdentityServiceError::new("publish identity key failed"))?,
+        )
+        .map_err(|_| IdentityServiceError::new("encode public identity key failed"))?,
+        Command::Activate { kid } => {
+            activate_session_key(&mut database.client, &issuer, &kid)
+                .await
+                .map_err(|_| IdentityServiceError::new("activate identity key failed"))?;
+            json!({"issuer": issuer, "kid": kid, "activated": true})
+        }
+        Command::Remove { kid } => {
+            let removed = remove_compromised_session_key(&mut database.client, &issuer, &kid)
+                .await
+                .map_err(|_| IdentityServiceError::new("remove identity key failed"))?;
+            json!({"issuer": issuer, "kid": kid, "removed": removed})
+        }
+        Command::Retire => {
+            let retired = retire_session_keys(&mut database.client, &issuer)
+                .await
+                .map_err(|_| IdentityServiceError::new("retire identity keys failed"))?;
+            json!({"issuer": issuer, "retired": retired})
+        }
+        Command::Serve { .. } => unreachable!("serve returned before lifecycle dispatch"),
+    };
+    println!("{output}");
+    Ok(())
+}

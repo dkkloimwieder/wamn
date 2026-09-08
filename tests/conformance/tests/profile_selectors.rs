@@ -318,7 +318,7 @@ fn profile_contract_matches_locked_metadata() {
     // than written down, and adding a package moves none of these
     // (wamn-10yt.10.39).
     let derived = package_components(&root);
-    assert_eq!(root_members.len(), 36);
+    assert_eq!(root_members.len(), 37);
     assert_eq!(component_members.len(), 21 + derived.len());
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
@@ -363,11 +363,11 @@ fn profile_contract_matches_locked_metadata() {
     );
 
     let profile_counts = [
-        ("m1", 19),
-        ("m2", 21),
-        ("deploy", 29),
-        ("full", 36),
-        ("ops", 36),
+        ("m1", 20),
+        ("m2", 22),
+        ("deploy", 30),
+        ("full", 37),
+        ("ops", 37),
     ];
     let mut profiles = BTreeMap::new();
     for (profile, expected_count) in profile_counts {
