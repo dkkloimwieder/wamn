@@ -848,6 +848,10 @@ pub fn write_dev_config(
     let config = serde_json::json!({
         "verification_database_url": verification.database_url.as_str(),
         "target_database_url": route.database_url.as_str(),
+        // The loop recreates the target before every run, which drops every
+        // per-database privilege with it. This is the file it replays, and it
+        // is the file provision_route already applied, not a second copy.
+        "target_privileges_file": root.join("privileges.sql"),
         "system_database_url": system_url,
         "identity_database_url": credentials.identity_reader.as_str(),
         "guest_database_url": credentials.guest_sql.as_str(),

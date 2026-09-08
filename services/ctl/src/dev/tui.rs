@@ -222,6 +222,7 @@ fn pipeline_lines(snapshot: &DevSnapshot) -> Vec<String> {
             DevStageState::Awaiting => "awaiting".to_owned(),
             DevStageState::Running => "running".to_owned(),
             DevStageState::Passed => "passed".to_owned(),
+            DevStageState::Skipped => "skipped: unchanged".to_owned(),
             DevStageState::Failed(failure) => match failure.remedy() {
                 Some(remedy) => format!(
                     "failed code={} detail={} remedy={remedy}",

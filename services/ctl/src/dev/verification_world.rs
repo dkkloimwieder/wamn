@@ -388,6 +388,7 @@ mod tests {
         let document = json!({
             "verification_database_url": verification_url,
             "target_database_url": database_url(verification_url, &format!("wamn_dev_target_{process}")),
+            "target_privileges_file": "/run/wamn-dev/privileges.sql",
             "system_database_url": database_url(verification_url, &format!("wamn_dev_system_{process}")),
             "identity_database_url": database_url(verification_url, &format!("wamn_dev_identity_{process}")),
             "guest_database_url": database_url(verification_url, &format!("wamn_dev_guest_{process}")),

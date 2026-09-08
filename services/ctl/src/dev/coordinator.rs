@@ -35,9 +35,10 @@ use super::read::{
     DevGateOutcome, DevGateVerdict, DevReadHandle, DevReadPublisher, DevRuntimeEndpoint,
     dev_read_channel,
 };
+use super::target_database;
 use super::verification_world::RUN_SCHEMA;
 use super::watch::GitSource;
-use super::{DevStage, DevStageFailure, DevStageRunner};
+use super::{DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
 use crate::apply_package::ApplyPackageArgs;
 use crate::dev_gate::GateClient;
 use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
@@ -356,6 +357,8 @@ pub struct ProductionDevStageRunner {
     publish_provenance: Option<CommitProvenance>,
     release: Option<ReleaseCarrier>,
     activation: Option<DevActivation>,
+    generate_input_digest: Option<String>,
+    generate_input_candidate: Option<String>,
     read_publisher: DevReadPublisher,
     read_handle: DevReadHandle,
     observation_readers: Option<DevObservationReaders>,
@@ -419,6 +422,8 @@ impl ProductionDevStageRunner {
             publish_provenance: None,
             release: None,
             activation: None,
+            generate_input_digest: None,
+            generate_input_candidate: None,
             read_publisher,
             read_handle,
             observation_readers: None,
@@ -787,7 +792,13 @@ impl ProductionDevStageRunner {
         let source = self.git.snapshot().await.map_err(|source| {
             ProductionDevStageError::owner("read publication source commit", source.into())
         })?;
-        if source.state() != super::DevSourceState::Clean {
+        // The same condition the engine applies, at the second call site.
+        // Publish pushes a component by digest, and a digest names its own
+        // bytes; the provenance claim is what needs committed source, and a
+        // disposable session registry carries none.
+        if super::refuses_dirty_source(DevStage::Publish, self.target_durability())
+            && source.state() != super::DevSourceState::Clean
+        {
             return Err(ProductionDevStageError::invalid(
                 "read publication source commit",
                 "the source worktree became dirty before Publish",
@@ -1055,6 +1066,24 @@ impl ProductionDevStageRunner {
         Ok(())
     }
 
+    /// Digest every authored byte Generate reads.
+    ///
+    /// Deliberately over-broad: it covers the whole package tree except
+    /// `generated/`, so a file Generate reads that this walk does not know
+    /// about still moves the digest. The error a narrow digest makes is to skip
+    /// a stage that had work to do, and that error is silent.
+    fn generate_inputs_digest(&self) -> Result<String, ProductionDevStageError> {
+        let mut inputs: Vec<(String, String)> = Vec::new();
+        for package in self.package_inputs()? {
+            collect_authored_bytes(&package.root, &package.root, &mut inputs)?;
+        }
+        inputs.sort();
+        let inputs = serde_json::to_value(&inputs).map_err(|source| {
+            ProductionDevStageError::owner("serialize the authored input digest", source.into())
+        })?;
+        Ok(wamn_execution_contract::canonical_json_sha256(&inputs))
+    }
+
     fn package_inputs(&self) -> Result<Vec<PackageInput>, ProductionDevStageError> {
         let packages = self.packages.as_ref().ok_or_else(|| {
             ProductionDevStageError::invalid(
@@ -1198,6 +1227,46 @@ impl ProductionDevStageRunner {
     }
 }
 
+/// Read every authored file under `directory`, skipping the generated subtree.
+///
+/// A read failure is a refusal rather than an omission: a file the walk cannot
+/// read is a file whose change would go unnoticed.
+fn collect_authored_bytes(
+    root: &Path,
+    directory: &Path,
+    inputs: &mut Vec<(String, String)>,
+) -> Result<(), ProductionDevStageError> {
+    let entries = std::fs::read_dir(directory)
+        .map_err(|source| ProductionDevStageError::owner("read the package tree", source.into()))?;
+    for entry in entries {
+        let entry = entry.map_err(|source| {
+            ProductionDevStageError::owner("read the package tree", source.into())
+        })?;
+        let path = entry.path();
+        if path.file_name().is_some_and(|name| name == "generated") {
+            continue;
+        }
+        let kind = entry.file_type().map_err(|source| {
+            ProductionDevStageError::owner("read the package tree", source.into())
+        })?;
+        if kind.is_dir() {
+            collect_authored_bytes(root, &path, inputs)?;
+            continue;
+        }
+        let bytes = std::fs::read(&path).map_err(|source| {
+            ProductionDevStageError::owner("read an authored package file", source.into())
+        })?;
+        let relative = path.strip_prefix(root).unwrap_or(&path);
+        inputs.push((
+            relative.to_string_lossy().into_owned(),
+            // Authored inputs are text. Encoding the bytes rather than the text
+            // keeps a non-UTF-8 file from hashing to the same value as another.
+            bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+        ));
+    }
+    Ok(())
+}
+
 impl DevStageRunner for ProductionDevStageRunner {
     type Error = ProductionDevStageError;
 
@@ -1210,7 +1279,30 @@ impl DevStageRunner for ProductionDevStageRunner {
     }
 
     fn stage_completed(&mut self, stage: DevStage) {
+        // The digest is promoted only after the stage it describes succeeded.
+        // Recording it earlier would let a failed Generate be skipped next run.
+        if stage == DevStage::Generate {
+            self.generate_input_digest = self.generate_input_candidate.take();
+        }
         self.read_publisher.stage_completed(stage);
+    }
+
+    fn stage_skipped(&mut self, stage: DevStage) {
+        self.read_publisher.stage_skipped(stage);
+    }
+
+    async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
+        // Generate is the one stage whose whole output is files in the
+        // worktree, so it is the one stage a later run can find already done.
+        if stage != DevStage::Generate {
+            return Ok(false);
+        }
+        let digest = self.generate_inputs_digest()?;
+        if self.generate_input_digest.as_deref() == Some(digest.as_str()) {
+            return Ok(true);
+        }
+        self.generate_input_candidate = Some(digest);
+        Ok(false)
     }
 
     fn stage_failed(&mut self, stage: DevStage, failure: DevStageFailure) {
@@ -1219,6 +1311,26 @@ impl DevStageRunner for ProductionDevStageRunner {
 
     fn classify_error(&self, error: &Self::Error) -> DevStageFailure {
         DevStageFailure::new(error.kind.as_str(), error.to_string(), None)
+    }
+
+    fn target_durability(&self) -> DevTargetDurability {
+        // A development loop recreates its target before every run and pushes
+        // to the session's own registry, so nothing it deploys is durable.
+        DevTargetDurability::Disposable
+    }
+
+    async fn prepare_run(&mut self) -> Result<(), Self::Error> {
+        // The previous run's host still holds connections to this database.
+        // DROP DATABASE WITH FORCE would terminate them under a live process,
+        // so the host is stopped first and the drop finds no session to kill.
+        if self.activation.is_some() {
+            self.shutdown().await?;
+        }
+        target_database::recreate(&self.config)
+            .await
+            .map_err(|source| {
+                ProductionDevStageError::owner("recreate the target database", source.into())
+            })
     }
 
     async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {

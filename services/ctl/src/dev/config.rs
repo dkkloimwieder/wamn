@@ -31,6 +31,7 @@ pub const STARTUP_REACHABILITY_BUDGET: Duration = Duration::from_secs(5);
 const DOCUMENT_KEY: &str = "$";
 pub(super) const VERIFICATION_DATABASE_URL: &str = "verification_database_url";
 const TARGET_DATABASE_URL: &str = "target_database_url";
+const TARGET_PRIVILEGES_FILE: &str = "target_privileges_file";
 const SYSTEM_DATABASE_URL: &str = "system_database_url";
 const IDENTITY_DATABASE_URL: &str = "identity_database_url";
 const GUEST_DATABASE_URL: &str = "guest_database_url";
@@ -76,6 +77,7 @@ const REFERENCE_PROBE_DIGEST: &str =
 struct DevConfigDocument {
     verification_database_url: String,
     target_database_url: String,
+    target_privileges_file: PathBuf,
     system_database_url: String,
     identity_database_url: String,
     guest_database_url: String,
@@ -525,6 +527,7 @@ struct ReachabilityProbe {
 pub struct DevConfig {
     verification_database_url: Box<str>,
     target_database_url: Box<str>,
+    target_privileges_file: PathBuf,
     system_database_url: Box<str>,
     identity_database_url: Box<str>,
     guest_database_url: Box<str>,
@@ -563,6 +566,7 @@ impl fmt::Debug for DevConfig {
                 TARGET_DATABASE_URL,
                 &self.sanitized_endpoint(TARGET_DATABASE_URL),
             )
+            .field(TARGET_PRIVILEGES_FILE, &self.target_privileges_file)
             .field(
                 SYSTEM_DATABASE_URL,
                 &self.sanitized_endpoint(SYSTEM_DATABASE_URL),
@@ -636,9 +640,21 @@ impl DevConfig {
         &self.verification_database_url
     }
 
-    /// Durable target PostgreSQL URL used only after provenance gates pass.
+    /// Target PostgreSQL URL. In a development loop this database is
+    /// disposable: the loop drops and recreates it before every Apply.
     pub fn target_database_url(&self) -> &str {
         &self.target_database_url
+    }
+
+    /// Privilege SQL `wamn dev up` emitted for the target database.
+    ///
+    /// The loop recreates the target database per run, which drops every
+    /// per-database privilege with it. Roles are cluster-level and survive, so
+    /// this file is what has to be replayed. It is read, never re-derived: a
+    /// privilege set the loop computed itself would not be the one the
+    /// environment was provisioned with.
+    pub fn target_privileges_file(&self) -> &Path {
+        &self.target_privileges_file
     }
 
     /// System PostgreSQL URL holding control and identity facts.
@@ -804,6 +820,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let DevConfigDocument {
         verification_database_url,
         target_database_url,
+        target_privileges_file,
         system_database_url,
         identity_database_url,
         guest_database_url,
@@ -862,6 +879,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         nonempty_string(component_artifact_base, COMPONENT_ARTIFACT_BASE)?;
     let release_artifact_base = nonempty_string(release_artifact_base, RELEASE_ARTIFACT_BASE)?;
     let registry_auth_file = nonempty_path(registry_auth_file, REGISTRY_AUTH_FILE)?;
+    let target_privileges_file = nonempty_path(target_privileges_file, TARGET_PRIVILEGES_FILE)?;
     let gate_url = nonempty_string(gate_url, GATE_URL)?;
     let gate_bearer_token = nonempty_string(gate_bearer_token, GATE_BEARER_TOKEN)?;
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
@@ -920,6 +938,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         EVENT_MATERIALIZER_DATABASE_URL,
         &event_materializer_database_url,
     )?;
+    validate_disposable_target_database(&target_probe, &target_identity)?;
     validate_verification_database(
         &verification_probe,
         &verification_identity,
@@ -987,6 +1006,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     Ok(DevConfig {
         verification_database_url,
         target_database_url,
+        target_privileges_file,
         system_database_url,
         identity_database_url,
         guest_database_url,
@@ -1364,6 +1384,26 @@ fn database_probe(
     Ok((probe, identity))
 }
 
+/// Refuse a target database the development loop must not drop.
+///
+/// The loop recreates the target before every Apply, so the same reasoning that
+/// protects the verification database applies here: a system database named as
+/// the target would be destroyed by the first run.
+fn validate_disposable_target_database(
+    probe: &ReachabilityProbe,
+    target: &DatabaseIdentity,
+) -> Result<(), DevConfigError> {
+    if POSTGRES_SYSTEM_DATABASES.contains(&target.database.as_ref()) {
+        return Err(DevConfigError::endpoint(
+            DevConfigErrorKind::DatabaseCollision,
+            TARGET_DATABASE_URL,
+            probe.sanitized_endpoint.clone(),
+            "set target_database_url to a disposable database other than postgres, template0, or template1",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_verification_database(
     probe: &ReachabilityProbe,
     verification: &DatabaseIdentity,
@@ -1641,6 +1681,7 @@ mod tests {
         json!({
             (VERIFICATION_DATABASE_URL): format!("postgresql://verify:verify-secret@{}/verification", addresses[0]),
             (TARGET_DATABASE_URL): format!("postgresql://target:target-secret@{}/target", addresses[1]),
+            (TARGET_PRIVILEGES_FILE): "/run/wamn-dev/privileges.sql",
             (SYSTEM_DATABASE_URL): format!("postgresql://system:system-secret@{}/system", addresses[2]),
             (IDENTITY_DATABASE_URL): format!("postgresql://identity:identity-secret@{}/system", addresses[3]),
             (GUEST_DATABASE_URL): format!("postgresql://guest:guest-secret@{}/target", addresses[4]),

@@ -14,6 +14,7 @@ pub mod environment;
 #[cfg(target_os = "linux")]
 pub mod observations;
 pub mod read;
+pub mod target_database;
 #[cfg(target_os = "linux")]
 pub mod tui;
 pub mod up;
@@ -138,6 +139,32 @@ pub enum DevStageBoundary {
     CommittedSource,
 }
 
+/// Durability of the target a run deploys into.
+///
+/// Provenance protects DURABLE state. A development session deploys into a
+/// database it recreates before every run and a registry it owns, so nothing it
+/// writes outlives the session and the committed-source refusal has nothing to
+/// protect. The condition is the TARGET, never the stage name: point a run at a
+/// shared environment and the same stages refuse again.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DevTargetDurability {
+    /// The run deploys into state that outlives it. Committed source required.
+    Durable,
+    /// The run deploys into state it recreates and owns.
+    Disposable,
+}
+
+/// Whether a run must refuse dirty bytes before `stage`.
+///
+/// One condition, two call sites: the engine applies it before every stage, and
+/// Publish applies it again at the moment it reads the source commit it is
+/// about to attach. Keeping the rule in one function is what stops those two
+/// from drifting apart, which is how the second one came to have no test.
+pub const fn refuses_dirty_source(stage: DevStage, durability: DevTargetDurability) -> bool {
+    matches!(stage.boundary(), DevStageBoundary::CommittedSource)
+        && matches!(durability, DevTargetDurability::Durable)
+}
+
 /// Source state supplied by the client at the start of one run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DevSourceState {
@@ -224,6 +251,38 @@ pub trait DevStageRunner {
 
     /// Execute exactly one stage.
     fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> + Send;
+
+    /// Durability of the target this runner deploys into.
+    ///
+    /// The engine owns stage order and the committed-source boundary. It does
+    /// not own databases, so the runner is what knows whether its target
+    /// outlives the run. The default is the safe answer.
+    fn target_durability(&self) -> DevTargetDurability {
+        DevTargetDurability::Durable
+    }
+
+    /// Report that one stage was skipped because its input is unchanged.
+    fn stage_skipped(&mut self, _stage: DevStage) {}
+
+    /// Whether this stage's input is unchanged since the previous run.
+    ///
+    /// Only a stage whose output SURVIVES the run boundary may answer true. A
+    /// stage whose work an earlier stage discards, or whose output lives in a
+    /// database the run recreates, has nothing to skip to.
+    fn stage_is_unchanged(
+        &mut self,
+        _stage: DevStage,
+    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
+        async { Ok(false) }
+    }
+
+    /// Prepare the target before the first stage of a run.
+    ///
+    /// A runner whose target is disposable recreates it here, so every run
+    /// starts from a target that holds nothing an earlier run left behind.
+    fn prepare_run(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        async { Ok(()) }
+    }
 }
 
 /// Stable category of a failed development run.
@@ -347,12 +406,21 @@ impl Error for DevRunError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevRunReceipt {
     completed: Box<[DevStage]>,
+    skipped: Box<[DevStage]>,
 }
 
 impl DevRunReceipt {
     /// Stages completed by the runner, in execution order.
+    ///
+    /// A skipped stage is completed: its work is already present. Read
+    /// [`Self::skipped`] to tell the two apart.
     pub fn completed(&self) -> &[DevStage] {
         &self.completed
+    }
+
+    /// Stages the runner reported as unchanged, so their work was not redone.
+    pub fn skipped(&self) -> &[DevStage] {
+        &self.skipped
     }
 }
 
@@ -492,10 +560,33 @@ where
 {
     let first = from.position();
     runner.reset(from);
+    if let Err(error) = runner.prepare_run().await {
+        let failure = runner.classify_error(&error);
+        runner.stage_failed(from, failure);
+        return Err(DevRunError::stage_failed(from, error));
+    }
     let mut completed = Vec::with_capacity(DEV_STAGE_ORDER.len() - first);
+    let mut skipped = Vec::new();
     for stage in DEV_STAGE_ORDER.into_iter().skip(first) {
         runner.stage_started(stage);
-        if stage.boundary() == DevStageBoundary::CommittedSource {
+        // The decision is made HERE and not inside the stage, because entering
+        // a stage tears down a live activation and discards the downstream work
+        // the skip exists to keep.
+        match runner.stage_is_unchanged(stage).await {
+            Ok(true) => {
+                runner.stage_skipped(stage);
+                completed.push(stage);
+                skipped.push(stage);
+                continue;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                let failure = runner.classify_error(&error);
+                runner.stage_failed(stage, failure);
+                return Err(DevRunError::stage_failed(stage, error));
+            }
+        }
+        if refuses_dirty_source(stage, runner.target_durability()) {
             let source_state = match source_state_provider.source_state().await {
                 Ok(source_state) => source_state,
                 Err(error) => {
@@ -530,6 +621,7 @@ where
     }
     Ok(DevRunReceipt {
         completed: completed.into_boxed_slice(),
+        skipped: skipped.into_boxed_slice(),
     })
 }
 
@@ -975,6 +1067,149 @@ mod tests {
                     DevStageFailure::new("dev-stage-failed", "synthetic gate failure", None)
                 ),
             ]
+        );
+    }
+
+    /// A runner whose target is disposable, and which can refuse its own
+    /// preparation. Both are the seams a production loop uses to recreate the
+    /// target database before the first stage.
+    #[derive(Default)]
+    struct DisposableTargetRunner {
+        invoked: Vec<DevStage>,
+        prepared: u8,
+        refuse_preparation: bool,
+    }
+
+    impl DevStageRunner for DisposableTargetRunner {
+        type Error = SyntheticStageError;
+
+        fn target_durability(&self) -> DevTargetDurability {
+            DevTargetDurability::Disposable
+        }
+
+        async fn prepare_run(&mut self) -> Result<(), Self::Error> {
+            self.prepared += 1;
+            if self.refuse_preparation {
+                return Err(SyntheticStageError(DevStage::Migrate));
+            }
+            Ok(())
+        }
+
+        async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+            self.invoked.push(stage);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn one_condition_decides_the_refusal_for_every_stage_and_both_targets() {
+        for stage in DEV_STAGE_ORDER {
+            assert!(
+                !refuses_dirty_source(stage, DevTargetDurability::Disposable),
+                "{stage} must not refuse dirty bytes against a target the run owns"
+            );
+            assert_eq!(
+                refuses_dirty_source(stage, DevTargetDurability::Durable),
+                stage.boundary() == DevStageBoundary::CommittedSource,
+                "{stage} must refuse dirty bytes against a durable target exactly when it can mint durable provenance"
+            );
+        }
+    }
+
+    /// A runner that reports one stage unchanged, and records what actually ran.
+    #[derive(Default)]
+    struct SkippingRunner {
+        invoked: Vec<DevStage>,
+        reported_skips: Vec<DevStage>,
+        unchanged: Option<DevStage>,
+    }
+
+    impl DevStageRunner for SkippingRunner {
+        type Error = SyntheticStageError;
+
+        fn stage_skipped(&mut self, stage: DevStage) {
+            self.reported_skips.push(stage);
+        }
+
+        async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
+            Ok(self.unchanged == Some(stage))
+        }
+
+        async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+            self.invoked.push(stage);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_stage_is_not_run_and_is_reported_as_skipped() {
+        let mut runner = SkippingRunner {
+            unchanged: Some(DevStage::Generate),
+            ..SkippingRunner::default()
+        };
+
+        let receipt = run_once_stages(DevSourceState::Clean, &mut runner)
+            .await
+            .expect("an unchanged stage does not fail a run");
+
+        assert_eq!(receipt.skipped(), [DevStage::Generate]);
+        assert_eq!(
+            receipt.completed(),
+            DEV_STAGE_ORDER,
+            "a skipped stage is still completed: its work is present"
+        );
+        assert!(
+            !runner.invoked.contains(&DevStage::Generate),
+            "a skipped stage must not be entered, because entering it discards downstream work"
+        );
+        assert_eq!(runner.reported_skips, [DevStage::Generate]);
+        assert_eq!(runner.invoked.len(), DEV_STAGE_ORDER.len() - 1);
+    }
+
+    #[tokio::test]
+    async fn a_run_with_nothing_unchanged_reports_no_skips() {
+        let mut runner = SkippingRunner::default();
+
+        let receipt = run_once_stages(DevSourceState::Clean, &mut runner)
+            .await
+            .expect("a full run succeeds");
+
+        assert!(receipt.skipped().is_empty());
+        assert_eq!(runner.invoked, DEV_STAGE_ORDER);
+    }
+
+    #[tokio::test]
+    async fn a_disposable_target_reaches_every_stage_from_dirty_bytes() {
+        let mut runner = DisposableTargetRunner::default();
+
+        let receipt = run_once_stages(DevSourceState::Dirty, &mut runner)
+            .await
+            .expect("a disposable target has no durable provenance to protect");
+
+        assert_eq!(receipt.completed(), DEV_STAGE_ORDER);
+        assert_eq!(runner.invoked, DEV_STAGE_ORDER);
+        assert_eq!(
+            runner.prepared, 1,
+            "the target is prepared once per run, not once per stage"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_preparation_stops_the_run_at_its_first_stage() {
+        let mut runner = DisposableTargetRunner {
+            refuse_preparation: true,
+            ..DisposableTargetRunner::default()
+        };
+
+        let error = run_once_stages(DevSourceState::Clean, &mut runner)
+            .await
+            .expect_err("a target that cannot be prepared must not run a stage against it");
+
+        assert_eq!(error.kind(), DevRunErrorKind::StageFailed);
+        assert_eq!(error.stage(), DevStage::Migrate);
+        assert!(
+            runner.invoked.is_empty(),
+            "no stage runs against an unprepared target"
         );
     }
 

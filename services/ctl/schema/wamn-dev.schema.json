@@ -95,6 +95,9 @@
     "target_database_url": {
       "type": "string"
     },
+    "target_privileges_file": {
+      "type": "string"
+    },
     "tempo_query_url": {
       "type": "string"
     },
@@ -138,6 +141,7 @@
     "schema",
     "system_database_url",
     "target_database_url",
+    "target_privileges_file",
     "tempo_query_url",
     "tenant",
     "verification_database_url",

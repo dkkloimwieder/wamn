@@ -1281,6 +1281,7 @@ mod tests {
             &serde_json::to_vec(&json!({
                 "verification_database_url": "postgresql://verify:verify-secret@127.0.0.1:41001/verification",
                 "target_database_url": "postgresql://target:target-secret@127.0.0.1:41002/target",
+                "target_privileges_file": "/run/wamn-dev/privileges.sql",
                 "system_database_url": "postgresql://owner:owner-secret@127.0.0.1:41003/system",
                 "identity_database_url": "postgresql://identity:identity-secret@127.0.0.1:41004/system",
                 "guest_database_url": "postgresql://guest:guest-secret@127.0.0.1:41005/target",

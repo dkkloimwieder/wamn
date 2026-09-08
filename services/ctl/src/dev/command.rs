@@ -524,6 +524,17 @@ pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
         .collect::<Vec<_>>()
         .join(",");
     println!("{prefix} completed: {completed}");
+    // A separate line on purpose. Scripted callers read the completed line and
+    // the served line by shape, so a skip must not change either of them.
+    if !receipt.skipped().is_empty() {
+        let skipped = receipt
+            .skipped()
+            .iter()
+            .map(|stage| stage.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("{prefix} skipped: unchanged {skipped}");
+    }
 }
 
 #[cfg(test)]

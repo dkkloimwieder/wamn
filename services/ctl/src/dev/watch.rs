@@ -961,13 +961,17 @@ impl FilesystemInvalidationSource {
                     source_state,
                 }
             } else if let Some(path) = change.path {
-                if self.roots.is_git_metadata(&path) {
+                // Path classification decides RELEVANCE, not the starting
+                // stage. Every relevant change reruns the whole pipeline,
+                // because the target database is recreated per run and a
+                // suffix that started after Apply would run against an empty
+                // one. What a run does not have to redo is decided by each
+                // stage's input digest, not by which file was touched.
+                if self.roots.is_git_metadata(&path) || self.roots.stage(&path).is_some() {
                     DevInvalidation::Rerun {
-                        from: DevStage::Publish,
+                        from: DevStage::Migrate,
                         source_state,
                     }
-                } else if let Some(from) = self.roots.stage(&path) {
-                    DevInvalidation::Rerun { from, source_state }
                 } else {
                     DevInvalidation::Ignore
                 }
@@ -1257,7 +1261,7 @@ mod tests {
             .expect("source remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Generate,
+            DevStage::Migrate,
             DevSourceState::Dirty
         ));
 
@@ -1273,13 +1277,13 @@ mod tests {
             .expect("source remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Build,
+            DevStage::Migrate,
             DevSourceState::Dirty
         ));
     }
 
     #[tokio::test]
-    async fn clean_commit_metadata_resumes_at_publish_without_another_package_edit() {
+    async fn clean_commit_metadata_reruns_without_another_package_edit() {
         let repository = TempRepository::new();
         repository.write_fixture();
         let git_source = GitSource::discover(&repository.root)
@@ -1303,7 +1307,7 @@ mod tests {
             .expect("read dirty package event")
             .expect("source remains open");
         let dirty = collect_batch(dirty, &mut source);
-        assert!(has_rerun(&dirty, DevStage::Generate, DevSourceState::Dirty));
+        assert!(has_rerun(&dirty, DevStage::Migrate, DevSourceState::Dirty));
 
         git(&repository.root, &["add", "."]);
         git(&repository.root, &["commit", "--quiet", "-m", "save edit"]);
@@ -1313,9 +1317,14 @@ mod tests {
             .expect("read commit metadata event")
             .expect("source remains open");
         let committed = collect_batch(committed, &mut source);
+        // The property this guards is that a commit is itself an
+        // invalidation carrying CLEAN source state, so a run can reach the
+        // committed-source stages without the author touching the package
+        // again. Which stage it resumes at is no longer part of it: every
+        // relevant change reruns the whole pipeline.
         assert!(has_rerun(
             &committed,
-            DevStage::Publish,
+            DevStage::Migrate,
             DevSourceState::Clean
         ));
     }

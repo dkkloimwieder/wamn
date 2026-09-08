@@ -37,6 +37,9 @@ pub enum DevStageState {
     Running,
     /// This stage completed successfully.
     Passed,
+    /// This stage did not run, because its input is unchanged and its output
+    /// is already present.
+    Skipped,
     /// This stage refused or failed.
     Failed(DevStageFailure),
 }
@@ -451,6 +454,13 @@ impl DevReadPublisher {
     pub(crate) fn stage_completed(&self, stage: DevStage) {
         self.update(|snapshot| {
             snapshot.stages[stage.position()].state = DevStageState::Passed;
+        });
+    }
+
+    /// Mark one stage skipped because its input is unchanged.
+    pub(crate) fn stage_skipped(&self, stage: DevStage) {
+        self.update(|snapshot| {
+            snapshot.stages[stage.position()].state = DevStageState::Skipped;
         });
     }
 
