@@ -5233,8 +5233,8 @@ mod tests {
     #[test]
     fn every_workload_family_carries_a_distinct_frozen_label() {
         // `wamn-0fqa` takes the vocabulary to ten and `wamn-0h0g.13.63` to
-        // twelve. `label` reads only the family, so the scope below is inert
-        // and deliberately uniform.
+        // twelve. `wamn-ctc8.15.2` adds the session-role reader as the thirteenth.
+        // `label` reads only the family, so the scope is deliberately uniform.
         let expected = [
             (WorkloadRoleFamily::EffectWriter, "effect-writer"),
             (WorkloadRoleFamily::ControlAuthor, "control-author"),
@@ -5251,6 +5251,7 @@ mod tests {
             (WorkloadRoleFamily::EventMaterializer, "event-materializer"),
             (WorkloadRoleFamily::RegistryReader, "registry-reader"),
             (WorkloadRoleFamily::IdentityReader, "identity-reader"),
+            (WorkloadRoleFamily::SessionRoleReader, "session-role-reader"),
         ];
         assert_eq!(expected.len(), WorkloadRoleFamily::ALL.len());
         let mut seen = Vec::new();

@@ -107,7 +107,7 @@ const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run
 /// consumer that does NOT delegate. Admitting or demoting a family now costs one
 /// deliberate edit here, which is the point.
 ///
-/// # The one deliberate move so far
+/// # Deliberate changes
 ///
 /// `wamn-0h0g.22.32` DEMOTED `wamn_effect_writer` — 8 members down to 7 — and
 /// this edit is the deliberate cost that pin was built to charge. The reason is
@@ -121,8 +121,11 @@ const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run
 /// have caught a stranding, `services/ctl/tests/run_plane_live.rs`, goes from
 /// 8 failures to 0 across the change.
 ///
+/// `wamn-ctc8.15.2` adds the approved session-role reader to the platform group.
+/// Its explicit column grants and tenant predicates bound its reads.
+///
 /// Sorted, because both consumers compare against a sorted list.
-const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
+const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
     "wamn_dispatch_reader",
     "wamn_event_materializer",
     "wamn_executor_platform",
@@ -130,6 +133,7 @@ const PLATFORM_GRAIN_ACL_ROLES: [&str; 7] = [
     "wamn_management_admitter",
     "wamn_run_retention",
     "wamn_service_reader",
+    "wamn_session_role_reader",
 ];
 
 /// The host-only group that is NOT a [`WorkloadRoleFamily`] and, since
@@ -584,8 +588,8 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     );
 
     // 3. THE MEMBER SET, FROM THE REAL BUILDER, WITH ITS EDGE OPTIONS.
-    //    `platform_group_membership_sql` is applied for ALL twelve families,
-    //    including the four that must NOT be members — its revoke arm is what
+    //    `platform_group_membership_sql` is applied for every family,
+    //    including those that must NOT be members — its revoke arm is what
     //    keeps a demoted family from silently retaining the arm.
     //
     //    The stable ACL role is ensured FIRST, by its own builder: the membership
