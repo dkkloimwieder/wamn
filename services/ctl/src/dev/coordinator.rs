@@ -381,6 +381,10 @@ impl fmt::Debug for ProductionDevStageRunner {
                 "verified_base_digest_count",
                 &self.verified_base_digests.len(),
             )
+            .field(
+                "base_digests_moved_off_pin",
+                &self.base_digests_moved_off_pin().collect::<Vec<_>>(),
+            )
             .field("admission_count", &self.admissions.len())
             .field("gated_wiring_count", &self.gated_wirings.len())
             .field("published_wiring_count", &self.published_wirings.len())
@@ -433,6 +437,19 @@ impl ProductionDevStageRunner {
     /// Read-only state for terminal and future console clients.
     pub fn read_handle(&self) -> DevReadHandle {
         self.read_handle.clone()
+    }
+
+    /// Base coordinates this run built off their pinned digest, with both values.
+    ///
+    /// A disposable target accepts a moved digest instead of stopping the loop,
+    /// so the drift is only visible if the run reports it. Nothing is written
+    /// back to the authored manifest.
+    pub fn base_digests_moved_off_pin(&self) -> impl Iterator<Item = (&str, &str, &str)> {
+        self.verified_base_digests.iter().filter_map(|verified| {
+            verified
+                .superseded_pin()
+                .map(|pin| (verified.coordinate(), pin, verified.digest()))
+        })
     }
 
     /// Start the two read-only environment observation sources once.
@@ -618,6 +635,10 @@ impl ProductionDevStageRunner {
             &build.plan.virtualization.artifacts,
         )?;
 
+        // Read the durability through the trait so this refusal and the
+        // committed-source refusal keep answering to one definition of the
+        // target, rather than each carrying its own copy of the answer.
+        let durability = <Self as DevStageRunner>::target_durability(self);
         let packages = self.packages.as_ref().expect("package_inputs proved state");
         for base in packages.base_packages() {
             let artifact = self
@@ -629,7 +650,7 @@ impl ProductionDevStageRunner {
                 .expect("selected artifacts contain every resolved package");
             let verified = base
                 .component_digest()
-                .verify(artifact.digest.clone())
+                .verify(artifact.digest.clone(), durability)
                 .map_err(|source| {
                     ProductionDevStageError::owner(
                         "verify the built base component digest",
