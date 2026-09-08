@@ -10,6 +10,9 @@ use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
 use crate::StatementTransactionality;
+use crate::client_ir::{ClientContractIr, published_routes};
+use crate::client_rust::emit_rust_client;
+use crate::generate::GeneratedFile;
 use crate::{
     AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
     data_access::application_schemas, generate, manifest::CONTROL_OWNED_RELATION_TABLES,
@@ -181,12 +184,53 @@ pub fn materialize_package_classified(
 ) -> Result<()> {
     let package = generate_package(catalog, package_root, transactional)?;
     let output_root = package_root.join("generated");
-    let expected = expected_files(&package)?;
+    let client = client_bindings(package_root, &package)?;
+    let mut expected = expected_files(&package)?;
+    for file in &client {
+        let relative = Path::new(file.path())
+            .strip_prefix("generated")
+            .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
+        expected.insert(relative.to_owned(), file.bytes());
+    }
 
     match mode {
         MaterializeMode::Write => write_files(&output_root, &expected),
         MaterializeMode::Check => check_files(&output_root, &expected),
     }
+}
+
+/// The Rust client bindings this package's release publishes.
+///
+/// Emitted HERE and not by a caller, because `generated/` is one owned set:
+/// materialization refuses any file in it that it did not produce, so a
+/// binding written beside the contracts by anything else is an unexpected file
+/// on the very next run. Folding the emitter in is what makes the bindings a
+/// GENERATE OUTPUT rather than something dropped next to one (`wamn-10yt.45`).
+///
+/// The contracts are read from the generated package still in memory, and the
+/// routes from the package's own `publication/attachments.json`. Route
+/// templates are release facts — the base package publishes
+/// `/purchase_order/get` and the overlay publishes its own at
+/// `/acme/purchase_order/get` — so a binding that derived a path from an
+/// operation name would call the wrong one.
+fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Vec<GeneratedFile>> {
+    const CONTRACTS: &str = "generated/contracts/";
+
+    let (_, manifest) = load_manifest(package_root)?;
+    let contracts = package
+        .files()
+        .iter()
+        .filter_map(|file| {
+            file.path()
+                .strip_prefix(CONTRACTS)
+                .map(|relative| (relative.to_owned(), file.bytes().to_vec()))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let routes = published_routes(&package_root.join("publication/attachments.json"))
+        .context("read the release's published routes")?;
+    let ir = ClientContractIr::from_release_contracts(&manifest.package.id, &contracts, &routes)
+        .context("project the client-contract IR")?;
+    emit_rust_client(&ir).context("emit the Rust client bindings")
 }
 
 fn generate_package(

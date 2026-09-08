@@ -367,6 +367,76 @@ impl ClientContractIr {
             }
         }
 
+        Self::assemble(package, modules, cursor, routes)
+    }
+
+    /// Project a release from contract files that are still in memory.
+    ///
+    /// The same projection as [`Self::from_release`], reading the bytes the
+    /// generator has just produced instead of the copy on disk. Materialization
+    /// emits the client beside the contracts in ONE pass, and it cannot read
+    /// back a directory it has not written yet — nor should it, because the
+    /// bytes it would read back are the ones it is about to overwrite.
+    ///
+    /// `contracts` is keyed by each file's path relative to
+    /// `generated/contracts`, so `purchase_order/get.input.json` and
+    /// `cursor-v1.json` are both addressed the way the directory addresses
+    /// them. A path outside that shape is ignored, exactly as the directory
+    /// walk ignores a file whose name it does not recognise.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientIrError`] naming the contract that could not be read as JSON,
+    /// the attachment whose route is malformed or un-normalized, or the
+    /// operation published at more than one route.
+    pub fn from_release_contracts(
+        package: &str,
+        contracts: &BTreeMap<String, Vec<u8>>,
+        routes: &BTreeMap<String, RouteIr>,
+    ) -> Result<Self, ClientIrError> {
+        let mut modules: BTreeMap<String, BTreeMap<String, OperationParts>> = BTreeMap::new();
+        let mut cursor = None;
+        for (relative, bytes) in contracts {
+            let parse = |bytes: &[u8]| -> Result<Value, ClientIrError> {
+                serde_json::from_slice(bytes).map_err(|error| {
+                    ClientIrError::new(
+                        ClientIrErrorKind::MalformedContract,
+                        format!("parse {relative}: {error}"),
+                    )
+                })
+            };
+            match relative.split_once('/') {
+                Some((module, file_name)) => {
+                    let Some((operation, part)) = split_contract_name(file_name) else {
+                        continue;
+                    };
+                    let value = parse(bytes)?;
+                    let slot = modules
+                        .entry(module.to_owned())
+                        .or_default()
+                        .entry(operation.to_owned())
+                        .or_default();
+                    match part {
+                        "operation" => slot.operation = Some(value),
+                        "input" => slot.input = Some(value),
+                        "result" => slot.result = Some(value),
+                        "errors" => slot.errors = Some(value),
+                        _ => {}
+                    }
+                }
+                None if relative == "cursor-v1.json" => cursor = Some(parse(bytes)?),
+                None => {}
+            }
+        }
+        Self::assemble(package, modules, cursor, routes)
+    }
+
+    fn assemble(
+        package: &str,
+        modules: BTreeMap<String, BTreeMap<String, OperationParts>>,
+        cursor: Option<Value>,
+        routes: &BTreeMap<String, RouteIr>,
+    ) -> Result<Self, ClientIrError> {
         let models = modules
             .into_iter()
             .map(|(name, operations)| build_model(&name, operations, routes))
@@ -377,6 +447,24 @@ impl ClientContractIr {
             cursor,
             models,
         })
+    }
+}
+
+/// Read one release's published routes, or none when it publishes nothing.
+///
+/// A package with no `publication/attachments.json` publishes no HTTP route at
+/// all, which is a real state and not a missing input: the emitted client then
+/// carries every operation's types and descriptors and no invoke function,
+/// which is what [`ClientContractIr::from_contract_directory`] already means.
+///
+/// # Errors
+///
+/// [`ClientIrError`] when the file exists and is not a serving attachment map.
+pub fn published_routes(attachments: &Path) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
+    if attachments.exists() {
+        route_index(attachments)
+    } else {
+        Ok(BTreeMap::new())
     }
 }
 
