@@ -454,6 +454,8 @@ the scores; the machine checks own PASS/FAIL.
 |---|---|---|---|
 | 001–009 | `wamn-10yt.10.39` open: a package that ships a component could not be authored inside its own paths | 001 | the wall was fixed, so no later run is comparable to this one |
 | 010–019 | the component allowlist closes over the packages, and the claim law is emitted by construction (`522a1941`) | 010, 011, 012 | open. Fixing `wamn-nvbd.9` closes it, because hiding the rubric changes what a run measures |
+| 020–029 | never measured | 020, 021 | closed by the instrument, not the platform. Both runs read the grading fixture out of their own worktree, so both are leak instances and neither is comparable |
+| 030–039 | the rubric, the pilot tools and the gate document's pilot section leave with the baseline commit (`wamn-nvbd.12`) | 030, 031, 032 | open |
 
 Run 001 stands as the wall arm. Its finding is what the pilot exists to produce
 and it is unaffected by the two contaminations §11 records, because a blocker
@@ -466,6 +468,19 @@ in a run. The stall table lives on `wamn-nvbd.6`. Read the three passes with
 `wamn-nvbd.9`: every run could read `steps.json` from its own task directory, so
 the rubric was visible. The stall table is unaffected by that, because every
 stall is the platform refusing something.
+
+Series 030 is three runs on the fenced instrument, one FAIL and two PASS. Its
+stall table lives on `wamn-nvbd.11`. It succeeds under §7.4: three valid runs
+exist, every stall carries a category and a pointer, and `env` is 0.4 of 24.5
+stall minutes. Each arm cites its own commit, because rule 6 is amended and a
+platform change does not open a series.
+
+The top category is `provisioning` at 13.7 minutes over two runs. Its largest
+single message is `component-fact-conflict` after a reformat, and that message
+costs 6.0 minutes in both runs. That is `wamn-10yt.38`, the finding this series
+exists to produce. `component-build` and `generator` also clear the floor and open
+`wamn-10yt.39` through `wamn-10yt.42`. Four categories appear in one run each and
+open nothing.
 
 ## 10. Run report template
 
