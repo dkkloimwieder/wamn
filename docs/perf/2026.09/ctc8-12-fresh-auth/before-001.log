@@ -1,0 +1,967 @@
+ac8648807511928593c1ea77d0ea807e9d542a6c
+Tue Sep  8 02:01:58 UTC 2026
+ 22:01:58 up 1 day, 14:38,  1 user,  load average: 2.04, 3.22, 3.26
+1. the schema is the contract, and it is the checked-in one
+  ok    the checked-in schema exists where the Rust drift test pins it
+  ok    the schema forbids unknown keys, which is what makes it a contract
+2. the writer, pinned to the example the Rust side parses
+  ok    the example spec writes
+  ok    the written document carries exactly the schema's required keys
+  ok    the written document is already in sorted key order, before any amendment
+  ok    the materializer phase amends in
+  ok    the runtime phase amends in
+  ok    after both amendments it carries exactly the schema's properties
+  ok    and it is byte-identical to the checked-in example the Rust test parses
+3. a second application writes its own values into the same shape
+  ok    a second spec writes
+  ok    ["route_host": "hopper.localhost"] replaces ["route_host": "example.localhost"]
+  ok    ["host_secret_namespace": "wamn-hopper-journey"] replaces ["host_secret_namespace": "wamn-example-journey"]
+  ok    [10.9.9.9:5432/postgres] replaces [10.0.0.9:5432/postgres]
+4. refusals, each naming the field, each isolated
+  ok    control: a spec missing a required key is refused, naming IT
+  ok    control: a key the schema does not declare is refused, naming IT
+  ok    control isolates: the typo spec is complete, so only the unknown-key guard refused
+  ok    control: an empty value is refused before it becomes an empty string on the far side
+  ok    control: a missing schema is refused
+  ok    control: a file that is not a schema is refused, not read as an empty contract
+5. the amendment is a phase becoming known, once
+  ok    control: amending a key the schema does not declare is refused, naming IT
+  ok    control: a non-JSON value is refused
+  ok    control: amending the same phase twice is refused
+  ok    control: amending a document that does not exist is refused
+6. nameref binding
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'journey_spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-document: all properties hold
+1. the happy path, and a second application through it
+  ok    the App family resolves by its own file stem
+  ok    each declared family resolves its name
+  ok    each declared family resolves its path
+  ok    five families yield five path/name pairs
+  ok    a two-family application yields three pairs, not five
+2. the declared set is the assertion
+  ok    control: an undeclared Secret in the directory is refused
+  ok    control: a declared family with no Secret is refused
+3. each Secret's shape
+  ok    control: a Secret for another namespace is refused
+  ok    control: a url pointing at another database host is refused
+  ok    control: a Secret with an empty name is refused
+4. the spec contract
+  ok    control: a missing required key is refused before any work
+  ok    control: an empty family declaration is refused, naming that cause
+5. nameref binding, both directions
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'out' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    a caller array named 'secrets' binds to the caller
+  ok    a caller array named 'host_secrets' binds to the caller
+  ok    control: colliding on the internal IN name is detected
+  ok    control: colliding on the internal OUT name is detected
+
+journey-host-secrets: all properties hold
+1. byte identity, both arms
+  ok    arms differ only in replicas: host-base.yaml
+  ok    arms differ only in replicas: host-overlay.yaml
+  ok    normal arm renders 3
+  ok    measure arm renders 0
+  ok    bytes unchanged since the pre-lift block: normal/host-overlay.yaml
+  ok    bytes unchanged since the pre-lift block: measure/host-overlay.yaml
+  ok    bytes unchanged since the pre-lift block: normal/host-base.yaml
+  ok    bytes unchanged since the pre-lift block: measure/host-base.yaml
+  ok    every derived secret anchor fired (no template name survives)
+2. second consumer
+  ok    WMS overlay carries its own identity
+  ok    every WMS-derived anchor fired
+  ok    the object-store credentials Secret is the declared one
+  ok    control: the WMS overlay rendered for an application declaring none is refused, naming it
+  ok    control: the Receiving overlay rendered for an application declaring one is refused
+  ok    the two applications render differently
+3. the guards themselves
+  ok    a duplicated anchor is refused (exactly-once, not at-least-once)
+  ok    a missing required key is refused before any work
+  ok    a declared family with no secret name is refused
+4. nameref binding
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'values' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    a caller array named 'opts' binds to the caller
+  ok    a caller array named 'host_values_spec' binds to the caller
+  ok    a caller array named 'render_spec' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-host-values: all properties hold
+1. bytes, and both applications
+  ok    the Receiving render succeeds
+  ok    bytes unchanged since the pre-lift block
+  ok    the journey's own inputs render the pre-lift bytes too
+  ok    a second application renders
+2. every one of the eight identity values moved
+  ok    [name: hopper-materializer] replaces [name: receiving-materializer]
+  ok    [wamn.tenant: quay-9-route-auth] replaces [wamn.tenant: receiving-route-auth]
+  ok    [wamn.project: quay9] replaces [wamn.project: receiving]
+  ok    [wamn.environment: stage7] replaces [wamn.environment: dev]
+  ok    [WAMN_MAT_STREAM: EVT_zamboni_stage7] replaces [WAMN_MAT_STREAM: EVT_acme_dev]
+  ok    [WAMN_MAT_ORG: zamboni] replaces [WAMN_MAT_ORG: acme]
+  ok    [WAMN_MAT_PROJECT: quay9] replaces [WAMN_MAT_PROJECT: receiving]
+  ok    [WAMN_MAT_ENV: stage7] replaces [WAMN_MAT_ENV: dev]
+  ok    [WAMN_MAT_TENANT: quay-9-route-auth] replaces [WAMN_MAT_TENANT: receiving-route-auth]
+  ok    the platform authority class is untouched for both applications
+  ok    the template's retry bound is untouched
+3. exactly once, per anchor
+  ok    control: a template missing [name: materializer-demo] is refused, naming IT
+  ok    control: a template missing [namespace: wamn-system] is refused, naming IT
+  ok    control: a template missing [environment: wamn-system] is refused, naming IT
+  ok    control: a template missing [wamn.tenant: t1] is refused, naming IT
+  ok    control: a template missing [wamn.project: default] is refused, naming IT
+  ok    control: a template missing [wamn.environment: menv] is refused, naming IT
+  ok    control: a template missing [WAMN_MAT_STREAM: EVT_morg_menv] is refused, naming IT
+  ok    control: a template missing [WAMN_MAT_ORG: morg] is refused, naming IT
+  ok    control: a template missing [WAMN_MAT_PROJECT: mproj] is refused, naming IT
+  ok    control: a template missing [WAMN_MAT_ENV: menv] is refused, naming IT
+  ok    control: a template declaring an anchor TWICE is refused
+4. the tenant-env anchor carries the insertion, so it needs its own message
+  ok    control: a template missing the tenant-env anchor is refused, naming IT
+  ok    the two poll intervals are inserted exactly once each
+  ok    the intervals come from the spec, not from the function
+5. no placeholder reaches the cluster under an anchor nobody declared
+  ok    control: a surviving placeholder under an undeclared anchor is refused
+6. the arguments themselves
+  ok    control: a missing template is refused
+  ok    control: a missing required key is refused before any work
+  ok    control: a missing template_* key is refused too
+7. nameref binding
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'materializer_spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-materializer: all properties hold
+1. declarations render with every placeholder filled, for all three templates
+  ok    wms.json.in renders
+  ok      its tenant is the one handed in, not the template's
+  ok      no placeholder survives
+  ok    declaration.json.in renders
+  ok      its tenant is the one handed in, not the template's
+  ok      no placeholder survives
+  ok    declaration.json.in renders
+  ok      its tenant is the one handed in, not the template's
+  ok      no placeholder survives
+  ok    the wms declaration keeps its own package coordinate
+  ok    a palette declaration takes the caller's package coordinate
+  ok    blob-put's store alias is the one handed in
+  ok      and the real alias does not appear anywhere, so a hardcoded one is visible
+2. controls on the declaration render
+  ok    control: a placeholder the renderer does not know is refused, naming IT
+  ok    control: a missing template is refused
+  ok    control: an empty tenant is refused before it becomes a tenant called nothing
+  ok    control: a file without a scope is refused
+3. the gate envelope matches the Rust producer's shape
+  ok    the envelope renders
+  ok    every field the Rust gate_document sets is present and equal
+  ok    the wiring document is embedded whole and unchanged
+  ok    control: a wiring that is not JSON is refused here, not as a 400
+  ok    control: a file with two JSON values is refused
+  ok    control: a missing wiring document is refused
+4. one prepared credential per call, where derive_host_secrets looks
+  ok    one family's flags build
+  ok    one family is one action and one Secret: four words
+  ok    and they are exactly its prepare and its emit, at <family>.json
+  ok      identity-reader lands at /s/identity-reader.json
+  ok      http-admitter lands at /s/http-admitter.json
+  ok      event-materializer lands at /s/event-materializer.json
+  ok      guest (the App family) lands at the declared guest file
+  ok    the directory comes from the caller, not the function
+  ok    control: no family is refused
+  ok    control: two families in one call are refused naming the verb's law (run 2's failure)
+  ok    control: a family with a space is refused before it becomes two flags
+  ok    control: an empty directory is refused
+5. nameref binding
+  ok    a caller array named 'flags' binds to the caller
+  ok    a caller array named 'family_flags' binds to the caller
+  ok    a caller array named 'out' binds to the caller
+  ok    a caller array named 'args' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-mint: all properties hold
+1. bytes
+  ok    the Receiving probe renders
+  ok    bytes unchanged since the marker rename
+  ok    request_id is merged FIRST, so the body is byte-for-byte the old literal
+2. a second application changes route and body, per line
+  ok    a second application renders
+  ok    [svc.cluster.local/inventory/move] replaces [svc.cluster.local/purchase_order/get]
+  ok    ["pallet_code":"PAL-77"] replaces ["id":"00000000-0000-0000-0000-000000000301"]
+3. THE RENDERED PROBE RUNS -- a render that produces broken shell is a
+   forty-minute failure, and reading the YAML cannot tell you it works
+  ok    the rendered probe exits 0 when the route answers 200
+  ok    it reports exactly one attempt
+  ok    it emits exactly one canonical receipt
+  ok    the attempt line carries the declared phase
+  ok    the response body is reported
+  ok    a route that 404s twice and then answers still exits 0
+  ok    every attempt is reported, not only the last
+  ok    the canonical receipt is still emitted exactly once
+  ok    each attempt carries the elapsed window
+  ok    the shortened-window rewrite landed (a no-op sed would prove nothing)
+  ok    a route that never answers exits NON-zero
+  ok    and still reports before asserting, so the failure is diagnosable
+  ok    it kept trying to the window rather than giving up on the first 404
+  ok    the rendered window is 150 and fits inside the Job deadline of 200
+  ok    the window exceeds the 120s recovery ceiling, so a breach is reported
+  ok    the final report carries recovery_seconds for the caller to assert on
+4. the body is JSON, and it is refused here rather than in a cluster
+  ok    control: a body that is not JSON is refused, naming it
+  ok    control: a body carrying a single quote is refused before it breaks out
+  ok    control isolates: that body is valid JSON, so only the quote guard can refuse it
+5. the arguments themselves
+  ok    control: a spec without route is refused, naming IT
+  ok    control: a spec without body is refused, naming IT
+  ok    control: a spec without request_id is refused, naming IT
+  ok    control: a spec without phase is refused, naming IT
+  ok    control: a spec without job is refused, naming IT
+  ok    control: a spec without namespace is refused, naming IT
+  ok    control: a spec without host_image is refused, naming IT
+  ok    control: a spec without secret_name is refused, naming IT
+  ok    control: a spec without route_host is refused, naming IT
+  ok    control: a spec without trace_id is refused, naming IT
+  ok    control: a spec without parent_span_id is refused, naming IT
+6. nameref binding
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'probe_spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-probe: all properties hold
+1. the matrix — matched pairs pass, crossed pairs fail by name
+  ok    Receiving overlay, Receiving declaration
+  ok    WMS overlay, WMS declaration
+  ok    control: Receiving overlay under a WMS declaration is refused, naming the claim
+  ok    control: WMS overlay under a Receiving declaration is refused, naming the claim
+2. absent — fails closed, and says so
+  ok    control: a missing claim is refused as MISSING, not as a mismatch
+  ok    control: a claim in block form is reported absent, not assumed correct
+3. repeated — the uniqueness corollary at claim grain
+  ok    control: a claim declared twice with the SAME value is refused
+  ok    control: a claim declared twice with DIFFERENT values is refused
+4. the anchor is a whole-key match, not a substring
+  ok    a superstring key and a value naming the claim are both ignored
+5. the arguments themselves
+  ok    control: a missing rendered file is refused
+  ok    control: an empty claim set is refused rather than passing vacuously
+6. nameref binding
+  ok    a caller array named 'claims' binds to the caller
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'identity' binds to the caller
+  ok    a caller array named 'app_identity_claims' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-rendered-identity: all properties hold
+1. the route layer: oha, POST, the PAT through Kubernetes expansion, no shell
+  ok    renders
+  ok    a one-shot Job with a deadline of three durations plus ninety seconds
+  ok    the digest-pinned image, the concurrency, duration, JSON output, headers, body and URL are the spec's
+  ok    the PAT comes from the named Secret and appears nowhere else
+  ok    no credential-shaped literal in the HTTP Job
+2. the no-DB layer: GET, unauthenticated, no Secret at all
+  ok    renders
+  ok    GET, no body, no env, the spec's concurrency and URL
+3. the direct-PostgreSQL layer: pgbench under sh, the statement written from a quoted heredoc
+  ok    renders
+  ok    the pinned image, the password env, clients, capped threads, sampling rate, target and statement
+4. THE PGBENCH SCRIPT RUNS -- broken shell here is a forty-minute failure
+  ok    the rendered script exits 0 against the stub
+  ok    the summary, then the marker, then the log lines, in that order
+  ok    the marker precedes the log
+  ok    pgbench received the sampling rate as its own argument
+5. refusals, each naming the cause
+  ok    a route spec without its Secret is refused by name
+  ok    an unknown layer is refused
+  ok    a non-numeric concurrency is refused
+  ok    a tag where a digest is required is refused
+  ok    a spec without a layer is refused
+
+6. fresh-auth sweeps keep distinct credentials and alternate their order
+  ok    exactly three sweeps per credential
+  ok    scheduled sweep 0
+  ok    scheduled sweep 1
+  ok    scheduled sweep 2
+  ok    scheduled sweep 3
+  ok    scheduled sweep 4
+  ok    scheduled sweep 5
+  ok    a failed sweep stops the sequence with its exit code
+  ok    the scheduler preserves errexit inside the real sweep
+journey-throughput-proof: all checks passed
+1. a complete trace, both arms
+  ok    executor arm: complete trace accepted
+  ok    non-executor arm: complete trace accepted
+2. the statement count is the ROUTE'S, and tracks its parameter
+  ok    a route issuing eight statements is accepted when it declares eight
+  ok    control: eight statements against a declared one is refused
+  ok    control: one statement against a declared eight is refused
+3. the executor arm is asserted in BOTH directions
+  ok    control: an unexpected executor acquisition is refused
+  ok    control: a missing executor acquisition is refused
+4. every platform span is load-bearing
+  ok    control: a trace missing wamn.route.authenticate is refused
+  ok    control: a trace missing wamn.router.resolve is refused
+  ok    control: a trace missing wamn.component.cache_hit is refused
+  ok    control: a trace missing wamn.component.linker_setup is refused
+  ok    control: a trace missing wamn.component.link is refused
+  ok    control: a trace missing wamn.component.instantiate is refused
+  ok    control: a trace missing wamn.postgres is refused
+  ok    control: a trace missing the callable-http acquisition is refused
+  ok    control: a trace missing the guest-sql acquisition is refused
+4b. the preload's own evidence: a served request pulls and compiles nothing
+  ok    control: a served trace that does wamn.component.pull is refused
+  ok    control: a served trace that does wamn.component.compile is refused
+5. counts are exact, not at-least — for EVERY count, not a sample
+  ok    control: wamn.route.authenticate appearing twice is refused
+  ok    control: wamn.router.resolve appearing twice is refused
+  ok    control: wamn.component.cache_hit appearing twice is refused
+  ok    control: wamn.component.linker_setup appearing twice is refused
+  ok    control: wamn.component.link appearing twice is refused
+  ok    control: wamn.component.instantiate appearing twice is refused
+  ok    control: the callable-http authority acquired twice is refused
+  ok    control: the guest-sql authority acquired twice is refused
+  ok    control: the executor authority acquired twice is refused
+6. the arguments themselves
+  ok    control: a missing trace file is refused
+  ok    control: a non-boolean executor expectation is refused
+  ok    control: a non-numeric statement expectation is refused
+
+journey-trace: all properties hold
+1. bytes, and both applications
+  ok    the Receiving render succeeds
+  ok    bytes unchanged since the pre-lift block
+  ok    a second application renders
+  ok    the two applications render differently
+  ok    [wamn.tenant: "wms-route-auth"] replaces [wamn.tenant: "00000000-0000-0000-0000-000000000001"]
+  ok    [wamn.catalog: "wms-catalog"] replaces [wamn.catalog: "default"]
+  ok    [wamn.environment: "dev"] replaces [wamn.environment: "poc"]
+  ok    [wamn.project: "wms"] replaces [wamn.project: "default"]
+  ok    [wamn.schema: "wms"] replaces [wamn.schema: "public"]
+2. exactly N — the count is per anchor, not one for all
+  ok    the twice-occurring namespace anchor fired twice
+  ok    control: a template with only ONE namespace is refused, naming the count
+  ok    control: a template with THREE namespaces is refused
+3. every identity anchor is load-bearing
+  ok    control: a template missing [wamn.tenant: "00000000-0000-0000-0000-000000000001"] is refused
+  ok    control: a template missing [wamn.environment: "poc"] is refused
+  ok    control: a template missing [wamn.catalog: "default"] is refused
+  ok    control: a template missing [wamn.project: "default"] is refused
+  ok    control: a template missing [wamn.schema: "public"] is refused
+  ok    control: a template missing the interfaces anchor is refused, naming IT
+4. no claim placeholder survives the render
+  ok    control: a placeholder surviving under an undeclared key is refused
+  ok    Receiving keeps exactly one "default" -- its own catalog claim
+  ok    a second application whose catalog differs keeps none
+  ok    the unquoted hostgroup default survives, so the sweep is not too wide
+5. the route host is setup-owned and singular
+  ok    control: a manifest answering on the host twice is refused
+6. the arguments themselves
+  ok    control: a missing template is refused
+  ok    control: a missing required key is refused before any work
+  ok    control: a spec without catalog is refused, naming IT
+  ok    control: a spec without template_catalog is refused, naming IT
+7. nameref binding
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'workload_spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-workload: all properties hold
+build-components: m1 selects 9 component packages across 2 workspaces
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling zmij v1.0.23
+   Compiling serde_core v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling foldhash v0.2.0
+   Compiling hashbrown v0.17.1
+   Compiling syn v3.0.4
+   Compiling equivalent v1.0.2
+   Compiling bitflags v2.13.1
+   Compiling anyhow v1.0.104
+   Compiling semver v1.0.28
+   Compiling syn v2.0.119
+   Compiling serde_derive v1.0.229
+   Compiling indexmap v2.14.0
+   Compiling serde v1.0.229
+   Compiling wasmparser v0.258.0
+   Compiling prettyplease v0.2.37
+   Compiling log v0.4.34
+   Compiling id-arena v2.3.0
+   Compiling leb128fmt v0.1.0
+   Compiling typenum v1.20.1
+   Compiling heck v0.5.0
+   Compiling wit-bindgen-rust v0.61.1
+   Compiling hybrid-array v0.4.14
+   Compiling wit-bindgen-rust-macro v0.61.1
+   Compiling autocfg v1.5.1
+   Compiling wit-bindgen v0.61.1
+   Compiling block-buffer v0.12.1
+   Compiling num-traits v0.2.19
+   Compiling crypto-common v0.2.2
+   Compiling const-oid v0.10.2
+   Compiling cfg-if v1.0.4
+   Compiling digest v0.11.3
+   Compiling sha2 v0.11.0
+   Compiling chrono v0.4.45
+   Compiling serde_derive_internals v0.29.1
+   Compiling wit-parser v0.258.0
+   Compiling wasm-encoder v0.258.0
+   Compiling schemars v0.8.22
+   Compiling deunicode v1.6.2
+   Compiling slug v0.1.6
+   Compiling wasm-metadata v0.258.0
+   Compiling schemars_derive v0.8.22
+   Compiling uuid v1.26.0
+   Compiling dyn-clone v1.0.20
+   Compiling jmespath v0.3.0
+   Compiling pin-project-lite v0.2.17
+   Compiling futures-core v0.3.34
+   Compiling slab v0.4.12
+   Compiling wit-component v0.258.0
+   Compiling wit-bindgen-core v0.61.1
+   Compiling futures-task v0.3.34
+   Compiling futures-util v0.3.34
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/execution/contract)
+   Compiling base64 v0.22.1
+   Compiling lazy_static v1.5.0
+   Compiling futures-executor v0.3.34
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/events/wire)
+   Compiling wamn-event-reg v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/events/registration)
+   Compiling wamn-materializer v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/events/materializer)
+   Compiling wamn-postgres-statements v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/data/postgres-statements)
+   Compiling blob-put v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/execution/blob-put)
+   Compiling materializer v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/execution/materializer)
+   Compiling http-route v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/ingress/http-route)
+   Compiling wamn-wms-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/data/wms-data)
+warning: field `adjusted_quantity` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:12:9
+   |
+11 | pub(crate) struct FinalizeCommandRow {
+   |                   ------------------ field in this struct
+12 |     pub adjusted_quantity: Option<wamn_postgres_statements::Numeric>,
+   |         ^^^^^^^^^^^^^^^^^
+   |
+   = note: `FinalizeCommandRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:27:9
+   |
+26 | pub(crate) struct InsertMovementRow {
+   |                   ----------------- field in this struct
+27 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `InsertMovementRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `location_id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:32:9
+   |
+31 | pub(crate) struct LockPalletRow {
+   |                   ------------- field in this struct
+32 |     pub location_id: wamn_postgres_statements::Uuid,
+   |         ^^^^^^^^^^^
+   |
+   = note: `LockPalletRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:39:9
+   |
+38 | pub(crate) struct SetQuantityRow {
+   |                   -------------- field in this struct
+39 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `SetQuantityRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id` and `quantity` are never read
+ --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:7:9
+  |
+6 | pub(crate) struct AddToTargetRow {
+  |                   -------------- fields in this struct
+7 |     pub id: wamn_postgres_statements::Uuid,
+  |         ^^
+8 |     pub quantity: wamn_postgres_statements::Numeric,
+  |         ^^^^^^^^
+  |
+  = note: `AddToTargetRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `row_version` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:18:9
+   |
+17 | pub(crate) struct ConsumeSourceRow {
+   |                   ---------------- field in this struct
+18 |     pub row_version: i64,
+   |         ^^^^^^^^^^^
+   |
+   = note: `ConsumeSourceRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:37:9
+   |
+36 | pub(crate) struct InsertMovementRow {
+   |                   ----------------- field in this struct
+37 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `InsertMovementRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `location_id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:43:9
+   |
+41 | pub(crate) struct LockBothPalletsRow {
+   |                   ------------------ field in this struct
+42 |     pub id: wamn_postgres_statements::Uuid,
+43 |     pub location_id: wamn_postgres_statements::Uuid,
+   |         ^^^^^^^^^^^
+   |
+   = note: `LockBothPalletsRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id` and `quantity` are never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:50:9
+   |
+49 | pub(crate) struct PlaceOnTargetRow {
+   |                   ---------------- fields in this struct
+50 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+51 |     pub quantity: wamn_postgres_statements::Numeric,
+   |         ^^^^^^^^
+   |
+   = note: `PlaceOnTargetRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `pallet_status` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:12:9
+   |
+11 | pub(crate) struct FinalizeCommandRow {
+   |                   ------------------ field in this struct
+12 |     pub pallet_status: Option<String>,
+   |         ^^^^^^^^^^^^^
+   |
+   = note: `FinalizeCommandRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:27:9
+   |
+26 | pub(crate) struct InsertMovementRow {
+   |                   ----------------- field in this struct
+27 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `InsertMovementRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `status` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:34:9
+   |
+31 | pub(crate) struct LockPalletRow {
+   |                   ------------- field in this struct
+...
+34 |     pub status: String,
+   |         ^^^^^^
+   |
+   = note: `LockPalletRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `status` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:48:9
+   |
+45 | pub(crate) struct SelectPalletQuantityRow {
+   |                   ----------------------- field in this struct
+...
+48 |     pub status: String,
+   |         ^^^^^^
+   |
+   = note: `SelectPalletQuantityRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:53:9
+   |
+52 | pub(crate) struct ValidateLocationRow {
+   |                   ------------------- field in this struct
+53 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `ValidateLocationRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id`, `row_version`, and `status` are never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:13:9
+   |
+12 | pub(crate) struct CreatePalletRow {
+   |                   --------------- fields in this struct
+13 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+14 |     pub row_version: i64,
+   |         ^^^^^^^^^^^
+15 |     pub status: String,
+   |         ^^^^^^
+   |
+   = note: `CreatePalletRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:34:9
+   |
+33 | pub(crate) struct InsertMovementRow {
+   |                   ----------------- field in this struct
+34 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `InsertMovementRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `location_id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:39:9
+   |
+38 | pub(crate) struct LockPalletRow {
+   |                   ------------- field in this struct
+39 |     pub location_id: wamn_postgres_statements::Uuid,
+   |         ^^^^^^^^^^^
+   |
+   = note: `LockPalletRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id` and `quantity` are never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:46:9
+   |
+45 | pub(crate) struct PlaceQuantityRow {
+   |                   ---------------- fields in this struct
+46 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+47 |     pub quantity: wamn_postgres_statements::Numeric,
+   |         ^^^^^^^^
+   |
+   = note: `PlaceQuantityRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id` and `quantity` are never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:57:9
+   |
+56 | pub(crate) struct TakeFromSourceRow {
+   |                   ----------------- fields in this struct
+57 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+58 |     pub quantity: wamn_postgres_statements::Numeric,
+   |         ^^^^^^^^
+   |
+   = note: `TakeFromSourceRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /wamn/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:69:9
+   |
+68 | pub(crate) struct ValidateLocationRow {
+   |                   ------------------- field in this struct
+69 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `ValidateLocationRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_adjust.rs:28:18
+   |
+28 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_aggregate.rs:14:18
+   |
+14 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_merge.rs:30:18
+   |
+30 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_move.rs:33:18
+   |
+33 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_split.rs:29:18
+   |
+29 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `GET_REFUSALS` is never used
+  --> data/wms-data/src/pallet.rs:16:18
+   |
+16 | pub(crate) const GET_REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^^^^^
+
+warning: constant `QUERY_REFUSALS` is never used
+  --> data/wms-data/src/pallet.rs:25:18
+   |
+25 | pub(crate) const QUERY_REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^^^^^^^
+
+   Compiling wamn-client-acme-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/data/client-acme-receiving-data)
+   Compiling wamn-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/data/receiving-data)
+   Compiling client-acme-receiving v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/application/client-acme-receiving)
+warning: `wamn-wms-data-access` (lib) generated 27 warnings
+   Compiling wms v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/application/wms)
+   Compiling receiving v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/application/receiving)
+    Finished `release` profile [optimized] target(s) in 32.58s
+   Compiling wasmparser v0.236.1
+   Compiling foldhash v0.1.5
+   Compiling hashbrown v0.17.1
+   Compiling semver v1.0.28
+   Compiling hashbrown v0.15.5
+   Compiling wasm-encoder v0.236.1
+   Compiling unicode-xid v0.2.6
+   Compiling id-arena v2.3.0
+   Compiling syn v2.0.119
+   Compiling serde_core v1.0.229
+   Compiling indexmap v2.14.0
+   Compiling wit-bindgen-rust v0.44.0
+   Compiling serde_json v1.0.151
+   Compiling wit-bindgen-rt v0.44.0
+   Compiling wit-bindgen-rust-macro v0.44.0
+   Compiling bitflags v2.13.1
+   Compiling memchr v2.8.3
+   Compiling dlmalloc v0.2.14
+   Compiling prettyplease v0.2.37
+   Compiling label-template v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/no-std/label-template)
+   Compiling wit-parser v0.236.1
+   Compiling wasm-metadata v0.236.1
+   Compiling wit-component v0.236.1
+   Compiling wit-bindgen-core v0.44.0
+   Compiling wit-bindgen v0.44.0
+   Compiling transform v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/no-std/transform)
+   Compiling http-request v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/no-std/http-request)
+   Compiling label-render v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/components/no-std/label-render)
+warning: unused variable: `record`
+  --> label-render/src/lib.rs:86:22
+   |
+86 |             let Some(record) = fields.as_object_mut() else {
+   |                      ^^^^^^ help: if this is intentional, prefix it with an underscore: `_record`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: suspicious definition of the runtime `memcmp` symbol used by the standard library
+  --> label-render/src/../../guest_runtime.rs:60:1
+   |
+60 | unsafe extern "C" fn memcmp(left: *const u8, right: *const u8, length: usize) -> i32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected `unsafe extern "C" fn(*const c_void, *const c_void, usize) -> i32`
+           found    `unsafe extern "C" fn(*const u8, *const u8, usize) -> i32`
+   = help: either fix the signature or remove any attributes like `#[unsafe(no_mangle)]`, `#[unsafe(export_name = "memcmp")]`, or `#[link_name = "memcmp"]`
+   = help: allow this lint if the signature is compatible
+   = note: `#[warn(suspicious_runtime_symbol_definitions)]` on by default
+
+warning: suspicious definition of the runtime `memcmp` symbol used by the standard library
+  --> transform/src/../../guest_runtime.rs:60:1
+   |
+60 | unsafe extern "C" fn memcmp(left: *const u8, right: *const u8, length: usize) -> i32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected `unsafe extern "C" fn(*const c_void, *const c_void, usize) -> i32`
+           found    `unsafe extern "C" fn(*const u8, *const u8, usize) -> i32`
+   = help: either fix the signature or remove any attributes like `#[unsafe(no_mangle)]`, `#[unsafe(export_name = "memcmp")]`, or `#[link_name = "memcmp"]`
+   = help: allow this lint if the signature is compatible
+   = note: `#[warn(suspicious_runtime_symbol_definitions)]` on by default
+
+warning: suspicious definition of the runtime `memcmp` symbol used by the standard library
+  --> http-request/src/../../guest_runtime.rs:60:1
+   |
+60 | unsafe extern "C" fn memcmp(left: *const u8, right: *const u8, length: usize) -> i32 {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: expected `unsafe extern "C" fn(*const c_void, *const c_void, usize) -> i32`
+           found    `unsafe extern "C" fn(*const u8, *const u8, usize) -> i32`
+   = help: either fix the signature or remove any attributes like `#[unsafe(no_mangle)]`, `#[unsafe(export_name = "memcmp")]`, or `#[link_name = "memcmp"]`
+   = help: allow this lint if the signature is compatible
+   = note: `#[warn(suspicious_runtime_symbol_definitions)]` on by default
+
+warning: `label-render` (lib) generated 2 warnings (run `cargo fix --lib -p label-render` to apply 1 suggestion)
+warning: `transform` (lib) generated 1 warning
+warning: `http-request` (lib) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 15.48s
+build-components: m1 normalizes 4 declared artifacts with profile std-empty-environment
+   Compiling stable_deref_trait v1.2.1
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling hashbrown v0.17.1
+   Compiling serde v1.0.229
+   Compiling semver v1.0.28
+   Compiling smallvec v1.15.2
+   Compiling indexmap v2.14.0
+   Compiling id-arena v2.3.0
+   Compiling rustix v1.1.4
+   Compiling percent-encoding v2.3.2
+   Compiling wasmparser v0.252.0
+   Compiling synstructure v0.13.2
+   Compiling form_urlencoded v1.2.2
+   Compiling wasm-encoder v0.247.0
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerofrom v0.1.8
+   Compiling topological-sort v0.2.2
+   Compiling thiserror-impl v1.0.69
+   Compiling yoke v0.8.3
+   Compiling terminal_size v0.4.4
+   Compiling serde_derive v1.0.229
+   Compiling zerovec-derive v0.11.6
+   Compiling displaydoc v0.2.7
+   Compiling zerovec v0.11.8
+   Compiling zerotrie v0.2.5
+   Compiling spdx v0.13.5
+   Compiling tinystr v0.8.4
+   Compiling icu_locale_core v2.3.0
+   Compiling potential_utf v0.1.6
+   Compiling icu_collections v2.3.0
+   Compiling wasm-encoder v0.252.0
+   Compiling icu_provider v2.3.1
+   Compiling icu_properties v2.3.0
+   Compiling icu_normalizer v2.3.0
+   Compiling wasmparser v0.247.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling serde_spanned v0.6.9
+   Compiling toml_datetime v0.6.11
+   Compiling url v2.5.8
+   Compiling auditable-serde v0.9.0
+   Compiling hashbrown v0.16.1
+   Compiling fallible-iterator v0.3.0
+   Compiling winnow v0.7.15
+   Compiling fixedbitset v0.4.2
+   Compiling clap_builder v4.6.6
+   Compiling wasmparser v0.245.1
+   Compiling toml_edit v0.22.27
+   Compiling wac-types v0.10.1
+   Compiling wasm-metadata v0.247.0
+   Compiling petgraph v0.6.5
+   Compiling gimli v0.32.3
+   Compiling wasm-metadata v0.252.0
+   Compiling wit-parser v0.252.0
+   Compiling thiserror v1.0.69
+   Compiling clap_derive v4.6.4
+   Compiling walrus-macro v0.26.0
+   Compiling wasm-encoder v0.245.1
+   Compiling clap v4.6.6
+   Compiling wac-graph v0.10.1
+   Compiling toml v0.8.23
+   Compiling walrus v0.26.5
+   Compiling wit-component v0.252.0
+   Compiling wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8)
+   Compiling wamn-component-virtualizer v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/crates/platform/component-virtualizer)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 34.03s
+     Running `target/debug/wamn-component-virtualizer --input /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/wasm32-wasip2/release/blob_put.wasm --output /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/virtualized/std-empty-environment/blob_put.wasm.partial.1462165`
+wasi-virt-source-rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742 wasi-virt-adapter-sha256=sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632
+build-components: normalized blob-put -> /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/virtualized/std-empty-environment/blob_put.wasm
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running `target/debug/wamn-component-virtualizer --input /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/wasm32-wasip2/release/client_acme_receiving.wasm --output /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/virtualized/std-empty-environment/client_acme_receiving.wasm.partial.1462165`
+wasi-virt-source-rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742 wasi-virt-adapter-sha256=sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632
+build-components: normalized client-acme-receiving -> /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/virtualized/std-empty-environment/client_acme_receiving.wasm
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running `target/debug/wamn-component-virtualizer --input /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/wasm32-wasip2/release/receiving.wasm --output /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/virtualized/std-empty-environment/receiving.wasm.partial.1462165`
+wasi-virt-source-rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742 wasi-virt-adapter-sha256=sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632
+build-components: normalized receiving -> /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/virtualized/std-empty-environment/receiving.wasm
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running `target/debug/wamn-component-virtualizer --input /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/wasm32-wasip2/release/wms.wasm --output /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/virtualized/std-empty-environment/wms.wasm.partial.1462165`
+wasi-virt-source-rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742 wasi-virt-adapter-sha256=sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632
+build-components: normalized wms -> /home/kaalin/.cache/wamn-lanes/ctc8-12-fresh-auth-20260907/target/virtualized/std-empty-environment/wms.wasm
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling libc v0.2.189
+   Compiling cfg-if v1.0.4
+   Compiling memchr v2.8.3
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling anyhow v1.0.104
+   Compiling itoa v1.0.18
+   Compiling foldhash v0.2.0
+   Compiling pin-project-lite v0.2.17
+   Compiling log v0.4.34
+   Compiling hashbrown v0.17.1
+   Compiling futures-core v0.3.34
+   Compiling once_cell v1.21.4
+   Compiling zmij v1.0.23
+   Compiling jobserver v0.1.35
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.11
+   Compiling cc v1.4.4
+   Compiling equivalent v1.0.2
+   Compiling typenum v1.20.1
+   Compiling indexmap v2.14.0
+   Compiling futures-sink v0.3.34
+   Compiling version_check v0.9.5
+   Compiling bitflags v2.13.1
+   Compiling parking_lot_core v0.9.12
+   Compiling serde_derive v1.0.229
+   Compiling scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling futures-macro v0.3.34
+   Compiling thiserror-impl v2.0.20
+   Compiling futures-channel v0.3.34
+   Compiling errno v0.3.14
+   Compiling futures-task v0.3.34
+   Compiling futures-io v0.3.34
+   Compiling slab v0.4.12
+   Compiling futures-util v0.3.34
+   Compiling signal-hook-registry v1.4.8
+   Compiling tokio-macros v2.7.2
+   Compiling mio v1.2.2
+   Compiling socket2 v0.6.5
+   Compiling libm v0.2.16
+   Compiling pkg-config v0.3.34
+   Compiling serde_json v1.0.151
+   Compiling smallvec v1.15.2
+   Compiling bytes v1.12.1
+   Compiling base64 v0.22.1
+   Compiling parking_lot v0.12.5
+   Compiling tokio v1.53.1
+   Compiling generic-array v0.14.7
+   Compiling synstructure v0.13.2
+   Compiling thiserror v2.0.20
+   Compiling percent-encoding v2.3.2
+   Compiling zerofrom-derive v0.1.7
+   Compiling heck v0.5.0
+   Compiling yoke-derive v0.8.2
+   Compiling tracing-core v0.1.36
+   Compiling zerofrom v0.1.8
+   Compiling fnv v1.0.7
+   Compiling stable_deref_trait v1.2.1
+   Compiling tracing-attributes v0.1.31
+   Compiling zerovec-derive v0.11.6
+   Compiling yoke v0.8.3
+   Compiling displaydoc v0.2.7
+   Compiling tracing v0.1.44
+   Compiling zerovec v0.11.8
+   Compiling semver v1.0.28
+   Compiling zeroize_derive v1.5.0
+   Compiling hybrid-array v0.4.14
+   Compiling cmake v0.1.58
+   Compiling dunce v1.0.5
+   Compiling cpufeatures v0.3.0
+   Compiling autocfg v1.5.1
+   Compiling fs_extra v1.3.0
+   Compiling wasmtime-internal-core v47.0.4
+   Compiling num-traits v0.2.19
+   Compiling zeroize v1.9.0
+   Compiling tinystr v0.8.4
+   Compiling aws-lc-sys v0.44.0
+   Compiling getrandom v0.2.17
+   Compiling tokio-util v0.7.19
+   Compiling cmov v0.5.4
+   Compiling writeable v0.6.4
+   Compiling litemap v0.8.3
+   Compiling ctutils v0.4.2
+   Compiling icu_locale_core v2.3.0
