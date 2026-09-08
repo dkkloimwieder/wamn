@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Agent-authoring pilot secret scrubber.
+#
+# Evidence leaves the cache and enters the repository. A run transcript records
+# every command the agent ran, and some of those commands carry the credentials
+# the runner minted for the disposable environment. Those credentials are dead
+# once `down` destroys the environment, and dead is not a reason to track them:
+# the argument that a token is dead is the argument that leaks the first live
+# one.
+#
+# WHAT IT RECOGNIZES. Minting SHAPE, never a list of values. A list goes stale
+# the moment a run mints a token this tool has never seen, so every pattern here
+# is the grammar the platform issues, not a value it issued once:
+#
+#   wamn_pat_<lookup>_<secret>   the PAT grammar, crates/identity/platform
+#   postgres://user:secret@host  the libpq URL grammar
+#   PGPASSWORD=<secret>          the libpq environment variable
+#   Authorization: Bearer <tok>  the header, literal tokens only
+#
+# The lookup half of a PAT and the role name in a URL both survive, because they
+# identify which credential was used and neither one authenticates.
+#
+# Placeholders survive too. `Bearer $TOKEN` and `Bearer <token>` are what an
+# agent writes when it does the right thing, and rewriting them would hide that.
+#
+#   agent-pilot-scrub <file-or-directory> [...]
+#
+# Exit codes: 0 ok · 2 usage · 50 a secret survived the scrub.
+set -euo pipefail
+
+readonly EX_USAGE=2 EX_SURVIVED=50
+readonly REDACTED="REDACTED-BY-agent-pilot-scrub"
+
+die() { printf 'agent-pilot-scrub: %s\n' "$1" >&2; exit "${2:-$EX_USAGE}"; }
+
+[[ $# -ge 1 ]] || die "expected at least one file or directory"
+
+targets=()
+for path in "$@"; do
+  [[ -e "$path" ]] || die "no such path: $path"
+  if [[ -d "$path" ]]; then
+    while IFS= read -r -d '' file; do targets+=("$file"); done \
+      < <(find "$path" -type f -print0)
+  else
+    targets+=("$path")
+  fi
+done
+
+[[ ${#targets[@]} -gt 0 ]] || die "no files under the given paths"
+
+# The replacement carries no quote and no backslash, so a JSON string stays a
+# JSON string and a transcript stays parseable.
+scrub() {
+  perl -pi -e '
+    my $r = $ENV{PILOT_REDACTED};
+    # Bearer runs first and steps around a PAT on purpose. The PAT rule below
+    # owns that token, because it keeps the lookup half and this rule cannot.
+    s{(Bearer\s+)(?!wamn_pat_)[A-Za-z0-9._~+/-]{16,}={0,2}}{$1 . $r}ge;
+    s{(wamn_pat_[0-9a-f]+_)[0-9a-f]{16,}}{$1 . $r}ge;
+    s{((?:postgres|postgresql)://[^:/?\#\[\]@\s"'"'"']+):[^@\s"'"'"']+\@}{$1 . ":" . $r . "\@"}ge;
+    s{(PGPASSWORD=)[^\s"'"'"';]+}{$1 . $r}ge;
+  ' "$@"
+}
+
+PILOT_REDACTED="$REDACTED" scrub "${targets[@]}"
+
+# The scrub asserts its own result. A pattern that matched on the way in and
+# still matches on the way out is a defect in the pattern, not a warning. The
+# marker itself satisfies two of these grammars, so it is filtered out rather
+# than written around: the check must stay the grammar, not the grammar minus
+# whatever this tool happens to write.
+readonly SECRET_GRAMMAR='wamn_pat_[0-9a-f]+_[0-9a-f]{16,}|(postgres|postgresql)://[^[:space:]"]*:[^@[:space:]"]+@|PGPASSWORD=[^[:space:]";]+|Bearer[[:space:]]+[A-Za-z0-9._~+/-]{16,}'
+
+survivors=0
+for file in "${targets[@]}"; do
+  if LC_ALL=C grep -oE "$SECRET_GRAMMAR" "$file" 2>/dev/null \
+       | LC_ALL=C grep -qv "$REDACTED"; then
+    printf 'agent-pilot-scrub: a secret survived in %s\n' "$file" >&2
+    survivors=$((survivors + 1))
+  fi
+done
+
+[[ $survivors -eq 0 ]] || die "$survivors file(s) still carry a secret" "$EX_SURVIVED"
+
+printf 'agent-pilot-scrub: scrubbed %s file(s)\n' "${#targets[@]}"

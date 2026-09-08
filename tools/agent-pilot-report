@@ -57,6 +57,13 @@ rsync -a --delete --delete-excluded --exclude env/ --exclude worktree/ --exclude
   --exclude 'run.json.*' --exclude verbs.lock \
   "$DIR/" "$OUT/$RUN_ID/"
 
+# The transcript records every command the agent ran, and some of them carry the
+# credentials the runner minted. Those credentials die with the environment, and
+# dead is not a reason to track them. The scrubber refuses if a secret survives,
+# so a shape it cannot match stops the promotion instead of entering the tree.
+"$TREE/tools/agent-pilot-scrub" "$OUT/$RUN_ID/" >/dev/null \
+  || die "the evidence still carries a secret; promotion refused" "$EX_GRADE"
+
 jq -r --slurpfile checklist "$DIR/checklist.json" \
       --slurpfile human "$DIR/human.json" \
       --arg run_id "$RUN_ID" '
@@ -111,5 +118,9 @@ jq -r --slurpfile checklist "$DIR/checklist.json" \
       | . as $k | "- " + $k + ": " + ($h[$k] | tostring) ]
   + ["", "Raw: `" + $run_id + "/`", ""]
   | .[]' "$DIR/run.json" > "$OUT/$RUN_ID.md"
+
+# The report quotes human text, and human text quotes commands.
+"$TREE/tools/agent-pilot-scrub" "$OUT/$RUN_ID.md" >/dev/null \
+  || die "the report still carries a secret; promotion refused" "$EX_GRADE"
 
 printf 'agent-pilot-report: wrote %s\n' "$OUT/$RUN_ID.md"

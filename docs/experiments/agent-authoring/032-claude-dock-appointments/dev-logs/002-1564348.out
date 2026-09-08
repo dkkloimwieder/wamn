@@ -1,0 +1,29 @@
+Run the package development loop, or stand up the environment it needs
+
+Usage: wamn dev [OPTIONS] --config <FILE> --overlay-root <DIRECTORY>
+       wamn dev <COMMAND>
+
+Commands:
+  up    Stand up the disposable environment the loop runs against, and hold it
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <FILE>
+          Strict deployment configuration document
+
+      --overlay-root <DIRECTORY>
+          Package root for the application overlay under development
+
+      --watch
+          Keep the disposable verification session open and rerun affected suffixes
+
+      --hold
+          Keep the activated release reachable until this process is interrupted.
+          
+          Session mode and renderer are independent axes. This is the session mode the interactive client already uses, offered to the plain renderer: redundant under --tui, and a no-op under --watch, which holds by its own nature.
+
+      --tui
+          Render the development session in the interactive terminal client
+
+  -h, --help
+          Print help (see a summary with '-h')

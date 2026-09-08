@@ -1,0 +1,12 @@
+{"ts":"2026-09-07T14:02:50.480Z","n":"001","argv":["--help"],"exit":0,"ms":13}
+{"ts":"2026-09-07T14:02:50.510Z","n":"002","argv":["dev","--help"],"exit":0,"ms":13}
+{"ts":"2026-09-07T14:15:18.910Z","n":"003","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":880}
+{"ts":"2026-09-07T14:16:45.286Z","n":"004","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":1012}
+{"ts":"2026-09-07T14:24:33.361Z","n":"005","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":68167}
+{"ts":"2026-09-07T14:26:00.569Z","n":"006","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":0,"ms":15974}
+{"ts":"2026-09-07T14:30:10.375Z","n":"008","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":8166}
+{"ts":"2026-09-07T14:32:47.400Z","n":"009","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":5074}
+{"ts":"2026-09-07T14:33:05.194Z","n":"010","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":5622}
+{"ts":"2026-09-07T14:34:35.719Z","n":"011","argv":["dev","up","--help"],"exit":0,"ms":12}
+{"ts":"2026-09-07T14:36:44.852Z","n":"012","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":8136}
+{"ts":"2026-09-07T14:37:04.200Z","n":"013","argv":["dev","--config","/home/kaalin/.cache/wamn-pilot/runs/030-claude-dock-appointments/env/dev.json","--overlay-root","packages/dock"],"exit":1,"ms":6968}

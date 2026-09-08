@@ -1,0 +1,45 @@
+{
+  "run": "030-claude-dock-appointments",
+  "commit": "f8001bf1fbba8200915af35cd93acee34db98ae9",
+  "task": "dock-appointments",
+  "agent": "claude",
+  "standup": "dev-env",
+  "machine": {
+    "load_at_launch": "7.54 4.98 2.91",
+    "cores": 8
+  },
+  "build": {
+    "cached": false,
+    "seconds": 593
+  },
+  "up": {
+    "ok": true,
+    "baseline_stages": 0
+  },
+  "launch": {
+    "agent": "claude",
+    "binary": "claude",
+    "started": "2026-09-07T14:02:25Z",
+    "ended": "2026-09-07T14:42:06Z",
+    "exit": 0,
+    "reason": "completed",
+    "model_id": "claude-opus-5[1m]",
+    "session_id": "70bb2ed4-a642-4fe4-8a09-3ffb9f29ecfa",
+    "output_style": "simple-english:simple-english"
+  },
+  "verbs": {
+    "wamn_dev_runs": 11,
+    "wamn_dev_failed": 8,
+    "wamn_dev_hold_runs": 0,
+    "first_green_minutes": 23
+  },
+  "git": {
+    "commits": 4,
+    "files_changed": 88,
+    "outside_allowed_paths": []
+  },
+  "down": {
+    "ok": true,
+    "residue": []
+  }
+}

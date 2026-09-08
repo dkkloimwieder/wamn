@@ -1,0 +1,4301 @@
+diff --git a/components/Cargo.lock b/components/Cargo.lock
+index 6e1c1e62..4ee44822 100644
+--- a/components/Cargo.lock
++++ b/components/Cargo.lock
+@@ -217,6 +217,20 @@ dependencies = [
+  "syn 3.0.4",
+ ]
+ 
++[[package]]
++name = "dock"
++version = "0.1.0"
++dependencies = [
++ "chrono",
++ "futures-executor",
++ "serde",
++ "serde_json",
++ "uuid",
++ "wamn-execution-contract",
++ "wamn-postgres-statements",
++ "wit-bindgen",
++]
++
+ [[package]]
+ name = "dotenvy"
+ version = "0.15.7"
+diff --git a/components/Cargo.toml b/components/Cargo.toml
+index 974046ef..8f6da316 100644
+--- a/components/Cargo.toml
++++ b/components/Cargo.toml
+@@ -9,6 +9,7 @@ resolver = "2"
+ # `no-std/`, whose manifest carries the full reason (wamn-0h0g.11.56).
+ members = [
+     "application/client-acme-receiving",
++    "application/dock",
+     "application/receiving",
+     "application/wms",
+     "ingress/http-route",
+diff --git a/components/application/dock/Cargo.toml b/components/application/dock/Cargo.toml
+new file mode 100644
+index 00000000..9e478bfa
+--- /dev/null
++++ b/components/application/dock/Cargo.toml
+@@ -0,0 +1,23 @@
++[package]
++name = "dock"
++version.workspace = true
++edition.workspace = true
++description = "Package-grain dock appointment operation component"
++license = "Apache-2.0"
++
++[dependencies]
++chrono = { workspace = true, features = ["std"] }
++futures-executor = "0.3"
++serde = { workspace = true, features = ["derive"] }
++serde_json.workspace = true
++uuid = "1"
++wamn-execution-contract = { workspace = true }
++wamn-postgres-statements = { workspace = true }
++wit-bindgen = { workspace = true }
++
++[lib]
++crate-type = ["cdylib"]
++bench = false
++
++[lints]
++workspace = true
+diff --git a/components/application/dock/src/canonical.rs b/components/application/dock/src/canonical.rs
+new file mode 100644
+index 00000000..9f438413
+--- /dev/null
++++ b/components/application/dock/src/canonical.rs
+@@ -0,0 +1,98 @@
++//! Pure canonical spellings shared by every dock operation.
++//!
++//! Canonicalization is not validation. The command identity that
++//! `appointment.book` stores is the canonical JSON of the re-spelled input, so
++//! every member the manifest names is parsed and written back here before it
++//! reaches the command bytes.
++
++use chrono::{DateTime, NaiveDate, SecondsFormat};
++
++/// Re-spell one canonical lowercase-hyphenated UUID.
++pub(crate) fn canonical_uuid(value: &str) -> Option<String> {
++    uuid::Uuid::parse_str(value)
++        .ok()
++        .map(|parsed| parsed.hyphenated().to_string())
++        .filter(|spelled| spelled == value)
++}
++
++/// Re-spell any RFC 3339 timestamp as UTC with six fractional digits.
++///
++/// Canonicalization, not validation. The command identity `appointment.book`
++/// stores is the canonical JSON of the re-spelled input, so a retry that sends
++/// `...T08:00:00Z` where the first call sent `...T08:00:00.000000Z` names the
++/// same instant and therefore the same command, not a conflicting one.
++pub(crate) fn utc_timestamp(value: &str) -> Option<String> {
++    DateTime::parse_from_rfc3339(value).ok().map(|timestamp| {
++        timestamp
++            .to_utc()
++            .to_rfc3339_opts(SecondsFormat::Micros, true)
++    })
++}
++
++/// Half-open UTC bounds of one `YYYY-MM-DD` calendar day.
++///
++/// A slot is an instant, so "one day" needs a zone. This package names UTC and
++/// nothing else, which is why the bounds are derived here rather than supplied.
++pub(crate) fn utc_day_bounds(day: &str) -> Option<(String, String)> {
++    let date = NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?;
++    if date.format("%Y-%m-%d").to_string() != day {
++        return None;
++    }
++    let start = date.and_hms_opt(0, 0, 0)?.and_utc();
++    let end = date.succ_opt()?.and_hms_opt(0, 0, 0)?.and_utc();
++    Some((
++        start.to_rfc3339_opts(SecondsFormat::Micros, true),
++        end.to_rfc3339_opts(SecondsFormat::Micros, true),
++    ))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{canonical_uuid, utc_day_bounds, utc_timestamp};
++
++    #[test]
++    fn only_the_canonical_uuid_spelling_is_accepted() {
++        let canonical = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
++        assert_eq!(canonical_uuid(canonical).as_deref(), Some(canonical));
++        assert_eq!(canonical_uuid("1B4E28BA-2FA1-11D2-883F-0016D3CCA427"), None);
++        assert_eq!(canonical_uuid("1b4e28ba2fa111d2883f0016d3cca427"), None);
++        assert_eq!(canonical_uuid("not-a-uuid"), None);
++    }
++
++    #[test]
++    fn every_spelling_of_one_instant_becomes_one_timestamp() {
++        let canonical = "2026-09-10T08:00:00.000000Z";
++        for spelling in [
++            canonical,
++            "2026-09-10T08:00:00Z",
++            "2026-09-10T09:00:00+01:00",
++            "2026-09-10T08:00:00.000Z",
++        ] {
++            assert_eq!(utc_timestamp(spelling).as_deref(), Some(canonical));
++        }
++        assert_eq!(utc_timestamp("2026-09-10"), None);
++        assert_eq!(utc_timestamp("2026-09-10T08:00:00"), None);
++        assert_eq!(utc_timestamp(""), None);
++    }
++
++    #[test]
++    fn a_day_becomes_half_open_utc_bounds() {
++        assert_eq!(
++            utc_day_bounds("2026-09-10"),
++            Some((
++                "2026-09-10T00:00:00.000000Z".to_owned(),
++                "2026-09-11T00:00:00.000000Z".to_owned(),
++            ))
++        );
++        assert_eq!(
++            utc_day_bounds("2026-12-31"),
++            Some((
++                "2026-12-31T00:00:00.000000Z".to_owned(),
++                "2027-01-01T00:00:00.000000Z".to_owned(),
++            ))
++        );
++        assert_eq!(utc_day_bounds("2026-9-10"), None);
++        assert_eq!(utc_day_bounds("2026-02-30"), None);
++        assert_eq!(utc_day_bounds(""), None);
++    }
++}
+diff --git a/components/application/dock/src/error.rs b/components/application/dock/src/error.rs
+new file mode 100644
+index 00000000..1a100112
+--- /dev/null
++++ b/components/application/dock/src/error.rs
+@@ -0,0 +1,197 @@
++//! Contextual refusals translated once at the dock operation boundary.
++
++use std::error::Error;
++use std::fmt;
++
++use wamn_postgres_statements::{StatementError, StatementErrorKind};
++
++/// Every refusal literal the dock package declares.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub(crate) enum RefusalKind {
++    InvalidInput,
++    NotFound,
++    DockNotFound,
++    CarrierNotFound,
++    SlotUnavailable,
++    IdempotencyConflict,
++    AppointmentNotScheduled,
++    CarrierCodeConflict,
++    DockCodeConflict,
++    Retry,
++    Timeout,
++    PermissionDenied,
++    InternalError,
++}
++
++impl RefusalKind {
++    /// Frozen operation-contract literal for this refusal.
++    pub(crate) const fn literal(self) -> &'static str {
++        match self {
++            Self::InvalidInput => "invalid_input",
++            Self::NotFound => "not_found",
++            Self::DockNotFound => "dock_not_found",
++            Self::CarrierNotFound => "carrier_not_found",
++            Self::SlotUnavailable => "slot_unavailable",
++            Self::IdempotencyConflict => "idempotency_conflict",
++            Self::AppointmentNotScheduled => "appointment_not_scheduled",
++            Self::CarrierCodeConflict => "carrier_code_conflict",
++            Self::DockCodeConflict => "dock_code_conflict",
++            Self::Retry => "retry",
++            Self::Timeout => "timeout",
++            Self::PermissionDenied => "permission_denied",
++            Self::InternalError => "internal_error",
++        }
++    }
++}
++
++/// One refused operation item, with the structured detail its code declares.
++#[derive(Debug)]
++pub(crate) struct Refusal {
++    kind: RefusalKind,
++    context: Box<str>,
++    field: Option<&'static str>,
++    id: Option<Box<str>>,
++    constraint: Option<Box<str>>,
++}
++
++impl Refusal {
++    /// Stable class; callers never match display text.
++    pub(crate) const fn kind(&self) -> RefusalKind {
++        self.kind
++    }
++
++    /// Input field this refusal belongs to.
++    pub(crate) const fn field(&self) -> Option<&'static str> {
++        self.field
++    }
++
++    /// Subject identity carried by a `field`+`id` detail.
++    pub(crate) fn id(&self) -> Option<&str> {
++        self.id.as_deref()
++    }
++
++    /// Named PostgreSQL constraint carried by a constraint detail.
++    pub(crate) fn constraint(&self) -> Option<&str> {
++        self.constraint.as_deref()
++    }
++
++    pub(crate) fn invalid(context: impl Into<Box<str>>, field: &'static str) -> Self {
++        Self::named(RefusalKind::InvalidInput, context, field)
++    }
++
++    pub(crate) fn named(
++        kind: RefusalKind,
++        context: impl Into<Box<str>>,
++        field: &'static str,
++    ) -> Self {
++        Self {
++            field: Some(field),
++            ..Self::new(kind, context)
++        }
++    }
++
++    pub(crate) fn subject(
++        kind: RefusalKind,
++        context: impl Into<Box<str>>,
++        field: &'static str,
++        id: impl Into<Box<str>>,
++    ) -> Self {
++        Self {
++            id: Some(id.into()),
++            ..Self::named(kind, context, field)
++        }
++    }
++
++    pub(crate) fn internal(context: impl Into<Box<str>>) -> Self {
++        Self::new(RefusalKind::InternalError, context)
++    }
++
++    /// Translate one statement failure, honouring this operation's constraints.
++    pub(crate) fn from_statement(
++        context: impl Into<Box<str>>,
++        source: &StatementError,
++        constraints: &[(&str, RefusalKind)],
++    ) -> Self {
++        let mapped = source.constraint().and_then(|name| {
++            constraints
++                .iter()
++                .find(|(candidate, _)| *candidate == name)
++                .map(|(_, kind)| (name.to_owned(), *kind))
++        });
++        if let Some((name, kind)) = mapped {
++            return Self {
++                constraint: Some(name.into_boxed_str()),
++                ..Self::new(kind, context)
++            };
++        }
++        Self::new(classify(source.kind()), context)
++    }
++
++    fn new(kind: RefusalKind, context: impl Into<Box<str>>) -> Self {
++        Self {
++            kind,
++            context: context.into(),
++            field: None,
++            id: None,
++            constraint: None,
++        }
++    }
++}
++
++impl fmt::Display for Refusal {
++    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
++        write!(formatter, "{}: {}", self.kind.literal(), self.context)
++    }
++}
++
++impl Error for Refusal {}
++
++fn classify(kind: StatementErrorKind) -> RefusalKind {
++    match kind {
++        StatementErrorKind::SerializationFailure | StatementErrorKind::ConnectionUnavailable => {
++            RefusalKind::Retry
++        }
++        StatementErrorKind::StatementTimeout => RefusalKind::Timeout,
++        StatementErrorKind::PermissionDenied => RefusalKind::PermissionDenied,
++        StatementErrorKind::UnknownStatement
++        | StatementErrorKind::StatementContractMismatch
++        | StatementErrorKind::RowLimitExceeded
++        | StatementErrorKind::UniqueViolation
++        | StatementErrorKind::ForeignKeyViolation
++        | StatementErrorKind::CheckViolation
++        | StatementErrorKind::QueryError
++        | StatementErrorKind::InvalidResult => RefusalKind::InternalError,
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{RefusalKind, classify};
++    use wamn_postgres_statements::StatementErrorKind;
++
++    #[test]
++    fn only_contractual_database_classes_cross_the_boundary() {
++        for (source, expected) in [
++            (StatementErrorKind::SerializationFailure, RefusalKind::Retry),
++            (
++                StatementErrorKind::ConnectionUnavailable,
++                RefusalKind::Retry,
++            ),
++            (StatementErrorKind::StatementTimeout, RefusalKind::Timeout),
++            (
++                StatementErrorKind::PermissionDenied,
++                RefusalKind::PermissionDenied,
++            ),
++            (
++                StatementErrorKind::UniqueViolation,
++                RefusalKind::InternalError,
++            ),
++            (
++                StatementErrorKind::CheckViolation,
++                RefusalKind::InternalError,
++            ),
++        ] {
++            assert_eq!(classify(source), expected);
++        }
++    }
++}
+diff --git a/components/application/dock/src/generated.rs b/components/application/dock/src/generated.rs
+new file mode 100644
+index 00000000..81f718c6
+--- /dev/null
++++ b/components/application/dock/src/generated.rs
+@@ -0,0 +1,40 @@
++//! Package-generator output carrying only admitted statement digests.
++
++#[expect(
++    dead_code,
++    reason = "the dock and carrier existence probes read presence, not the identity column the generated row carries"
++)]
++pub(crate) mod appointment_book {
++    include!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/../../../packages/dock/generated/wamn/appointment_book.rs"
++    ));
++}
++
++pub(crate) mod appointment_check_in {
++    include!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/../../../packages/dock/generated/wamn/appointment_check_in.rs"
++    ));
++}
++
++pub(crate) mod appointment_query {
++    include!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/../../../packages/dock/generated/wamn/appointment_query.rs"
++    ));
++}
++
++pub(crate) mod carrier_create {
++    include!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/../../../packages/dock/generated/wamn/carrier_create.rs"
++    ));
++}
++
++pub(crate) mod dock_create {
++    include!(concat!(
++        env!("CARGO_MANIFEST_DIR"),
++        "/../../../packages/dock/generated/wamn/dock_create.rs"
++    ));
++}
+diff --git a/components/application/dock/src/lib.rs b/components/application/dock/src/lib.rs
+new file mode 100644
+index 00000000..745617c0
+--- /dev/null
++++ b/components/application/dock/src/lib.rs
+@@ -0,0 +1,97 @@
++#![expect(
++    clippy::same_length_and_capacity,
++    reason = "wit-bindgen emits Vec::from_raw_parts with equal length and capacity"
++)]
++
++//! One package-grain component exporting every dock appointment operation.
++
++use exports::dock::appointment::book::Guest as AppointmentBook;
++use exports::dock::appointment::check_in::Guest as AppointmentCheckIn;
++use exports::dock::appointment::query::Guest as AppointmentQuery;
++use exports::dock::carrier::create::Guest as CarrierCreate;
++use exports::dock::dock::create::Guest as DockCreate;
++use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
++
++use crate::wire::InvocationError;
++
++mod canonical;
++mod error;
++mod generated;
++mod operation;
++mod wire;
++
++wit_bindgen::generate!({
++    world: "dock:component/dock@1.0.0",
++    inline: r#"
++        package dock:component@1.0.0;
++
++        world dock {
++          import wamn:postgres/types@0.1.0;
++          import wamn:postgres/statements@0.1.0;
++          export dock:carrier/create@1.0.0;
++          export dock:dock/create@1.0.0;
++          export dock:appointment/book@1.0.0;
++          export dock:appointment/check-in@1.0.0;
++          export dock:appointment/query@1.0.0;
++        }
++    "#,
++    path: [
++        "../../data/receiving-data/wit/deps/wamn-node",
++        "../../data/receiving-data/wit/deps/wamn-postgres",
++        "wit/deps/dock-appointment",
++        "wit/deps/dock-carrier",
++        "wit/deps/dock-dock",
++    ],
++    generate_all,
++});
++
++struct Component;
++
++fn invoke<F>(operation: F) -> Result<Emission, NodeError>
++where
++    F: Future<Output = Result<String, InvocationError>>,
++{
++    futures_executor::block_on(operation)
++        .map(|payload| Emission {
++            payload,
++            port: None,
++        })
++        .map_err(|error| {
++            NodeError::InvalidInput(ErrorDetail {
++                message: error.context().to_owned(),
++                code: Some(error.code().to_owned()),
++            })
++        })
++}
++
++impl CarrierCreate for Component {
++    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
++        invoke(operation::carrier_create(&input))
++    }
++}
++
++impl DockCreate for Component {
++    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
++        invoke(operation::dock_create(&input))
++    }
++}
++
++impl AppointmentBook for Component {
++    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
++        invoke(operation::appointment_book(&input))
++    }
++}
++
++impl AppointmentCheckIn for Component {
++    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
++        invoke(operation::appointment_check_in(&input))
++    }
++}
++
++impl AppointmentQuery for Component {
++    fn run(_context: NodeContext, input: String) -> Result<Emission, NodeError> {
++        invoke(operation::appointment_query(&input))
++    }
++}
++
++export!(Component);
+diff --git a/components/application/dock/src/operation.rs b/components/application/dock/src/operation.rs
+new file mode 100644
+index 00000000..927ffa18
+--- /dev/null
++++ b/components/application/dock/src/operation.rs
+@@ -0,0 +1,707 @@
++//! The five dock operations, each backed only by generated static SQL.
++
++use serde::{Deserialize, Serialize};
++use serde_json::json;
++use wamn_execution_contract::canonical_json_bytes;
++use wamn_postgres_statements::{Connection, TimestampTz, Transaction, Uuid as WamnUuid};
++
++use crate::canonical::{canonical_uuid, utc_day_bounds, utc_timestamp};
++use crate::error::{Refusal, RefusalKind};
++use crate::generated::{
++    appointment_book as book_sql, appointment_check_in as check_in_sql,
++    appointment_query as query_sql, carrier_create as carrier_sql, dock_create as dock_sql,
++};
++use crate::wire::{
++    InvocationError, ItemResult, RowsValue, parse_item, prepare_envelope, refused, serialized,
++};
++
++const APPOINTMENT_STATUS: [&str; 3] = ["scheduled", "arrived", "departed"];
++const CARRIER_CONSTRAINTS: [(&str, RefusalKind); 1] =
++    [("carrier_carrier_code_key", RefusalKind::CarrierCodeConflict)];
++const DOCK_CONSTRAINTS: [(&str, RefusalKind); 1] =
++    [("dock_dock_code_key", RefusalKind::DockCodeConflict)];
++const NO_CONSTRAINTS: [(&str, RefusalKind); 0] = [];
++
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct CreateCarrierInput {
++    carrier_code: Box<str>,
++    carrier_name: Box<str>,
++}
++
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct CreateDockInput {
++    dock_code: Box<str>,
++}
++
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct BookInput {
++    value: BookValue,
++}
++
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct BookValue {
++    idempotency_key: Box<str>,
++    dock_id: Box<str>,
++    carrier_id: Box<str>,
++    slot_start: Box<str>,
++    slot_end: Box<str>,
++}
++
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct CheckInInput {
++    appointment_id: Box<str>,
++    arrived_at: Box<str>,
++}
++
++#[derive(Debug, Deserialize)]
++#[serde(deny_unknown_fields)]
++struct QueryInput {
++    dock_id: Box<str>,
++    day: Box<str>,
++    #[serde(default)]
++    status: Option<Box<str>>,
++}
++
++#[derive(Debug, Serialize)]
++#[expect(
++    clippy::struct_field_names,
++    reason = "these are the wire member names the generated carrier.create result contract fixes"
++)]
++struct CarrierValue {
++    carrier_id: Box<str>,
++    carrier_code: Box<str>,
++    carrier_name: Box<str>,
++}
++
++#[derive(Debug, Serialize)]
++struct DockValue {
++    dock_id: Box<str>,
++    dock_code: Box<str>,
++}
++
++#[derive(Debug, Serialize)]
++struct AppointmentValue {
++    appointment_id: Box<str>,
++    dock_id: Box<str>,
++    carrier_id: Box<str>,
++    slot_start: Box<str>,
++    slot_end: Box<str>,
++    status: Box<str>,
++    arrived_at: Option<Box<str>>,
++}
++
++/// The appointment columns every statement returns, before completeness.
++#[derive(Debug)]
++struct AppointmentColumns {
++    appointment_id: Option<WamnUuid>,
++    dock_id: Option<WamnUuid>,
++    carrier_id: Option<WamnUuid>,
++    slot_start: Option<TimestampTz>,
++    slot_end: Option<TimestampTz>,
++    status: Option<String>,
++    arrived_at: Option<TimestampTz>,
++}
++
++/// One booking after every member the manifest names is re-spelled.
++#[derive(Debug)]
++struct PreparedBooking {
++    idempotency_key: String,
++    dock_id: String,
++    carrier_id: String,
++    slot_start: String,
++    slot_end: String,
++    canonical_command: Vec<u8>,
++}
++
++/// Execute `carrier.create` as one transaction per input item.
++pub async fn carrier_create(input: &str) -> Result<String, InvocationError> {
++    let items = prepare_envelope(input)?;
++    let mut connection = Connection::new();
++    let mut output: Vec<ItemResult<CarrierValue>> = Vec::with_capacity(items.len());
++    for item in items.into_vec() {
++        let result = async {
++            let parsed = parse_item::<CreateCarrierInput>(&item)?;
++            require_nonempty(&parsed.carrier_code, "carrier_code")?;
++            require_nonempty(&parsed.carrier_name, "carrier_name")?;
++            let mut transaction = begin(&mut connection, "begin carrier creation").await?;
++            let row = carrier_sql::insert_carrier(
++                &mut transaction,
++                parsed.carrier_code.to_string(),
++                parsed.carrier_name.to_string(),
++            )
++            .await
++            .map_err(|source| {
++                Refusal::from_statement("insert carrier", &source, &CARRIER_CONSTRAINTS)
++            })?;
++            commit(transaction, "commit carrier creation").await?;
++            Ok::<_, Refusal>(CarrierValue {
++                carrier_id: row.id.0.into_boxed_str(),
++                carrier_code: row.carrier_code.into_boxed_str(),
++                carrier_name: row.carrier_name.into_boxed_str(),
++            })
++        }
++        .await;
++        output.push(match result {
++            Ok(value) => ItemResult::Succeeded {
++                request_id: item.request_id,
++                value,
++            },
++            Err(refusal) => refused(item.request_id, &refusal, "carrier.create"),
++        });
++    }
++    Ok(serialized(&output))
++}
++
++/// Execute `dock.create` as one transaction per input item.
++pub async fn dock_create(input: &str) -> Result<String, InvocationError> {
++    let items = prepare_envelope(input)?;
++    let mut connection = Connection::new();
++    let mut output: Vec<ItemResult<DockValue>> = Vec::with_capacity(items.len());
++    for item in items.into_vec() {
++        let result = async {
++            let parsed = parse_item::<CreateDockInput>(&item)?;
++            require_nonempty(&parsed.dock_code, "dock_code")?;
++            let mut transaction = begin(&mut connection, "begin dock creation").await?;
++            let row = dock_sql::insert_dock(&mut transaction, parsed.dock_code.to_string())
++                .await
++                .map_err(|source| {
++                    Refusal::from_statement("insert dock", &source, &DOCK_CONSTRAINTS)
++                })?;
++            commit(transaction, "commit dock creation").await?;
++            Ok::<_, Refusal>(DockValue {
++                dock_id: row.id.0.into_boxed_str(),
++                dock_code: row.dock_code.into_boxed_str(),
++            })
++        }
++        .await;
++        output.push(match result {
++            Ok(value) => ItemResult::Succeeded {
++                request_id: item.request_id,
++                value,
++            },
++            Err(refusal) => refused(item.request_id, &refusal, "dock.create"),
++        });
++    }
++    Ok(serialized(&output))
++}
++
++/// Execute `appointment.book` as one transaction per input item.
++///
++/// A refusal drops the transaction, so the idempotency claim it took is rolled
++/// back with it: a key names a booking only once one exists.
++pub async fn appointment_book(input: &str) -> Result<String, InvocationError> {
++    let items = prepare_envelope(input)?;
++    let mut connection = Connection::new();
++    let mut output: Vec<ItemResult<AppointmentValue>> = Vec::with_capacity(items.len());
++    for item in items.into_vec() {
++        let result = async {
++            let parsed = parse_item::<BookInput>(&item)?;
++            let command = prepare_booking(&parsed.value)?;
++            let mut transaction = begin(&mut connection, "begin appointment booking").await?;
++            let value = book_in(&mut transaction, &command).await?;
++            commit(transaction, "commit appointment booking").await?;
++            Ok::<_, Refusal>(value)
++        }
++        .await;
++        output.push(match result {
++            Ok(value) => ItemResult::Succeeded {
++                request_id: item.request_id,
++                value,
++            },
++            Err(refusal) => refused(item.request_id, &refusal, "appointment.book"),
++        });
++    }
++    Ok(serialized(&output))
++}
++
++/// Execute `appointment.check_in` as one transaction per input item.
++pub async fn appointment_check_in(input: &str) -> Result<String, InvocationError> {
++    let items = prepare_envelope(input)?;
++    let mut connection = Connection::new();
++    let mut output: Vec<ItemResult<AppointmentValue>> = Vec::with_capacity(items.len());
++    for item in items.into_vec() {
++        let result = async {
++            let parsed = parse_item::<CheckInInput>(&item)?;
++            let appointment_id = canonical_uuid(&parsed.appointment_id).ok_or_else(|| {
++                Refusal::invalid(
++                    "appointment_id must be a canonical lowercase UUID",
++                    "appointment_id",
++                )
++            })?;
++            let arrived_at = utc_timestamp(&parsed.arrived_at).ok_or_else(|| {
++                Refusal::invalid(
++                    "arrived_at must be an RFC 3339 timestamp with an offset",
++                    "arrived_at",
++                )
++            })?;
++            let mut transaction = begin(&mut connection, "begin appointment check-in").await?;
++            let row = check_in_sql::check_in_appointment(
++                &mut transaction,
++                WamnUuid(appointment_id.clone()),
++                TimestampTz(arrived_at),
++            )
++            .await
++            .map_err(|source| {
++                Refusal::from_statement("check in appointment", &source, &NO_CONSTRAINTS)
++            })?;
++            let value = check_in_value(row, &appointment_id)?;
++            commit(transaction, "commit appointment check-in").await?;
++            Ok::<_, Refusal>(value)
++        }
++        .await;
++        output.push(match result {
++            Ok(value) => ItemResult::Succeeded {
++                request_id: item.request_id,
++                value,
++            },
++            Err(refusal) => refused(item.request_id, &refusal, "appointment.check_in"),
++        });
++    }
++    Ok(serialized(&output))
++}
++
++/// Execute `appointment.query` against its verified projection.
++pub async fn appointment_query(input: &str) -> Result<String, InvocationError> {
++    let items = prepare_envelope(input)?;
++    let mut connection = Connection::new();
++    let mut output: Vec<ItemResult<RowsValue<AppointmentValue>>> = Vec::with_capacity(items.len());
++    for item in items.into_vec() {
++        let result = async {
++            let parsed = parse_item::<QueryInput>(&item)?;
++            let dock_id = canonical_uuid(&parsed.dock_id).ok_or_else(|| {
++                Refusal::invalid("dock_id must be a canonical lowercase UUID", "dock_id")
++            })?;
++            let (day_start, day_end) = utc_day_bounds(&parsed.day).ok_or_else(|| {
++                Refusal::invalid("day must be a UTC calendar date spelled YYYY-MM-DD", "day")
++            })?;
++            let status = parsed.status.as_deref().map(status_filter).transpose()?;
++            let mut transaction = begin(&mut connection, "begin appointment query").await?;
++            let rows = query_sql::list_appointments(
++                &mut transaction,
++                WamnUuid(dock_id),
++                TimestampTz(day_start),
++                TimestampTz(day_end),
++                status,
++            )
++            .await
++            .map_err(|source| {
++                Refusal::from_statement("list appointments", &source, &NO_CONSTRAINTS)
++            })?;
++            commit(transaction, "commit appointment query").await?;
++            Ok::<_, Refusal>(RowsValue {
++                rows: rows
++                    .into_iter()
++                    .map(list_value)
++                    .collect::<Result<Vec<_>, _>>()?
++                    .into_boxed_slice(),
++            })
++        }
++        .await;
++        output.push(match result {
++            Ok(value) => ItemResult::Succeeded {
++                request_id: item.request_id,
++                value,
++            },
++            Err(refusal) => refused(item.request_id, &refusal, "appointment.query"),
++        });
++    }
++    Ok(serialized(&output))
++}
++
++async fn begin(connection: &mut Connection, context: &'static str) -> Result<Transaction, Refusal> {
++    connection
++        .begin()
++        .await
++        .map_err(|source| Refusal::from_statement(context, &source, &NO_CONSTRAINTS))
++}
++
++async fn commit(transaction: Transaction, context: &'static str) -> Result<(), Refusal> {
++    transaction
++        .commit()
++        .await
++        .map_err(|source| Refusal::from_statement(context, &source, &NO_CONSTRAINTS))
++}
++
++fn require_nonempty(value: &str, field: &'static str) -> Result<(), Refusal> {
++    if value.is_empty() {
++        Err(Refusal::invalid("value must not be empty", field))
++    } else {
++        Ok(())
++    }
++}
++
++fn status_filter(value: &str) -> Result<String, Refusal> {
++    if APPOINTMENT_STATUS.contains(&value) {
++        Ok(value.to_owned())
++    } else {
++        Err(Refusal::invalid(
++            "status is outside the closed appointment vocabulary",
++            "status",
++        ))
++    }
++}
++
++/// Re-spell every named member, then hash what was re-spelled.
++fn prepare_booking(value: &BookValue) -> Result<PreparedBooking, Refusal> {
++    require_nonempty(&value.idempotency_key, "value.idempotency_key")?;
++    let dock_id = canonical_uuid(&value.dock_id).ok_or_else(|| {
++        Refusal::invalid(
++            "value.dock_id must be a canonical lowercase UUID",
++            "value.dock_id",
++        )
++    })?;
++    let carrier_id = canonical_uuid(&value.carrier_id).ok_or_else(|| {
++        Refusal::invalid(
++            "value.carrier_id must be a canonical lowercase UUID",
++            "value.carrier_id",
++        )
++    })?;
++    let slot_start = utc_timestamp(&value.slot_start).ok_or_else(|| {
++        Refusal::invalid(
++            "value.slot_start must be an RFC 3339 timestamp with an offset",
++            "value.slot_start",
++        )
++    })?;
++    let slot_end = utc_timestamp(&value.slot_end).ok_or_else(|| {
++        Refusal::invalid(
++            "value.slot_end must be an RFC 3339 timestamp with an offset",
++            "value.slot_end",
++        )
++    })?;
++    // Both spellings are fixed-width UTC, so text order is time order.
++    if slot_end <= slot_start {
++        return Err(Refusal::invalid(
++            "value.slot_end must be after value.slot_start",
++            "value.slot_end",
++        ));
++    }
++    let canonical_value = json!({
++        "carrier_id": carrier_id,
++        "dock_id": dock_id,
++        "slot_end": slot_end,
++        "slot_start": slot_start,
++    });
++    Ok(PreparedBooking {
++        idempotency_key: value.idempotency_key.to_string(),
++        dock_id,
++        carrier_id,
++        slot_start,
++        slot_end,
++        canonical_command: canonical_json_bytes(&canonical_value),
++    })
++}
++
++async fn book_in(
++    transaction: &mut Transaction,
++    command: &PreparedBooking,
++) -> Result<AppointmentValue, Refusal> {
++    if let Some(replay) = book_sql::find_replay(transaction, command.idempotency_key.clone())
++        .await
++        .map_err(|source| {
++            Refusal::from_statement("find appointment replay", &source, &NO_CONSTRAINTS)
++        })?
++    {
++        return replay_value(replay, command);
++    }
++
++    let claim = book_sql::claim_command(
++        transaction,
++        command.idempotency_key.clone(),
++        command.canonical_command.clone(),
++    )
++    .await
++    .map_err(|source| {
++        Refusal::from_statement(
++            "claim appointment idempotency key",
++            &source,
++            &NO_CONSTRAINTS,
++        )
++    })?;
++    let Some(claim) = claim else {
++        let replay = book_sql::find_replay(transaction, command.idempotency_key.clone())
++            .await
++            .map_err(|source| {
++                Refusal::from_statement(
++                    "load concurrent appointment replay",
++                    &source,
++                    &NO_CONSTRAINTS,
++                )
++            })?
++            .ok_or_else(|| Refusal::internal("conflicting command claim has no durable result"))?;
++        return replay_value(replay, command);
++    };
++
++    if book_sql::lock_dock(transaction, WamnUuid(command.dock_id.clone()))
++        .await
++        .map_err(|source| Refusal::from_statement("lock dock", &source, &NO_CONSTRAINTS))?
++        .is_none()
++    {
++        return Err(Refusal::subject(
++            RefusalKind::DockNotFound,
++            "dock does not exist",
++            "value.dock_id",
++            command.dock_id.clone(),
++        ));
++    }
++    if book_sql::find_carrier(transaction, WamnUuid(command.carrier_id.clone()))
++        .await
++        .map_err(|source| Refusal::from_statement("find carrier", &source, &NO_CONSTRAINTS))?
++        .is_none()
++    {
++        return Err(Refusal::subject(
++            RefusalKind::CarrierNotFound,
++            "carrier does not exist",
++            "value.carrier_id",
++            command.carrier_id.clone(),
++        ));
++    }
++
++    let row = book_sql::insert_appointment(
++        transaction,
++        claim.appointment_id,
++        WamnUuid(command.dock_id.clone()),
++        WamnUuid(command.carrier_id.clone()),
++        TimestampTz(command.slot_start.clone()),
++        TimestampTz(command.slot_end.clone()),
++    )
++    .await
++    .map_err(|source| Refusal::from_statement("insert appointment", &source, &NO_CONSTRAINTS))?;
++    booked_value(row)
++}
++
++fn replay_value(
++    replay: book_sql::FindReplayRow,
++    command: &PreparedBooking,
++) -> Result<AppointmentValue, Refusal> {
++    if replay.canonical_command != command.canonical_command {
++        return Err(Refusal::named(
++            RefusalKind::IdempotencyConflict,
++            "the idempotency key already names a different request",
++            "value.idempotency_key",
++        ));
++    }
++    appointment_value(
++        AppointmentColumns {
++            appointment_id: Some(replay.appointment_id),
++            dock_id: replay.dock_id,
++            carrier_id: replay.carrier_id,
++            slot_start: replay.slot_start,
++            slot_end: replay.slot_end,
++            status: replay.status,
++            arrived_at: replay.arrived_at,
++        },
++        "a claimed idempotency key has no appointment",
++    )
++}
++
++fn booked_value(row: book_sql::InsertAppointmentRow) -> Result<AppointmentValue, Refusal> {
++    match row.outcome.as_deref() {
++        Some("slot_unavailable") => {
++            let Some(conflicting) = row.conflicting_appointment_id else {
++                return Err(Refusal::internal(
++                    "the slot refusal omitted the conflicting appointment",
++                ));
++            };
++            Err(Refusal::subject(
++                RefusalKind::SlotUnavailable,
++                "the requested slot overlaps an appointment on this dock",
++                "value.slot_start",
++                conflicting.0,
++            ))
++        }
++        Some("booked") => appointment_value(
++            AppointmentColumns {
++                appointment_id: row.appointment_id,
++                dock_id: row.dock_id,
++                carrier_id: row.carrier_id,
++                slot_start: row.slot_start,
++                slot_end: row.slot_end,
++                status: row.status,
++                arrived_at: row.arrived_at,
++            },
++            "the booking returned an incomplete row",
++        ),
++        _ => Err(Refusal::internal(
++            "appointment.book returned a null or unknown outcome",
++        )),
++    }
++}
++
++fn check_in_value(
++    row: check_in_sql::CheckInAppointmentRow,
++    appointment_id: &str,
++) -> Result<AppointmentValue, Refusal> {
++    match row.outcome.as_deref() {
++        Some("not_found") => Err(Refusal::subject(
++            RefusalKind::NotFound,
++            "appointment does not exist",
++            "appointment_id",
++            appointment_id,
++        )),
++        Some("not_scheduled") => Err(Refusal::subject(
++            RefusalKind::AppointmentNotScheduled,
++            "appointment has already left the scheduled status",
++            "appointment_id",
++            appointment_id,
++        )),
++        Some("arrived") => appointment_value(
++            AppointmentColumns {
++                appointment_id: row.appointment_id,
++                dock_id: row.dock_id,
++                carrier_id: row.carrier_id,
++                slot_start: row.slot_start,
++                slot_end: row.slot_end,
++                status: row.status,
++                arrived_at: row.arrived_at,
++            },
++            "the check-in returned an incomplete row",
++        ),
++        _ => Err(Refusal::internal(
++            "appointment.check_in returned a null or unknown outcome",
++        )),
++    }
++}
++
++fn list_value(row: query_sql::ListAppointmentsRow) -> Result<AppointmentValue, Refusal> {
++    Ok(AppointmentValue {
++        appointment_id: row.appointment_id.0.into_boxed_str(),
++        dock_id: row.dock_id.0.into_boxed_str(),
++        carrier_id: row.carrier_id.0.into_boxed_str(),
++        slot_start: wire_timestamp(&row.slot_start)?,
++        slot_end: wire_timestamp(&row.slot_end)?,
++        status: row.status.into_boxed_str(),
++        arrived_at: row.arrived_at.as_ref().map(wire_timestamp).transpose()?,
++    })
++}
++
++fn appointment_value(
++    columns: AppointmentColumns,
++    context: &'static str,
++) -> Result<AppointmentValue, Refusal> {
++    let (
++        Some(appointment_id),
++        Some(dock_id),
++        Some(carrier_id),
++        Some(slot_start),
++        Some(slot_end),
++        Some(status),
++    ) = (
++        columns.appointment_id,
++        columns.dock_id,
++        columns.carrier_id,
++        columns.slot_start,
++        columns.slot_end,
++        columns.status,
++    )
++    else {
++        return Err(Refusal::internal(context));
++    };
++    Ok(AppointmentValue {
++        appointment_id: appointment_id.0.into_boxed_str(),
++        dock_id: dock_id.0.into_boxed_str(),
++        carrier_id: carrier_id.0.into_boxed_str(),
++        slot_start: wire_timestamp(&slot_start)?,
++        slot_end: wire_timestamp(&slot_end)?,
++        status: status.into_boxed_str(),
++        arrived_at: columns
++            .arrived_at
++            .as_ref()
++            .map(wire_timestamp)
++            .transpose()?,
++    })
++}
++
++fn wire_timestamp(value: &TimestampTz) -> Result<Box<str>, Refusal> {
++    utc_timestamp(&value.0)
++        .map(String::into_boxed_str)
++        .ok_or_else(|| Refusal::internal("a stored timestamp is not RFC 3339"))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{BookValue, prepare_booking, status_filter};
++    use crate::error::RefusalKind;
++
++    fn booking(idempotency_key: &str, slot_start: &str) -> BookValue {
++        BookValue {
++            idempotency_key: idempotency_key.into(),
++            dock_id: "11111111-1111-1111-1111-111111111111".into(),
++            carrier_id: "22222222-2222-2222-2222-222222222222".into(),
++            slot_start: slot_start.into(),
++            slot_end: "2026-09-10T09:00:00.000000Z".into(),
++        }
++    }
++
++    #[test]
++    fn the_command_identity_ignores_the_idempotency_key() {
++        let first = prepare_booking(&booking("key-a", "2026-09-10T08:00:00.000000Z"))
++            .expect("a canonical booking is admitted");
++        let second = prepare_booking(&booking("key-b", "2026-09-10T08:00:00.000000Z"))
++            .expect("a canonical booking is admitted");
++        assert_eq!(first.canonical_command, second.canonical_command);
++        assert_eq!(
++            String::from_utf8(first.canonical_command).expect("canonical JSON is UTF-8"),
++            concat!(
++                r#"{"carrier_id":"22222222-2222-2222-2222-222222222222","#,
++                r#""dock_id":"11111111-1111-1111-1111-111111111111","#,
++                r#""slot_end":"2026-09-10T09:00:00.000000Z","#,
++                r#""slot_start":"2026-09-10T08:00:00.000000Z"}"#,
++            )
++        );
++    }
++
++    #[test]
++    fn one_instant_spelled_two_ways_is_one_command() {
++        let canonical = prepare_booking(&booking("key-a", "2026-09-10T08:00:00.000000Z"))
++            .expect("a canonical booking is admitted");
++        let respelled = prepare_booking(&booking("key-a", "2026-09-10T09:00:00+01:00"))
++            .expect("an offset booking is admitted");
++        assert_eq!(canonical.canonical_command, respelled.canonical_command);
++    }
++
++    #[test]
++    fn a_different_slot_is_a_different_command() {
++        let first = prepare_booking(&booking("key-a", "2026-09-10T08:00:00.000000Z"))
++            .expect("a canonical booking is admitted");
++        let moved = prepare_booking(&booking("key-a", "2026-09-10T08:30:00.000000Z"))
++            .expect("a canonical booking is admitted");
++        assert_ne!(first.canonical_command, moved.canonical_command);
++    }
++
++    #[test]
++    fn a_booking_refuses_noncanonical_and_empty_slots() {
++        let refusal = prepare_booking(&booking("key-a", "2026-09-10"))
++            .expect_err("a date without a time is refused");
++        assert_eq!(refusal.kind(), RefusalKind::InvalidInput);
++        assert_eq!(refusal.field(), Some("value.slot_start"));
++
++        let refusal = prepare_booking(&booking("", "2026-09-10T08:00:00.000000Z"))
++            .expect_err("an empty key is refused");
++        assert_eq!(refusal.field(), Some("value.idempotency_key"));
++
++        let refusal = prepare_booking(&booking("key-a", "2026-09-10T09:00:00.000000Z"))
++            .expect_err("an empty slot is refused");
++        assert_eq!(refusal.field(), Some("value.slot_end"));
++
++        let refusal = prepare_booking(&booking("key-a", "2026-09-10T10:00:00.000000Z"))
++            .expect_err("an inverted slot is refused");
++        assert_eq!(refusal.field(), Some("value.slot_end"));
++    }
++
++    #[test]
++    fn the_status_filter_is_a_closed_vocabulary() {
++        for status in ["scheduled", "arrived", "departed"] {
++            assert_eq!(
++                status_filter(status).expect("a declared status is admitted"),
++                status
++            );
++        }
++        let refusal = status_filter("cancelled").expect_err("an unknown status is refused");
++        assert_eq!(refusal.field(), Some("status"));
++    }
++}
+diff --git a/components/application/dock/src/wire.rs b/components/application/dock/src/wire.rs
+new file mode 100644
+index 00000000..2841fd04
+--- /dev/null
++++ b/components/application/dock/src/wire.rs
+@@ -0,0 +1,296 @@
++//! The public envelope every dock operation reads and writes.
++//!
++//! One request is a JSON array of items. Each item carries its own
++//! `request_id` and succeeds or is refused on its own, so one bad item never
++//! decides the fate of its neighbours.
++
++use serde::Serialize;
++use serde::de::DeserializeOwned;
++use serde_json::Value;
++
++use crate::error::{Refusal, RefusalKind};
++
++const MAX_ENVELOPE_ITEMS: usize = 100;
++
++/// Envelope refusal translated to the frozen node invalid-input arm.
++#[derive(Debug)]
++pub struct InvocationError {
++    context: &'static str,
++}
++
++impl InvocationError {
++    /// Frozen WIT error-detail code.
++    #[expect(
++        clippy::unused_self,
++        reason = "the node error boundary reads code and context off one value"
++    )]
++    pub const fn code(&self) -> &'static str {
++        "invalid_input"
++    }
++
++    /// Stable, non-database refusal description.
++    pub const fn context(&self) -> &'static str {
++        self.context
++    }
++
++    const fn new(context: &'static str) -> Self {
++        Self { context }
++    }
++}
++
++/// One envelope item: its identity and the body the operation parses.
++#[derive(Clone, Debug, PartialEq)]
++pub(crate) struct EnvelopeItem {
++    pub(crate) request_id: Box<str>,
++    pub(crate) body: Value,
++}
++
++/// Split one raw request into bounded, identified items.
++pub(crate) fn prepare_envelope(input: &str) -> Result<Box<[EnvelopeItem]>, InvocationError> {
++    let value: Value = serde_json::from_str(input)
++        .map_err(|_| InvocationError::new("operation input must be a JSON array"))?;
++    let Value::Array(values) = value else {
++        return Err(InvocationError::new("operation input must be a JSON array"));
++    };
++    if !(1..=MAX_ENVELOPE_ITEMS).contains(&values.len()) {
++        return Err(InvocationError::new(
++            "operation input item count must be 1..=100",
++        ));
++    }
++
++    values
++        .into_iter()
++        .map(|value| {
++            let Value::Object(mut object) = value else {
++                return Err(InvocationError::new(
++                    "every operation item must be a JSON object",
++                ));
++            };
++            let request_id = match object.remove("request_id") {
++                Some(Value::String(request_id)) if !request_id.is_empty() => request_id,
++                _ => {
++                    return Err(InvocationError::new(
++                        "every operation item must carry a nonempty string request_id",
++                    ));
++                }
++            };
++            Ok(EnvelopeItem {
++                request_id: request_id.into_boxed_str(),
++                body: Value::Object(object),
++            })
++        })
++        .collect::<Result<Vec<_>, _>>()
++        .map(Vec::into_boxed_slice)
++}
++
++/// Decode one item body into its declared input contract.
++pub(crate) fn parse_item<T: DeserializeOwned>(item: &EnvelopeItem) -> Result<T, Refusal> {
++    serde_json::from_value(item.body.clone())
++        .map_err(|_| Refusal::invalid("operation item does not match its input contract", "input"))
++}
++
++/// What one item produced: its value, or the refusal that replaced it.
++#[derive(Debug, Serialize)]
++#[serde(untagged)]
++pub(crate) enum ItemResult<T> {
++    Succeeded {
++        request_id: Box<str>,
++        value: T,
++    },
++    Refused {
++        request_id: Box<str>,
++        error: OperationError,
++    },
++}
++
++/// One serialized refusal: its code and the detail that code declares.
++#[derive(Debug, Serialize)]
++pub(crate) struct OperationError {
++    code: &'static str,
++    detail: ErrorDetail,
++}
++
++#[derive(Debug, Serialize)]
++#[serde(untagged)]
++enum ErrorDetail {
++    Field(FieldDetail),
++    FieldId(FieldIdDetail),
++    Constraint(ConstraintDetail),
++    Permission(PermissionDetail),
++    Empty(EmptyDetail),
++}
++
++#[derive(Debug, Serialize)]
++struct FieldDetail {
++    field: &'static str,
++}
++
++#[derive(Debug, Serialize)]
++struct FieldIdDetail {
++    field: &'static str,
++    id: Box<str>,
++}
++
++#[derive(Debug, Serialize)]
++struct ConstraintDetail {
++    constraint: Box<str>,
++}
++
++#[derive(Debug, Serialize)]
++struct PermissionDetail {
++    operation: &'static str,
++}
++
++#[derive(Debug, Serialize)]
++struct EmptyDetail {}
++
++/// Bounded-list values travel under one `rows` member.
++#[derive(Debug, Serialize)]
++pub(crate) struct RowsValue<T> {
++    pub(crate) rows: Box<[T]>,
++}
++
++/// Render one refusal in the exact detail shape its code declares.
++pub(crate) fn operation_error(refusal: &Refusal, operation: &'static str) -> OperationError {
++    let internal = || OperationError {
++        code: RefusalKind::InternalError.literal(),
++        detail: ErrorDetail::Empty(EmptyDetail {}),
++    };
++    let detail = match refusal.kind() {
++        RefusalKind::InvalidInput | RefusalKind::IdempotencyConflict => {
++            let Some(field) = refusal.field() else {
++                return internal();
++            };
++            ErrorDetail::Field(FieldDetail { field })
++        }
++        RefusalKind::NotFound
++        | RefusalKind::DockNotFound
++        | RefusalKind::CarrierNotFound
++        | RefusalKind::SlotUnavailable
++        | RefusalKind::AppointmentNotScheduled => {
++            let (Some(field), Some(id)) = (refusal.field(), refusal.id()) else {
++                return internal();
++            };
++            ErrorDetail::FieldId(FieldIdDetail {
++                field,
++                id: id.into(),
++            })
++        }
++        RefusalKind::CarrierCodeConflict | RefusalKind::DockCodeConflict => {
++            let Some(constraint) = refusal.constraint() else {
++                return internal();
++            };
++            ErrorDetail::Constraint(ConstraintDetail {
++                constraint: constraint.into(),
++            })
++        }
++        RefusalKind::PermissionDenied => ErrorDetail::Permission(PermissionDetail { operation }),
++        RefusalKind::Retry | RefusalKind::Timeout | RefusalKind::InternalError => {
++            ErrorDetail::Empty(EmptyDetail {})
++        }
++    };
++    OperationError {
++        code: refusal.kind().literal(),
++        detail,
++    }
++}
++
++/// Replace one item with its refusal.
++pub(crate) fn refused<T>(
++    request_id: Box<str>,
++    refusal: &Refusal,
++    operation: &'static str,
++) -> ItemResult<T> {
++    ItemResult::Refused {
++        request_id,
++        error: operation_error(refusal, operation),
++    }
++}
++
++/// Serialize one complete operation response.
++pub(crate) fn serialized<T: Serialize>(output: &[ItemResult<T>]) -> String {
++    serde_json::to_string(output).expect("closed operation results always serialize")
++}
++
++#[cfg(test)]
++mod tests {
++    use serde_json::json;
++
++    use super::{ItemResult, operation_error, prepare_envelope, serialized};
++    use crate::error::{Refusal, RefusalKind};
++
++    #[test]
++    fn the_envelope_admits_only_identified_bounded_items() {
++        let items = prepare_envelope(r#"[{"request_id":"r1","dock_code":"D1"}]"#)
++            .expect("one identified item is admitted");
++        assert_eq!(items.len(), 1);
++        assert_eq!(items[0].request_id.as_ref(), "r1");
++        assert_eq!(items[0].body, json!({"dock_code": "D1"}));
++
++        assert!(prepare_envelope("[]").is_err());
++        assert!(prepare_envelope(r#"{"request_id":"r1"}"#).is_err());
++        assert!(prepare_envelope(r#"[{"request_id":""}]"#).is_err());
++        assert!(prepare_envelope(r#"[{"dock_code":"D1"}]"#).is_err());
++        assert!(prepare_envelope("not json").is_err());
++    }
++
++    #[test]
++    fn each_refusal_carries_the_detail_its_code_declares() {
++        let slot = Refusal::subject(
++            RefusalKind::SlotUnavailable,
++            "the slot overlaps an appointment",
++            "value.slot_start",
++            "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
++        );
++        let rendered =
++            serde_json::to_value(operation_error(&slot, "appointment.book")).expect("serializes");
++        assert_eq!(
++            rendered,
++            json!({
++                "code": "slot_unavailable",
++                "detail": {
++                    "field": "value.slot_start",
++                    "id": "1b4e28ba-2fa1-11d2-883f-0016d3cca427",
++                },
++            })
++        );
++
++        let conflict =
++            Refusal::invalid("the key names a different request", "value.idempotency_key");
++        let rendered = serde_json::to_value(operation_error(&conflict, "appointment.book"))
++            .expect("serializes");
++        assert_eq!(
++            rendered["detail"],
++            json!({"field": "value.idempotency_key"})
++        );
++
++        let internal = Refusal::internal("the statement returned an unknown outcome");
++        let rendered = serde_json::to_value(operation_error(&internal, "appointment.book"))
++            .expect("serializes");
++        assert_eq!(rendered, json!({"code": "internal_error", "detail": {}}));
++    }
++
++    #[test]
++    fn a_response_pairs_every_item_with_its_request_id() {
++        let output = vec![
++            ItemResult::Succeeded {
++                request_id: "r1".into(),
++                value: json!({"dock_id": "d"}),
++            },
++            ItemResult::Refused {
++                request_id: "r2".into(),
++                error: operation_error(&Refusal::invalid("bad", "dock_code"), "dock.create"),
++            },
++        ];
++        assert_eq!(
++            serde_json::from_str::<serde_json::Value>(&serialized(&output)).expect("valid JSON"),
++            json!([
++                {"request_id": "r1", "value": {"dock_id": "d"}},
++                {
++                    "request_id": "r2",
++                    "error": {"code": "invalid_input", "detail": {"field": "dock_code"}},
++                },
++            ])
++        );
++    }
++}
+diff --git a/components/application/dock/wit/deps/dock-appointment/package.wit b/components/application/dock/wit/deps/dock-appointment/package.wit
+new file mode 100644
+index 00000000..b4d494a8
+--- /dev/null
++++ b/components/application/dock/wit/deps/dock-appointment/package.wit
+@@ -0,0 +1,19 @@
++package dock:appointment@1.0.0;
++
++interface book {
++  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
++
++  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
++}
++
++interface check-in {
++  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
++
++  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
++}
++
++interface query {
++  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
++
++  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
++}
+diff --git a/components/application/dock/wit/deps/dock-carrier/package.wit b/components/application/dock/wit/deps/dock-carrier/package.wit
+new file mode 100644
+index 00000000..74593be2
+--- /dev/null
++++ b/components/application/dock/wit/deps/dock-carrier/package.wit
+@@ -0,0 +1,7 @@
++package dock:carrier@1.0.0;
++
++interface create {
++  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
++
++  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
++}
+diff --git a/components/application/dock/wit/deps/dock-dock/package.wit b/components/application/dock/wit/deps/dock-dock/package.wit
+new file mode 100644
+index 00000000..80190988
+--- /dev/null
++++ b/components/application/dock/wit/deps/dock-dock/package.wit
+@@ -0,0 +1,7 @@
++package dock:dock@1.0.0;
++
++interface create {
++  use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
++
++  run: func(ctx: node-context, input: json) -> result<emission, node-error>;
++}
+diff --git a/packages/dock/command/book_appointment/claim_command.sql b/packages/dock/command/book_appointment/claim_command.sql
+new file mode 100644
+index 00000000..37c1498a
+--- /dev/null
++++ b/packages/dock/command/book_appointment/claim_command.sql
+@@ -0,0 +1,8 @@
++INSERT INTO book_appointment_command (
++    idempotency_key,
++    canonical_command
++)
++VALUES ($1, $2)
++ON CONFLICT ON CONSTRAINT book_appointment_command_idempotency_key_pkey
++DO NOTHING
++RETURNING appointment_id;
+diff --git a/packages/dock/command/book_appointment/find_carrier.sql b/packages/dock/command/book_appointment/find_carrier.sql
+new file mode 100644
+index 00000000..5e1ce204
+--- /dev/null
++++ b/packages/dock/command/book_appointment/find_carrier.sql
+@@ -0,0 +1,3 @@
++SELECT id
++FROM carrier
++WHERE id = $1;
+diff --git a/packages/dock/command/book_appointment/find_replay.sql b/packages/dock/command/book_appointment/find_replay.sql
+new file mode 100644
+index 00000000..6ddda254
+--- /dev/null
++++ b/packages/dock/command/book_appointment/find_replay.sql
+@@ -0,0 +1,12 @@
++SELECT
++    claim.canonical_command,
++    claim.appointment_id,
++    appointment.dock_id,
++    appointment.carrier_id,
++    appointment.slot_start,
++    appointment.slot_end,
++    appointment.status,
++    appointment.arrived_at
++FROM book_appointment_command AS claim
++LEFT JOIN appointment ON appointment.id = claim.appointment_id
++WHERE claim.idempotency_key = $1;
+diff --git a/packages/dock/command/book_appointment/insert_appointment.sql b/packages/dock/command/book_appointment/insert_appointment.sql
+new file mode 100644
+index 00000000..86d808d8
+--- /dev/null
++++ b/packages/dock/command/book_appointment/insert_appointment.sql
+@@ -0,0 +1,37 @@
++WITH conflicting AS (
++    SELECT appointment.id
++    FROM appointment
++    WHERE appointment.dock_id = $2
++        AND appointment.slot_start < $5
++        AND appointment.slot_end > $4
++    ORDER BY appointment.slot_start, appointment.id
++    LIMIT 1
++),
++booked AS (
++    INSERT INTO appointment (
++        id,
++        dock_id,
++        carrier_id,
++        slot_start,
++        slot_end
++    )
++    SELECT $1, $2, $3, $4, $5
++    WHERE NOT EXISTS (SELECT 1 FROM conflicting)
++    RETURNING id, dock_id, carrier_id, slot_start, slot_end, status, arrived_at
++)
++SELECT
++    CASE
++        WHEN booked.id IS NULL THEN 'slot_unavailable'
++        ELSE 'booked'
++    END AS outcome,
++    booked.id AS appointment_id,
++    booked.dock_id,
++    booked.carrier_id,
++    booked.slot_start,
++    booked.slot_end,
++    booked.status,
++    booked.arrived_at,
++    conflicting.id AS conflicting_appointment_id
++FROM (SELECT 1) AS singleton
++LEFT JOIN booked ON TRUE
++LEFT JOIN conflicting ON TRUE;
+diff --git a/packages/dock/command/book_appointment/lock_dock.sql b/packages/dock/command/book_appointment/lock_dock.sql
+new file mode 100644
+index 00000000..c83adedb
+--- /dev/null
++++ b/packages/dock/command/book_appointment/lock_dock.sql
+@@ -0,0 +1,4 @@
++SELECT id
++FROM dock
++WHERE id = $1
++FOR UPDATE;
+diff --git a/packages/dock/command/check_in_appointment/check_in_appointment.sql b/packages/dock/command/check_in_appointment/check_in_appointment.sql
+new file mode 100644
+index 00000000..5f18e043
+--- /dev/null
++++ b/packages/dock/command/check_in_appointment/check_in_appointment.sql
+@@ -0,0 +1,29 @@
++WITH target AS (
++    SELECT appointment.id
++    FROM appointment
++    WHERE appointment.id = $1
++),
++arrived AS (
++    UPDATE appointment
++    SET
++        status = 'arrived',
++        arrived_at = $2
++    WHERE appointment.id = $1
++        AND appointment.status = 'scheduled'
++    RETURNING id, dock_id, carrier_id, slot_start, slot_end, status, arrived_at
++)
++SELECT
++    CASE
++        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'
++        WHEN arrived.id IS NULL THEN 'not_scheduled'
++        ELSE 'arrived'
++    END AS outcome,
++    arrived.id AS appointment_id,
++    arrived.dock_id,
++    arrived.carrier_id,
++    arrived.slot_start,
++    arrived.slot_end,
++    arrived.status,
++    arrived.arrived_at
++FROM (SELECT 1) AS singleton
++LEFT JOIN arrived ON TRUE;
+diff --git a/packages/dock/command/create_carrier/insert_carrier.sql b/packages/dock/command/create_carrier/insert_carrier.sql
+new file mode 100644
+index 00000000..77ad6527
+--- /dev/null
++++ b/packages/dock/command/create_carrier/insert_carrier.sql
+@@ -0,0 +1,6 @@
++INSERT INTO carrier (
++    carrier_code,
++    carrier_name
++)
++VALUES ($1, $2)
++RETURNING id, carrier_code, carrier_name;
+diff --git a/packages/dock/command/create_dock/insert_dock.sql b/packages/dock/command/create_dock/insert_dock.sql
+new file mode 100644
+index 00000000..fd3db33c
+--- /dev/null
++++ b/packages/dock/command/create_dock/insert_dock.sql
+@@ -0,0 +1,5 @@
++INSERT INTO dock (
++    dock_code
++)
++VALUES ($1)
++RETURNING id, dock_code;
+diff --git a/packages/dock/generated/contracts/appointment/book.errors.json b/packages/dock/generated/contracts/appointment/book.errors.json
+new file mode 100644
+index 00000000..7b9b9840
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/book.errors.json
+@@ -0,0 +1 @@
++{"cases":[{"detail":{"optional":["minimum","maximum","observed"],"required":["field"]},"from":["malformed_input","envelope_count"],"literal":"invalid_input"},{"detail":{"required":["field","id"]},"from":"transaction_invariant","literal":"dock_not_found"},{"detail":{"required":["field","id"]},"from":"transaction_invariant","literal":"carrier_not_found"},{"detail":{"required":["field","id"]},"from":"transaction_invariant","literal":"slot_unavailable"},{"detail":{"required":["field"]},"from":"same_key_different_canonical_command","literal":"idempotency_conflict"},{"automatic":false,"detail":{},"from":["serialization_failure","connection_unavailable"],"literal":"retry"},{"detail":{},"from":"statement_timeout","literal":"timeout"},{"detail":{"required":["operation"]},"from":"permission_denied","literal":"permission_denied"},{"detail":{},"from":["query_error","row_limit_exceeded","undeclared_constraint"],"literal":"internal_error"}],"closed":true}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/appointment/book.input.json b/packages/dock/generated/contracts/appointment/book.input.json
+new file mode 100644
+index 00000000..b981ae2d
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/book.input.json
+@@ -0,0 +1 @@
++{"canonicalization":{"excluded_fields":["request_id","value.idempotency_key"],"numeric":"postgresql_lexical_scale_preserved","payload":"canonical_compact_json","timestamptz":"utc_rfc3339_six_fractional_digits","uuid":"lowercase_hyphenated"},"envelope":{"invalid":"invalid_input","maximum":100,"minimum":1},"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"value.idempotency_key","type":"text","values":[]},{"nullable":false,"path":"value.dock_id","type":"uuid","values":[]},{"nullable":false,"path":"value.carrier_id","type":"uuid","values":[]},{"nullable":false,"path":"value.slot_start","type":"timestamptz","values":[]},{"nullable":false,"path":"value.slot_end","type":"timestamptz","values":[]}],"item_semantics":"per_input","raw_body_bytes":{"maximum":1048576,"owner":"ingress_pre_parse","refusal":"http_413"}}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/appointment/book.operation.json b/packages/dock/generated/contracts/appointment/book.operation.json
+new file mode 100644
+index 00000000..3b00d359
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/book.operation.json
+@@ -0,0 +1 @@
++{"automatic_retry":false,"connection":"postgres","grant":"dock:appointment/book@1.0.0","kind":"command","operation":"dock:appointment/book@1.0.0","permission_token":"appointment.book","result":"one","statements":[{"binds":[{"name":"idempotency_key","nullable":false,"type":"text"},{"name":"canonical_command","nullable":false,"type":"bytes"}],"columns":[{"name":"appointment_id","nullable":false,"type":"uuid"}],"digest":"sha256:c7f90be3947185e39c4e3a220ec0c5cf25d441f7e30197a750ec60030b8b0768","name":"claim_command","path":"command/book_appointment/claim_command.sql","transactional":true},{"binds":[{"name":"carrier_id","nullable":false,"type":"uuid"}],"columns":[{"name":"id","nullable":false,"type":"uuid"}],"digest":"sha256:e8b5ee92d485b0ddd803646c6997aca68e0a7cde2409a6781e2cec76870079b1","name":"find_carrier","path":"command/book_appointment/find_carrier.sql","transactional":false},{"binds":[{"name":"idempotency_key","nullable":false,"type":"text"}],"columns":[{"name":"canonical_command","nullable":false,"type":"bytes"},{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"dock_id","nullable":true,"type":"uuid"},{"name":"carrier_id","nullable":true,"type":"uuid"},{"name":"slot_start","nullable":true,"type":"timestamptz"},{"name":"slot_end","nullable":true,"type":"timestamptz"},{"name":"status","nullable":true,"type":"text"},{"name":"arrived_at","nullable":true,"type":"timestamptz"}],"digest":"sha256:fa6ed411264f21035efa72c2053f3edab458a0b643e60caa74835f9cab41a77d","name":"find_replay","path":"command/book_appointment/find_replay.sql","transactional":false},{"binds":[{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"dock_id","nullable":false,"type":"uuid"},{"name":"carrier_id","nullable":false,"type":"uuid"},{"name":"slot_start","nullable":false,"type":"timestamptz"},{"name":"slot_end","nullable":false,"type":"timestamptz"}],"columns":[{"name":"outcome","nullable":true,"type":"text"},{"name":"appointment_id","nullable":true,"type":"uuid"},{"name":"dock_id","nullable":true,"type":"uuid"},{"name":"carrier_id","nullable":true,"type":"uuid"},{"name":"slot_start","nullable":true,"type":"timestamptz"},{"name":"slot_end","nullable":true,"type":"timestamptz"},{"name":"status","nullable":true,"type":"text"},{"name":"arrived_at","nullable":true,"type":"timestamptz"},{"name":"conflicting_appointment_id","nullable":true,"type":"uuid"}],"digest":"sha256:0c219ede9269e1a3c06467d17a845b3523508eceee7756cccb827fd154a6f1d0","name":"insert_appointment","path":"command/book_appointment/insert_appointment.sql","transactional":true},{"binds":[{"name":"dock_id","nullable":false,"type":"uuid"}],"columns":[{"name":"id","nullable":false,"type":"uuid"}],"digest":"sha256:22388fb8416f6d186429d2b2467214773cb3aba980e2b914a133d8b4df8067f4","name":"lock_dock","path":"command/book_appointment/lock_dock.sql","transactional":true}],"transaction":"explicit_per_input","visibility":"public"}
+diff --git a/packages/dock/generated/contracts/appointment/book.result.json b/packages/dock/generated/contracts/appointment/book.result.json
+new file mode 100644
+index 00000000..1bf14b6f
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/book.result.json
+@@ -0,0 +1 @@
++{"class":"one","fields":[{"path":"appointment_id","type":"uuid","nullable":false,"values":[]},{"path":"dock_id","type":"uuid","nullable":false,"values":[]},{"path":"carrier_id","type":"uuid","nullable":false,"values":[]},{"path":"slot_start","type":"timestamptz","nullable":false,"values":[]},{"path":"slot_end","type":"timestamptz","nullable":false,"values":[]},{"path":"status","type":"text","nullable":false,"values":["scheduled","arrived","departed"]},{"path":"arrived_at","type":"timestamptz","nullable":true,"values":[]}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/appointment/check_in.errors.json b/packages/dock/generated/contracts/appointment/check_in.errors.json
+new file mode 100644
+index 00000000..984199f6
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/check_in.errors.json
+@@ -0,0 +1 @@
++{"cases":[{"detail":{"optional":["minimum","maximum","observed"],"required":["field"]},"from":["malformed_input","envelope_count"],"literal":"invalid_input"},{"detail":{"required":["field","id"]},"from":"transaction_invariant","literal":"not_found"},{"detail":{"required":["field","id"]},"from":"transaction_invariant","literal":"appointment_not_scheduled"},{"automatic":false,"detail":{},"from":["serialization_failure","connection_unavailable"],"literal":"retry"},{"detail":{},"from":"statement_timeout","literal":"timeout"},{"detail":{"required":["operation"]},"from":"permission_denied","literal":"permission_denied"},{"detail":{},"from":["query_error","row_limit_exceeded","undeclared_constraint"],"literal":"internal_error"}],"closed":true}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/appointment/check_in.input.json b/packages/dock/generated/contracts/appointment/check_in.input.json
+new file mode 100644
+index 00000000..71b4941f
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/check_in.input.json
+@@ -0,0 +1 @@
++{"envelope":{"invalid":"invalid_input","maximum":100,"minimum":1},"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"appointment_id","type":"uuid","values":[]},{"nullable":false,"path":"arrived_at","type":"timestamptz","values":[]}],"item_semantics":"per_input","raw_body_bytes":{"maximum":1048576,"owner":"ingress_pre_parse","refusal":"http_413"}}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/appointment/check_in.operation.json b/packages/dock/generated/contracts/appointment/check_in.operation.json
+new file mode 100644
+index 00000000..4b1c2552
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/check_in.operation.json
+@@ -0,0 +1 @@
++{"automatic_retry":false,"connection":"postgres","grant":"dock:appointment/check-in@1.0.0","kind":"command","operation":"dock:appointment/check-in@1.0.0","permission_token":"appointment.check_in","result":"one","statements":[{"binds":[{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"arrived_at","nullable":false,"type":"timestamptz"}],"columns":[{"name":"outcome","nullable":true,"type":"text"},{"name":"appointment_id","nullable":true,"type":"uuid"},{"name":"dock_id","nullable":true,"type":"uuid"},{"name":"carrier_id","nullable":true,"type":"uuid"},{"name":"slot_start","nullable":true,"type":"timestamptz"},{"name":"slot_end","nullable":true,"type":"timestamptz"},{"name":"status","nullable":true,"type":"text"},{"name":"arrived_at","nullable":true,"type":"timestamptz"}],"digest":"sha256:aab2221a69e21115fa3ff219cc1dc6ec2fcef8d33a6295feccca4587a8230868","name":"check_in_appointment","path":"command/check_in_appointment/check_in_appointment.sql","transactional":true}],"transaction":"explicit_per_input","visibility":"public"}
+diff --git a/packages/dock/generated/contracts/appointment/check_in.result.json b/packages/dock/generated/contracts/appointment/check_in.result.json
+new file mode 100644
+index 00000000..1bf14b6f
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/check_in.result.json
+@@ -0,0 +1 @@
++{"class":"one","fields":[{"path":"appointment_id","type":"uuid","nullable":false,"values":[]},{"path":"dock_id","type":"uuid","nullable":false,"values":[]},{"path":"carrier_id","type":"uuid","nullable":false,"values":[]},{"path":"slot_start","type":"timestamptz","nullable":false,"values":[]},{"path":"slot_end","type":"timestamptz","nullable":false,"values":[]},{"path":"status","type":"text","nullable":false,"values":["scheduled","arrived","departed"]},{"path":"arrived_at","type":"timestamptz","nullable":true,"values":[]}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/appointment/query.errors.json b/packages/dock/generated/contracts/appointment/query.errors.json
+new file mode 100644
+index 00000000..7250e3f0
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/query.errors.json
+@@ -0,0 +1 @@
++{"cases":[{"detail":{"optional":["minimum","maximum","observed"],"required":["field"]},"from":["malformed_input","envelope_count"],"literal":"invalid_input"},{"automatic":false,"detail":{},"from":["serialization_failure","connection_unavailable"],"literal":"retry"},{"detail":{},"from":"statement_timeout","literal":"timeout"},{"detail":{"required":["operation"]},"from":"permission_denied","literal":"permission_denied"},{"detail":{},"from":["query_error","row_limit_exceeded","undeclared_constraint"],"literal":"internal_error"}],"closed":true}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/appointment/query.input.json b/packages/dock/generated/contracts/appointment/query.input.json
+new file mode 100644
+index 00000000..718dbce4
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/query.input.json
+@@ -0,0 +1 @@
++{"envelope":{"invalid":"invalid_input","maximum":100,"minimum":1},"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"dock_id","type":"uuid","values":[]},{"nullable":false,"path":"day","type":"text","values":[]},{"nullable":true,"path":"status","type":"text","values":["scheduled","arrived","departed"]}],"item_semantics":"per_input","raw_body_bytes":{"maximum":1048576,"owner":"ingress_pre_parse","refusal":"http_413"}}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/appointment/query.operation.json b/packages/dock/generated/contracts/appointment/query.operation.json
+new file mode 100644
+index 00000000..e76fcc7c
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/query.operation.json
+@@ -0,0 +1 @@
++{"connection":"postgres","grant":"dock:appointment/query@1.0.0","kind":"projection","operation":"dock:appointment/query@1.0.0","permission_token":"appointment.query","result":"bounded_list","statements":[{"binds":[{"name":"dock_id","nullable":false,"type":"uuid"},{"name":"day_start","nullable":false,"type":"timestamptz"},{"name":"day_end","nullable":false,"type":"timestamptz"},{"name":"status","nullable":true,"type":"text"}],"columns":[{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"dock_id","nullable":false,"type":"uuid"},{"name":"carrier_id","nullable":false,"type":"uuid"},{"name":"slot_start","nullable":false,"type":"timestamptz"},{"name":"slot_end","nullable":false,"type":"timestamptz"},{"name":"status","nullable":false,"type":"text"},{"name":"arrived_at","nullable":true,"type":"timestamptz"}],"digest":"sha256:be14e2ce751fc2f0c7798094353bcdfebc45656cc3d9a850e6e2349549705d4d","name":"list_appointments","path":"query/appointment_by_dock_day.sql","transactional":false}],"visibility":"public"}
+diff --git a/packages/dock/generated/contracts/appointment/query.result.json b/packages/dock/generated/contracts/appointment/query.result.json
+new file mode 100644
+index 00000000..e32fadcc
+--- /dev/null
++++ b/packages/dock/generated/contracts/appointment/query.result.json
+@@ -0,0 +1 @@
++{"class":"bounded_list","fields":[{"path":"appointment_id","type":"uuid","nullable":false,"values":[]},{"path":"dock_id","type":"uuid","nullable":false,"values":[]},{"path":"carrier_id","type":"uuid","nullable":false,"values":[]},{"path":"slot_start","type":"timestamptz","nullable":false,"values":[]},{"path":"slot_end","type":"timestamptz","nullable":false,"values":[]},{"path":"status","type":"text","nullable":false,"values":["scheduled","arrived","departed"]},{"path":"arrived_at","type":"timestamptz","nullable":true,"values":[]}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/carrier/create.errors.json b/packages/dock/generated/contracts/carrier/create.errors.json
+new file mode 100644
+index 00000000..e4df066c
+--- /dev/null
++++ b/packages/dock/generated/contracts/carrier/create.errors.json
+@@ -0,0 +1 @@
++{"cases":[{"detail":{"optional":["minimum","maximum","observed"],"required":["field"]},"from":["malformed_input","envelope_count"],"literal":"invalid_input"},{"constraint":"carrier_carrier_code_key","detail":{"required":["constraint"]},"from":"unique_violation","literal":"carrier_code_conflict"},{"automatic":false,"detail":{},"from":["serialization_failure","connection_unavailable"],"literal":"retry"},{"detail":{},"from":"statement_timeout","literal":"timeout"},{"detail":{"required":["operation"]},"from":"permission_denied","literal":"permission_denied"},{"detail":{},"from":["query_error","row_limit_exceeded","undeclared_constraint"],"literal":"internal_error"}],"closed":true}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/carrier/create.input.json b/packages/dock/generated/contracts/carrier/create.input.json
+new file mode 100644
+index 00000000..09415525
+--- /dev/null
++++ b/packages/dock/generated/contracts/carrier/create.input.json
+@@ -0,0 +1 @@
++{"envelope":{"invalid":"invalid_input","maximum":100,"minimum":1},"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"carrier_code","type":"text","values":[]},{"nullable":false,"path":"carrier_name","type":"text","values":[]}],"item_semantics":"per_input","raw_body_bytes":{"maximum":1048576,"owner":"ingress_pre_parse","refusal":"http_413"}}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/carrier/create.operation.json b/packages/dock/generated/contracts/carrier/create.operation.json
+new file mode 100644
+index 00000000..b4a2279d
+--- /dev/null
++++ b/packages/dock/generated/contracts/carrier/create.operation.json
+@@ -0,0 +1 @@
++{"automatic_retry":false,"connection":"postgres","grant":"dock:carrier/create@1.0.0","kind":"command","operation":"dock:carrier/create@1.0.0","permission_token":"carrier.create","result":"one","statements":[{"binds":[{"name":"carrier_code","nullable":false,"type":"text"},{"name":"carrier_name","nullable":false,"type":"text"}],"columns":[{"name":"id","nullable":false,"type":"uuid"},{"name":"carrier_code","nullable":false,"type":"text"},{"name":"carrier_name","nullable":false,"type":"text"}],"digest":"sha256:0371cb78139b4dc21bab40976a480b177e753eb141862ebfb27b5c597425826a","name":"insert_carrier","path":"command/create_carrier/insert_carrier.sql","transactional":true}],"transaction":"explicit_per_input","visibility":"public"}
+diff --git a/packages/dock/generated/contracts/carrier/create.result.json b/packages/dock/generated/contracts/carrier/create.result.json
+new file mode 100644
+index 00000000..4861dbee
+--- /dev/null
++++ b/packages/dock/generated/contracts/carrier/create.result.json
+@@ -0,0 +1 @@
++{"class":"one","fields":[{"path":"carrier_id","type":"uuid","nullable":false,"values":[]},{"path":"carrier_code","type":"text","nullable":false,"values":[]},{"path":"carrier_name","type":"text","nullable":false,"values":[]}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/cursor-v1.json b/packages/dock/generated/contracts/cursor-v1.json
+new file mode 100644
+index 00000000..7cf9174b
+--- /dev/null
++++ b/packages/dock/generated/contracts/cursor-v1.json
+@@ -0,0 +1 @@
++{"encoding":"base64url_unpadded","fallback_to_first_page":false,"invalid":["decode_failure","unknown_version","field_mismatch","direction_mismatch","key_parse_failure","noncanonical_payload"],"key":"bare_value_typed_by_manifest_ir","member_order":["direction","field","id","key","v"],"numeric":"postgresql_lexical_scale_preserved","payload":"canonical_compact_json","refusal":"invalid_input","timestamptz":"utc_rfc3339_six_fractional_digits","version":1}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/dock/create.errors.json b/packages/dock/generated/contracts/dock/create.errors.json
+new file mode 100644
+index 00000000..c7ba6d30
+--- /dev/null
++++ b/packages/dock/generated/contracts/dock/create.errors.json
+@@ -0,0 +1 @@
++{"cases":[{"detail":{"optional":["minimum","maximum","observed"],"required":["field"]},"from":["malformed_input","envelope_count"],"literal":"invalid_input"},{"constraint":"dock_dock_code_key","detail":{"required":["constraint"]},"from":"unique_violation","literal":"dock_code_conflict"},{"automatic":false,"detail":{},"from":["serialization_failure","connection_unavailable"],"literal":"retry"},{"detail":{},"from":"statement_timeout","literal":"timeout"},{"detail":{"required":["operation"]},"from":"permission_denied","literal":"permission_denied"},{"detail":{},"from":["query_error","row_limit_exceeded","undeclared_constraint"],"literal":"internal_error"}],"closed":true}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/dock/create.input.json b/packages/dock/generated/contracts/dock/create.input.json
+new file mode 100644
+index 00000000..dc8e892f
+--- /dev/null
++++ b/packages/dock/generated/contracts/dock/create.input.json
+@@ -0,0 +1 @@
++{"envelope":{"invalid":"invalid_input","maximum":100,"minimum":1},"fields":[{"nullable":false,"path":"request_id","type":"text","values":[]},{"nullable":false,"path":"dock_code","type":"text","values":[]}],"item_semantics":"per_input","raw_body_bytes":{"maximum":1048576,"owner":"ingress_pre_parse","refusal":"http_413"}}
+\ No newline at end of file
+diff --git a/packages/dock/generated/contracts/dock/create.operation.json b/packages/dock/generated/contracts/dock/create.operation.json
+new file mode 100644
+index 00000000..7a3a9795
+--- /dev/null
++++ b/packages/dock/generated/contracts/dock/create.operation.json
+@@ -0,0 +1 @@
++{"automatic_retry":false,"connection":"postgres","grant":"dock:dock/create@1.0.0","kind":"command","operation":"dock:dock/create@1.0.0","permission_token":"dock.create","result":"one","statements":[{"binds":[{"name":"dock_code","nullable":false,"type":"text"}],"columns":[{"name":"id","nullable":false,"type":"uuid"},{"name":"dock_code","nullable":false,"type":"text"}],"digest":"sha256:c75e85950b7e9e0a7253b11a2124b7b12e0bd55cf4baef0f1e1c145247eea83c","name":"insert_dock","path":"command/create_dock/insert_dock.sql","transactional":true}],"transaction":"explicit_per_input","visibility":"public"}
+diff --git a/packages/dock/generated/contracts/dock/create.result.json b/packages/dock/generated/contracts/dock/create.result.json
+new file mode 100644
+index 00000000..fd483d89
+--- /dev/null
++++ b/packages/dock/generated/contracts/dock/create.result.json
+@@ -0,0 +1 @@
++{"class":"one","fields":[{"path":"dock_id","type":"uuid","nullable":false,"values":[]},{"path":"dock_code","type":"text","nullable":false,"values":[]}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/models/appointment.json b/packages/dock/generated/models/appointment.json
+new file mode 100644
+index 00000000..f02a3d59
+--- /dev/null
++++ b/packages/dock/generated/models/appointment.json
+@@ -0,0 +1 @@
++{"fields":[{"enum_values":null,"name":"arrived_at","nullable":true,"server_owned":true,"type":"timestamptz"},{"enum_values":null,"name":"carrier_id","nullable":false,"server_owned":false,"type":"uuid"},{"enum_values":null,"name":"created_at","nullable":false,"server_owned":true,"type":"timestamptz"},{"enum_values":null,"name":"dock_id","nullable":false,"server_owned":false,"type":"uuid"},{"enum_values":null,"name":"id","nullable":false,"server_owned":true,"type":"uuid"},{"enum_values":null,"name":"slot_end","nullable":false,"server_owned":false,"type":"timestamptz"},{"enum_values":null,"name":"slot_start","nullable":false,"server_owned":false,"type":"timestamptz"},{"enum_values":["scheduled","arrived","departed"],"name":"status","nullable":false,"server_owned":true,"type":"text"}],"model":"appointment","owner":"dock","schema":"receiving","table":"appointment"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/models/carrier.json b/packages/dock/generated/models/carrier.json
+new file mode 100644
+index 00000000..94c9ae32
+--- /dev/null
++++ b/packages/dock/generated/models/carrier.json
+@@ -0,0 +1 @@
++{"fields":[{"enum_values":null,"name":"carrier_code","nullable":false,"server_owned":false,"type":"text"},{"enum_values":null,"name":"carrier_name","nullable":false,"server_owned":false,"type":"text"},{"enum_values":null,"name":"id","nullable":false,"server_owned":true,"type":"uuid"}],"model":"carrier","owner":"dock","schema":"receiving","table":"carrier"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/models/dock.json b/packages/dock/generated/models/dock.json
+new file mode 100644
+index 00000000..4c34e41e
+--- /dev/null
++++ b/packages/dock/generated/models/dock.json
+@@ -0,0 +1 @@
++{"fields":[{"enum_values":null,"name":"dock_code","nullable":false,"server_owned":false,"type":"text"},{"enum_values":null,"name":"id","nullable":false,"server_owned":true,"type":"uuid"}],"model":"dock","owner":"dock","schema":"receiving","table":"dock"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/native-verifier/appointment.rs b/packages/dock/generated/native-verifier/appointment.rs
+new file mode 100644
+index 00000000..3c904642
+--- /dev/null
++++ b/packages/dock/generated/native-verifier/appointment.rs
+@@ -0,0 +1,13 @@
++// @generated from migration IR; do not edit.
++
++#[derive(Debug, sqlx::FromRow)]
++pub struct AppointmentRow {
++    pub arrived_at: Option<chrono::DateTime<chrono::Utc>>,
++    pub carrier_id: uuid::Uuid,
++    pub created_at: chrono::DateTime<chrono::Utc>,
++    pub dock_id: uuid::Uuid,
++    pub id: uuid::Uuid,
++    pub slot_end: chrono::DateTime<chrono::Utc>,
++    pub slot_start: chrono::DateTime<chrono::Utc>,
++    pub status: String,
++}
+diff --git a/packages/dock/generated/native-verifier/appointment_book.rs b/packages/dock/generated/native-verifier/appointment_book.rs
+new file mode 100644
+index 00000000..d826256c
+--- /dev/null
++++ b/packages/dock/generated/native-verifier/appointment_book.rs
+@@ -0,0 +1,78 @@
++// @generated from migration IR; do not edit.
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct ClaimCommandRow {
++    pub appointment_id: uuid::Uuid,
++}
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct FindCarrierRow {
++    pub id: uuid::Uuid,
++}
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct FindReplayRow {
++    pub canonical_command: Vec<u8>,
++    pub appointment_id: uuid::Uuid,
++    pub dock_id: Option<uuid::Uuid>,
++    pub carrier_id: Option<uuid::Uuid>,
++    pub slot_start: Option<chrono::DateTime<chrono::Utc>>,
++    pub slot_end: Option<chrono::DateTime<chrono::Utc>>,
++    pub status: Option<String>,
++    pub arrived_at: Option<chrono::DateTime<chrono::Utc>>,
++}
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct InsertAppointmentRow {
++    pub outcome: Option<String>,
++    pub appointment_id: Option<uuid::Uuid>,
++    pub dock_id: Option<uuid::Uuid>,
++    pub carrier_id: Option<uuid::Uuid>,
++    pub slot_start: Option<chrono::DateTime<chrono::Utc>>,
++    pub slot_end: Option<chrono::DateTime<chrono::Utc>>,
++    pub status: Option<String>,
++    pub arrived_at: Option<chrono::DateTime<chrono::Utc>>,
++    pub conflicting_appointment_id: Option<uuid::Uuid>,
++}
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct LockDockRow {
++    pub id: uuid::Uuid,
++}
++
++pub(crate) const CLAIM_COMMAND_SQL: &str = include_str!("../../command/book_appointment/claim_command.sql");
++pub(crate) const FIND_CARRIER_SQL: &str = include_str!("../../command/book_appointment/find_carrier.sql");
++pub(crate) const FIND_REPLAY_SQL: &str = include_str!("../../command/book_appointment/find_replay.sql");
++pub(crate) const INSERT_APPOINTMENT_SQL: &str = include_str!("../../command/book_appointment/insert_appointment.sql");
++pub(crate) const LOCK_DOCK_SQL: &str = include_str!("../../command/book_appointment/lock_dock.sql");
++
++pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
++    String::new()
++}
++pub(crate) fn claim_command_canonical_command_bind_fixture() -> Vec<u8> {
++    Vec::new()
++}
++pub(crate) fn find_carrier_carrier_id_bind_fixture() -> uuid::Uuid {
++    uuid::Uuid::nil()
++}
++pub(crate) fn find_replay_idempotency_key_bind_fixture() -> String {
++    String::new()
++}
++pub(crate) fn insert_appointment_appointment_id_bind_fixture() -> uuid::Uuid {
++    uuid::Uuid::nil()
++}
++pub(crate) fn insert_appointment_dock_id_bind_fixture() -> uuid::Uuid {
++    uuid::Uuid::nil()
++}
++pub(crate) fn insert_appointment_carrier_id_bind_fixture() -> uuid::Uuid {
++    uuid::Uuid::nil()
++}
++pub(crate) fn insert_appointment_slot_start_bind_fixture() -> chrono::DateTime<chrono::Utc> {
++    chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
++}
++pub(crate) fn insert_appointment_slot_end_bind_fixture() -> chrono::DateTime<chrono::Utc> {
++    chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
++}
++pub(crate) fn lock_dock_dock_id_bind_fixture() -> uuid::Uuid {
++    uuid::Uuid::nil()
++}
+diff --git a/packages/dock/generated/native-verifier/appointment_check_in.rs b/packages/dock/generated/native-verifier/appointment_check_in.rs
+new file mode 100644
+index 00000000..f777ac50
+--- /dev/null
++++ b/packages/dock/generated/native-verifier/appointment_check_in.rs
+@@ -0,0 +1,22 @@
++// @generated from migration IR; do not edit.
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct CheckInAppointmentRow {
++    pub outcome: Option<String>,
++    pub appointment_id: Option<uuid::Uuid>,
++    pub dock_id: Option<uuid::Uuid>,
++    pub carrier_id: Option<uuid::Uuid>,
++    pub slot_start: Option<chrono::DateTime<chrono::Utc>>,
++    pub slot_end: Option<chrono::DateTime<chrono::Utc>>,
++    pub status: Option<String>,
++    pub arrived_at: Option<chrono::DateTime<chrono::Utc>>,
++}
++
++pub(crate) const CHECK_IN_APPOINTMENT_SQL: &str = include_str!("../../command/check_in_appointment/check_in_appointment.sql");
++
++pub(crate) fn check_in_appointment_appointment_id_bind_fixture() -> uuid::Uuid {
++    uuid::Uuid::nil()
++}
++pub(crate) fn check_in_appointment_arrived_at_bind_fixture() -> chrono::DateTime<chrono::Utc> {
++    chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
++}
+diff --git a/packages/dock/generated/native-verifier/appointment_query.rs b/packages/dock/generated/native-verifier/appointment_query.rs
+new file mode 100644
+index 00000000..c3cc89e3
+--- /dev/null
++++ b/packages/dock/generated/native-verifier/appointment_query.rs
+@@ -0,0 +1,27 @@
++// @generated from migration IR; do not edit.
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct ListAppointmentsRow {
++    pub appointment_id: uuid::Uuid,
++    pub dock_id: uuid::Uuid,
++    pub carrier_id: uuid::Uuid,
++    pub slot_start: chrono::DateTime<chrono::Utc>,
++    pub slot_end: chrono::DateTime<chrono::Utc>,
++    pub status: String,
++    pub arrived_at: Option<chrono::DateTime<chrono::Utc>>,
++}
++
++pub(crate) const LIST_APPOINTMENTS_SQL: &str = include_str!("../../query/appointment_by_dock_day.sql");
++
++pub(crate) fn list_appointments_dock_id_bind_fixture() -> uuid::Uuid {
++    uuid::Uuid::nil()
++}
++pub(crate) fn list_appointments_day_start_bind_fixture() -> chrono::DateTime<chrono::Utc> {
++    chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
++}
++pub(crate) fn list_appointments_day_end_bind_fixture() -> chrono::DateTime<chrono::Utc> {
++    chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
++}
++pub(crate) fn list_appointments_status_bind_fixture() -> Option<String> {
++    None
++}
+diff --git a/packages/dock/generated/native-verifier/carrier.rs b/packages/dock/generated/native-verifier/carrier.rs
+new file mode 100644
+index 00000000..58b60e3f
+--- /dev/null
++++ b/packages/dock/generated/native-verifier/carrier.rs
+@@ -0,0 +1,8 @@
++// @generated from migration IR; do not edit.
++
++#[derive(Debug, sqlx::FromRow)]
++pub struct CarrierRow {
++    pub carrier_code: String,
++    pub carrier_name: String,
++    pub id: uuid::Uuid,
++}
+diff --git a/packages/dock/generated/native-verifier/carrier_create.rs b/packages/dock/generated/native-verifier/carrier_create.rs
+new file mode 100644
+index 00000000..ece6d74d
+--- /dev/null
++++ b/packages/dock/generated/native-verifier/carrier_create.rs
+@@ -0,0 +1,17 @@
++// @generated from migration IR; do not edit.
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct InsertCarrierRow {
++    pub id: uuid::Uuid,
++    pub carrier_code: String,
++    pub carrier_name: String,
++}
++
++pub(crate) const INSERT_CARRIER_SQL: &str = include_str!("../../command/create_carrier/insert_carrier.sql");
++
++pub(crate) fn insert_carrier_carrier_code_bind_fixture() -> String {
++    String::new()
++}
++pub(crate) fn insert_carrier_carrier_name_bind_fixture() -> String {
++    String::new()
++}
+diff --git a/packages/dock/generated/native-verifier/dock.rs b/packages/dock/generated/native-verifier/dock.rs
+new file mode 100644
+index 00000000..b6bdc89f
+--- /dev/null
++++ b/packages/dock/generated/native-verifier/dock.rs
+@@ -0,0 +1,7 @@
++// @generated from migration IR; do not edit.
++
++#[derive(Debug, sqlx::FromRow)]
++pub struct DockRow {
++    pub dock_code: String,
++    pub id: uuid::Uuid,
++}
+diff --git a/packages/dock/generated/native-verifier/dock_create.rs b/packages/dock/generated/native-verifier/dock_create.rs
+new file mode 100644
+index 00000000..104b7926
+--- /dev/null
++++ b/packages/dock/generated/native-verifier/dock_create.rs
+@@ -0,0 +1,13 @@
++// @generated from migration IR; do not edit.
++
++#[derive(Debug, sqlx::FromRow)]
++pub(crate) struct InsertDockRow {
++    pub id: uuid::Uuid,
++    pub dock_code: String,
++}
++
++pub(crate) const INSERT_DOCK_SQL: &str = include_str!("../../command/create_dock/insert_dock.sql");
++
++pub(crate) fn insert_dock_dock_code_bind_fixture() -> String {
++    String::new()
++}
+diff --git a/packages/dock/generated/package-weld.json b/packages/dock/generated/package-weld.json
+new file mode 100644
+index 00000000..086acd49
+--- /dev/null
++++ b/packages/dock/generated/package-weld.json
+@@ -0,0 +1 @@
++{"application_sql_corpus_identity":"sha256:c2f42aefba9b851eb73131e386bcb844e0ed857a5e51b82d1c7b839eb8ada31f","promotion_state":"eligible","provenance":{"generator":"wamn-schema-generator/0.1.0","toolchain":"rust-1.98.0"},"required_platform_policy_contract":{"id":"dock_data_access","state":"satisfied"},"required_schema_contract":{"tables":[{"constraints":[{"definition":{"columns":[{"column":"carrier_id","referenced_column":"id"}],"kind":"foreign_key","on_delete":"no_action","on_update":"no_action","referenced_schema":"receiving","referenced_table":"carrier"},"name":"appointment_carrier_id_fkey"},{"definition":{"columns":[{"column":"dock_id","referenced_column":"id"}],"kind":"foreign_key","on_delete":"no_action","on_update":"no_action","referenced_schema":"receiving","referenced_table":"dock"},"name":"appointment_dock_id_fkey"},{"definition":{"columns":[{"column":"id","referenced_column":"appointment_id"}],"kind":"foreign_key","on_delete":"no_action","on_update":"no_action","referenced_schema":"receiving","referenced_table":"book_appointment_command"},"name":"appointment_id_fkey"},{"definition":{"columns":["id"],"kind":"primary_key"},"name":"appointment_id_pkey"},{"definition":{"expression":"(slot_end > slot_start)","kind":"check"},"name":"appointment_slot_start_slot_end_check"},{"definition":{"expression":"(((status = 'scheduled'::text) AND (arrived_at IS NULL)) OR ((status <> 'scheduled'::text) AND (arrived_at IS NOT NULL)))","kind":"check"},"name":"appointment_status_arrived_at_check"},{"definition":{"expression":"(status = ANY (ARRAY['scheduled'::text, 'arrived'::text, 'departed'::text]))","kind":"check"},"name":"appointment_status_check"}],"fields":[{"name":"arrived_at","nullable":true,"type":"timestamptz"},{"name":"carrier_id","nullable":false,"type":"uuid"},{"name":"created_at","nullable":false,"type":"timestamptz"},{"name":"dock_id","nullable":false,"type":"uuid"},{"name":"id","nullable":false,"type":"uuid"},{"name":"slot_end","nullable":false,"type":"timestamptz"},{"name":"slot_start","nullable":false,"type":"timestamptz"},{"name":"status","nullable":false,"type":"text"}],"schema":"receiving","table":"appointment"},{"constraints":[{"definition":{"columns":["idempotency_key"],"kind":"primary_key"},"name":"book_appointment_command_idempotency_key_pkey"}],"fields":[{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"canonical_command","nullable":false,"type":"bytes"},{"name":"idempotency_key","nullable":false,"type":"text"}],"schema":"receiving","table":"book_appointment_command"},{"constraints":[{"definition":{"columns":["carrier_code"],"kind":"unique"},"name":"carrier_carrier_code_key"},{"definition":{"columns":["id"],"kind":"primary_key"},"name":"carrier_id_pkey"}],"fields":[{"name":"carrier_code","nullable":false,"type":"text"},{"name":"carrier_name","nullable":false,"type":"text"},{"name":"id","nullable":false,"type":"uuid"}],"schema":"receiving","table":"carrier"},{"constraints":[{"definition":{"columns":["dock_code"],"kind":"unique"},"name":"dock_dock_code_key"},{"definition":{"columns":["id"],"kind":"primary_key"},"name":"dock_id_pkey"}],"fields":[{"name":"dock_code","nullable":false,"type":"text"},{"name":"id","nullable":false,"type":"uuid"}],"schema":"receiving","table":"dock"}]},"verified_schema_state_id":"sha256:bd0db1f857dd7afafe2dd35443d1814131550ce2833880fd4a559cf23a737faa"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/parity/appointment.json b/packages/dock/generated/parity/appointment.json
+new file mode 100644
+index 00000000..fafce184
+--- /dev/null
++++ b/packages/dock/generated/parity/appointment.json
+@@ -0,0 +1 @@
++{"accessor_binds":[],"fields":[{"field":"arrived_at","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"carrier_id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"created_at","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz","wamn_sql_value":"timestamptz"},{"field":"dock_id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"slot_end","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz","wamn_sql_value":"timestamptz"},{"field":"slot_start","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz","wamn_sql_value":"timestamptz"},{"field":"status","native_rust":"String","nullable":false,"postgres":"text","wamn_rust":"String","wamn_sql_value":"text"}],"model":"appointment","rule":"same_sql_file_two_projection_structs"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/parity/appointment_book.json b/packages/dock/generated/parity/appointment_book.json
+new file mode 100644
+index 00000000..909e571f
+--- /dev/null
++++ b/packages/dock/generated/parity/appointment_book.json
+@@ -0,0 +1 @@
++{"accessor_binds":[{"accessor":"claim_command","native_rust":"String","nullable":false,"parameter":"idempotency_key","postgres":"text","wamn_rust":"String"},{"accessor":"claim_command","native_rust":"Vec<u8>","nullable":false,"parameter":"canonical_command","postgres":"bytea","wamn_rust":"Vec<u8>"},{"accessor":"find_carrier","native_rust":"uuid::Uuid","nullable":false,"parameter":"carrier_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"accessor":"find_replay","native_rust":"String","nullable":false,"parameter":"idempotency_key","postgres":"text","wamn_rust":"String"},{"accessor":"insert_appointment","native_rust":"uuid::Uuid","nullable":false,"parameter":"appointment_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"accessor":"insert_appointment","native_rust":"uuid::Uuid","nullable":false,"parameter":"dock_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"accessor":"insert_appointment","native_rust":"uuid::Uuid","nullable":false,"parameter":"carrier_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"accessor":"insert_appointment","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"slot_start","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"},{"accessor":"insert_appointment","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"slot_end","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"},{"accessor":"lock_dock","native_rust":"uuid::Uuid","nullable":false,"parameter":"dock_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"}],"fields":[{"field":"claim_command.appointment_id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"find_carrier.id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"find_replay.canonical_command","native_rust":"Vec<u8>","nullable":false,"postgres":"bytea","wamn_rust":"Vec<u8>","wamn_sql_value":"bytes"},{"field":"find_replay.appointment_id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"find_replay.dock_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"find_replay.carrier_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"find_replay.slot_start","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"find_replay.slot_end","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"find_replay.status","native_rust":"Option<String>","nullable":true,"postgres":"text","wamn_rust":"Option<String>","wamn_sql_value":"text"},{"field":"find_replay.arrived_at","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"insert_appointment.outcome","native_rust":"Option<String>","nullable":true,"postgres":"text","wamn_rust":"Option<String>","wamn_sql_value":"text"},{"field":"insert_appointment.appointment_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"insert_appointment.dock_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"insert_appointment.carrier_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"insert_appointment.slot_start","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"insert_appointment.slot_end","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"insert_appointment.status","native_rust":"Option<String>","nullable":true,"postgres":"text","wamn_rust":"Option<String>","wamn_sql_value":"text"},{"field":"insert_appointment.arrived_at","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"insert_appointment.conflicting_appointment_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"lock_dock.id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"}],"model":"appointment_book","rule":"same_sql_file_two_projection_structs"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/parity/appointment_check_in.json b/packages/dock/generated/parity/appointment_check_in.json
+new file mode 100644
+index 00000000..9e22ba10
+--- /dev/null
++++ b/packages/dock/generated/parity/appointment_check_in.json
+@@ -0,0 +1 @@
++{"accessor_binds":[{"accessor":"check_in_appointment","native_rust":"uuid::Uuid","nullable":false,"parameter":"appointment_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"accessor":"check_in_appointment","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"arrived_at","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"}],"fields":[{"field":"check_in_appointment.outcome","native_rust":"Option<String>","nullable":true,"postgres":"text","wamn_rust":"Option<String>","wamn_sql_value":"text"},{"field":"check_in_appointment.appointment_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"check_in_appointment.dock_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"check_in_appointment.carrier_id","native_rust":"Option<uuid::Uuid>","nullable":true,"postgres":"uuid","wamn_rust":"Option<wamn_postgres_statements::Uuid>","wamn_sql_value":"uuid"},{"field":"check_in_appointment.slot_start","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"check_in_appointment.slot_end","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"},{"field":"check_in_appointment.status","native_rust":"Option<String>","nullable":true,"postgres":"text","wamn_rust":"Option<String>","wamn_sql_value":"text"},{"field":"check_in_appointment.arrived_at","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"}],"model":"appointment_check_in","rule":"same_sql_file_two_projection_structs"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/parity/appointment_query.json b/packages/dock/generated/parity/appointment_query.json
+new file mode 100644
+index 00000000..2fa10d9d
+--- /dev/null
++++ b/packages/dock/generated/parity/appointment_query.json
+@@ -0,0 +1 @@
++{"accessor_binds":[{"accessor":"list_appointments","native_rust":"uuid::Uuid","nullable":false,"parameter":"dock_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"accessor":"list_appointments","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"day_start","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"},{"accessor":"list_appointments","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"day_end","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"},{"accessor":"list_appointments","native_rust":"Option<String>","nullable":true,"parameter":"status","postgres":"text","wamn_rust":"Option<String>"}],"fields":[{"field":"list_appointments.appointment_id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"list_appointments.dock_id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"list_appointments.carrier_id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"list_appointments.slot_start","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz","wamn_sql_value":"timestamptz"},{"field":"list_appointments.slot_end","native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz","wamn_sql_value":"timestamptz"},{"field":"list_appointments.status","native_rust":"String","nullable":false,"postgres":"text","wamn_rust":"String","wamn_sql_value":"text"},{"field":"list_appointments.arrived_at","native_rust":"Option<chrono::DateTime<chrono::Utc>>","nullable":true,"postgres":"timestamptz","wamn_rust":"Option<wamn_postgres_statements::TimestampTz>","wamn_sql_value":"timestamptz"}],"model":"appointment_query","rule":"same_sql_file_two_projection_structs"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/parity/carrier.json b/packages/dock/generated/parity/carrier.json
+new file mode 100644
+index 00000000..bd2c3e77
+--- /dev/null
++++ b/packages/dock/generated/parity/carrier.json
+@@ -0,0 +1 @@
++{"accessor_binds":[],"fields":[{"field":"carrier_code","native_rust":"String","nullable":false,"postgres":"text","wamn_rust":"String","wamn_sql_value":"text"},{"field":"carrier_name","native_rust":"String","nullable":false,"postgres":"text","wamn_rust":"String","wamn_sql_value":"text"},{"field":"id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"}],"model":"carrier","rule":"same_sql_file_two_projection_structs"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/parity/carrier_create.json b/packages/dock/generated/parity/carrier_create.json
+new file mode 100644
+index 00000000..9e1f6a18
+--- /dev/null
++++ b/packages/dock/generated/parity/carrier_create.json
+@@ -0,0 +1 @@
++{"accessor_binds":[{"accessor":"insert_carrier","native_rust":"String","nullable":false,"parameter":"carrier_code","postgres":"text","wamn_rust":"String"},{"accessor":"insert_carrier","native_rust":"String","nullable":false,"parameter":"carrier_name","postgres":"text","wamn_rust":"String"}],"fields":[{"field":"insert_carrier.id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"insert_carrier.carrier_code","native_rust":"String","nullable":false,"postgres":"text","wamn_rust":"String","wamn_sql_value":"text"},{"field":"insert_carrier.carrier_name","native_rust":"String","nullable":false,"postgres":"text","wamn_rust":"String","wamn_sql_value":"text"}],"model":"carrier_create","rule":"same_sql_file_two_projection_structs"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/parity/dock.json b/packages/dock/generated/parity/dock.json
+new file mode 100644
+index 00000000..bd7d406b
+--- /dev/null
++++ b/packages/dock/generated/parity/dock.json
+@@ -0,0 +1 @@
++{"accessor_binds":[],"fields":[{"field":"dock_code","native_rust":"String","nullable":false,"postgres":"text","wamn_rust":"String","wamn_sql_value":"text"},{"field":"id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"}],"model":"dock","rule":"same_sql_file_two_projection_structs"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/parity/dock_create.json b/packages/dock/generated/parity/dock_create.json
+new file mode 100644
+index 00000000..497a8d51
+--- /dev/null
++++ b/packages/dock/generated/parity/dock_create.json
+@@ -0,0 +1 @@
++{"accessor_binds":[{"accessor":"insert_dock","native_rust":"String","nullable":false,"parameter":"dock_code","postgres":"text","wamn_rust":"String"}],"fields":[{"field":"insert_dock.id","native_rust":"uuid::Uuid","nullable":false,"postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid","wamn_sql_value":"uuid"},{"field":"insert_dock.dock_code","native_rust":"String","nullable":false,"postgres":"text","wamn_rust":"String","wamn_sql_value":"text"}],"model":"dock_create","rule":"same_sql_file_two_projection_structs"}
+\ No newline at end of file
+diff --git a/packages/dock/generated/platform-policy/data-access.json b/packages/dock/generated/platform-policy/data-access.json
+new file mode 100644
+index 00000000..4db4762b
+--- /dev/null
++++ b/packages/dock/generated/platform-policy/data-access.json
+@@ -0,0 +1 @@
++{"contract":"dock_data_access","manifest_sha256":"sha256:8318aa1b107b676cd12812c372a695653dc6bb60caaffc51769d7265297c18dd","package":"dock@1.0.0","relations":[{"all_fields":["arrived_at","carrier_id","created_at","dock_id","id","slot_end","slot_start","status"],"insert_fields":["carrier_id","dock_id","id","slot_end","slot_start"],"lock":false,"schema":"receiving","select_fields":["arrived_at","carrier_id","dock_id","id","slot_end","slot_start","status"],"table":"appointment","update_fields":["arrived_at","status"]},{"all_fields":["appointment_id","canonical_command","idempotency_key"],"insert_fields":["canonical_command","idempotency_key"],"lock":false,"schema":"receiving","select_fields":["appointment_id","canonical_command","idempotency_key"],"table":"book_appointment_command","update_fields":[]},{"all_fields":["carrier_code","carrier_name","id"],"insert_fields":["carrier_code","carrier_name"],"lock":false,"schema":"receiving","select_fields":["carrier_code","carrier_name","id"],"table":"carrier","update_fields":[]},{"all_fields":["dock_code","id"],"insert_fields":["dock_code"],"lock":true,"lock_update_field":"dock_code","schema":"receiving","select_fields":["dock_code","id"],"table":"dock","update_fields":[]}],"role":"wamn_app","schemas":["receiving"]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/source-map/appointment.json b/packages/dock/generated/source-map/appointment.json
+new file mode 100644
+index 00000000..9069f948
+--- /dev/null
++++ b/packages/dock/generated/source-map/appointment.json
+@@ -0,0 +1 @@
++{"manifest":"wamn.json#/models/appointment","model":"appointment","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://receiving.appointment","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"statement_digest_visibility":"crate"}}
+\ No newline at end of file
+diff --git a/packages/dock/generated/source-map/appointment_book.json b/packages/dock/generated/source-map/appointment_book.json
+new file mode 100644
+index 00000000..6693f39c
+--- /dev/null
++++ b/packages/dock/generated/source-map/appointment_book.json
+@@ -0,0 +1 @@
++{"command":"appointment.book","manifest":"wamn.json#/custom_operations/appointment.book","native_bind_fixtures":[{"accessor":"claim_command","function":"claim_command_idempotency_key_bind_fixture","parameter":"idempotency_key","type":"String","visibility":"crate"},{"accessor":"claim_command","function":"claim_command_canonical_command_bind_fixture","parameter":"canonical_command","type":"Vec<u8>","visibility":"crate"},{"accessor":"find_carrier","function":"find_carrier_carrier_id_bind_fixture","parameter":"carrier_id","type":"uuid::Uuid","visibility":"crate"},{"accessor":"find_replay","function":"find_replay_idempotency_key_bind_fixture","parameter":"idempotency_key","type":"String","visibility":"crate"},{"accessor":"insert_appointment","function":"insert_appointment_appointment_id_bind_fixture","parameter":"appointment_id","type":"uuid::Uuid","visibility":"crate"},{"accessor":"insert_appointment","function":"insert_appointment_dock_id_bind_fixture","parameter":"dock_id","type":"uuid::Uuid","visibility":"crate"},{"accessor":"insert_appointment","function":"insert_appointment_carrier_id_bind_fixture","parameter":"carrier_id","type":"uuid::Uuid","visibility":"crate"},{"accessor":"insert_appointment","function":"insert_appointment_slot_start_bind_fixture","parameter":"slot_start","type":"chrono::DateTime<chrono::Utc>","visibility":"crate"},{"accessor":"insert_appointment","function":"insert_appointment_slot_end_bind_fixture","parameter":"slot_end","type":"chrono::DateTime<chrono::Utc>","visibility":"crate"},{"accessor":"lock_dock","function":"lock_dock_dock_id_bind_fixture","parameter":"dock_id","type":"uuid::Uuid","visibility":"crate"}],"native_rows":[{"fields":[{"name":"appointment_id","type":"uuid::Uuid"}],"name":"ClaimCommandRow","visibility":"crate"},{"fields":[{"name":"id","type":"uuid::Uuid"}],"name":"FindCarrierRow","visibility":"crate"},{"fields":[{"name":"canonical_command","type":"Vec<u8>"},{"name":"appointment_id","type":"uuid::Uuid"},{"name":"dock_id","type":"Option<uuid::Uuid>"},{"name":"carrier_id","type":"Option<uuid::Uuid>"},{"name":"slot_start","type":"Option<chrono::DateTime<chrono::Utc>>"},{"name":"slot_end","type":"Option<chrono::DateTime<chrono::Utc>>"},{"name":"status","type":"Option<String>"},{"name":"arrived_at","type":"Option<chrono::DateTime<chrono::Utc>>"}],"name":"FindReplayRow","visibility":"crate"},{"fields":[{"name":"outcome","type":"Option<String>"},{"name":"appointment_id","type":"Option<uuid::Uuid>"},{"name":"dock_id","type":"Option<uuid::Uuid>"},{"name":"carrier_id","type":"Option<uuid::Uuid>"},{"name":"slot_start","type":"Option<chrono::DateTime<chrono::Utc>>"},{"name":"slot_end","type":"Option<chrono::DateTime<chrono::Utc>>"},{"name":"status","type":"Option<String>"},{"name":"arrived_at","type":"Option<chrono::DateTime<chrono::Utc>>"},{"name":"conflicting_appointment_id","type":"Option<uuid::Uuid>"}],"name":"InsertAppointmentRow","visibility":"crate"},{"fields":[{"name":"id","type":"uuid::Uuid"}],"name":"LockDockRow","visibility":"crate"}],"relations":[{"constraints":[],"insert_fields":["id","dock_id","carrier_id","slot_start","slot_end"],"lock":false,"schema":"receiving","select_fields":["id","dock_id","carrier_id","slot_start","slot_end","status","arrived_at"],"table":"appointment","update_fields":[]},{"constraints":["book_appointment_command_idempotency_key_pkey"],"insert_fields":["idempotency_key","canonical_command"],"lock":false,"schema":"receiving","select_fields":["idempotency_key","canonical_command","appointment_id"],"table":"book_appointment_command","update_fields":[]},{"constraints":[],"insert_fields":[],"lock":false,"schema":"receiving","select_fields":["id"],"table":"carrier","update_fields":[]},{"constraints":[],"insert_fields":[],"lock":true,"schema":"receiving","select_fields":["id"],"table":"dock","update_fields":[]}],"statements":{"claim_command":{"fetch":"optional_one","parameters":[{"name":"idempotency_key","nullable":false,"type":"text"},{"name":"canonical_command","nullable":false,"type":"bytes"}],"path":"command/book_appointment/claim_command.sql","row":[{"name":"appointment_id","nullable":false,"type":"uuid"}]},"find_carrier":{"fetch":"optional_one","parameters":[{"name":"carrier_id","nullable":false,"type":"uuid"}],"path":"command/book_appointment/find_carrier.sql","row":[{"name":"id","nullable":false,"type":"uuid"}]},"find_replay":{"fetch":"optional_one","parameters":[{"name":"idempotency_key","nullable":false,"type":"text"}],"path":"command/book_appointment/find_replay.sql","row":[{"name":"canonical_command","nullable":false,"type":"bytes"},{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"dock_id","nullable":true,"type":"uuid"},{"name":"carrier_id","nullable":true,"type":"uuid"},{"name":"slot_start","nullable":true,"type":"timestamptz"},{"name":"slot_end","nullable":true,"type":"timestamptz"},{"name":"status","nullable":true,"type":"text"},{"name":"arrived_at","nullable":true,"type":"timestamptz"}]},"insert_appointment":{"fetch":"one","parameters":[{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"dock_id","nullable":false,"type":"uuid"},{"name":"carrier_id","nullable":false,"type":"uuid"},{"name":"slot_start","nullable":false,"type":"timestamptz"},{"name":"slot_end","nullable":false,"type":"timestamptz"}],"path":"command/book_appointment/insert_appointment.sql","row":[{"name":"outcome","nullable":true,"type":"text"},{"name":"appointment_id","nullable":true,"type":"uuid"},{"name":"dock_id","nullable":true,"type":"uuid"},{"name":"carrier_id","nullable":true,"type":"uuid"},{"name":"slot_start","nullable":true,"type":"timestamptz"},{"name":"slot_end","nullable":true,"type":"timestamptz"},{"name":"status","nullable":true,"type":"text"},{"name":"arrived_at","nullable":true,"type":"timestamptz"},{"name":"conflicting_appointment_id","nullable":true,"type":"uuid"}]},"lock_dock":{"fetch":"optional_one","parameters":[{"name":"dock_id","nullable":false,"type":"uuid"}],"path":"command/book_appointment/lock_dock.sql","row":[{"name":"id","nullable":false,"type":"uuid"}]}},"wamn_accessors":[{"binds":[{"native_rust":"String","nullable":false,"parameter":"idempotency_key","postgres":"text","wamn_rust":"String"},{"native_rust":"Vec<u8>","nullable":false,"parameter":"canonical_command","postgres":"bytea","wamn_rust":"Vec<u8>"}],"fetch":"optional_one","name":"claim_command","row":"ClaimCommandRow","statement_digest_constant":"CLAIM_COMMAND_DIGEST"},{"binds":[{"native_rust":"uuid::Uuid","nullable":false,"parameter":"carrier_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"}],"fetch":"optional_one","name":"find_carrier","row":"FindCarrierRow","statement_digest_constant":"FIND_CARRIER_DIGEST"},{"binds":[{"native_rust":"String","nullable":false,"parameter":"idempotency_key","postgres":"text","wamn_rust":"String"}],"fetch":"optional_one","name":"find_replay","row":"FindReplayRow","statement_digest_constant":"FIND_REPLAY_DIGEST"},{"binds":[{"native_rust":"uuid::Uuid","nullable":false,"parameter":"appointment_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"native_rust":"uuid::Uuid","nullable":false,"parameter":"dock_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"native_rust":"uuid::Uuid","nullable":false,"parameter":"carrier_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"slot_start","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"},{"native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"slot_end","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"}],"fetch":"one","name":"insert_appointment","row":"InsertAppointmentRow","statement_digest_constant":"INSERT_APPOINTMENT_DIGEST"},{"binds":[{"native_rust":"uuid::Uuid","nullable":false,"parameter":"dock_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"}],"fetch":"optional_one","name":"lock_dock","row":"LockDockRow","statement_digest_constant":"LOCK_DOCK_DIGEST"}],"wamn_rows":[{"fields":[{"name":"appointment_id","type":"wamn_postgres_statements::Uuid"}],"name":"ClaimCommandRow","visibility":"crate"},{"fields":[{"name":"id","type":"wamn_postgres_statements::Uuid"}],"name":"FindCarrierRow","visibility":"crate"},{"fields":[{"name":"canonical_command","type":"Vec<u8>"},{"name":"appointment_id","type":"wamn_postgres_statements::Uuid"},{"name":"dock_id","type":"Option<wamn_postgres_statements::Uuid>"},{"name":"carrier_id","type":"Option<wamn_postgres_statements::Uuid>"},{"name":"slot_start","type":"Option<wamn_postgres_statements::TimestampTz>"},{"name":"slot_end","type":"Option<wamn_postgres_statements::TimestampTz>"},{"name":"status","type":"Option<String>"},{"name":"arrived_at","type":"Option<wamn_postgres_statements::TimestampTz>"}],"name":"FindReplayRow","visibility":"crate"},{"fields":[{"name":"outcome","type":"Option<String>"},{"name":"appointment_id","type":"Option<wamn_postgres_statements::Uuid>"},{"name":"dock_id","type":"Option<wamn_postgres_statements::Uuid>"},{"name":"carrier_id","type":"Option<wamn_postgres_statements::Uuid>"},{"name":"slot_start","type":"Option<wamn_postgres_statements::TimestampTz>"},{"name":"slot_end","type":"Option<wamn_postgres_statements::TimestampTz>"},{"name":"status","type":"Option<String>"},{"name":"arrived_at","type":"Option<wamn_postgres_statements::TimestampTz>"},{"name":"conflicting_appointment_id","type":"Option<wamn_postgres_statements::Uuid>"}],"name":"InsertAppointmentRow","visibility":"crate"},{"fields":[{"name":"id","type":"wamn_postgres_statements::Uuid"}],"name":"LockDockRow","visibility":"crate"}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/source-map/appointment_check_in.json b/packages/dock/generated/source-map/appointment_check_in.json
+new file mode 100644
+index 00000000..d1b44f2a
+--- /dev/null
++++ b/packages/dock/generated/source-map/appointment_check_in.json
+@@ -0,0 +1 @@
++{"command":"appointment.check_in","manifest":"wamn.json#/custom_operations/appointment.check_in","native_bind_fixtures":[{"accessor":"check_in_appointment","function":"check_in_appointment_appointment_id_bind_fixture","parameter":"appointment_id","type":"uuid::Uuid","visibility":"crate"},{"accessor":"check_in_appointment","function":"check_in_appointment_arrived_at_bind_fixture","parameter":"arrived_at","type":"chrono::DateTime<chrono::Utc>","visibility":"crate"}],"native_rows":[{"fields":[{"name":"outcome","type":"Option<String>"},{"name":"appointment_id","type":"Option<uuid::Uuid>"},{"name":"dock_id","type":"Option<uuid::Uuid>"},{"name":"carrier_id","type":"Option<uuid::Uuid>"},{"name":"slot_start","type":"Option<chrono::DateTime<chrono::Utc>>"},{"name":"slot_end","type":"Option<chrono::DateTime<chrono::Utc>>"},{"name":"status","type":"Option<String>"},{"name":"arrived_at","type":"Option<chrono::DateTime<chrono::Utc>>"}],"name":"CheckInAppointmentRow","visibility":"crate"}],"relations":[{"constraints":[],"insert_fields":[],"lock":false,"schema":"receiving","select_fields":["id","dock_id","carrier_id","slot_start","slot_end","status","arrived_at"],"table":"appointment","update_fields":["status","arrived_at"]}],"statements":{"check_in_appointment":{"fetch":"one","parameters":[{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"arrived_at","nullable":false,"type":"timestamptz"}],"path":"command/check_in_appointment/check_in_appointment.sql","row":[{"name":"outcome","nullable":true,"type":"text"},{"name":"appointment_id","nullable":true,"type":"uuid"},{"name":"dock_id","nullable":true,"type":"uuid"},{"name":"carrier_id","nullable":true,"type":"uuid"},{"name":"slot_start","nullable":true,"type":"timestamptz"},{"name":"slot_end","nullable":true,"type":"timestamptz"},{"name":"status","nullable":true,"type":"text"},{"name":"arrived_at","nullable":true,"type":"timestamptz"}]}},"wamn_accessors":[{"binds":[{"native_rust":"uuid::Uuid","nullable":false,"parameter":"appointment_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"arrived_at","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"}],"fetch":"one","name":"check_in_appointment","row":"CheckInAppointmentRow","statement_digest_constant":"CHECK_IN_APPOINTMENT_DIGEST"}],"wamn_rows":[{"fields":[{"name":"outcome","type":"Option<String>"},{"name":"appointment_id","type":"Option<wamn_postgres_statements::Uuid>"},{"name":"dock_id","type":"Option<wamn_postgres_statements::Uuid>"},{"name":"carrier_id","type":"Option<wamn_postgres_statements::Uuid>"},{"name":"slot_start","type":"Option<wamn_postgres_statements::TimestampTz>"},{"name":"slot_end","type":"Option<wamn_postgres_statements::TimestampTz>"},{"name":"status","type":"Option<String>"},{"name":"arrived_at","type":"Option<wamn_postgres_statements::TimestampTz>"}],"name":"CheckInAppointmentRow","visibility":"crate"}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/source-map/appointment_query.json b/packages/dock/generated/source-map/appointment_query.json
+new file mode 100644
+index 00000000..74aa4ae1
+--- /dev/null
++++ b/packages/dock/generated/source-map/appointment_query.json
+@@ -0,0 +1 @@
++{"kind":"projection","manifest":"wamn.json#/custom_operations/appointment.query","native_bind_fixtures":[{"accessor":"list_appointments","function":"list_appointments_dock_id_bind_fixture","parameter":"dock_id","type":"uuid::Uuid","visibility":"crate"},{"accessor":"list_appointments","function":"list_appointments_day_start_bind_fixture","parameter":"day_start","type":"chrono::DateTime<chrono::Utc>","visibility":"crate"},{"accessor":"list_appointments","function":"list_appointments_day_end_bind_fixture","parameter":"day_end","type":"chrono::DateTime<chrono::Utc>","visibility":"crate"},{"accessor":"list_appointments","function":"list_appointments_status_bind_fixture","parameter":"status","type":"Option<String>","visibility":"crate"}],"native_rows":[{"fields":[{"name":"appointment_id","type":"uuid::Uuid"},{"name":"dock_id","type":"uuid::Uuid"},{"name":"carrier_id","type":"uuid::Uuid"},{"name":"slot_start","type":"chrono::DateTime<chrono::Utc>"},{"name":"slot_end","type":"chrono::DateTime<chrono::Utc>"},{"name":"status","type":"String"},{"name":"arrived_at","type":"Option<chrono::DateTime<chrono::Utc>>"}],"name":"ListAppointmentsRow","visibility":"crate"}],"operation":"appointment.query","relations":[{"constraints":[],"insert_fields":[],"lock":false,"schema":"receiving","select_fields":["id","dock_id","carrier_id","slot_start","slot_end","status","arrived_at"],"table":"appointment","update_fields":[]}],"statements":{"list_appointments":{"fetch":"bounded_list","parameters":[{"name":"dock_id","nullable":false,"type":"uuid"},{"name":"day_start","nullable":false,"type":"timestamptz"},{"name":"day_end","nullable":false,"type":"timestamptz"},{"name":"status","nullable":true,"type":"text"}],"path":"query/appointment_by_dock_day.sql","row":[{"name":"appointment_id","nullable":false,"type":"uuid"},{"name":"dock_id","nullable":false,"type":"uuid"},{"name":"carrier_id","nullable":false,"type":"uuid"},{"name":"slot_start","nullable":false,"type":"timestamptz"},{"name":"slot_end","nullable":false,"type":"timestamptz"},{"name":"status","nullable":false,"type":"text"},{"name":"arrived_at","nullable":true,"type":"timestamptz"}]}},"wamn_accessors":[{"binds":[{"native_rust":"uuid::Uuid","nullable":false,"parameter":"dock_id","postgres":"uuid","wamn_rust":"wamn_postgres_statements::Uuid"},{"native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"day_start","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"},{"native_rust":"chrono::DateTime<chrono::Utc>","nullable":false,"parameter":"day_end","postgres":"timestamptz","wamn_rust":"wamn_postgres_statements::TimestampTz"},{"native_rust":"Option<String>","nullable":true,"parameter":"status","postgres":"text","wamn_rust":"Option<String>"}],"fetch":"bounded_list","name":"list_appointments","row":"ListAppointmentsRow","statement_digest_constant":"LIST_APPOINTMENTS_DIGEST"}],"wamn_rows":[{"fields":[{"name":"appointment_id","type":"wamn_postgres_statements::Uuid"},{"name":"dock_id","type":"wamn_postgres_statements::Uuid"},{"name":"carrier_id","type":"wamn_postgres_statements::Uuid"},{"name":"slot_start","type":"wamn_postgres_statements::TimestampTz"},{"name":"slot_end","type":"wamn_postgres_statements::TimestampTz"},{"name":"status","type":"String"},{"name":"arrived_at","type":"Option<wamn_postgres_statements::TimestampTz>"}],"name":"ListAppointmentsRow","visibility":"crate"}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/source-map/carrier.json b/packages/dock/generated/source-map/carrier.json
+new file mode 100644
+index 00000000..350df2ab
+--- /dev/null
++++ b/packages/dock/generated/source-map/carrier.json
+@@ -0,0 +1 @@
++{"manifest":"wamn.json#/models/carrier","model":"carrier","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://receiving.carrier","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"statement_digest_visibility":"crate"}}
+\ No newline at end of file
+diff --git a/packages/dock/generated/source-map/carrier_create.json b/packages/dock/generated/source-map/carrier_create.json
+new file mode 100644
+index 00000000..48528bd0
+--- /dev/null
++++ b/packages/dock/generated/source-map/carrier_create.json
+@@ -0,0 +1 @@
++{"command":"carrier.create","manifest":"wamn.json#/custom_operations/carrier.create","native_bind_fixtures":[{"accessor":"insert_carrier","function":"insert_carrier_carrier_code_bind_fixture","parameter":"carrier_code","type":"String","visibility":"crate"},{"accessor":"insert_carrier","function":"insert_carrier_carrier_name_bind_fixture","parameter":"carrier_name","type":"String","visibility":"crate"}],"native_rows":[{"fields":[{"name":"id","type":"uuid::Uuid"},{"name":"carrier_code","type":"String"},{"name":"carrier_name","type":"String"}],"name":"InsertCarrierRow","visibility":"crate"}],"relations":[{"constraints":["carrier_carrier_code_key"],"insert_fields":["carrier_code","carrier_name"],"lock":false,"schema":"receiving","select_fields":["id","carrier_code","carrier_name"],"table":"carrier","update_fields":[]}],"statements":{"insert_carrier":{"fetch":"one","parameters":[{"name":"carrier_code","nullable":false,"type":"text"},{"name":"carrier_name","nullable":false,"type":"text"}],"path":"command/create_carrier/insert_carrier.sql","row":[{"name":"id","nullable":false,"type":"uuid"},{"name":"carrier_code","nullable":false,"type":"text"},{"name":"carrier_name","nullable":false,"type":"text"}]}},"wamn_accessors":[{"binds":[{"native_rust":"String","nullable":false,"parameter":"carrier_code","postgres":"text","wamn_rust":"String"},{"native_rust":"String","nullable":false,"parameter":"carrier_name","postgres":"text","wamn_rust":"String"}],"fetch":"one","name":"insert_carrier","row":"InsertCarrierRow","statement_digest_constant":"INSERT_CARRIER_DIGEST"}],"wamn_rows":[{"fields":[{"name":"id","type":"wamn_postgres_statements::Uuid"},{"name":"carrier_code","type":"String"},{"name":"carrier_name","type":"String"}],"name":"InsertCarrierRow","visibility":"crate"}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/source-map/dock.json b/packages/dock/generated/source-map/dock.json
+new file mode 100644
+index 00000000..685c09ba
+--- /dev/null
++++ b/packages/dock/generated/source-map/dock.json
+@@ -0,0 +1 @@
++{"manifest":"wamn.json#/models/dock","model":"dock","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://receiving.dock","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"statement_digest_visibility":"crate"}}
+\ No newline at end of file
+diff --git a/packages/dock/generated/source-map/dock_create.json b/packages/dock/generated/source-map/dock_create.json
+new file mode 100644
+index 00000000..42ff18b4
+--- /dev/null
++++ b/packages/dock/generated/source-map/dock_create.json
+@@ -0,0 +1 @@
++{"command":"dock.create","manifest":"wamn.json#/custom_operations/dock.create","native_bind_fixtures":[{"accessor":"insert_dock","function":"insert_dock_dock_code_bind_fixture","parameter":"dock_code","type":"String","visibility":"crate"}],"native_rows":[{"fields":[{"name":"id","type":"uuid::Uuid"},{"name":"dock_code","type":"String"}],"name":"InsertDockRow","visibility":"crate"}],"relations":[{"constraints":["dock_dock_code_key"],"insert_fields":["dock_code"],"lock":false,"schema":"receiving","select_fields":["id","dock_code"],"table":"dock","update_fields":[]}],"statements":{"insert_dock":{"fetch":"one","parameters":[{"name":"dock_code","nullable":false,"type":"text"}],"path":"command/create_dock/insert_dock.sql","row":[{"name":"id","nullable":false,"type":"uuid"},{"name":"dock_code","nullable":false,"type":"text"}]}},"wamn_accessors":[{"binds":[{"native_rust":"String","nullable":false,"parameter":"dock_code","postgres":"text","wamn_rust":"String"}],"fetch":"one","name":"insert_dock","row":"InsertDockRow","statement_digest_constant":"INSERT_DOCK_DIGEST"}],"wamn_rows":[{"fields":[{"name":"id","type":"wamn_postgres_statements::Uuid"},{"name":"dock_code","type":"String"}],"name":"InsertDockRow","visibility":"crate"}]}
+\ No newline at end of file
+diff --git a/packages/dock/generated/wamn/appointment.rs b/packages/dock/generated/wamn/appointment.rs
+new file mode 100644
+index 00000000..74a264d7
+--- /dev/null
++++ b/packages/dock/generated/wamn/appointment.rs
+@@ -0,0 +1,15 @@
++// @generated from migration IR; do not edit.
++
++use wamn_postgres_statements::Connection;
++
++#[derive(Debug)]
++pub struct AppointmentRow {
++    pub arrived_at: Option<wamn_postgres_statements::TimestampTz>,
++    pub carrier_id: wamn_postgres_statements::Uuid,
++    pub created_at: wamn_postgres_statements::TimestampTz,
++    pub dock_id: wamn_postgres_statements::Uuid,
++    pub id: wamn_postgres_statements::Uuid,
++    pub slot_end: wamn_postgres_statements::TimestampTz,
++    pub slot_start: wamn_postgres_statements::TimestampTz,
++    pub status: String,
++}
+diff --git a/packages/dock/generated/wamn/appointment_book.rs b/packages/dock/generated/wamn/appointment_book.rs
+new file mode 100644
+index 00000000..5822e04b
+--- /dev/null
++++ b/packages/dock/generated/wamn/appointment_book.rs
+@@ -0,0 +1,144 @@
++// @generated from migration IR; do not edit.
++
++use wamn_postgres_statements::Transaction;
++
++#[derive(Debug)]
++pub(crate) struct ClaimCommandRow {
++    pub appointment_id: wamn_postgres_statements::Uuid,
++}
++
++#[derive(Debug)]
++pub(crate) struct FindCarrierRow {
++    pub id: wamn_postgres_statements::Uuid,
++}
++
++#[derive(Debug)]
++pub(crate) struct FindReplayRow {
++    pub canonical_command: Vec<u8>,
++    pub appointment_id: wamn_postgres_statements::Uuid,
++    pub dock_id: Option<wamn_postgres_statements::Uuid>,
++    pub carrier_id: Option<wamn_postgres_statements::Uuid>,
++    pub slot_start: Option<wamn_postgres_statements::TimestampTz>,
++    pub slot_end: Option<wamn_postgres_statements::TimestampTz>,
++    pub status: Option<String>,
++    pub arrived_at: Option<wamn_postgres_statements::TimestampTz>,
++}
++
++#[derive(Debug)]
++pub(crate) struct InsertAppointmentRow {
++    pub outcome: Option<String>,
++    pub appointment_id: Option<wamn_postgres_statements::Uuid>,
++    pub dock_id: Option<wamn_postgres_statements::Uuid>,
++    pub carrier_id: Option<wamn_postgres_statements::Uuid>,
++    pub slot_start: Option<wamn_postgres_statements::TimestampTz>,
++    pub slot_end: Option<wamn_postgres_statements::TimestampTz>,
++    pub status: Option<String>,
++    pub arrived_at: Option<wamn_postgres_statements::TimestampTz>,
++    pub conflicting_appointment_id: Option<wamn_postgres_statements::Uuid>,
++}
++
++#[derive(Debug)]
++pub(crate) struct LockDockRow {
++    pub id: wamn_postgres_statements::Uuid,
++}
++
++pub(crate) const CLAIM_COMMAND_DIGEST: &str = "sha256:c7f90be3947185e39c4e3a220ec0c5cf25d441f7e30197a750ec60030b8b0768";
++pub(crate) const FIND_CARRIER_DIGEST: &str = "sha256:e8b5ee92d485b0ddd803646c6997aca68e0a7cde2409a6781e2cec76870079b1";
++pub(crate) const FIND_REPLAY_DIGEST: &str = "sha256:fa6ed411264f21035efa72c2053f3edab458a0b643e60caa74835f9cab41a77d";
++pub(crate) const INSERT_APPOINTMENT_DIGEST: &str = "sha256:0c219ede9269e1a3c06467d17a845b3523508eceee7756cccb827fd154a6f1d0";
++pub(crate) const LOCK_DOCK_DIGEST: &str = "sha256:22388fb8416f6d186429d2b2467214773cb3aba980e2b914a133d8b4df8067f4";
++
++pub(crate) async fn claim_command(
++    transaction: &mut Transaction,
++    idempotency_key: String,
++    canonical_command: Vec<u8>,
++) -> Result<Option<ClaimCommandRow>, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(CLAIM_COMMAND_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(idempotency_key),
++        wamn_postgres_statements::into_sql_value(canonical_command),
++    ]).await?;
++    wamn_postgres_statements::decode_optional(CLAIM_COMMAND_DIGEST, rows, |row| {
++        Ok(ClaimCommandRow {
++            appointment_id: row.decode("appointment_id")?,
++        })
++    })
++}
++
++pub(crate) async fn find_carrier(
++    transaction: &mut Transaction,
++    carrier_id: wamn_postgres_statements::Uuid,
++) -> Result<Option<FindCarrierRow>, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(FIND_CARRIER_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(carrier_id),
++    ]).await?;
++    wamn_postgres_statements::decode_optional(FIND_CARRIER_DIGEST, rows, |row| {
++        Ok(FindCarrierRow {
++            id: row.decode("id")?,
++        })
++    })
++}
++
++pub(crate) async fn find_replay(
++    transaction: &mut Transaction,
++    idempotency_key: String,
++) -> Result<Option<FindReplayRow>, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(FIND_REPLAY_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(idempotency_key),
++    ]).await?;
++    wamn_postgres_statements::decode_optional(FIND_REPLAY_DIGEST, rows, |row| {
++        Ok(FindReplayRow {
++            canonical_command: row.decode("canonical_command")?,
++            appointment_id: row.decode("appointment_id")?,
++            dock_id: row.decode("dock_id")?,
++            carrier_id: row.decode("carrier_id")?,
++            slot_start: row.decode("slot_start")?,
++            slot_end: row.decode("slot_end")?,
++            status: row.decode("status")?,
++            arrived_at: row.decode("arrived_at")?,
++        })
++    })
++}
++
++pub(crate) async fn insert_appointment(
++    transaction: &mut Transaction,
++    appointment_id: wamn_postgres_statements::Uuid,
++    dock_id: wamn_postgres_statements::Uuid,
++    carrier_id: wamn_postgres_statements::Uuid,
++    slot_start: wamn_postgres_statements::TimestampTz,
++    slot_end: wamn_postgres_statements::TimestampTz,
++) -> Result<InsertAppointmentRow, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(INSERT_APPOINTMENT_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(appointment_id),
++        wamn_postgres_statements::into_sql_value(dock_id),
++        wamn_postgres_statements::into_sql_value(carrier_id),
++        wamn_postgres_statements::into_sql_value(slot_start),
++        wamn_postgres_statements::into_sql_value(slot_end),
++    ]).await?;
++    wamn_postgres_statements::decode_one(INSERT_APPOINTMENT_DIGEST, rows, |row| {
++        Ok(InsertAppointmentRow {
++            outcome: row.decode("outcome")?,
++            appointment_id: row.decode("appointment_id")?,
++            dock_id: row.decode("dock_id")?,
++            carrier_id: row.decode("carrier_id")?,
++            slot_start: row.decode("slot_start")?,
++            slot_end: row.decode("slot_end")?,
++            status: row.decode("status")?,
++            arrived_at: row.decode("arrived_at")?,
++            conflicting_appointment_id: row.decode("conflicting_appointment_id")?,
++        })
++    })
++}
++
++pub(crate) async fn lock_dock(
++    transaction: &mut Transaction,
++    dock_id: wamn_postgres_statements::Uuid,
++) -> Result<Option<LockDockRow>, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(LOCK_DOCK_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(dock_id),
++    ]).await?;
++    wamn_postgres_statements::decode_optional(LOCK_DOCK_DIGEST, rows, |row| {
++        Ok(LockDockRow {
++            id: row.decode("id")?,
++        })
++    })
++}
+diff --git a/packages/dock/generated/wamn/appointment_check_in.rs b/packages/dock/generated/wamn/appointment_check_in.rs
+new file mode 100644
+index 00000000..4acb4e79
+--- /dev/null
++++ b/packages/dock/generated/wamn/appointment_check_in.rs
+@@ -0,0 +1,40 @@
++// @generated from migration IR; do not edit.
++
++use wamn_postgres_statements::Transaction;
++
++#[derive(Debug)]
++pub(crate) struct CheckInAppointmentRow {
++    pub outcome: Option<String>,
++    pub appointment_id: Option<wamn_postgres_statements::Uuid>,
++    pub dock_id: Option<wamn_postgres_statements::Uuid>,
++    pub carrier_id: Option<wamn_postgres_statements::Uuid>,
++    pub slot_start: Option<wamn_postgres_statements::TimestampTz>,
++    pub slot_end: Option<wamn_postgres_statements::TimestampTz>,
++    pub status: Option<String>,
++    pub arrived_at: Option<wamn_postgres_statements::TimestampTz>,
++}
++
++pub(crate) const CHECK_IN_APPOINTMENT_DIGEST: &str = "sha256:aab2221a69e21115fa3ff219cc1dc6ec2fcef8d33a6295feccca4587a8230868";
++
++pub(crate) async fn check_in_appointment(
++    transaction: &mut Transaction,
++    appointment_id: wamn_postgres_statements::Uuid,
++    arrived_at: wamn_postgres_statements::TimestampTz,
++) -> Result<CheckInAppointmentRow, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(CHECK_IN_APPOINTMENT_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(appointment_id),
++        wamn_postgres_statements::into_sql_value(arrived_at),
++    ]).await?;
++    wamn_postgres_statements::decode_one(CHECK_IN_APPOINTMENT_DIGEST, rows, |row| {
++        Ok(CheckInAppointmentRow {
++            outcome: row.decode("outcome")?,
++            appointment_id: row.decode("appointment_id")?,
++            dock_id: row.decode("dock_id")?,
++            carrier_id: row.decode("carrier_id")?,
++            slot_start: row.decode("slot_start")?,
++            slot_end: row.decode("slot_end")?,
++            status: row.decode("status")?,
++            arrived_at: row.decode("arrived_at")?,
++        })
++    })
++}
+diff --git a/packages/dock/generated/wamn/appointment_query.rs b/packages/dock/generated/wamn/appointment_query.rs
+new file mode 100644
+index 00000000..f56b942b
+--- /dev/null
++++ b/packages/dock/generated/wamn/appointment_query.rs
+@@ -0,0 +1,42 @@
++// @generated from migration IR; do not edit.
++
++use wamn_postgres_statements::Transaction;
++
++#[derive(Debug)]
++pub(crate) struct ListAppointmentsRow {
++    pub appointment_id: wamn_postgres_statements::Uuid,
++    pub dock_id: wamn_postgres_statements::Uuid,
++    pub carrier_id: wamn_postgres_statements::Uuid,
++    pub slot_start: wamn_postgres_statements::TimestampTz,
++    pub slot_end: wamn_postgres_statements::TimestampTz,
++    pub status: String,
++    pub arrived_at: Option<wamn_postgres_statements::TimestampTz>,
++}
++
++pub(crate) const LIST_APPOINTMENTS_DIGEST: &str = "sha256:be14e2ce751fc2f0c7798094353bcdfebc45656cc3d9a850e6e2349549705d4d";
++
++pub(crate) async fn list_appointments(
++    transaction: &mut Transaction,
++    dock_id: wamn_postgres_statements::Uuid,
++    day_start: wamn_postgres_statements::TimestampTz,
++    day_end: wamn_postgres_statements::TimestampTz,
++    status: Option<String>,
++) -> Result<Vec<ListAppointmentsRow>, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(LIST_APPOINTMENTS_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(dock_id),
++        wamn_postgres_statements::into_sql_value(day_start),
++        wamn_postgres_statements::into_sql_value(day_end),
++        wamn_postgres_statements::into_sql_value(status),
++    ]).await?;
++    wamn_postgres_statements::decode_all(LIST_APPOINTMENTS_DIGEST, rows, |row| {
++        Ok(ListAppointmentsRow {
++            appointment_id: row.decode("appointment_id")?,
++            dock_id: row.decode("dock_id")?,
++            carrier_id: row.decode("carrier_id")?,
++            slot_start: row.decode("slot_start")?,
++            slot_end: row.decode("slot_end")?,
++            status: row.decode("status")?,
++            arrived_at: row.decode("arrived_at")?,
++        })
++    })
++}
+diff --git a/packages/dock/generated/wamn/carrier.rs b/packages/dock/generated/wamn/carrier.rs
+new file mode 100644
+index 00000000..1ea2f878
+--- /dev/null
++++ b/packages/dock/generated/wamn/carrier.rs
+@@ -0,0 +1,10 @@
++// @generated from migration IR; do not edit.
++
++use wamn_postgres_statements::Connection;
++
++#[derive(Debug)]
++pub struct CarrierRow {
++    pub carrier_code: String,
++    pub carrier_name: String,
++    pub id: wamn_postgres_statements::Uuid,
++}
+diff --git a/packages/dock/generated/wamn/carrier_create.rs b/packages/dock/generated/wamn/carrier_create.rs
+new file mode 100644
+index 00000000..0dd57063
+--- /dev/null
++++ b/packages/dock/generated/wamn/carrier_create.rs
+@@ -0,0 +1,30 @@
++// @generated from migration IR; do not edit.
++
++use wamn_postgres_statements::Transaction;
++
++#[derive(Debug)]
++pub(crate) struct InsertCarrierRow {
++    pub id: wamn_postgres_statements::Uuid,
++    pub carrier_code: String,
++    pub carrier_name: String,
++}
++
++pub(crate) const INSERT_CARRIER_DIGEST: &str = "sha256:0371cb78139b4dc21bab40976a480b177e753eb141862ebfb27b5c597425826a";
++
++pub(crate) async fn insert_carrier(
++    transaction: &mut Transaction,
++    carrier_code: String,
++    carrier_name: String,
++) -> Result<InsertCarrierRow, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(INSERT_CARRIER_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(carrier_code),
++        wamn_postgres_statements::into_sql_value(carrier_name),
++    ]).await?;
++    wamn_postgres_statements::decode_one(INSERT_CARRIER_DIGEST, rows, |row| {
++        Ok(InsertCarrierRow {
++            id: row.decode("id")?,
++            carrier_code: row.decode("carrier_code")?,
++            carrier_name: row.decode("carrier_name")?,
++        })
++    })
++}
+diff --git a/packages/dock/generated/wamn/dock.rs b/packages/dock/generated/wamn/dock.rs
+new file mode 100644
+index 00000000..0fe7d704
+--- /dev/null
++++ b/packages/dock/generated/wamn/dock.rs
+@@ -0,0 +1,9 @@
++// @generated from migration IR; do not edit.
++
++use wamn_postgres_statements::Connection;
++
++#[derive(Debug)]
++pub struct DockRow {
++    pub dock_code: String,
++    pub id: wamn_postgres_statements::Uuid,
++}
+diff --git a/packages/dock/generated/wamn/dock_create.rs b/packages/dock/generated/wamn/dock_create.rs
+new file mode 100644
+index 00000000..68f525bc
+--- /dev/null
++++ b/packages/dock/generated/wamn/dock_create.rs
+@@ -0,0 +1,26 @@
++// @generated from migration IR; do not edit.
++
++use wamn_postgres_statements::Transaction;
++
++#[derive(Debug)]
++pub(crate) struct InsertDockRow {
++    pub id: wamn_postgres_statements::Uuid,
++    pub dock_code: String,
++}
++
++pub(crate) const INSERT_DOCK_DIGEST: &str = "sha256:c75e85950b7e9e0a7253b11a2124b7b12e0bd55cf4baef0f1e1c145247eea83c";
++
++pub(crate) async fn insert_dock(
++    transaction: &mut Transaction,
++    dock_code: String,
++) -> Result<InsertDockRow, wamn_postgres_statements::StatementError> {
++    let rows = transaction.run(INSERT_DOCK_DIGEST, vec![
++        wamn_postgres_statements::into_sql_value(dock_code),
++    ]).await?;
++    wamn_postgres_statements::decode_one(INSERT_DOCK_DIGEST, rows, |row| {
++        Ok(InsertDockRow {
++            id: row.decode("id")?,
++            dock_code: row.decode("dock_code")?,
++        })
++    })
++}
+diff --git a/packages/dock/migrations/0001_initial.sql b/packages/dock/migrations/0001_initial.sql
+new file mode 100644
+index 00000000..139fbf2e
+--- /dev/null
++++ b/packages/dock/migrations/0001_initial.sql
+@@ -0,0 +1,47 @@
++CREATE TABLE receiving.carrier (
++    id uuid CONSTRAINT carrier_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
++    carrier_code text NOT NULL CONSTRAINT carrier_carrier_code_key UNIQUE,
++    carrier_name text NOT NULL
++);
++
++CREATE TABLE receiving.dock (
++    id uuid CONSTRAINT dock_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
++    dock_code text NOT NULL CONSTRAINT dock_dock_code_key UNIQUE
++);
++
++CREATE TABLE receiving.book_appointment_command (
++    idempotency_key text
++        CONSTRAINT book_appointment_command_idempotency_key_pkey PRIMARY KEY,
++    canonical_command bytea NOT NULL,
++    appointment_id uuid NOT NULL DEFAULT gen_random_uuid()
++        CONSTRAINT book_appointment_command_appointment_id_key UNIQUE,
++    CONSTRAINT book_appointment_command_canonical_command_check
++        CHECK (octet_length(canonical_command) > 0)
++);
++
++CREATE TABLE receiving.appointment (
++    id uuid
++        CONSTRAINT appointment_id_pkey PRIMARY KEY
++        CONSTRAINT appointment_id_fkey
++        REFERENCES receiving.book_appointment_command (appointment_id),
++    dock_id uuid NOT NULL
++        CONSTRAINT appointment_dock_id_fkey
++        REFERENCES receiving.dock (id),
++    carrier_id uuid NOT NULL
++        CONSTRAINT appointment_carrier_id_fkey
++        REFERENCES receiving.carrier (id),
++    slot_start timestamptz NOT NULL,
++    slot_end timestamptz NOT NULL,
++    status text NOT NULL DEFAULT 'scheduled',
++    arrived_at timestamptz,
++    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    CONSTRAINT appointment_slot_start_slot_end_check
++        CHECK (slot_end > slot_start),
++    CONSTRAINT appointment_status_check
++        CHECK (status IN ('scheduled', 'arrived', 'departed')),
++    CONSTRAINT appointment_status_arrived_at_check
++        CHECK (
++            (status = 'scheduled' AND arrived_at IS NULL)
++            OR (status <> 'scheduled' AND arrived_at IS NOT NULL)
++        )
++);
+diff --git a/packages/dock/publication/attachments.json b/packages/dock/publication/attachments.json
+new file mode 100644
+index 00000000..bdb15e15
+--- /dev/null
++++ b/packages/dock/publication/attachments.json
+@@ -0,0 +1,283 @@
++{
++  "dock-carrier-create-http": {
++    "kind": "http",
++    "package-id": "dock",
++    "wiring-id": "carrier_create",
++    "wiring-version": 1,
++    "definition-hash": "sha256:5ff9a0c90ee410d612d95eaf13e6b5bd35bb70d4bc499d74e166afa4d81712d6",
++    "definition": {
++      "id": "dock-carrier-create-http",
++      "kind": "http",
++      "route": {
++        "path": "/dock/carrier/create",
++        "method": "POST"
++      },
++      "raw-body-bytes": {
++        "maximum": 1048576
++      },
++      "input-schema": {
++        "type": "array",
++        "minItems": 1,
++        "maxItems": 100,
++        "items": {
++          "type": "object",
++          "required": [
++            "request_id",
++            "carrier_code",
++            "carrier_name"
++          ],
++          "additionalProperties": false,
++          "properties": {
++            "request_id": {
++              "type": "string",
++              "minLength": 1
++            },
++            "carrier_code": {
++              "type": "string",
++              "minLength": 1
++            },
++            "carrier_name": {
++              "type": "string",
++              "minLength": 1
++            }
++          }
++        }
++      }
++    },
++    "auth-policy": {
++      "mode": "pat"
++    },
++    "registered-operation": "dock:carrier/create@1.0.0"
++  },
++  "dock-dock-create-http": {
++    "kind": "http",
++    "package-id": "dock",
++    "wiring-id": "dock_create",
++    "wiring-version": 1,
++    "definition-hash": "sha256:18c752c9eb95929e09a1d016de72840d8bbfbedc12fc2dfd6a9d07996b07b294",
++    "definition": {
++      "id": "dock-dock-create-http",
++      "kind": "http",
++      "route": {
++        "path": "/dock/dock/create",
++        "method": "POST"
++      },
++      "raw-body-bytes": {
++        "maximum": 1048576
++      },
++      "input-schema": {
++        "type": "array",
++        "minItems": 1,
++        "maxItems": 100,
++        "items": {
++          "type": "object",
++          "required": [
++            "request_id",
++            "dock_code"
++          ],
++          "additionalProperties": false,
++          "properties": {
++            "request_id": {
++              "type": "string",
++              "minLength": 1
++            },
++            "dock_code": {
++              "type": "string",
++              "minLength": 1
++            }
++          }
++        }
++      }
++    },
++    "auth-policy": {
++      "mode": "pat"
++    },
++    "registered-operation": "dock:dock/create@1.0.0"
++  },
++  "dock-appointment-book-http": {
++    "kind": "http",
++    "package-id": "dock",
++    "wiring-id": "appointment_book",
++    "wiring-version": 1,
++    "definition-hash": "sha256:31f42175c9e7af54f4d7f9e4813ad2eb71411959373da649aa320db9ffac1be6",
++    "definition": {
++      "id": "dock-appointment-book-http",
++      "kind": "http",
++      "route": {
++        "path": "/dock/appointment/book",
++        "method": "POST"
++      },
++      "raw-body-bytes": {
++        "maximum": 1048576
++      },
++      "input-schema": {
++        "type": "array",
++        "minItems": 1,
++        "maxItems": 100,
++        "items": {
++          "type": "object",
++          "required": [
++            "request_id",
++            "value"
++          ],
++          "additionalProperties": false,
++          "properties": {
++            "request_id": {
++              "type": "string",
++              "minLength": 1
++            },
++            "value": {
++              "type": "object",
++              "required": [
++                "idempotency_key",
++                "dock_id",
++                "carrier_id",
++                "slot_start",
++                "slot_end"
++              ],
++              "additionalProperties": false,
++              "properties": {
++                "idempotency_key": {
++                  "type": "string",
++                  "minLength": 1
++                },
++                "dock_id": {
++                  "type": "string",
++                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
++                },
++                "carrier_id": {
++                  "type": "string",
++                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
++                },
++                "slot_start": {
++                  "type": "string",
++                  "minLength": 1
++                },
++                "slot_end": {
++                  "type": "string",
++                  "minLength": 1
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "auth-policy": {
++      "mode": "pat"
++    },
++    "registered-operation": "dock:appointment/book@1.0.0"
++  },
++  "dock-appointment-check-in-http": {
++    "kind": "http",
++    "package-id": "dock",
++    "wiring-id": "appointment_check_in",
++    "wiring-version": 1,
++    "definition-hash": "sha256:1797f8014be67b4c4d62324a56da2ed78a304e772b73ea0d1fb7157ff5d6656d",
++    "definition": {
++      "id": "dock-appointment-check-in-http",
++      "kind": "http",
++      "route": {
++        "path": "/dock/appointment/check_in",
++        "method": "POST"
++      },
++      "raw-body-bytes": {
++        "maximum": 1048576
++      },
++      "input-schema": {
++        "type": "array",
++        "minItems": 1,
++        "maxItems": 100,
++        "items": {
++          "type": "object",
++          "required": [
++            "request_id",
++            "appointment_id",
++            "arrived_at"
++          ],
++          "additionalProperties": false,
++          "properties": {
++            "request_id": {
++              "type": "string",
++              "minLength": 1
++            },
++            "appointment_id": {
++              "type": "string",
++              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
++            },
++            "arrived_at": {
++              "type": "string",
++              "minLength": 1
++            }
++          }
++        }
++      }
++    },
++    "auth-policy": {
++      "mode": "pat"
++    },
++    "registered-operation": "dock:appointment/check-in@1.0.0"
++  },
++  "dock-appointment-query-http": {
++    "kind": "http",
++    "package-id": "dock",
++    "wiring-id": "appointment_query",
++    "wiring-version": 1,
++    "definition-hash": "sha256:f54d4237dbdb3b18f62832831f475053d8fa6ac9db38cae03f6dd257d07524e7",
++    "definition": {
++      "id": "dock-appointment-query-http",
++      "kind": "http",
++      "route": {
++        "path": "/dock/appointment/query",
++        "method": "POST"
++      },
++      "raw-body-bytes": {
++        "maximum": 1048576
++      },
++      "input-schema": {
++        "type": "array",
++        "minItems": 1,
++        "maxItems": 100,
++        "items": {
++          "type": "object",
++          "required": [
++            "request_id",
++            "dock_id",
++            "day"
++          ],
++          "additionalProperties": false,
++          "properties": {
++            "request_id": {
++              "type": "string",
++              "minLength": 1
++            },
++            "dock_id": {
++              "type": "string",
++              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
++            },
++            "day": {
++              "type": "string",
++              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
++            },
++            "status": {
++              "type": [
++                "string",
++                "null"
++              ],
++              "enum": [
++                "scheduled",
++                "arrived",
++                "departed",
++                null
++              ]
++            }
++          }
++        }
++      }
++    },
++    "auth-policy": {
++      "mode": "pat"
++    },
++    "registered-operation": "dock:appointment/query@1.0.0"
++  }
++}
+diff --git a/packages/dock/publication/components/dock.json.in b/packages/dock/publication/components/dock.json.in
+new file mode 100644
+index 00000000..989d656b
+--- /dev/null
++++ b/packages/dock/publication/components/dock.json.in
+@@ -0,0 +1 @@
++{"scope": {"tenant-id": "__TENANT_ID__", "package-id": "dock", "package-version": "1.0.0"}, "component": "dock", "interface-version": "0.1.0", "operations": {"dock:carrier/create@1.0.0": {"registered-operation": "dock:carrier/create@1.0.0", "input-ports": [{"name": "input", "schema": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["request_id", "carrier_code", "carrier_name"], "additionalProperties": false, "properties": {"request_id": {"type": "string", "minLength": 1}, "carrier_code": {"type": "string", "minLength": 1}, "carrier_name": {"type": "string", "minLength": 1}}}}}], "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}, "dock:dock/create@1.0.0": {"registered-operation": "dock:dock/create@1.0.0", "input-ports": [{"name": "input", "schema": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["request_id", "dock_code"], "additionalProperties": false, "properties": {"request_id": {"type": "string", "minLength": 1}, "dock_code": {"type": "string", "minLength": 1}}}}}], "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}, "dock:appointment/book@1.0.0": {"registered-operation": "dock:appointment/book@1.0.0", "input-ports": [{"name": "input", "schema": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["request_id", "value"], "additionalProperties": false, "properties": {"request_id": {"type": "string", "minLength": 1}, "value": {"type": "object", "required": ["idempotency_key", "dock_id", "carrier_id", "slot_start", "slot_end"], "additionalProperties": false, "properties": {"idempotency_key": {"type": "string", "minLength": 1}, "dock_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}, "carrier_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}, "slot_start": {"type": "string", "minLength": 1}, "slot_end": {"type": "string", "minLength": 1}}}}}}}], "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}, "dock:appointment/check-in@1.0.0": {"registered-operation": "dock:appointment/check-in@1.0.0", "input-ports": [{"name": "input", "schema": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["request_id", "appointment_id", "arrived_at"], "additionalProperties": false, "properties": {"request_id": {"type": "string", "minLength": 1}, "appointment_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}, "arrived_at": {"type": "string", "minLength": 1}}}}}], "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}, "dock:appointment/query@1.0.0": {"registered-operation": "dock:appointment/query@1.0.0", "input-ports": [{"name": "input", "schema": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["request_id", "dock_id", "day"], "additionalProperties": false, "properties": {"request_id": {"type": "string", "minLength": 1}, "dock_id": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}, "day": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}, "status": {"type": ["string", "null"], "enum": ["scheduled", "arrived", "departed", null]}}}}}], "output-ports": [{"name": "main", "schema": {"type": "array"}}], "parameters": []}}, "connections": []}
+diff --git a/packages/dock/publication/wirings/appointment_book.json b/packages/dock/publication/wirings/appointment_book.json
+new file mode 100644
+index 00000000..764f2308
+--- /dev/null
++++ b/packages/dock/publication/wirings/appointment_book.json
+@@ -0,0 +1,14 @@
++{
++  "format-version": "0.1",
++  "wiring-id": "appointment_book",
++  "version": 1,
++  "entry": "operation",
++  "nodes": {
++    "operation": {
++      "component": "dock",
++      "interface-version": "0.1.0",
++      "operation": "dock:appointment/book@1.0.0",
++      "terminal": "respond"
++    }
++  }
++}
+diff --git a/packages/dock/publication/wirings/appointment_check_in.json b/packages/dock/publication/wirings/appointment_check_in.json
+new file mode 100644
+index 00000000..4580a6b1
+--- /dev/null
++++ b/packages/dock/publication/wirings/appointment_check_in.json
+@@ -0,0 +1,14 @@
++{
++  "format-version": "0.1",
++  "wiring-id": "appointment_check_in",
++  "version": 1,
++  "entry": "operation",
++  "nodes": {
++    "operation": {
++      "component": "dock",
++      "interface-version": "0.1.0",
++      "operation": "dock:appointment/check-in@1.0.0",
++      "terminal": "respond"
++    }
++  }
++}
+diff --git a/packages/dock/publication/wirings/appointment_query.json b/packages/dock/publication/wirings/appointment_query.json
+new file mode 100644
+index 00000000..6f00ef98
+--- /dev/null
++++ b/packages/dock/publication/wirings/appointment_query.json
+@@ -0,0 +1,14 @@
++{
++  "format-version": "0.1",
++  "wiring-id": "appointment_query",
++  "version": 1,
++  "entry": "operation",
++  "nodes": {
++    "operation": {
++      "component": "dock",
++      "interface-version": "0.1.0",
++      "operation": "dock:appointment/query@1.0.0",
++      "terminal": "respond"
++    }
++  }
++}
+diff --git a/packages/dock/publication/wirings/carrier_create.json b/packages/dock/publication/wirings/carrier_create.json
+new file mode 100644
+index 00000000..f7ec8909
+--- /dev/null
++++ b/packages/dock/publication/wirings/carrier_create.json
+@@ -0,0 +1,14 @@
++{
++  "format-version": "0.1",
++  "wiring-id": "carrier_create",
++  "version": 1,
++  "entry": "operation",
++  "nodes": {
++    "operation": {
++      "component": "dock",
++      "interface-version": "0.1.0",
++      "operation": "dock:carrier/create@1.0.0",
++      "terminal": "respond"
++    }
++  }
++}
+diff --git a/packages/dock/publication/wirings/dock_create.json b/packages/dock/publication/wirings/dock_create.json
+new file mode 100644
+index 00000000..c545b965
+--- /dev/null
++++ b/packages/dock/publication/wirings/dock_create.json
+@@ -0,0 +1,14 @@
++{
++  "format-version": "0.1",
++  "wiring-id": "dock_create",
++  "version": 1,
++  "entry": "operation",
++  "nodes": {
++    "operation": {
++      "component": "dock",
++      "interface-version": "0.1.0",
++      "operation": "dock:dock/create@1.0.0",
++      "terminal": "respond"
++    }
++  }
++}
+diff --git a/packages/dock/query/appointment_by_dock_day.sql b/packages/dock/query/appointment_by_dock_day.sql
+new file mode 100644
+index 00000000..c47b915c
+--- /dev/null
++++ b/packages/dock/query/appointment_by_dock_day.sql
+@@ -0,0 +1,14 @@
++SELECT
++    appointment.id AS appointment_id,
++    appointment.dock_id,
++    appointment.carrier_id,
++    appointment.slot_start,
++    appointment.slot_end,
++    appointment.status,
++    appointment.arrived_at
++FROM appointment
++WHERE appointment.dock_id = $1
++    AND appointment.slot_start >= $2
++    AND appointment.slot_start < $3
++    AND ($4::text IS NULL OR appointment.status = $4::text)
++ORDER BY appointment.slot_start ASC, appointment.id ASC;
+diff --git a/packages/dock/wamn.json b/packages/dock/wamn.json
+new file mode 100644
+index 00000000..e9d482c2
+--- /dev/null
++++ b/packages/dock/wamn.json
+@@ -0,0 +1,1158 @@
++{
++  "package": {
++    "id": "dock",
++    "version": "1.0.0"
++  },
++  "required_platform_policy_contract": {
++    "id": "dock_data_access",
++    "state": "satisfied"
++  },
++  "models": {
++    "appointment": {
++      "schema": "receiving",
++      "table": "appointment",
++      "owner": "dock",
++      "server_owned_fields": [
++        "id",
++        "status",
++        "arrived_at",
++        "created_at"
++      ],
++      "enum_fields": {
++        "status": [
++          "scheduled",
++          "arrived",
++          "departed"
++        ]
++      },
++      "operations": {}
++    },
++    "carrier": {
++      "schema": "receiving",
++      "table": "carrier",
++      "owner": "dock",
++      "server_owned_fields": [
++        "id"
++      ],
++      "enum_fields": {},
++      "operations": {}
++    },
++    "dock": {
++      "schema": "receiving",
++      "table": "dock",
++      "owner": "dock",
++      "server_owned_fields": [
++        "id"
++      ],
++      "enum_fields": {},
++      "operations": {}
++    }
++  },
++  "internal_relations": {
++    "book_appointment_command": {
++      "schema": "receiving",
++      "table": "book_appointment_command",
++      "cdc": "excluded"
++    }
++  },
++  "custom_operations": {
++    "carrier.create": {
++      "kind": "command",
++      "visibility": "public",
++      "permission": "carrier.create",
++      "connection": "postgres",
++      "transaction": "explicit_per_input",
++      "automatic_retry": false,
++      "input": {
++        "raw_body_maximum": 1048576,
++        "envelope": {
++          "minimum": 1,
++          "maximum": 100,
++          "invalid": "invalid_input"
++        },
++        "item_semantics": "per_input",
++        "fields": [
++          {
++            "path": "request_id",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "carrier_code",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "carrier_name",
++            "type": "text",
++            "nullable": false
++          }
++        ]
++      },
++      "result": {
++        "class": "one",
++        "fields": [
++          {
++            "path": "carrier_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "carrier_code",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "carrier_name",
++            "type": "text",
++            "nullable": false
++          }
++        ]
++      },
++      "errors": [
++        "invalid_input",
++        "carrier_code_conflict",
++        "retry",
++        "timeout",
++        "permission_denied",
++        "internal_error"
++      ],
++      "error_details": {
++        "invalid_input": {
++          "required": [
++            "field"
++          ],
++          "optional": [
++            "minimum",
++            "maximum",
++            "observed"
++          ]
++        },
++        "carrier_code_conflict": {
++          "required": [
++            "constraint"
++          ]
++        },
++        "retry": {},
++        "timeout": {},
++        "permission_denied": {
++          "required": [
++            "operation"
++          ]
++        },
++        "internal_error": {}
++      },
++      "constraint_errors": {
++        "carrier_carrier_code_key": "carrier_code_conflict"
++      },
++      "relations": [
++        {
++          "schema": "receiving",
++          "table": "carrier",
++          "select_fields": [
++            "id",
++            "carrier_code",
++            "carrier_name"
++          ],
++          "insert_fields": [
++            "carrier_code",
++            "carrier_name"
++          ],
++          "update_fields": [],
++          "lock": false,
++          "constraints": [
++            "carrier_carrier_code_key"
++          ]
++        }
++      ],
++      "statements": {
++        "insert_carrier": {
++          "path": "command/create_carrier/insert_carrier.sql",
++          "fetch": "one",
++          "parameters": [
++            {
++              "name": "carrier_code",
++              "type": "text",
++              "nullable": false
++            },
++            {
++              "name": "carrier_name",
++              "type": "text",
++              "nullable": false
++            }
++          ],
++          "row": [
++            {
++              "name": "id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "carrier_code",
++              "type": "text",
++              "nullable": false
++            },
++            {
++              "name": "carrier_name",
++              "type": "text",
++              "nullable": false
++            }
++          ]
++        }
++      }
++    },
++    "dock.create": {
++      "kind": "command",
++      "visibility": "public",
++      "permission": "dock.create",
++      "connection": "postgres",
++      "transaction": "explicit_per_input",
++      "automatic_retry": false,
++      "input": {
++        "raw_body_maximum": 1048576,
++        "envelope": {
++          "minimum": 1,
++          "maximum": 100,
++          "invalid": "invalid_input"
++        },
++        "item_semantics": "per_input",
++        "fields": [
++          {
++            "path": "request_id",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "dock_code",
++            "type": "text",
++            "nullable": false
++          }
++        ]
++      },
++      "result": {
++        "class": "one",
++        "fields": [
++          {
++            "path": "dock_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "dock_code",
++            "type": "text",
++            "nullable": false
++          }
++        ]
++      },
++      "errors": [
++        "invalid_input",
++        "dock_code_conflict",
++        "retry",
++        "timeout",
++        "permission_denied",
++        "internal_error"
++      ],
++      "error_details": {
++        "invalid_input": {
++          "required": [
++            "field"
++          ],
++          "optional": [
++            "minimum",
++            "maximum",
++            "observed"
++          ]
++        },
++        "dock_code_conflict": {
++          "required": [
++            "constraint"
++          ]
++        },
++        "retry": {},
++        "timeout": {},
++        "permission_denied": {
++          "required": [
++            "operation"
++          ]
++        },
++        "internal_error": {}
++      },
++      "constraint_errors": {
++        "dock_dock_code_key": "dock_code_conflict"
++      },
++      "relations": [
++        {
++          "schema": "receiving",
++          "table": "dock",
++          "select_fields": [
++            "id",
++            "dock_code"
++          ],
++          "insert_fields": [
++            "dock_code"
++          ],
++          "update_fields": [],
++          "lock": false,
++          "constraints": [
++            "dock_dock_code_key"
++          ]
++        }
++      ],
++      "statements": {
++        "insert_dock": {
++          "path": "command/create_dock/insert_dock.sql",
++          "fetch": "one",
++          "parameters": [
++            {
++              "name": "dock_code",
++              "type": "text",
++              "nullable": false
++            }
++          ],
++          "row": [
++            {
++              "name": "id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "dock_code",
++              "type": "text",
++              "nullable": false
++            }
++          ]
++        }
++      }
++    },
++    "appointment.book": {
++      "kind": "command",
++      "visibility": "public",
++      "permission": "appointment.book",
++      "connection": "postgres",
++      "transaction": "explicit_per_input",
++      "automatic_retry": false,
++      "canonicalization": {
++        "payload": "canonical_compact_json",
++        "excluded_fields": [
++          "request_id",
++          "value.idempotency_key"
++        ],
++        "uuid": "lowercase_hyphenated",
++        "timestamptz": "utc_rfc3339_six_fractional_digits",
++        "numeric": "postgresql_lexical_scale_preserved"
++      },
++      "input": {
++        "raw_body_maximum": 1048576,
++        "envelope": {
++          "minimum": 1,
++          "maximum": 100,
++          "invalid": "invalid_input"
++        },
++        "item_semantics": "per_input",
++        "fields": [
++          {
++            "path": "request_id",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "value.idempotency_key",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "value.dock_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "value.carrier_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "value.slot_start",
++            "type": "timestamptz",
++            "nullable": false
++          },
++          {
++            "path": "value.slot_end",
++            "type": "timestamptz",
++            "nullable": false
++          }
++        ]
++      },
++      "result": {
++        "class": "one",
++        "fields": [
++          {
++            "path": "appointment_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "dock_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "carrier_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "slot_start",
++            "type": "timestamptz",
++            "nullable": false
++          },
++          {
++            "path": "slot_end",
++            "type": "timestamptz",
++            "nullable": false
++          },
++          {
++            "path": "status",
++            "type": "text",
++            "nullable": false,
++            "values": [
++              "scheduled",
++              "arrived",
++              "departed"
++            ]
++          },
++          {
++            "path": "arrived_at",
++            "type": "timestamptz",
++            "nullable": true
++          }
++        ]
++      },
++      "errors": [
++        "invalid_input",
++        "dock_not_found",
++        "carrier_not_found",
++        "slot_unavailable",
++        "idempotency_conflict",
++        "retry",
++        "timeout",
++        "permission_denied",
++        "internal_error"
++      ],
++      "error_details": {
++        "invalid_input": {
++          "required": [
++            "field"
++          ],
++          "optional": [
++            "minimum",
++            "maximum",
++            "observed"
++          ]
++        },
++        "dock_not_found": {
++          "required": [
++            "field",
++            "id"
++          ]
++        },
++        "carrier_not_found": {
++          "required": [
++            "field",
++            "id"
++          ]
++        },
++        "slot_unavailable": {
++          "required": [
++            "field",
++            "id"
++          ]
++        },
++        "idempotency_conflict": {
++          "required": [
++            "field"
++          ]
++        },
++        "retry": {},
++        "timeout": {},
++        "permission_denied": {
++          "required": [
++            "operation"
++          ]
++        },
++        "internal_error": {}
++      },
++      "constraint_errors": {},
++      "relations": [
++        {
++          "schema": "receiving",
++          "table": "appointment",
++          "select_fields": [
++            "id",
++            "dock_id",
++            "carrier_id",
++            "slot_start",
++            "slot_end",
++            "status",
++            "arrived_at"
++          ],
++          "insert_fields": [
++            "id",
++            "dock_id",
++            "carrier_id",
++            "slot_start",
++            "slot_end"
++          ],
++          "update_fields": [],
++          "lock": false,
++          "constraints": []
++        },
++        {
++          "schema": "receiving",
++          "table": "book_appointment_command",
++          "select_fields": [
++            "idempotency_key",
++            "canonical_command",
++            "appointment_id"
++          ],
++          "insert_fields": [
++            "idempotency_key",
++            "canonical_command"
++          ],
++          "update_fields": [],
++          "lock": false,
++          "constraints": [
++            "book_appointment_command_idempotency_key_pkey"
++          ]
++        },
++        {
++          "schema": "receiving",
++          "table": "carrier",
++          "select_fields": [
++            "id"
++          ],
++          "insert_fields": [],
++          "update_fields": [],
++          "lock": false,
++          "constraints": []
++        },
++        {
++          "schema": "receiving",
++          "table": "dock",
++          "select_fields": [
++            "id"
++          ],
++          "insert_fields": [],
++          "update_fields": [],
++          "lock": true,
++          "constraints": []
++        }
++      ],
++      "statements": {
++        "find_replay": {
++          "path": "command/book_appointment/find_replay.sql",
++          "fetch": "optional_one",
++          "parameters": [
++            {
++              "name": "idempotency_key",
++              "type": "text",
++              "nullable": false
++            }
++          ],
++          "row": [
++            {
++              "name": "canonical_command",
++              "type": "bytes",
++              "nullable": false
++            },
++            {
++              "name": "appointment_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "dock_id",
++              "type": "uuid",
++              "nullable": true
++            },
++            {
++              "name": "carrier_id",
++              "type": "uuid",
++              "nullable": true
++            },
++            {
++              "name": "slot_start",
++              "type": "timestamptz",
++              "nullable": true
++            },
++            {
++              "name": "slot_end",
++              "type": "timestamptz",
++              "nullable": true
++            },
++            {
++              "name": "status",
++              "type": "text",
++              "nullable": true
++            },
++            {
++              "name": "arrived_at",
++              "type": "timestamptz",
++              "nullable": true
++            }
++          ]
++        },
++        "claim_command": {
++          "path": "command/book_appointment/claim_command.sql",
++          "fetch": "optional_one",
++          "parameters": [
++            {
++              "name": "idempotency_key",
++              "type": "text",
++              "nullable": false
++            },
++            {
++              "name": "canonical_command",
++              "type": "bytes",
++              "nullable": false
++            }
++          ],
++          "row": [
++            {
++              "name": "appointment_id",
++              "type": "uuid",
++              "nullable": false
++            }
++          ]
++        },
++        "lock_dock": {
++          "path": "command/book_appointment/lock_dock.sql",
++          "fetch": "optional_one",
++          "parameters": [
++            {
++              "name": "dock_id",
++              "type": "uuid",
++              "nullable": false
++            }
++          ],
++          "row": [
++            {
++              "name": "id",
++              "type": "uuid",
++              "nullable": false
++            }
++          ]
++        },
++        "find_carrier": {
++          "path": "command/book_appointment/find_carrier.sql",
++          "fetch": "optional_one",
++          "parameters": [
++            {
++              "name": "carrier_id",
++              "type": "uuid",
++              "nullable": false
++            }
++          ],
++          "row": [
++            {
++              "name": "id",
++              "type": "uuid",
++              "nullable": false
++            }
++          ]
++        },
++        "insert_appointment": {
++          "path": "command/book_appointment/insert_appointment.sql",
++          "fetch": "one",
++          "parameters": [
++            {
++              "name": "appointment_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "dock_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "carrier_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "slot_start",
++              "type": "timestamptz",
++              "nullable": false
++            },
++            {
++              "name": "slot_end",
++              "type": "timestamptz",
++              "nullable": false
++            }
++          ],
++          "row": [
++            {
++              "name": "outcome",
++              "type": "text",
++              "nullable": true
++            },
++            {
++              "name": "appointment_id",
++              "type": "uuid",
++              "nullable": true
++            },
++            {
++              "name": "dock_id",
++              "type": "uuid",
++              "nullable": true
++            },
++            {
++              "name": "carrier_id",
++              "type": "uuid",
++              "nullable": true
++            },
++            {
++              "name": "slot_start",
++              "type": "timestamptz",
++              "nullable": true
++            },
++            {
++              "name": "slot_end",
++              "type": "timestamptz",
++              "nullable": true
++            },
++            {
++              "name": "status",
++              "type": "text",
++              "nullable": true
++            },
++            {
++              "name": "arrived_at",
++              "type": "timestamptz",
++              "nullable": true
++            },
++            {
++              "name": "conflicting_appointment_id",
++              "type": "uuid",
++              "nullable": true
++            }
++          ]
++        }
++      }
++    },
++    "appointment.check_in": {
++      "kind": "command",
++      "visibility": "public",
++      "permission": "appointment.check_in",
++      "connection": "postgres",
++      "transaction": "explicit_per_input",
++      "automatic_retry": false,
++      "input": {
++        "raw_body_maximum": 1048576,
++        "envelope": {
++          "minimum": 1,
++          "maximum": 100,
++          "invalid": "invalid_input"
++        },
++        "item_semantics": "per_input",
++        "fields": [
++          {
++            "path": "request_id",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "appointment_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "arrived_at",
++            "type": "timestamptz",
++            "nullable": false
++          }
++        ]
++      },
++      "result": {
++        "class": "one",
++        "fields": [
++          {
++            "path": "appointment_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "dock_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "carrier_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "slot_start",
++            "type": "timestamptz",
++            "nullable": false
++          },
++          {
++            "path": "slot_end",
++            "type": "timestamptz",
++            "nullable": false
++          },
++          {
++            "path": "status",
++            "type": "text",
++            "nullable": false,
++            "values": [
++              "scheduled",
++              "arrived",
++              "departed"
++            ]
++          },
++          {
++            "path": "arrived_at",
++            "type": "timestamptz",
++            "nullable": true
++          }
++        ]
++      },
++      "errors": [
++        "invalid_input",
++        "not_found",
++        "appointment_not_scheduled",
++        "retry",
++        "timeout",
++        "permission_denied",
++        "internal_error"
++      ],
++      "error_details": {
++        "invalid_input": {
++          "required": [
++            "field"
++          ],
++          "optional": [
++            "minimum",
++            "maximum",
++            "observed"
++          ]
++        },
++        "not_found": {
++          "required": [
++            "field",
++            "id"
++          ]
++        },
++        "appointment_not_scheduled": {
++          "required": [
++            "field",
++            "id"
++          ]
++        },
++        "retry": {},
++        "timeout": {},
++        "permission_denied": {
++          "required": [
++            "operation"
++          ]
++        },
++        "internal_error": {}
++      },
++      "constraint_errors": {},
++      "relations": [
++        {
++          "schema": "receiving",
++          "table": "appointment",
++          "select_fields": [
++            "id",
++            "dock_id",
++            "carrier_id",
++            "slot_start",
++            "slot_end",
++            "status",
++            "arrived_at"
++          ],
++          "insert_fields": [],
++          "update_fields": [
++            "status",
++            "arrived_at"
++          ],
++          "lock": false,
++          "constraints": []
++        }
++      ],
++      "statements": {
++        "check_in_appointment": {
++          "path": "command/check_in_appointment/check_in_appointment.sql",
++          "fetch": "one",
++          "parameters": [
++            {
++              "name": "appointment_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "arrived_at",
++              "type": "timestamptz",
++              "nullable": false
++            }
++          ],
++          "row": [
++            {
++              "name": "outcome",
++              "type": "text",
++              "nullable": true
++            },
++            {
++              "name": "appointment_id",
++              "type": "uuid",
++              "nullable": true
++            },
++            {
++              "name": "dock_id",
++              "type": "uuid",
++              "nullable": true
++            },
++            {
++              "name": "carrier_id",
++              "type": "uuid",
++              "nullable": true
++            },
++            {
++              "name": "slot_start",
++              "type": "timestamptz",
++              "nullable": true
++            },
++            {
++              "name": "slot_end",
++              "type": "timestamptz",
++              "nullable": true
++            },
++            {
++              "name": "status",
++              "type": "text",
++              "nullable": true
++            },
++            {
++              "name": "arrived_at",
++              "type": "timestamptz",
++              "nullable": true
++            }
++          ]
++        }
++      }
++    },
++    "appointment.query": {
++      "kind": "projection",
++      "visibility": "public",
++      "permission": "appointment.query",
++      "connection": "postgres",
++      "input": {
++        "raw_body_maximum": 1048576,
++        "envelope": {
++          "minimum": 1,
++          "maximum": 100,
++          "invalid": "invalid_input"
++        },
++        "item_semantics": "per_input",
++        "fields": [
++          {
++            "path": "request_id",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "dock_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "day",
++            "type": "text",
++            "nullable": false
++          },
++          {
++            "path": "status",
++            "type": "text",
++            "nullable": true,
++            "values": [
++              "scheduled",
++              "arrived",
++              "departed"
++            ]
++          }
++        ]
++      },
++      "result": {
++        "class": "bounded_list",
++        "fields": [
++          {
++            "path": "appointment_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "dock_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "carrier_id",
++            "type": "uuid",
++            "nullable": false
++          },
++          {
++            "path": "slot_start",
++            "type": "timestamptz",
++            "nullable": false
++          },
++          {
++            "path": "slot_end",
++            "type": "timestamptz",
++            "nullable": false
++          },
++          {
++            "path": "status",
++            "type": "text",
++            "nullable": false,
++            "values": [
++              "scheduled",
++              "arrived",
++              "departed"
++            ]
++          },
++          {
++            "path": "arrived_at",
++            "type": "timestamptz",
++            "nullable": true
++          }
++        ]
++      },
++      "errors": [
++        "invalid_input",
++        "retry",
++        "timeout",
++        "permission_denied",
++        "internal_error"
++      ],
++      "error_details": {
++        "invalid_input": {
++          "required": [
++            "field"
++          ],
++          "optional": [
++            "minimum",
++            "maximum",
++            "observed"
++          ]
++        },
++        "retry": {},
++        "timeout": {},
++        "permission_denied": {
++          "required": [
++            "operation"
++          ]
++        },
++        "internal_error": {}
++      },
++      "constraint_errors": {},
++      "relations": [
++        {
++          "schema": "receiving",
++          "table": "appointment",
++          "select_fields": [
++            "id",
++            "dock_id",
++            "carrier_id",
++            "slot_start",
++            "slot_end",
++            "status",
++            "arrived_at"
++          ],
++          "insert_fields": [],
++          "update_fields": [],
++          "lock": false,
++          "constraints": []
++        }
++      ],
++      "statements": {
++        "list_appointments": {
++          "path": "query/appointment_by_dock_day.sql",
++          "fetch": "bounded_list",
++          "parameters": [
++            {
++              "name": "dock_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "day_start",
++              "type": "timestamptz",
++              "nullable": false
++            },
++            {
++              "name": "day_end",
++              "type": "timestamptz",
++              "nullable": false
++            },
++            {
++              "name": "status",
++              "type": "text",
++              "nullable": true
++            }
++          ],
++          "row": [
++            {
++              "name": "appointment_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "dock_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "carrier_id",
++              "type": "uuid",
++              "nullable": false
++            },
++            {
++              "name": "slot_start",
++              "type": "timestamptz",
++              "nullable": false
++            },
++            {
++              "name": "slot_end",
++              "type": "timestamptz",
++              "nullable": false
++            },
++            {
++              "name": "status",
++              "type": "text",
++              "nullable": false
++            },
++            {
++              "name": "arrived_at",
++              "type": "timestamptz",
++              "nullable": true
++            }
++          ]
++        }
++      }
++    }
++  },
++  "connections": {
++    "postgres": {
++      "interface": "wamn:postgres@0.1.0"
++    }
++  },
++  "components": {
++    "dock": {
++      "connections": [
++        "postgres"
++      ]
++    }
++  }
++}

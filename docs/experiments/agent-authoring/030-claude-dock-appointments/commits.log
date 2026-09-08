@@ -1,0 +1,4 @@
+7263361f Revert "feat(dock)!: publish the formatted component as dock@1.1.0"
+ed75ba5f feat(dock)!: publish the formatted component as dock@1.1.0
+773deb28 style(dock): rustfmt the component and name its two lint overrides
+0f43d0a3 feat(dock): dock appointments as a wamn package

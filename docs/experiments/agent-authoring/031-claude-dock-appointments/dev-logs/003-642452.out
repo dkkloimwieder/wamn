@@ -1,0 +1,8 @@
+applied wamn_dock@1.0.0: 1 migration(s)
+applied wamn_dock@1.0.0: 1 migration(s)
+projected sha256:0c22de03e1e7e858b792fbca19938f6fc92979d17911ad846f1ddb107e99e970 (source-project: already converged; control: changed)
+sha256:0c22de03e1e7e858b792fbca19938f6fc92979d17911ad846f1ddb107e99e970
+sha256:b4f3fb90df4a88e495b31b815fae94034b9edc0ef5d0ec0db9aa6cb56e5abece
+sha256:b4f3fb90df4a88e495b31b815fae94034b9edc0ef5d0ec0db9aa6cb56e5abece
+run completed: migrate,introspect,generate,build,virtualize,apply,acl,admit,gate,publish,release,activate
+run served: http://127.0.0.1:33973 host=receiving.localhost

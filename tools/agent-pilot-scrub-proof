@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Offline proof for tools/agent-pilot-scrub.
+#
+# Every case plants a secret of one minting shape and asserts it is gone. The
+# negative controls matter as much: a scrubber that eats `Bearer $TOKEN` hides
+# the fact that the agent did the right thing, and a scrubber that eats the PAT
+# lookup half destroys the only record of WHICH credential a command used.
+#
+# No environment, no network, no run directory.
+#
+#   agent-pilot-scrub-proof
+#
+# Exit codes: 0 all cases pass · 1 a case failed.
+set -euo pipefail
+
+readonly SCRUB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/agent-pilot-scrub"
+readonly MARKER="REDACTED-BY-agent-pilot-scrub"
+
+# Planted values. Hex only, and no value here is or ever was a real credential.
+readonly PAT_LOOKUP="0123456789abcdef"
+readonly PAT_SECRET="$(printf 'ab%.0s' {1..32})"
+readonly PG_SECRET="a45d16910cf7a66fd92b2bed73613442"
+readonly BEARER_SECRET="ZmFrZS10b2tlbi1mb3ItdGhlLXByb29mLW9ubHk"
+
+pass=0
+fail=0
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+check() {
+  local name="$1" outcome="$2"
+  if [[ "$outcome" == ok ]]; then
+    pass=$((pass + 1))
+    printf '  ok   %s\n' "$name"
+  else
+    fail=$((fail + 1))
+    printf '  FAIL %s: %s\n' "$name" "$outcome"
+  fi
+}
+
+# Asserts the planted secret is gone and the kept half survives.
+gone_and_kept() {
+  local name="$1" file="$2" secret="$3" kept="${4:-}"
+  if grep -qF "$secret" "$file"; then
+    check "$name" "the planted secret survived"
+    return
+  fi
+  if [[ -n "$kept" ]] && ! grep -qF "$kept" "$file"; then
+    check "$name" "the half that must survive was destroyed: $kept"
+    return
+  fi
+  check "$name" ok
+}
+
+printf 'agent-pilot-scrub-proof\n\n'
+
+# 1. The PAT grammar. The secret half goes, the lookup half stays.
+f="$tmp/pat.txt"
+printf 'curl -H "Authorization: Bearer wamn_pat_%s_%s" http://host/\n' \
+  "$PAT_LOOKUP" "$PAT_SECRET" > "$f"
+"$SCRUB" "$f" >/dev/null
+gone_and_kept "PAT secret half is gone, lookup half kept" "$f" "$PAT_SECRET" "wamn_pat_$PAT_LOOKUP"
+
+# 2. The libpq URL grammar, long scheme. The role name identifies nothing secret.
+f="$tmp/url-long.txt"
+printf 'postgresql://wamn_materializer_role_a:%s@127.0.0.1:54332/db\n' "$PG_SECRET" > "$f"
+"$SCRUB" "$f" >/dev/null
+gone_and_kept "postgresql URL password is gone, role kept" "$f" "$PG_SECRET" "wamn_materializer_role_a"
+
+# 3. The libpq URL grammar, short scheme.
+f="$tmp/url-short.txt"
+printf 'postgres://someone:%s@localhost/db\n' "$PG_SECRET" > "$f"
+"$SCRUB" "$f" >/dev/null
+gone_and_kept "postgres URL password is gone" "$f" "$PG_SECRET" "someone"
+
+# 4. The libpq environment variable.
+f="$tmp/pgpassword.txt"
+printf 'PGPASSWORD=%s psql -h 127.0.0.1 -p 54332\n' "$PG_SECRET" > "$f"
+"$SCRUB" "$f" >/dev/null
+gone_and_kept "PGPASSWORD value is gone" "$f" "$PG_SECRET" "psql"
+
+# 5. A literal bearer token in the header.
+f="$tmp/bearer.txt"
+printf 'Authorization: Bearer %s\n' "$BEARER_SECRET" > "$f"
+"$SCRUB" "$f" >/dev/null
+gone_and_kept "literal Bearer token is gone" "$f" "$BEARER_SECRET" "Authorization"
+
+# 6-8. Negative controls. A placeholder is the agent doing the right thing.
+f="$tmp/placeholders.txt"
+{
+  printf 'curl -H "Authorization: Bearer $TOKEN" http://host/\n'
+  printf 'curl -H "Authorization: Bearer <token>" http://host/\n'
+  printf 'postgresql://role_only@127.0.0.1:54332/db\n'
+} > "$f"
+before="$(cat "$f")"
+"$SCRUB" "$f" >/dev/null
+if [[ "$before" == "$(cat "$f")" ]]; then
+  check "placeholders and password-free URLs are untouched" ok
+else
+  check "placeholders and password-free URLs are untouched" "the file changed"
+fi
+
+# 9. A transcript is JSON lines. It must still parse after the scrub.
+f="$tmp/transcript.jsonl"
+printf '{"cmd":"PGPASSWORD=%s psql","note":"one line"}\n' "$PG_SECRET" > "$f"
+printf '{"cmd":"curl -H \\"Authorization: Bearer wamn_pat_%s_%s\\""}\n' \
+  "$PAT_LOOKUP" "$PAT_SECRET" >> "$f"
+"$SCRUB" "$f" >/dev/null
+if jq -e . "$f" >/dev/null 2>&1; then
+  gone_and_kept "scrubbed JSON lines still parse" "$f" "$PG_SECRET" "$MARKER"
+else
+  check "scrubbed JSON lines still parse" "jq refused the scrubbed file"
+fi
+
+# 10. A directory is walked, not just a file.
+mkdir -p "$tmp/dir/nested"
+printf 'PGPASSWORD=%s\n' "$PG_SECRET" > "$tmp/dir/nested/deep.txt"
+"$SCRUB" "$tmp/dir" >/dev/null
+gone_and_kept "a nested file under a directory is scrubbed" "$tmp/dir/nested/deep.txt" "$PG_SECRET"
+
+# 11. Clean input is not an error.
+f="$tmp/clean.txt"
+printf 'nothing secret here, just prose about a password policy\n' > "$f"
+if "$SCRUB" "$f" >/dev/null 2>&1; then
+  check "clean input exits 0" ok
+else
+  check "clean input exits 0" "the scrubber refused a clean file"
+fi
+
+# 12. Scrubbing twice is the same as scrubbing once.
+f="$tmp/twice.txt"
+printf 'PGPASSWORD=%s and wamn_pat_%s_%s\n' "$PG_SECRET" "$PAT_LOOKUP" "$PAT_SECRET" > "$f"
+"$SCRUB" "$f" >/dev/null
+once="$(cat "$f")"
+"$SCRUB" "$f" >/dev/null
+if [[ "$once" == "$(cat "$f")" ]]; then
+  check "the scrub is idempotent" ok
+else
+  check "the scrub is idempotent" "the second pass changed the file"
+fi
+
+printf '\n%s passed, %s failed\n' "$pass" "$fail"
+[[ $fail -eq 0 ]]
