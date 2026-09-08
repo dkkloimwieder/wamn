@@ -288,6 +288,24 @@ by modelling the constraint rather than by moving the refusal earlier. The H-3
 fallback clause is rewritten to name any stage rather than two, and that rewrite
 lands with `wamn-10yt.36`.]
 
+[corrected 2026-09-08, owner ruling on `wamn-10yt.36`, which is now fixed. Two
+sentences in the annotation above are superseded. The original text stands as
+written.
+
+`map_indexes` never rejected the supporting index. `INDEXES_SQL` already omits
+every constraint-backed index, through a `NOT EXISTS` on
+`pg_constraint.conindid`. The gist index behind an exclusion constraint is
+constraint-backed. It never reached the `row.exclusion` test. This was measured
+on a live PostgreSQL 18 while the bead was fixed. THE ONE REAL REFUSAL WAS THE
+`contype` CATCH-ALL in `map_constraints`. The fix removed it.
+
+LOCK-IN-TRANSACTION IS NO LONGER THE TOP RUNG. Introspect now MODELS an
+exclusion constraint. The migration validator admits a named
+`EXCLUDE USING gist` inside `CREATE TABLE`. The database creates it. The IR
+carries it as `Table::exclusions`. The strongest rung is reachable end to end.
+An arm that already ran cites a commit before the fix and keeps the rung it had.
+An arm that cites the fix or later does not.]
+
 A ROW LOCK ON THE PARENT ROW, TAKEN BEFORE THE OVERLAP READ, IS A VALID RUNG 2
 and it is not marked down. All three runs of series 010 found it without help
 and all three passed the contention invariant with it, on a platform where the
