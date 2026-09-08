@@ -2190,7 +2190,11 @@ mod tests {
 
     /// A component absent from the manifest, exporting one handler and
     /// registering nothing: the palette-node shape.
-    fn stranger(manifest: &wamn_schema_generator::PackageManifest, name: &str, registered: Option<&str>) -> AdmittedComponent {
+    fn stranger(
+        manifest: &wamn_schema_generator::PackageManifest,
+        name: &str,
+        registered: Option<&str>,
+    ) -> AdmittedComponent {
         AdmittedComponent {
             scope: wamn_catalog::ComponentPackageScope {
                 tenant_id: "tenant-a".to_owned(),
@@ -2232,7 +2236,10 @@ mod tests {
         )
         .expect("an unregistered palette node is admitted without manifest membership");
 
-        assert!(served.is_empty(), "a palette node serves no manifest operation: {served:?}");
+        assert!(
+            served.is_empty(),
+            "a palette node serves no manifest operation: {served:?}"
+        );
     }
 
     /// The other half of the ruling: membership is still the fence for anyone
@@ -2242,7 +2249,11 @@ mod tests {
         let manifest = overlay_manifest();
         let expected =
             expected_operation_contracts(&manifest).expect("operation contract coordinates derive");
-        let registered = expected.keys().next().expect("the manifest registers operations").clone();
+        let registered = expected
+            .keys()
+            .next()
+            .expect("the manifest registers operations")
+            .clone();
 
         let error = validate_component_operation_assignment(
             &manifest,
@@ -2251,9 +2262,14 @@ mod tests {
         )
         .expect_err("a stranger registering a manifest operation was admitted");
 
-        assert_eq!(error.kind(), ComponentProjectionErrorKind::StatementComponentMismatch);
+        assert_eq!(
+            error.kind(),
+            ComponentProjectionErrorKind::StatementComponentMismatch
+        );
         assert!(
-            error.to_string().contains("absent from the package manifest yet registers"),
+            error
+                .to_string()
+                .contains("absent from the package manifest yet registers"),
             "the refusal names the membership rule: {error}"
         );
     }
@@ -2920,9 +2936,10 @@ mod tests {
 
         // ARM ONE: no projected environment at all. Absence means durable.
         let (second, second_requirements, second_hash) = admitted(b'b');
-        let unprojected = project_control(&second, second_requirements.clone(), second_hash.clone())
-            .await
-            .expect_err("a tenant with no projected environment refuses a moved digest");
+        let unprojected =
+            project_control(&second, second_requirements.clone(), second_hash.clone())
+                .await
+                .expect_err("a tenant with no projected environment refuses a moved digest");
         assert_eq!(
             unprojected
                 .downcast_ref::<ComponentProjectionError>()

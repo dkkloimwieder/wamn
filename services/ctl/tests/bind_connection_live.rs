@@ -44,7 +44,8 @@ const PACKAGE: &str = "wamn_wms";
 const PACKAGE_VERSION: &str = "1.0.0";
 const COMPONENT_ID: &str = "bind-connection-component";
 const BLOB_PUT: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
-const HTTP_SIDECAR: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+const HTTP_SIDECAR: &str =
+    "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
 const RELEASE_ID: i32 = 1;
@@ -222,11 +223,23 @@ async fn provision_project(project: &Client, project_url: &str) {
         .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
         .expect("scope the project seed session");
-    admit_component(project, "blob-put", BLOB_PUT, "labels", ConnectionTypeDescriptor::blobstore_v1())
-        .await;
+    admit_component(
+        project,
+        "blob-put",
+        BLOB_PUT,
+        "labels",
+        ConnectionTypeDescriptor::blobstore_v1(),
+    )
+    .await;
     // A second alias of a DIFFERENT type, for the mismatch control.
-    admit_component(project, "http-sidecar", HTTP_SIDECAR, "erp", ConnectionTypeDescriptor::http_v1())
-        .await;
+    admit_component(
+        project,
+        "http-sidecar",
+        HTTP_SIDECAR,
+        "erp",
+        ConnectionTypeDescriptor::http_v1(),
+    )
+    .await;
     project
         .execute(
             "INSERT INTO catalog.effective_releases \
@@ -321,7 +334,12 @@ fn definition_file(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
     path
 }
 
-fn args(project_url: &str, definition: std::path::PathBuf, store_alias: &str, digest: &str) -> BindConnectionArgs {
+fn args(
+    project_url: &str,
+    definition: std::path::PathBuf,
+    store_alias: &str,
+    digest: &str,
+) -> BindConnectionArgs {
     BindConnectionArgs {
         database_url: project_url.to_owned(),
         tenant: TENANT.to_owned(),
@@ -367,7 +385,8 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     author(&control, &mut project, &document).await;
     // No tempfile dev-dependency in this crate: a pid-named scratch directory,
     // removed at the end.
-    let scratch_dir = std::env::temp_dir().join(format!("wamn-bind-connection-{}", std::process::id()));
+    let scratch_dir =
+        std::env::temp_dir().join(format!("wamn-bind-connection-{}", std::process::id()));
     std::fs::create_dir_all(&scratch_dir).expect("scratch directory");
     let scratch = scratch_dir.as_path();
 
@@ -424,21 +443,35 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     // REFUSALS LEAVE NO ROWS. A definition missing a coordinate is refused by
     // name before a connection is opened; a blobstore instance bound to an
     // alias declared as HTTP is refused naming both types.
-    let lacking = definition_file(scratch, "lacking.json", r#"{"endpoint":"http://10.0.0.7:9000","container":"labels"}"#);
+    let lacking = definition_file(
+        scratch,
+        "lacking.json",
+        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels"}"#,
+    );
     let error = bind_connection::bind(&args(&project_url, lacking, "labels", BLOB_PUT))
         .await
         .expect_err("a definition without prefix cannot be bound");
     assert!(format!("{error:#}").contains("lacks prefix"), "{error:#}");
-    let good = definition_file(scratch, "good.json", r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"wms/"}"#);
+    let good = definition_file(
+        scratch,
+        "good.json",
+        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"wms/"}"#,
+    );
     let error = bind_connection::bind(&args(&project_url, good.clone(), "erp", HTTP_SIDECAR))
         .await
         .expect_err("a blobstore instance cannot bind an HTTP alias");
     let text = format!("{error:#}");
-    assert!(text.contains("declared erp as http/") && text.contains("not blobstore/"), "{text}");
+    assert!(
+        text.contains("declared erp as http/") && text.contains("not blobstore/"),
+        "{text}"
+    );
     let error = bind_connection::bind(&args(&project_url, good.clone(), "nothing", BLOB_PUT))
         .await
         .expect_err("an alias the component never declared cannot be bound");
-    assert!(format!("{error:#}").contains("declares no connection requirement named nothing"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("declares no connection requirement named nothing"),
+        "{error:#}"
+    );
     assert_eq!(rows(&project).await, (0, 0, 0), "a refusal writes nothing");
 
     // THE VERB.
@@ -460,12 +493,22 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(resolved.container, "labels");
     assert_eq!(resolved.prefix, "wms/");
     assert_eq!(resolved.credential_handle, "labels-store");
-    assert_eq!(after.definition_hash.as_deref(), Some(bound.definition_hash.as_str()));
-    assert_eq!(after.validation_hash.as_deref(), Some(bound.validation_hash.as_str()));
+    assert_eq!(
+        after.definition_hash.as_deref(),
+        Some(bound.definition_hash.as_str())
+    );
+    assert_eq!(
+        after.validation_hash.as_deref(),
+        Some(bound.validation_hash.as_str())
+    );
 
     // Binding the same alias twice is a primary-key refusal, not a silent
     // second generation: an amendment is a different verb.
-    let again = definition_file(scratch, "again.json", r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"wms/"}"#);
+    let again = definition_file(
+        scratch,
+        "again.json",
+        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"wms/"}"#,
+    );
     bind_connection::bind(&args(&project_url, again, "labels", BLOB_PUT))
         .await
         .expect_err("a second bind of the same instance and alias is refused");

@@ -190,8 +190,12 @@ pub async fn run(args: BindConnectionArgs) -> anyhow::Result<()> {
 }
 
 pub async fn bind(args: &BindConnectionArgs) -> anyhow::Result<BoundConnection> {
-    let definition_bytes = std::fs::read(&args.definition)
-        .with_context(|| format!("read the generation definition {}", args.definition.display()))?;
+    let definition_bytes = std::fs::read(&args.definition).with_context(|| {
+        format!(
+            "read the generation definition {}",
+            args.definition.display()
+        )
+    })?;
     let definition: Value = serde_json::from_slice(&definition_bytes)
         .with_context(|| format!("{} is not JSON", args.definition.display()))?;
     validate_definition(args.requirement_type, &definition)?;
@@ -384,7 +388,10 @@ mod tests {
     fn an_empty_coordinate_is_refused_by_name() {
         let error = blobstore(serde_json::json!({"endpoint": "", "container": "c", "prefix": "p"}))
             .expect_err("an empty endpoint is not an endpoint");
-        assert!(format!("{error:#}").contains("endpoint is empty"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("endpoint is empty"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -412,7 +419,10 @@ mod tests {
     #[test]
     fn a_non_object_definition_is_refused() {
         let error = blobstore(serde_json::json!(["endpoint"])).expect_err("not an object");
-        assert!(format!("{error:#}").contains("must be a JSON object"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("must be a JSON object"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -425,7 +435,11 @@ mod tests {
         assert_eq!(subject["definition-hash"], "sha256:def");
         // One hasher: the runtime's. Changing any named input changes the hash.
         let baseline = definition_hash(&subject);
-        let moved = definition_hash(&validation_subject(&descriptor, "sha256:req", "sha256:other"));
+        let moved = definition_hash(&validation_subject(
+            &descriptor,
+            "sha256:req",
+            "sha256:other",
+        ));
         assert_ne!(baseline, moved);
         assert!(baseline.starts_with("sha256:") && baseline.len() == 71);
     }
