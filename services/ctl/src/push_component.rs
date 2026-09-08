@@ -2746,6 +2746,239 @@ mod tests {
         }
     }
 
+    /// Both directions of wamn-10yt.38 against a real control store.
+    ///
+    /// The trigger is a no-op edit: the same package version, the same
+    /// coordinate, different component bytes. A durable environment answers with
+    /// `component-fact-conflict`, which is what locked an author out of their own
+    /// version after a reformat. The SAME admission against a target whose
+    /// projected environment says disposable lands, digest and connection
+    /// requirements together.
+    ///
+    /// The only thing that changes between the two arms is the projected row.
+    #[tokio::test]
+    async fn the_projected_environment_decides_whether_a_component_fact_may_be_replaced() {
+        let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
+            eprintln!("skipping disposable-projection proof; WAMN_CTL_PG_URL is unset");
+            return;
+        };
+        let lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(std::env::temp_dir().join("wamn-ctl-live-database.lock"))
+            .expect("open shared ctl database lock");
+        lock.lock()
+            .expect("lock disposable PostgreSQL across tests");
+
+        let base_config: PgConfig = url.parse().expect("parse WAMN_CTL_PG_URL");
+        let base = connect(&base_config).await;
+        let control_database = format!("wamn_disposable_control_{}", std::process::id());
+        run_alone(
+            &base,
+            &format!("DROP DATABASE IF EXISTS \"{control_database}\" WITH (FORCE)"),
+        )
+        .await;
+        base.batch_execute(
+            "DO $roles$ DECLARE role_name text; BEGIN \
+               FOREACH role_name IN ARRAY ARRAY[\
+                 'wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author'\
+               ] LOOP \
+                 IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
+                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+                 END IF; \
+               END LOOP; \
+             END $roles$;",
+        )
+        .await
+        .expect("ensure production schema prerequisite roles");
+        run_alone(&base, &format!("CREATE DATABASE \"{control_database}\"")).await;
+        run_alone(
+            &base,
+            &format!("GRANT CREATE ON DATABASE \"{control_database}\" TO wamn_system"),
+        )
+        .await;
+
+        let control_config = database_config(&base_config, &control_database);
+        let control = connect(&control_config).await;
+        control
+            .batch_execute("SET ROLE wamn_system")
+            .await
+            .expect("assume production control owner");
+        control
+            .batch_execute(include_str!("../../../deploy/sql/system-schema.sql"))
+            .await
+            .expect("install production control system schema");
+        control
+            .batch_execute(include_str!(
+                "../../../deploy/sql/control-portable-store.sql"
+            ))
+            .await
+            .expect("install production portable control store");
+        control
+            .batch_execute("RESET ROLE")
+            .await
+            .expect("restore test administrator");
+
+        let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let directory = crate::apply_package::read_package_directory(&package_path)
+            .expect("read real Receiving package");
+        let package = plan_package_migrations(&directory, None).expect("plan real package");
+
+        // One coordinate, two byte revisions — the reformat this bead is about.
+        let admitted = |marker: u8| {
+            let bytes = vec![marker; 32];
+            let mut component = projection_component();
+            component.component_digest =
+                wamn_runtime::component_admission::component_digest(&bytes);
+            let requirements = vec![ComponentConnectionRequirement::new(
+                &component.component_digest,
+                "warehouse",
+                ConnectionTypeDescriptor::http_v1(),
+            )];
+            let projection_hash = admitted_projection_hash(&component, &requirements)
+                .expect("hash admitted projection once");
+            (component, requirements, projection_hash)
+        };
+        let project_control = |component: &AdmittedComponent,
+                               requirements: Vec<ComponentConnectionRequirement>,
+                               projection_hash: String| {
+            let component = component.clone();
+            let control_config = control_config.clone();
+            let directory = directory.clone();
+            let package_path = package_path.clone();
+            let manifest_sha256 = package.manifest_sha256.clone();
+            async move {
+                persist_plane(
+                    &control_config,
+                    ProjectionPlane::Control,
+                    &component,
+                    &requirements,
+                    &manifest_sha256,
+                    &projection_hash,
+                    &directory,
+                    &package_path,
+                )
+                .await
+            }
+        };
+        let stored_digest = async || -> String {
+            control
+                .query_one(
+                    "SELECT component_digest FROM catalog.component_library \
+                      WHERE tenant_id = $1",
+                    &[&projection_component().scope.tenant_id],
+                )
+                .await
+                .expect("read the admitted component digest")
+                .get(0)
+        };
+        let stored_requirement_digest = async || -> String {
+            control
+                .query_one(
+                    "SELECT component_digest FROM catalog.connection_requirements \
+                      WHERE tenant_id = $1",
+                    &[&projection_component().scope.tenant_id],
+                )
+                .await
+                .expect("read the admitted requirement's component digest")
+                .get(0)
+        };
+        let project_environment = async |disposable: bool| {
+            control
+                .batch_execute("SET ROLE wamn_system")
+                .await
+                .expect("assume production control owner");
+            control
+                .query_one(
+                    "SELECT set_config('app.tenant', $1, false)",
+                    &[&projection_component().scope.tenant_id],
+                )
+                .await
+                .expect("claim the projected tenant");
+            control
+                .execute(
+                    "SELECT catalog.project_tenant_environment(\
+                         $1, 'acme', 'receiving', 'dev', 'abcd1234', $2)",
+                    &[&projection_component().scope.tenant_id, &disposable],
+                )
+                .await
+                .expect("project the environment");
+            control
+                .batch_execute("RESET ROLE")
+                .await
+                .expect("restore test administrator");
+        };
+
+        let (first, first_requirements, first_hash) = admitted(b'a');
+        project_control(&first, first_requirements, first_hash)
+            .await
+            .expect("the first admission projects into a fresh control store");
+        assert_eq!(stored_digest().await, first.component_digest);
+
+        // ARM ONE: no projected environment at all. Absence means durable.
+        let (second, second_requirements, second_hash) = admitted(b'b');
+        let unprojected = project_control(&second, second_requirements.clone(), second_hash.clone())
+            .await
+            .expect_err("a tenant with no projected environment refuses a moved digest");
+        assert_eq!(
+            unprojected
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("a moved digest is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::ComponentFactConflict
+        );
+
+        // ARM TWO: projected, and DURABLE. The refusal is unchanged.
+        project_environment(false).await;
+        let durable = project_control(&second, second_requirements.clone(), second_hash.clone())
+            .await
+            .expect_err("a durable environment refuses a moved digest");
+        assert_eq!(
+            durable
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("a moved digest is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::ComponentFactConflict
+        );
+        assert_eq!(stored_digest().await, first.component_digest);
+
+        // ARM THREE: the SAME admission, against a disposable environment.
+        project_environment(true).await;
+        project_control(&second, second_requirements, second_hash)
+            .await
+            .expect("a disposable environment replaces its own admitted fact");
+        assert_eq!(stored_digest().await, second.component_digest);
+        assert_eq!(
+            stored_requirement_digest().await,
+            second.component_digest,
+            "the replacement left a connection requirement pointing at the superseded digest"
+        );
+
+        // And flipping the environment back re-freezes it, with no redeploy.
+        project_environment(false).await;
+        let (third, third_requirements, third_hash) = admitted(b'c');
+        let refrozen = project_control(&third, third_requirements, third_hash)
+            .await
+            .expect_err("a re-provisioned durable environment freezes again");
+        assert_eq!(
+            refrozen
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("a moved digest is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::ComponentFactConflict
+        );
+
+        drop(control);
+        run_alone(
+            &base,
+            &format!("DROP DATABASE \"{control_database}\" WITH (FORCE)"),
+        )
+        .await;
+    }
+
     /// The exact bytes this publisher stores in `requirement_json`, frozen
     /// whole. `requirement_hash` is the SHA-256 of these same bytes, so an
     /// added, removed, or renamed field moves the persisted identity of every

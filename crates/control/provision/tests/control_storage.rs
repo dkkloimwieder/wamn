@@ -237,6 +237,7 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
         "secret_name",
         "secret_namespace",
         "instance_suffix",
+        "disposable",
     ] {
         assert!(sql.contains(col), "project_envs table missing {col}");
         assert!(
@@ -658,11 +659,11 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // stamped. env 'dev' resolves demo's own policy row (the composite FK holds).
     script.push_str(&format!(
         "PREPARE upp (text,text) AS {up_project};\n\
-         PREPARE upe (text,text,text,text,text,text) AS {up_env};\n\
+         PREPARE upe (text,text,text,text,text,text,boolean) AS {up_env};\n\
          EXECUTE upp('demo','app');\n\
          EXECUTE upp('demo','app');\n\
-         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL, 'k3m9x2p7');\n\
-         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev', NULL, 'r4n8c6v2');\n\
+         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL, 'k3m9x2p7', true);\n\
+         EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev', NULL, 'r4n8c6v2', false);\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.projects WHERE org='demo' AND id='app')=1,\n\
              'upsert_project_sql is idempotent — one project row after two upserts';\n\
@@ -672,6 +673,22 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
            ASSERT (SELECT instance_suffix FROM registry.project_envs\n\
                      WHERE org='demo' AND project='app' AND env='dev')='k3m9x2p7',\n\
              'the second project-env upsert preserved the originally minted instance suffix';\n\
+           ASSERT NOT (SELECT disposable FROM registry.project_envs\n\
+                     WHERE org='demo' AND project='app' AND env='dev'),\n\
+             'the disposable marker follows THIS provisioning, unlike the minted suffix';\n\
+           -- Ask the SERVER what an unstated marker means, not the DDL text.\n\
+           ASSERT (SELECT attnotnull FROM pg_attribute\n\
+                     WHERE attrelid='registry.project_envs'::regclass\n\
+                       AND attname='disposable'),\n\
+             'the disposable marker must be NOT NULL';\n\
+           ASSERT (SELECT pg_get_expr(default_value.adbin, default_value.adrelid)\n\
+                     FROM pg_attribute AS column_meta\n\
+                     JOIN pg_attrdef AS default_value\n\
+                       ON default_value.adrelid = column_meta.attrelid\n\
+                      AND default_value.adnum = column_meta.attnum\n\
+                    WHERE column_meta.attrelid='registry.project_envs'::regclass\n\
+                      AND column_meta.attname='disposable') = 'false',\n\
+             'an environment nobody marked disposable must default to durable';\n\
          END $$;\n\
          DEALLOCATE upp; DEALLOCATE upe;\n",
         up_project = wamn_control_registry::sql::upsert_project_sql(),
