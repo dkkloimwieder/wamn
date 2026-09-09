@@ -153,6 +153,12 @@ measurement at a named commit, not a standing promise.
 The 34 ignored is corroborated independently: `grep -rn '#\[ignore' --include=*.rs .`
 returns 34 at `1bffa614`. See "Live gates" below for why ignored is not skipped.
 
+[re-measured 2026-09-08 at `088dde73`, after wave 10: **204 binaries, 1911
+passed, 1 failed, 73 ignored, no compile errors.** The one failure is
+`every_mounted_secret_is_declared_here_or_named_a_prerequisite`, filed as
+`wamn-362o.58`. The `1bffa614` figures above are left as the owner measured
+them.]
+
 ## Conformance
 
 ```bash
