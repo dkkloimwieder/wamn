@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Collect the Receiving trigger's real invocation, effect, and metric evidence."""
+
+import argparse
+import base64
+import hashlib
+import json
+import math
+from pathlib import Path
+import re
+import subprocess
+import time
+
+
+def attributes(span):
+    return {item["key"]: next(iter(item["value"].values()), "")
+            for item in span.get("attributes", [])}
+
+
+def identifier(value, size):
+    if re.fullmatch(r"[0-9a-fA-F]{%d}" % (size * 2), value):
+        return value.lower()
+    decoded = base64.b64decode(value, validate=True)
+    if len(decoded) != size:
+        raise ValueError("The trace contains an invalid identifier length")
+    return decoded.hex()
+
+
+def trace_receipt(document, trace_id, tenant, project, environment):
+    spans = [span for batch in document.get("batches", [])
+             for scope in batch.get("scopeSpans", []) for span in scope.get("spans", [])]
+    by_id = {identifier(span["spanId"], 8): span for span in spans}
+    if not spans or len(by_id) != len(spans):
+        raise ValueError("The trace has no spans or repeats a span identifier")
+    if any(identifier(span["traceId"], 16) != trace_id for span in spans):
+        raise ValueError("The trace contains another request's identifier")
+    invocations = {}
+    effects = []
+    for span_id, span in by_id.items():
+        if span["name"] != "wamn.component.invoke":
+            continue
+        fields = attributes(span)
+        if (fields.get("wamn.tenant") != tenant or fields.get("wamn.project") != project
+                or fields.get("wamn.environment") != environment
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", fields.get("wamn.component_digest", ""))
+                or any(not str(fields.get(key, "")) for key in
+                       ("wamn.wiring_id", "wamn.node_id", "wamn.operation", "wamn.caller_principal_id"))
+                or fields.get("wamn.caller_credential_kind") != "pat"):
+            raise ValueError("The invocation does not carry the expected host identity")
+        duration = int(span["endTimeUnixNano"]) - int(span["startTimeUnixNano"])
+        if duration <= 0:
+            raise ValueError("The invocation span did not finish")
+        invocations[span_id] = {"span_id": span_id, "duration_ns": duration,
+                                "attributes": fields}
+    for span_id, span in by_id.items():
+        if span["name"] != "wamn.postgres":
+            continue
+        fields = attributes(span)
+        if (fields.get("wamn.tenant") != tenant or fields.get("wamn.project") != project
+                or not fields.get("wamn.component") or fields.get("db.system") != "postgresql"
+                or not fields.get("db.operation")):
+            raise ValueError("The PostgreSQL effect does not carry its host identity")
+        duration = int(span["endTimeUnixNano"]) - int(span["startTimeUnixNano"])
+        if duration <= 0:
+            raise ValueError("The PostgreSQL effect span did not finish")
+        parent = identifier(span.get("parentSpanId", ""), 8)
+        visited = set()
+        while parent in by_id and parent not in invocations and parent not in visited:
+            visited.add(parent)
+            parent = identifier(by_id[parent].get("parentSpanId", ""), 8)
+        if parent not in invocations:
+            raise ValueError("The PostgreSQL effect has no invocation ancestor in this trace")
+        effects.append({"span_id": span_id, "invocation_span_id": parent,
+                        "duration_ns": duration, "attributes": fields})
+    if not invocations or not effects:
+        raise ValueError("The request has no complete invocation and PostgreSQL effect")
+    return {"trace_id": trace_id, "spans": len(spans),
+            "invocations": list(invocations.values()), "postgres_effects": effects}
+
+
+def metric_receipt(text, namespace, project):
+    required = {
+        "guest_invocation_duration_count": ({"workload_namespace": namespace,
+            "component": "flow-http", "plugin": "wasi-http", "http_request_method": "POST"}, 2),
+        "wamn_postgres_query_duration_ms_count": ({"wamn_project": project}, 1),
+        "wamn_jetstream_duration_ms_count": ({"wamn_project": project}, 1),
+    }
+    found = {name: [] for name in required}
+    for line in text.splitlines():
+        match = re.fullmatch(r'([a-zA-Z_:][a-zA-Z0-9_:]*)\{(.*)\}\s+(\S+)(?:\s+\d+)?', line)
+        if not match or match[1] not in required:
+            continue
+        labels = {key: json.loads('"' + value + '"') for key, value in
+                  re.findall(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"', match[2])}
+        expected, _ = required[match[1]]
+        if any(labels.get(key) != value for key, value in expected.items()):
+            continue
+        value = float(match[3])
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("The collector returned an invalid histogram count")
+        found[match[1]].append({"labels": labels, "count": value})
+    for name, (_, minimum) in required.items():
+        if sum(series["count"] for series in found[name]) < minimum:
+            raise ValueError(f"The collector does not yet expose enough {name} samples")
+    return found
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for key in ("kubeconfig", "context", "evidence-dir", "source", "tenant", "project",
+                "environment", "namespace", "system-namespace", "update-trace", "receipt-trace"):
+        parser.add_argument("--" + key, required=True)
+    args = parser.parse_args()
+    if args.context != "kind-wamn-receiving-journey" or args.namespace != "wamn-receiving-journey":
+        parser.error("This proof only reads the disposable Receiving journey")
+    if args.system_namespace != "wamn-system" or not Path(args.kubeconfig).is_file():
+        parser.error("The proof requires the journey's explicit private kubeconfig")
+    if not re.fullmatch(r"[0-9a-f]{40}", args.source):
+        parser.error("The proof requires the full source commit")
+    traces = {"update": args.update_trace, "receipt": args.receipt_trace}
+    if len(set(traces.values())) != 2 or any(
+            not re.fullmatch(r"[0-9a-f]{32}", value) or int(value, 16) == 0
+            for value in traces.values()):
+        parser.error("The proof requires two distinct nonzero trace identifiers")
+    output = Path(args.evidence_dir)
+    output.mkdir(mode=0o700)
+    kube = ["kubectl", "--kubeconfig", args.kubeconfig, "--context", args.context,
+            "--request-timeout=10s", "get", "--raw"]
+    prefix = f"/api/v1/namespaces/{args.system_namespace}/services/http:"
+    requests = {name: prefix + "tempo:3200/proxy/api/traces/" + trace_id
+                for name, trace_id in traces.items()}
+    requests["metrics"] = prefix + "otel-collector:8889/proxy/metrics"
+    (output / "commands.json").write_text(json.dumps([kube + [path] for path in requests.values()], indent=2) + "\n")
+    completed = {}
+    deadline = time.monotonic() + 120
+    attempt = 0
+    failure = "The telemetry did not arrive within 120 seconds"
+    while time.monotonic() < deadline and len(completed) != len(requests):
+        attempt += 1
+        for name, path in requests.items():
+            if name in completed:
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            stem = f"{name}-{attempt:03d}"
+            raw = output / (stem + (".prom" if name == "metrics" else ".json"))
+            try:
+                result = subprocess.run(kube + [path], capture_output=True, timeout=min(12, remaining), check=False)
+                raw.write_bytes(result.stdout)
+                (output / (stem + ".stderr")).write_bytes(result.stderr)
+                if result.returncode:
+                    raise ValueError(f"kubectl returned {result.returncode} for {name}")
+                value = (metric_receipt(result.stdout.decode(), args.namespace, args.project)
+                         if name == "metrics" else
+                         trace_receipt(json.loads(result.stdout), traces[name], args.tenant,
+                                       args.project, args.environment))
+                completed[name] = {"file": raw.name,
+                                   "sha256": hashlib.sha256(result.stdout).hexdigest(),
+                                   "evidence": value}
+            except (ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+                failure = f"{name}: {error}"
+                (output / (stem + ".refusal.txt")).write_text(failure + "\n")
+        if len(completed) != len(requests):
+            time.sleep(min(2, max(0, deadline - time.monotonic())))
+    verdict = "pass" if len(completed) == len(requests) else "fail"
+    receipt = {"schema": "wamn-receiving-telemetry/v0.1", "verdict": verdict,
+               "source": args.source, "context": args.context, "namespace": args.namespace,
+               "meter": "duration", "traces": traces, "collected": completed,
+               "scope": "Two live PAT requests with invocation ancestry for PostgreSQL effects. "
+                        "Metrics cover native HTTP duration and WAMN PostgreSQL and JetStream calls. "
+                        "Histograms do not identify individual requests or measure guest CPU. "
+                        "This proof does not cover HTTP egress injection or private runtime phases."}
+    if verdict != "pass":
+        receipt["failure"] = failure
+    (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    hashes = [hashlib.sha256(path.read_bytes()).hexdigest() + "  " + path.name
+              for path in sorted(output.iterdir()) if path.is_file()]
+    (output / "evidence.sha256").write_text("\n".join(hashes) + "\n")
+    if verdict != "pass":
+        raise SystemExit(failure)
+    print("RECEIVING_TELEMETRY_PASS " + str(output / "receipt.json"))
+
+
+if __name__ == "__main__":
+    main()

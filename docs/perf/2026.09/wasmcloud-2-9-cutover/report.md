@@ -279,11 +279,34 @@ The [cleanup receipt](live-receiving-001/journey/cleanup.receipt) passes, and on
 
 This run cites historical telemetry evidence in its verdict.
 It does not establish current invocation traces, effect traces, or metric delivery.
-Operator recovery, startup bursts, bounded process tests, and comparable performance measurements remain open.
-The [comparison plan](performance-plan-001/comparison.json) distinguishes retained 2.8 measurements from the unexecuted source-matched baseline at `dfa1c318`.
-The prepared host process test [compiles](host-lifecycle-build-001/exit-code.txt), and scoped [Clippy](host-lifecycle-build-001/clippy-exit-code.txt) exits 0 with existing dependency warnings.
-Neither result establishes its live process behavior.
-The [NATS extraction record](host-lifecycle-preflight-001/extraction.json) identifies the pinned executable and confirms removal of its stopped extraction container.
+Operator recovery, startup bursts, idle executor cases, and comparable performance measurements remain open.
+The prepared Receiving helpers add current telemetry, startup, and operator checks to the full journey.
+Their [recipe and scope](../../../operations/build-and-test.md#receiving-cluster-journey--released-flow-http-scheduling-and-reachability) require a new clean-source run. None records a live pass yet.
+The existing `--measure-startup` arm remains a separate, unexecuted 2.9 measurement.
+
+## Rebuilt host process proof
+
+The [host process test](host-lifecycle-live-001/test.log) passes once at clean source [`9d54245c`](host-lifecycle-live-001/source.json), with no ignored or filtered cases.
+It runs the real rebuilt host and an owned NATS server without a guest workload, PostgreSQL, registry, or operator.
+The [SIGTERM receipt](host-lifecycle-live-001/host/host-term.receipt) records successful exit in 5,012 ms. [SIGINT](host-lifecycle-live-001/host/host-int.receipt) takes 5,004 ms, both within 70 seconds.
+Both cases prove `/livez` stays healthy during real ingress saturation while `/readyz` reports saturation, then recovers after the held connection closes.
+They also observe draining readiness before successful exit.
+The SIGTERM case keeps the same host alive through a 50-second NATS outage, then receives its native heartbeat RPC after reconnection.
+
+The [blocked exporter receipt](host-lifecycle-live-001/host/host-blocked-flush.receipt) records exit code 1 in 7,008 ms with the bounded flush error.
+The test observes the actual trace exporter connection and its [HTTP/2 preface](host-lifecycle-live-001/host/trace-peer-preface.bin), then leaves that connection unanswered.
+This proves an exercised exporter failure, not successful telemetry delivery.
+Neither normal signal case observes the initial `starting` probe response.
+The run does not prove failure before the first native beat, unexpected native loop/listener termination in a WAMN process, active guest drain, or operator recovery.
+The [NATS extraction record](host-lifecycle-preflight-001/extraction.json) retains the pinned executable's provenance.
+
+## Completed 2.8 comparison prebuilds
+
+The [first prebuild](baseline-build-001/run.sh) and [second prebuild](baseline-build-002/source.txt) use isolated source `dfa1c318`, with empty status records before and after.
+All recorded build commands exit 0: `tools/build-components m1`, the release host, debug CLI/CDC reader/scenario worker/gates, the integration library test binary with `--no-run`, and `wamn-throughput`.
+The [first exit](baseline-build-001/exit-code.txt), [second exit](baseline-build-002/exit-code.txt), and [host feature capture](baseline-build-002/features-exit-code.txt) all report 0.
+These receipts complete compilation preparation. No baseline journey or performance measurement ran in them.
+The [comparison plan](performance-plan-001/comparison.json) still requires source-matched live measurements before a 2.8-to-2.9 performance conclusion.
 
 
 ## WMS receipt correction

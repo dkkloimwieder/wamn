@@ -293,6 +293,7 @@ identity_image_owned=false
 session_gate_pid=
 session_forward_pid=
 executor_lifecycle_pid=
+startup_burst_pid=
 run_complete=false
 
 cleanup() {
@@ -308,6 +309,13 @@ cleanup() {
     sleep "$WAMN_JOURNEY_HOLD_SECONDS" || true
   fi
   set +e
+
+  if [[ -n "$startup_burst_pid" ]]; then
+    # The supervisor owns and bounds its native host and OTLP forward cleanup.
+    kill -TERM "$startup_burst_pid" >/dev/null 2>&1 || true
+    wait "$startup_burst_pid" >/dev/null 2>&1 || true
+    kill -0 "$startup_burst_pid" >/dev/null 2>&1 && cleanup_failed=true
+  fi
 
   if [[ -n "$executor_lifecycle_pid" ]]; then
     kill -TERM "$executor_lifecycle_pid" >/dev/null 2>&1 || true
@@ -487,7 +495,7 @@ cleanup() {
       printf 'RECEIVING STARTUP MEASUREMENT PASS source=%s namespace=%s\n' \
         "$head" "$namespace" >"$evidence_dir/startup-measurement.receipt"
     else
-      printf 'RECEIVING CLUSTER JOURNEY PASS source=%s namespace=%s host=%s cited=RC-851acb80:bootstrap,M2-supersession,socketguard,traceproof,scoped-RegistryReader rerun=materializer-journey,native-scheduling,exact-cleanup\n' \
+      printf 'RECEIVING CLUSTER JOURNEY PASS source=%s namespace=%s host=%s cited=RC-851acb80:bootstrap,M2-supersession,socketguard,traceproof,scoped-RegistryReader rerun=materializer-journey,native-scheduling,live-invocation-effect-traces-and-selected-metrics,exact-cleanup\n' \
         "$head" "$namespace" "$route_host" >"$evidence_dir/journey.receipt"
     fi
     (
@@ -560,6 +568,10 @@ if [[ "$standard_images" != true ]]; then
 fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor
+if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true ]]; then
+  run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo test --locked --offline -p wamn-proof-integration --test startup_burst_live --no-run
+fi
 if [[ "$fresh_auth_bench" == true ]]; then
   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
     cargo build --locked --offline -p wamn-gates
@@ -2873,6 +2885,11 @@ jq -e --arg host "$route_host" '
 
 # Prepare the genuine post-commit trigger. It is applied only after the
 # production reader, released HTTP workload, and materializer are all ready.
+# Two sampled requests identify this run's actual invocation and effect spans.
+materializer_update_trace=$(openssl rand -hex 16)
+materializer_receipt_trace=$(openssl rand -hex 16)
+jq -n --arg update "$materializer_update_trace" --arg receipt "$materializer_receipt_trace" \
+  '{update:$update,receipt:$receipt}' >"$evidence_dir/materializer-trace-ids.json"
 materializer_trigger=$work_dir/materializer-trigger.yaml
 cat >"$materializer_trigger" <<EOF
 apiVersion: batch/v1
@@ -2904,6 +2921,7 @@ spec:
                 --header 'Host: $route_host' \
                 --header 'Content-Type: application/json' \
                 --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \
+                --header 'traceparent: 00-$materializer_update_trace-1111111111111111-01' \
                 --data '[{"request_id":"materializer-order","id":"00000000-0000-0000-0000-000000000304","expected_row_version":"1","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]' \
                 'http://flow-http.$namespace.svc.cluster.local/acme/purchase_order/update')
               test "\$update_status" = 200
@@ -2912,6 +2930,7 @@ spec:
                 --header 'Host: $route_host' \
                 --header 'Content-Type: application/json' \
                 --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \
+                --header 'traceparent: 00-$materializer_receipt_trace-2222222222222222-01' \
                 --data '[{"request_id":"materializer-receipt","value":{"idempotency_key":"materializer-receipt-command","purchase_order_id":"00000000-0000-0000-0000-000000000304","receipt_reference":"MATERIALIZER-RECEIPT","occurred_at":"2026-08-31T12:34:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000504","quantity":"9.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]' \
                 'http://flow-http.$namespace.svc.cluster.local/acme/receiving/record_receipt')
               test "\$receipt_status" = 200
@@ -3097,6 +3116,57 @@ if grep -E 'wamn::materializer (REFUSED|.*failed)|router delivery did not settle
   exit 1
 fi
 
+run python3 "$repo_root/tools/journey-telemetry-proof" \
+  --kubeconfig "$kubeconfig" --context "$context" \
+  --evidence-dir "$evidence_dir/telemetry" --source "$head" \
+  --tenant "$app_tenant" --project "$app_project" --environment "$app_environment" \
+  --namespace "$namespace" --system-namespace "$system_namespace" \
+  --update-trace "$materializer_update_trace" --receipt-trace "$materializer_receipt_trace"
+
+# Full journey only. This fresh process uses the published production HTTP shell
+# and the existing private authorities. Measurement modes have already exited.
+startup_private=$work_dir/startup-burst
+install -d -m 0700 "$startup_private"
+jq -n \
+  --arg source "$head" --arg repo "$repo_root" --arg target "$cargo_target_dir" \
+  --arg binary "$cargo_target_dir/release/wamn-host" \
+  --arg secrets "$host_secret_directory" --arg auth "$docker_config_directory/config.json" \
+  --arg workload "$evidence_dir/flow-http-workload.json" --arg pat "$route_caller_secret" \
+  --arg private "$startup_private" --arg evidence "$evidence_dir/startup-burst" \
+  --arg nats "$nats_url" --arg proof "startup-$short_head-$run_id" \
+  --arg component "$component_artifact_base" --arg release "$release_artifact_base" \
+  --arg digest "$manifest_digest" --arg org "$app_org" --arg project "$app_project" \
+  --arg schema "$app_schema" --arg environment "$namespace" \
+  --arg host "$route_host" --arg route "$app_probe_route" --argjson body "$app_probe_body" \
+  --arg kubeconfig "$kubeconfig" --arg context "$context" --arg system "$system_namespace" \
+  --arg deployment "$evidence_dir/host-deployment.json" '
+  {
+    repo:$repo, cargo_target_dir:$target, kubeconfig:$kubeconfig, context:$context,
+    system_namespace:$system, host_deployment:$deployment,
+    fixture:{
+      source:$source, host_binary:$binary, host_secrets:$secrets, registry_auth:$auth,
+      workload:$workload, pat_secret:$pat, private_dir:$private, evidence_dir:$evidence,
+      nats_url:$nats, otlp_endpoint:"", proof_id:$proof,
+      component_artifact_base:$component, release_artifact_base:$release,
+      manifest_digest:$digest, org:$org, project:$project, schema:$schema,
+      environment:$environment, route_host:$host, route_path:$route,
+      probe_body:$body, max_concurrent_starts:0
+    }
+  }' >"$startup_private/wrapper.json"
+chmod 0600 "$startup_private/wrapper.json"
+record_command python3 "$script_dir/journey-startup-burst.py" '<private-fixture-path>'
+python3 "$script_dir/journey-startup-burst.py" "$startup_private/wrapper.json" &
+startup_burst_pid=$!
+if wait "$startup_burst_pid"; then
+  startup_burst_status=0
+else
+  startup_burst_status=$?
+fi
+startup_burst_pid=
+if ((startup_burst_status != 0)); then
+  exit "$startup_burst_status"
+fi
+
 negative_manifest=$work_dir/cross-environment-workload.json
 jq --arg name flow-http-cross-environment --arg environment "${namespace}-denied" '
   del(.metadata.annotations, .metadata.creationTimestamp, .metadata.generateName,
@@ -3173,6 +3243,13 @@ assert_can_i no update events.events.k8s.io "$operator_subject" "$events_rbac_re
 assert_can_i no delete events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
 assert_can_i no deletecollection events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
 
+# Full journey only: this point follows every early proof/measurement exit.
+run "$repo_root/tools/receiving-operator-recovery-run" \
+  --kubeconfig "$kubeconfig" --evidence-dir "$evidence_dir/operator-recovery" \
+  --host-image "$host_image" --route-caller-secret "$route_caller_secret_name" \
+  --route-host "$route_host" --probe-route "$app_probe_route" --probe-body "$app_probe_body"
+cp "$evidence_dir/operator-recovery/evidence.sha256" "$evidence_dir/operator-recovery.sha256"
+
 jq -n --arg source "$head" --arg namespace "$namespace" \
   --arg digest "$manifest_digest" --arg host "$route_host" '
   {
@@ -3183,12 +3260,17 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
     release_manifest_digest:$digest,
     route_host:$host,
     passing_arms:[
+      "installed-distributed-crd-identity",
+      "shared-scheduler-nats-recovery",
+      "native-fleet-deaf-host-preservation",
+      "operator-restart-with-exact-serving-recovery",
       "production-mint-and-attestation",
       "production-cdc-reader-session",
       "operator-before-host-2.9.0",
       "three-ready-default-hosts",
       "flow-http-workload-ready",
       "materializer-workload-ready",
+      "native-startup-burst",
       "operator-endpointslice",
       "exact-route-not-found-reachability",
       "receipt-root-causation",
@@ -3196,7 +3278,8 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
       "exactly-one-pending-inspection",
       "exact-materializer-durable-ack",
       "zero-materializer-dead-letter",
-      "cross-environment-scheduling-refusal"
+      "cross-environment-scheduling-refusal",
+      "live-invocation-effect-traces-and-selected-metrics"
     ],
     evidence_scope:{
       cited_immutable_rc:{
@@ -3205,7 +3288,8 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
         arms:["bootstrap","M2-supersession","socketguard","traceproof",
               "scoped-RegistryReader"]
       },
-      rerun:["materializer-journey","native-scheduling","exact-cleanup"]
+      rerun:["materializer-journey","native-scheduling",
+             "live-invocation-effect-traces-and-selected-metrics","exact-cleanup"]
     },
     reachability_scope:"The exact 404 proves HTTP routing and guest execution only."
   }

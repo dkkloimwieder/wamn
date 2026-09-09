@@ -1,0 +1,110 @@
+{
+  "id": "48a2d45c-786a-4e5e-8c0f-344b321041b0",
+  "hostname": "host-term",
+  "friendlyName": "spectacular-trees-3786",
+  "version": "2.9.0",
+  "labels": {
+    "hostgroup": "lifecycle-proof"
+  },
+  "startedAt": "2026-09-09T14:58:00.761782674+00:00",
+  "osArch": "x86_64",
+  "osName": "linux",
+  "osKernel": "unix",
+  "systemCpuUsage": 8.704096,
+  "systemMemoryTotal": "65437421568",
+  "systemMemoryFree": "9407938560",
+  "imports": [
+    {
+      "namespace": "wamn",
+      "package": "flow-http-routing",
+      "version": "0.1.0",
+      "interfaces": [
+        "routing"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "types"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "client"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "statements"
+      ]
+    },
+    {
+      "namespace": "wasi",
+      "package": "otel",
+      "version": "0.2.0-rc.2",
+      "interfaces": [
+        "types",
+        "tracing",
+        "metrics",
+        "logs"
+      ]
+    },
+    {
+      "namespace": "wasi",
+      "package": "config",
+      "version": "0.2.0-rc.1",
+      "interfaces": [
+        "store"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "types"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "consumer"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "doorbell"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "producer"
+      ]
+    },
+    {
+      "namespace": "wasi",
+      "package": "logging",
+      "interfaces": [
+        "logging"
+      ]
+    }
+  ],
+  "httpPort": 41603,
+  "environment": "lifecycle-proof"
+}

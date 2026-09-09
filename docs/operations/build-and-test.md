@@ -148,7 +148,10 @@ It tests ingress saturation, a 50-second NATS outage, recovery, SIGTERM, SIGINT,
 The normal signal cases must exit successfully within the 70-second deployment grace.
 The stalled exporter must report a flush failure within that grace.
 The test records an initial `starting` response if it observes that brief state.
-It does not prove failure before the first native liveness beat.
+The [first live run](../perf/2026.09/wasmcloud-2-9-cutover/host-lifecycle-live-001/source.json) passes at clean `9d54245c`.
+SIGTERM and SIGINT exit successfully in 5,012 ms and 5,004 ms. The blocked trace exporter produces exit code 1 in 7,008 ms.
+Both normal cases miss the brief initial `starting` state.
+The test does not prove failure before the first native beat, forced native loop/listener failure, active guest drain, or operator recovery.
 
 Set the NATS executable to an absolute path.
 Set the evidence directory to a new path outside the build worktree.
@@ -3004,20 +3007,42 @@ and RoleBinding, proves the operator's actual ServiceAccount has exactly
 and matching native Warning Event. The 404 proves only HTTP routing and guest
 execution; the Kubernetes objects independently prove the other arms.
 The [first 2.9.0 full journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/verdict.json) passes at `7798190c`.
-The later idle executor cases require a new run.
+The later idle executor, telemetry, startup-burst, and operator-recovery cases require a new run.
+Run the full mode from the next clean source commit, after its build preparation finishes.
+Keep new evidence in the main repository's `docs/perf`, outside the isolated build worktree.
+Select a fresh directory. The runner must not overwrite an earlier receipt.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \
-  --evidence-dir /tmp/wamn-receiving-cluster-evidence
+  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-002/journey
 ```
+
+The runner supplies the existing private kubeconfig, authorities, release, and fixture inputs to the helpers.
+No extra production flag or manually copied credential is needed.
+Each helper must pass before the runner writes the full verdict. All three remain unexecuted at this documentation update.
+
+| Helper and receipt | Required proof and limit |
+|---|---|
+| `tools/journey-telemetry-proof`; `telemetry/receipt.json` | Within 120 seconds, collect both real PAT request traces with completed invocation spans and descendant PostgreSQL effects carrying the expected identity. Require native HTTP duration counts of at least two and PostgreSQL/JetStream counts of at least one. These histograms do not identify individual requests or measure guest CPU; HTTP egress injection and private runtime phases remain outside this proof. |
+| `tools/journey-startup-burst.py`; `startup-burst/result.json` | Start one fresh release host with empty private caches and the deployed explicit start limit. Submit cold and warm bursts of twice that limit through native RPCs. Require measured native handler overlap above the limit, heartbeat/probe progress during starts, and warm serving continuity. Replicas share one production HTTP digest and native compile deduplication; overlap measures queued demand, not active permit occupancy or CPU use. |
+| `tools/receiving-operator-recovery-run`; `operator-recovery/result.json` | Compare all five installed CRD schemas with the pinned distributed chart, allowing only recorded Kubernetes defaults. After 75 seconds of healthy fleet observation, stop only the chart's shared scheduler NATS for 150 seconds, observe the native fleet-deaf condition, restore it, then restart the operator on the same image. Each recovery requires fresh Host readiness and an exact successful application response within 120 seconds. Host identities/processes must persist; Workload UID changes are recorded. The external event NATS stays running. |
+
+The 150-second scheduler outage exceeds native TTL 60 seconds, reconciliation 60 seconds, and heartbeat RPC 5 seconds, with 25 seconds of observation margin.
+Actual responses during the outage are retained and checked; arbitrary error responses cannot satisfy the helper.
+The helpers retain command, trace, metric, identity, cleanup, and hash receipts beneath their named evidence directories.
+They run only in full mode. `--measure-startup` exits earlier and keeps its existing timing protocol and thresholds.
+The 2.8 [prebuilds](../perf/2026.09/wasmcloud-2-9-cutover/report.md#completed-28-comparison-prebuilds) pass. Comparable live performance measurements remain pending.
 
 **Run the ten harness proofs first. They cost a second and they stand in
 front of a twenty-five-minute cluster run.**
 
 ```bash
-( for proof in tools/journey-*-proof; do "$proof" || exit; done )
+( for proof in tools/journey-{host-values,host-secrets,rendered-identity,workload,trace,materializer,probe,document,mint,throughput}-proof; do
+    "$proof" || exit
+  done )
 ```
 
+The explicit names select only the ten offline harness proofs. The live `journey-telemetry-proof` requires the running journey.
 The subshell and the bare `exit` are load-bearing, and the first draft of this
 line had neither. `for ...; do "$proof" || break; done` reports **exit 0 when a
 proof fails** — `break` succeeds, and the loop's status is the status of the
@@ -3075,7 +3100,7 @@ startup proof remains unexecuted.
 
 ```bash
 tools/receiving-cluster-journey-run --apply --measure-startup \
-  --evidence-dir /tmp/wamn-receiving-startup-evidence
+  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-startup-001/journey
 ```
 
 The helper refuses a dirty source tree or a pre-existing scratch cluster. Every

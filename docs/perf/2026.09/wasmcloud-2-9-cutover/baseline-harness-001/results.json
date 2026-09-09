@@ -1,0 +1,48 @@
+{
+  "source": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+  "source_status": "",
+  "started": "2026-09-09T15:00:17.275588+00:00",
+  "commands": [
+    {
+      "command": "tools/journey-document-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-host-values-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-host-secrets-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-workload-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-rendered-identity-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-mint-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-probe-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-trace-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-materializer-proof",
+      "exit_code": 0
+    },
+    {
+      "command": "tools/journey-throughput-proof",
+      "exit_code": 0
+    }
+  ],
+  "finished": "2026-09-09T15:00:23.259259+00:00"
+}

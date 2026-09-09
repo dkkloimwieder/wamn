@@ -1,0 +1,50 @@
+1. bytes
+  ok    the Receiving probe renders
+  ok    bytes unchanged since the marker rename
+  ok    request_id is merged FIRST, so the body is byte-for-byte the old literal
+2. a second application changes route and body, per line
+  ok    a second application renders
+  ok    [svc.cluster.local/inventory/move] replaces [svc.cluster.local/purchase_order/get]
+  ok    ["pallet_code":"PAL-77"] replaces ["id":"00000000-0000-0000-0000-000000000301"]
+3. THE RENDERED PROBE RUNS -- a render that produces broken shell is a
+   forty-minute failure, and reading the YAML cannot tell you it works
+  ok    the rendered probe exits 0 when the route answers 200
+  ok    it reports exactly one attempt
+  ok    it emits exactly one canonical receipt
+  ok    the attempt line carries the declared phase
+  ok    the response body is reported
+  ok    a route that 404s twice and then answers still exits 0
+  ok    every attempt is reported, not only the last
+  ok    the canonical receipt is still emitted exactly once
+  ok    each attempt carries the elapsed window
+  ok    the shortened-window rewrite landed (a no-op sed would prove nothing)
+  ok    a route that never answers exits NON-zero
+  ok    and still reports before asserting, so the failure is diagnosable
+  ok    it kept trying to the window rather than giving up on the first 404
+  ok    the rendered window is 150 and fits inside the Job deadline of 200
+  ok    the window exceeds the 120s recovery ceiling, so a breach is reported
+  ok    the final report carries recovery_seconds for the caller to assert on
+4. the body is JSON, and it is refused here rather than in a cluster
+  ok    control: a body that is not JSON is refused, naming it
+  ok    control: a body carrying a single quote is refused before it breaks out
+  ok    control isolates: that body is valid JSON, so only the quote guard can refuse it
+5. the arguments themselves
+  ok    control: a spec without route is refused, naming IT
+  ok    control: a spec without body is refused, naming IT
+  ok    control: a spec without request_id is refused, naming IT
+  ok    control: a spec without phase is refused, naming IT
+  ok    control: a spec without job is refused, naming IT
+  ok    control: a spec without namespace is refused, naming IT
+  ok    control: a spec without host_image is refused, naming IT
+  ok    control: a spec without secret_name is refused, naming IT
+  ok    control: a spec without route_host is refused, naming IT
+  ok    control: a spec without trace_id is refused, naming IT
+  ok    control: a spec without parent_span_id is refused, naming IT
+6. nameref binding
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'probe_spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-probe: all properties hold

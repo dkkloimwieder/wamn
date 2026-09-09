@@ -1,0 +1,44 @@
+{
+  "schema": "wamn-native-startup-burst-preparation/v1",
+  "base_source": "7798190c7d045a48231a8db41448cc6e29cf3bd8",
+  "upstream_source": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "state": "prepared; static syntax checks passed; not compiled or executed",
+  "scope": "Three proposed files and patch under /tmp only. No repository, Beads, build, live, network, or active credential changes/reads.",
+  "proposed_files": [
+    "tests/integration/tests/startup_burst_live.rs",
+    "tools/journey-startup-burst.py",
+    "tools/receiving-cluster-journey-run"
+  ],
+  "patch": "startup-burst.patch",
+  "runner_integration": "Patch is against 7798190c, not the parent's pending executor/operator additions. Merge the small build/cleanup/full-only insertion and passing-arm changes into those additions; do not replace the current runner wholesale.",
+  "entrypoint": "Full Receiving journey only, immediately before negative_manifest cross-environment proof. Measurement modes exit before this arm; their performance protocol is unchanged.",
+  "future_compile": "cargo test --locked --offline -p wamn-proof-integration --test startup_burst_live --no-run",
+  "future_execution": "Existing Receiving runner prepares private wrapper.json then launches python3 tools/journey-startup-burst.py; helper launches exactly the ignored native test with WAMN_STARTUP_BURST_INPUT.",
+  "acceptance": [
+    "Real release WAMN host and actual production HTTP Workload/credentials; newly created empty private OCI and Wasmtime cache directories.",
+    "Actual chart WASH_MAX_CONCURRENT_STARTS is read from retained host.env and passed to native host; host log must confirm the consumed value.",
+    "Two herds of twice that limit use unique workload identities. Every actual native response must report Running.",
+    "Each herd must expose more overlapping native workload_start spans than the configured limit. These spans include pre-permit wait, so this proves queued demand, not active permit occupancy or CPU-core use.",
+    "At least one complete successful heartbeat/live/ready/application observation must fit inside a continuous native-start interval. Warm-phase application reads must stay 200; cold pre-first-success 404/503 are retained.",
+    "All exact-owned workloads are stopped; native heartbeat count reaches zero; native host exits zero within the existing 70-second host grace. Supervisor terminates and reaps its owned test and OTLP forward process groups.",
+    "Retained output contains source, binary/input hashes, actual request/native status and timing, cache/resource limits, numbered redacted trace snapshots, per-span source files, commands and cleanup receipts."
+  ],
+  "evidence_limits": [
+    "No compiled or live proof exists yet. Native RPC/trace transport and the conservative overlap/progress acceptance remain unexecuted.",
+    "A fast warm herd may fail to expose enough overlap or fit a complete progress observation. Requests issued alone never count as proof.",
+    "One cold production HTTP digest shares native compilation deduplication. The proof does not claim simultaneous compilation of different cold components.",
+    "Fresh host release preload can compile release callables before native readiness; the production HTTP shell is subsequently native-loaded by the cold herd.",
+    "Native whole-start, native ready, and observed first-success times are retained. Retired private Wasm/non-Wasm phase attribution is unavailable.",
+    "Owned local process inherits the runner cgroup, not the chart's six-CPU quota. No version performance comparison is claimed; baseline/after throughput runners remain unchanged.",
+    "Control uses the fixture's external NATS, not the chart scheduler/operator plane. The separate operator proof owns deployed operator behavior.",
+    "This is read-only production HTTP traffic; no active queued delivery or materializer-consumer overlap is claimed."
+  ],
+  "static_validation": "static-checks.json",
+  "source_inventory": "coverage.json",
+  "sha256": {
+    "tests/integration/tests/startup_burst_live.rs": "739e39e53de73f223479057569ef0c54feb107952f254e65043e818c3b9c9ceb",
+    "tools/journey-startup-burst.py": "112a29f60a3dc78c5711dc789407529895b308a2b7e7f8ea018406e1a8054329",
+    "tools/receiving-cluster-journey-run": "1c5b03738899d910f2445e03ccd26e85c6cb7998b3082e34b2c2a1e77ceba1ae",
+    "startup-burst.patch": "0b75df07ae6f901b30219738cb4e422906357f964bf5a7fde642ad0e849ae2f2"
+  }
+}

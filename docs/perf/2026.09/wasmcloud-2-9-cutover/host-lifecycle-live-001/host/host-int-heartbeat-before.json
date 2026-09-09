@@ -1,0 +1,110 @@
+{
+  "id": "1162cc6a-19e6-4507-9ba2-55051a06334a",
+  "hostname": "host-int",
+  "friendlyName": "stiff-trousers-9422",
+  "version": "2.9.0",
+  "labels": {
+    "hostgroup": "lifecycle-proof"
+  },
+  "startedAt": "2026-09-09T14:58:58.006803426+00:00",
+  "osArch": "x86_64",
+  "osName": "linux",
+  "osKernel": "unix",
+  "systemCpuUsage": 22.520258,
+  "systemMemoryTotal": "65437421568",
+  "systemMemoryFree": "9368338432",
+  "imports": [
+    {
+      "namespace": "wasi",
+      "package": "otel",
+      "version": "0.2.0-rc.2",
+      "interfaces": [
+        "types",
+        "tracing",
+        "logs",
+        "metrics"
+      ]
+    },
+    {
+      "namespace": "wasi",
+      "package": "config",
+      "version": "0.2.0-rc.1",
+      "interfaces": [
+        "store"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "types"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "consumer"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "producer"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "doorbell"
+      ]
+    },
+    {
+      "namespace": "wasi",
+      "package": "logging",
+      "interfaces": [
+        "logging"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "client"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "statements"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "types"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "flow-http-routing",
+      "version": "0.1.0",
+      "interfaces": [
+        "routing"
+      ]
+    }
+  ],
+  "httpPort": 38553,
+  "environment": "lifecycle-proof"
+}

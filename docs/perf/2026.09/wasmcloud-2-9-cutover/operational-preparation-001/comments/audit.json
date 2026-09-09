@@ -1,0 +1,128 @@
+{
+  "base_commit": "74d89e4b8ceeac02393e3a8326f452470cf86242",
+  "upstream_commit": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "files": [
+    {
+      "path": "CLAUDE.md",
+      "before_sha256": "c11cc8c19c5bdd66b0b70ae3596ea79fb73fd92dde6075e54d10f0409fcf3e58",
+      "after_sha256": "53cb53f3e082071d8d4fd62db102f4bd007eac1e67203727cd29563e9578633f",
+      "changes": 1
+    },
+    {
+      "path": "crates/platform/runtime/Cargo.toml",
+      "before_sha256": "525813b698a0972b6aab807300b7b122d8c39749114aac71dff9ea26abc99130",
+      "after_sha256": "6abd72a8a9c3bf8761464e8b430486444ad082b82824c3566707ecd1ff7ed35f",
+      "changes": 1
+    },
+    {
+      "path": "crates/execution/host/src/router_driver.rs",
+      "before_sha256": "8ad6506c8d5b95ba4ca5fb98bb773b3a95a0408212bbc1eb139cd54aba4891a7",
+      "after_sha256": "b449848a07a4a742be44bd7329a252597acc05e0a11079807a8b7b5b68a47217",
+      "changes": 1
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/effect_span.rs",
+      "before_sha256": "87bdba20086e6a0e0defde16543e9786bdac9581f9b3f6d3287ab8dab1f62181",
+      "after_sha256": "e3f638a5a3153ffe0d2a3a414ca66a642b7b2a2f61708f1eaa0fbd74d1dc6200",
+      "changes": 2
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/connection_http.rs",
+      "before_sha256": "0fd938d9a9987afa9cc10d17a74bd9e74ef9e8096905042825f1d5b343d10f07",
+      "after_sha256": "ef12838adac91b5ea84983a80644e279226eee20366fa079affc9ea1edda319a",
+      "changes": 1
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_logging.rs",
+      "before_sha256": "128e66b03918acbe3b3b7183fe139f51a538bb9036ef698396f663ba18a75dc0",
+      "after_sha256": "97db30f594c5756ddbeba4c3faf7538135ee6d4a80fe0c769fe0469ea0f8cfa5",
+      "changes": 5
+    },
+    {
+      "path": "crates/platform/runtime/tests/guest_environment_isolation.rs",
+      "before_sha256": "848db397b3b20f13b7d1dc2299d68e425022206d97263eaa429b4e1cc222221e",
+      "after_sha256": "76294398f5819ee13e689a9a3b175b6fa7b91e3cbc6ae86a961ebe286e671d69",
+      "changes": 5
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs",
+      "before_sha256": "2ed4f5039ccf2cce43be0423c1ea2f9f999cb3e05d080d66a7c9132294f098f2",
+      "after_sha256": "d5fb340f72e67212c488b11bb11f09022d938cf21ff3f3700d69964aa7fdb969",
+      "changes": 3
+    },
+    {
+      "path": "services/dispatcher/src/main.rs",
+      "before_sha256": "67ecd27fbeb7e95a0979dd03f3f51a6853c57393f028aa59713e7ff02128006e",
+      "after_sha256": "14e8063eae89e0a5aa4eb5b875a0aa2fab9075489f942b038d5a408d77aa9d0b",
+      "changes": 1
+    },
+    {
+      "path": "services/host/src/host.rs",
+      "before_sha256": "71d5a8ccc3d4fbd12a89e6a27dc79eab5a4965c70438d0be44754b86b8fd3bd5",
+      "after_sha256": "f86b8e3cd664daa834142dff77327d97b12450ccfaa805b1f1fa8b8585d0fd29",
+      "changes": 1
+    },
+    {
+      "path": "components/fixtures/sockprobe/src/main.rs",
+      "before_sha256": "ecf6b0b0dde2b6d1c2dc0b575f6a6385a1efa79339c8e465e807fa4818ac970f",
+      "after_sha256": "277aa7b3d5d2b2a68770b3b1091f42b020e513c85638601c6249c4796c73874e",
+      "changes": 1
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_jetstream.rs",
+      "before_sha256": "46c042a9d4d41f90fc66edde7513fabcd4d3a4f8e9d89405672173ea38e97f87",
+      "after_sha256": "4afa531a7e8ea0fbd58c82d11ed8dda37a1970a3f57cfe78b9b5816edbab1988",
+      "changes": 1
+    },
+    {
+      "path": "docs/poc/seam-template.md",
+      "before_sha256": "2de8e2277f94c6f76edc8c789917bd27101bff28cd2f92b1a9976d9f019b3bdd",
+      "after_sha256": "cc6fba10b6fbb89dbdd51cbb703f066c0154233248455fe23f5dc8e3519476c4",
+      "changes": 1
+    },
+    {
+      "path": "crates/platform/runtime/wit/deps/wamn-jetstream/package.wit",
+      "before_sha256": "a1774bd18c22f34aa712ab78e6b7ad36786fccf82b5a93aba3927476cdb7a596",
+      "after_sha256": "7ecc756bb2d5752349c40b552335b46f329dee9f07e144e82c582f300ccc0845",
+      "changes": 1
+    },
+    {
+      "path": "components/execution/materializer/wit/deps/wamn-jetstream/package.wit",
+      "before_sha256": "a1774bd18c22f34aa712ab78e6b7ad36786fccf82b5a93aba3927476cdb7a596",
+      "after_sha256": "7ecc756bb2d5752349c40b552335b46f329dee9f07e144e82c582f300ccc0845",
+      "changes": 1
+    }
+  ],
+  "patch_sha256": "c4f95db291a95d36a10218df1ab88cf8d3cf96b211621935e72cb092e3a0fe90",
+  "checks": {
+    "noncomment_source_unchanged_except_one_test_assertion_message": true,
+    "wit_copies_byte_identical": true,
+    "production_behavior_changed": false,
+    "cargo_or_live_run": false,
+    "repository_written": false
+  },
+  "symlink": "AGENTS.md -> CLAUDE.md; only the target is patched",
+  "primary_upstream_source": {
+    "observability": "crates/wash-runtime/src/observability.rs:96-174: OTEL activation, logger/tracer layers, log-level filters, tracer kept in layer; only meter provider and propagator set globally",
+    "fallback_context": "crates/wash-runtime/src/engine/ctx.rs:608-613: fresh WasiCtxBuilder with args and stderr, no inherited environment",
+    "private_plugins": "crates/wash-runtime/src/engine/ctx.rs:300: private Ctx.plugins field",
+    "postgres_prefix": "crates/wash-runtime/src/plugin/wasmcloud_postgres/mod.rs:693,704: starts_with(workload_id) cleanup",
+    "native_logger": "crates/wash-runtime/src/plugin/wasi_logging/mod.rs:33: TracingLogger",
+    "socket_error": "crates/wash-runtime/src/sockets/network.rs:40-49: PermissionDenied maps to AccessDenied",
+    "messaging_versions": "crates/wash-runtime/wit/world.wit:34-37,66-69 imports 0.2 and 0.3; deps/wasmcloud-messaging-0.3.0/package.wit:44-58 adds handler dispositions"
+  },
+  "logging_queue_correction": "Current opentelemetry_sdk 0.31.0 is locked. Its src/logs/logger_provider.rs:226-227 uses BatchLogProcessor::builder; src/logs/batch_log_processor.rs:52 default is 2048, :610-628 reads env, :701-706 applies OTEL_BLRP_MAX_QUEUE_SIZE. Therefore default, not fixed.",
+  "retained": [
+    "dispatcher/waker local copies from the former fork in Cargo manifests and lib.rs are historical provenance",
+    "guest_environment_isolation.rs:23 describes the retired wamn-mrfr fork source scan",
+    "engine.rs:81 records retirement of the fork-only raw-socket opt-in",
+    "Receiving/WMS overhead-ratchet comments describe historical September measurements",
+    "traceproof g2br.4 provenance and historical native-alignment ledger remain history",
+    "pg_walstream and cdc-reader references concern the separate still-pinned fork",
+    "docs/poc/wms-prep-spec.md records dated prior decisions, not current runtime dependency identity",
+    "fork as process cloning, graph lineage, control alternatives, or duplicate implementations is unrelated",
+    "historical docs/perf, operations evidence logs, experiment transcripts and archived/source-pinned proposal observations are not current dependency descriptions"
+  ],
+  "application": "From the cutover worktree: git apply --check /tmp/wamn-cutover-comments-prepared/comments.patch; git apply /tmp/wamn-cutover-comments-prepared/comments.patch",
+  "guest_artifact_note": "Both listed WIT files change comment bytes only. The next materializer build must record its actual resulting artifact identity; no claim of byte-identical rebuilt guest output is made."
+}

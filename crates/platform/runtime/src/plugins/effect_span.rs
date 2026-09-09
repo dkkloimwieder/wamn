@@ -408,10 +408,10 @@ pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_
 /// would not cover the await that is the effect.
 ///
 /// The span is emitted through the process's global `tracing` subscriber, which
-/// the fork's `initialize_observability` bridges to OTel and exports over OTLP
+/// the runtime's `initialize_observability` bridges to OTel and exports over OTLP
 /// when `OTEL_*` is set — so it nests under whatever span is current and threads
 /// into that trace. Enriching a host-created span keeps 9.1 wamn-side, with no
-/// fork patch.
+/// runtime patch.
 macro_rules! effect_span {
     (
         $name:literal,

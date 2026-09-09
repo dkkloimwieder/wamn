@@ -346,7 +346,7 @@ impl opentelemetry::propagation::Injector for NodeTraceContext {
 /// by the ratified host-scoped re-root) with no context to send.
 ///
 /// Read through [`tracing_opentelemetry::OpenTelemetrySpanExt`], never
-/// `opentelemetry::global::tracer`: the fork's `initialize_observability`
+/// `opentelemetry::global::tracer`: the runtime's `initialize_observability`
 /// installs the layer but no global tracer provider, so the global tracer is a
 /// silent no-op.
 fn node_trace_context(request: &RouterDriverRequest) -> NodeTraceContext {

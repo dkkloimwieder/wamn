@@ -46,7 +46,7 @@ url = { workspace = true }
 # `global::get_text_map_propagator`, both `cfg(feature = "trace")`, which the
 # trusted HTTP effect needs to write its span onto the outbound wire.
 opentelemetry = { workspace = true, features = ["logs", "metrics", "trace"] }
-# The fork's `initialize_observability` installs a `tracing-opentelemetry` layer
+# The runtime's `initialize_observability` installs a `tracing-opentelemetry` layer
 # but never a global tracer provider, so `global::tracer()` is a silent no-op
 # here. `OpenTelemetrySpanExt::context()` is the only way to read the live span.
 tracing-opentelemetry = { workspace = true }

@@ -2,8 +2,8 @@ package wamn:jetstream@0.1.0;
 
 /// Host-plugin interface for JetStream event consumption + publication (E10).
 ///
-/// WHY A NEW PACKAGE. The only messaging WIT the pinned wasmCloud fork carries
-/// is `wasmcloud:messaging@0.2.0` (core NATS: `broker-message {subject, body,
+/// WHY A NEW PACKAGE. When this interface was introduced, the pinned runtime
+/// carried `wasmcloud:messaging@0.2.0` (core NATS: `broker-message {subject, body,
 /// reply-to}`, `handler.handle-message`, `consumer.{request, publish}`). It has
 /// no ack/nack/term, no durable-consumer config, no pull/fetch, no redelivery
 /// count, no `stream_seq`, and NO HEADERS — so a component cannot set

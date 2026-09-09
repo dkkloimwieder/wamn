@@ -661,7 +661,7 @@ impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
 /// and never saw the effect at all.
 ///
 /// The span is read through `tracing`, never `opentelemetry::global::tracer`:
-/// the fork's `initialize_observability` installs a `tracing-opentelemetry`
+/// the runtime's `initialize_observability` installs a `tracing-opentelemetry`
 /// layer and a propagator but NO global tracer provider, so the global tracer
 /// silently answers with a no-op span.
 ///

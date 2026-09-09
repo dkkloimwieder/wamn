@@ -1,0 +1,11 @@
+{
+  "preparation_only": true,
+  "python_syntax": "pass",
+  "sampler_shell_syntax": "pass",
+  "five_distributed_crd_hashes": "pass",
+  "explicit_crd_defaults_match": "pass",
+  "preserve_unknown_fields_and_scope_drift_refused": "pass",
+  "response_classifications": "pass",
+  "unexpected_response_refusals": 6,
+  "cargo_or_live_execution": false
+}

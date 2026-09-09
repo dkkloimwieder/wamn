@@ -39,7 +39,7 @@ const HOST_LOOPBACK_LISTED_ENV: &str = "SOCKPROBE_HOST_LOOPBACK_LISTED";
 const HOST_LOOPBACK_UNLISTED_ENV: &str = "SOCKPROBE_HOST_LOOPBACK_UNLISTED";
 
 /// The raw-egress denial the policy raises: `access-denied` on the WIT side maps
-/// to `PermissionDenied` in `std` (fork `network.rs` `error_code_from_io`).
+/// to `PermissionDenied` in `std` (runtime `sockets/network.rs` `error_code_from_io`).
 fn is_denied(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::PermissionDenied
 }

@@ -1,6 +1,6 @@
 //! # wamn:logging plugin (S5 — logging capture PoC, docs/archive/p0-exit-criteria.md S5)
 //!
-//! Implements `wasi:logging/logging` for guests, but unlike the vendored
+//! Implements `wasi:logging/logging` for guests, but unlike the native
 //! `TracingLogger` (which only tags the workload/component identity and routes
 //! to `tracing`) this plugin is the **capture path** the S5 gates measure:
 //!
@@ -23,18 +23,18 @@
 //!
 //! This plugin is THE guest-log pipeline: it owns its OWN `SdkLoggerProvider`
 //! (generous batch queue → OTLP gRPC → external collector) rather than reusing the
-//! fork's vendored `observability.rs` logs pipeline. That fork pipeline is
-//! **host-internal tracing only** — its batch queue is fixed at 2048 and its OTLP
+//! runtime's `observability.rs` logs pipeline. That host pipeline is
+//! **host-internal tracing only** — its batch queue defaults to 2048 and its OTLP
 //! filter is tied to `--log-level`, so it exists to ship the HOST's own `tracing`
 //! events, and both limits would bottleneck or misfilter a 10k lines/s stream of
 //! GUEST logs. Keeping the two pipelines separate is deliberate: the host tracing
 //! path and the guest-log path have different back-pressure, sizing, and
-//! filtering needs, and folding guest logs into the fork pipeline would force one
+//! filtering needs, and folding guest logs into the host pipeline would force one
 //! set of knobs on both. So "fold into host observability wiring" (the bead's
 //! delta) is satisfied by construction, not fusion: the provider is built ONCE
 //! from [`WamnLoggingConfig::from_env`] (the `WAMN_LOG_*` knobs, surfaced in the
 //! deploy manifests that run this plugin — the runner + logbench Job), and no
-//! fork edit is required.
+//! upstream edit is required.
 //!
 //! ## Trace context (9.2/9.3)
 //!

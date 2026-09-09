@@ -93,10 +93,10 @@ need, adopt it. When it does not, author a new `wamn:*` package.
 Blobstore adopted `wasmcloud:blobstore@0.1.0` exactly and singly
 (`docs/poc/wms-prep-spec.md:116`).
 
-JetStream authored a new package instead. The contract records the reason. The
-pinned fork's only messaging WIT has no ack, no nack, no term, no durable
-consumers, no redelivery count and no headers. A guest therefore cannot
-participate in stream deduplication
+JetStream authored a new package instead. The contract records the reason. At
+that time, the pinned runtime's messaging WIT had no ack, no nack, no term, no
+durable consumers, no redelivery count and no headers. Guests lacked stream
+deduplication
 (`crates/platform/runtime/wit/deps/wamn-jetstream/package.wit:5-16`). That file
 also states the rule that a new namespace beats a forked one.
 

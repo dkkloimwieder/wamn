@@ -115,7 +115,7 @@ Almost all code here is Rust — consult the `rust-guidelines` skill when writin
 - `test-support/{harness,fixtures,infrastructure}` — shared proof support that is not itself a deployable or proof owner.
 - `deploy/` — tiered (SR8, `deploy/README.md` holds the rules): `infra/` install-once infrastructure, `platform/` production manifests, `gates/` gate/bench Jobs, and `sql/` standalone SQL schemas. The former `poc/` tier was deleted by `wamn-0h0g.12.2` (`3554f140`); `deploy/mvp/` (bootstrap scripts) exists on disk but is not one of the tiers `deploy/README.md` names.
 - `docs/exe-model.md` — the single WIP design authority. `docs/PLAN/PLAN.md` is the non-normative ordering and ambiguity map; Beads and git own status. `docs/operations/build-and-test.md` is the gate of record and the per-bead build and test commands. There is no `docs/archive/`; it was deleted at `ff04842e`.
-- Root `Cargo.toml` pins the `wash-runtime` fork rev in one place (`workspace.dependencies.wash-runtime.rev`).
+- Root `Cargo.toml` pins the direct upstream `wash-runtime` rev in one place (`workspace.dependencies.wash-runtime.rev`).
 
 See `README.md` for a fuller tree and the dev/test/deploy quick commands.
 

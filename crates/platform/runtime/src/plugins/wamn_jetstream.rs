@@ -3,9 +3,9 @@
 //! Built contract: `wit/deps/wamn-jetstream/package.wit`; guest-vendored copies
 //! are drift-guarded by `tests/jetstream_wit_coherence.rs`.
 //!
-//! WHY THIS EXISTS. The only messaging WIT the pinned wasmCloud fork carries is
-//! `wasmcloud:messaging@0.2.0` — core NATS with no ack/nack/term, no durable
-//! consumers, no pull/fetch, no redelivery count, no `stream_seq`, and no
+//! WHY THIS EXISTS. When this plugin was introduced, the pinned runtime's
+//! messaging WIT was `wasmcloud:messaging@0.2.0` — core NATS with no ack/nack/term,
+//! no durable consumers, no pull/fetch, no redelivery count, no `stream_seq`, and no
 //! headers, so a component cannot set `Nats-Msg-Id` and cannot participate in
 //! JetStream dedupe (findings.md E10). This plugin is the host side of a NEW
 //! `wamn:jetstream@0.1.0` package (never a forked `wasmcloud:messaging`) over the

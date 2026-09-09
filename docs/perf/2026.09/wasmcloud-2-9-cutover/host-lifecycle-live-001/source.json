@@ -1,0 +1,8 @@
+{
+  "source": "9d54245c0b0e7af43bfe43085378877a88bf62d0",
+  "source_status": "",
+  "started": "2026-09-09T14:57:59.806934+00:00",
+  "binary_sha256": "982ca60867367ed446f2a989aca157c3ea7df2b0090cd31cceddc0f8cfa71973",
+  "nats_binary": "/tmp/wamn-cutover-nats-bin-20260909/nats-server",
+  "command": "cargo test -p wamn-host --test native_lifecycle_live --locked --offline rebuilt_host_probes_signals_and_scheduler_recovery -- --ignored --exact --nocapture"
+}

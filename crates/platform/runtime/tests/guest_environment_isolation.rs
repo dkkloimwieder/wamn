@@ -47,7 +47,7 @@ use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder};
 
-/// The component id the fork's context builder is handed. Nothing keys on it —
+/// The component id the runtime's context builder is handed. Nothing keys on it —
 /// this test binds no workload and resolves no template.
 const GUEST_ID: &str = "guest-environment-isolation";
 
@@ -124,10 +124,10 @@ fn envprobe_wat() -> String {
     )
 }
 
-/// Instantiate the guest through the FORK'S OWN context builder and return the
+/// Instantiate the guest through the runtime's own context builder and return the
 /// number of environment entries it observed.
 ///
-/// `Ctx::builder(..).build()` with no `with_wasi_ctx` is the fork's FALLBACK
+/// `Ctx::builder(..).build()` with no `with_wasi_ctx` is the runtime's FALLBACK
 /// path — the one `wamn-mrfr` pinned as text and the one every executor guest
 /// takes, because the executor's context builder never calls `with_wasi_ctx`.
 /// Building a `WasiCtx` here instead would prove something about this test's
@@ -212,7 +212,7 @@ async fn a_guest_reads_the_environment_its_context_carries() {
     );
 }
 
-/// The property: taking the fork's FALLBACK context — the path every executor
+/// The property: taking the runtime's FALLBACK context — the path every executor
 /// guest takes, because the executor's context builder never calls
 /// `with_wasi_ctx` — a guest observes NOTHING.
 #[tokio::test]
@@ -230,7 +230,7 @@ async fn a_guest_never_sees_the_host_process_environment() {
 
     assert_eq!(
         observed, 0,
-        "a guest instantiated through the fork's own fallback context observed \
+        "a guest instantiated through the runtime's own fallback context observed \
          {observed} environment entries while the host process held \
          {host_entries}; it must observe NONE. In production that host \
          environment carries the credentialed WAMN_PG_URL that \

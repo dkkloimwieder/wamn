@@ -816,7 +816,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .copy_environment(true)
                 .build(),
         ),
-        // S5: the custom wamn:logging plugin replaces the vendored TracingLogger
+        // S5: the custom wamn:logging plugin replaces the native TracingLogger
         // — it enriches (host-trusted tenant/project + guest flow/run/node),
         // owns a bounded front queue + drop counter, and ships enriched OTel log
         // records to the collector. Both claim wasi:logging/logging, so exactly

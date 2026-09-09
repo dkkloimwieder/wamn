@@ -1432,7 +1432,7 @@ impl WamnPostgres {
     /// component id inherits the prior claim. The lifecycle pool maps are
     /// deliberately NOT touched: they are keyed by PROJECT (shared and memoized
     /// within each lifecycle for the plugin's lifetime), not by component id.
-    /// Keyed like the fork's builtin postgres plugin — a workload's component ids
+    /// Keyed like the runtime's builtin postgres plugin — a workload's component ids
     /// are prefixed by the workload id — so everything NOT under it is retained;
     /// an unknown workload id is a no-op.
     pub(super) fn clear_component_claims(&self, workload_id: &str) {
@@ -1629,7 +1629,7 @@ impl WamnPostgres {
     /// when its store was constructed
     /// (`crates/platform/runtime/src/plugins/connection_http.rs:77`). That value
     /// is NOT rebound at checkout — the store's `Ctx.plugins` map is private to
-    /// the fork, so nothing outside it can swap the plugin — while every other
+    /// wash-runtime, so nothing outside it can swap the plugin — while every other
     /// claim on this path IS
     /// ([`bind_session_claims`](Self::bind_session_claims)). A pooled instance
     /// serving tenant B would therefore carry tenant A's frozen value here and
@@ -2972,7 +2972,7 @@ mod tests {
     // R31 — unbind reaps every per-component claim registry plus the closed
     // workload-authority discriminator while leaving another workload's
     // component untouched; the project-keyed `pools` map is never touched here.
-    // Keyed by the workload-id prefix (the fork's builtin convention). An unknown
+    // Keyed by the workload-id prefix (the runtime's builtin convention). An unknown
     // workload id is a no-op.
     #[test]
     fn clear_component_claims_reaps_all_registries_for_the_workload() {

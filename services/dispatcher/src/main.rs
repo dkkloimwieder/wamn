@@ -26,8 +26,8 @@ struct Cli {
 }
 
 /// The dispatcher's minimal OTel providers — it is the one service
-/// artifact that links no runtime (SR9), so it cannot reuse the fork's global
-/// providers. Traces and metrics share the same `OTEL_*` activation and
+/// artifact that links no runtime (SR9), so it cannot call the runtime's
+/// observability initializer. Traces and metrics share the same `OTEL_*` activation and
 /// shutdown discipline as `wash_runtime::observability`; no OTel environment
 /// leaves only stderr formatting installed.
 struct Providers {
