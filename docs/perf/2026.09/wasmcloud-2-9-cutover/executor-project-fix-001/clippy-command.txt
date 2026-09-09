@@ -1,0 +1,1 @@
+cargo clippy -p wamn-executor --all-targets --locked --offline

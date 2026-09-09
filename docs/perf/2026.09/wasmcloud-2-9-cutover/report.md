@@ -180,7 +180,7 @@ A successful publication must return both `.success` and `.data.success`, with t
 Publishers select their existing private credential files through `DOCKER_CONFIG`.
 Upstream `oci.rs` uses `docker_credential` 1.4.0, which reads `config.json` and accepts the existing username/password fields.
 This replaces the unsupported legacy credential environment variables without passing passwords in command arguments.
-The actual authenticated publication proof remains unexecuted.
+The [first deployed run](live-receiving-001/journey/flow-http-push.json) later records successful authenticated publication through this path.
 
 The first [upstream gate](upstream-gate-001/release-check.log) exits 101 because generated Wasm fixtures are absent.
 Its formatter passes, and all four isolated Git-template tests pass.
@@ -317,3 +317,25 @@ The [correction](wms-evidence-labels-001/wms-evidence-labels.patch) removes thos
 It names the actual composed move, released operations, winning label object, and idle materializer scope.
 The [acceptance map](wms-evidence-labels-001/acceptance-map.json) cites the existing assertions for each replacement.
 Shell syntax passes, and no new WMS live result is claimed.
+
+
+## Executor project binding
+
+The [second full Receiving run](live-receiving-002/exit-code.txt) exits 1 at clean source `c28f651b`.
+Its [production route test](live-receiving-002/journey/production-route.log) passes once, with no ignored tests and 65 other cases filtered.
+Both native OCI publications succeed, and the [owned cleanup receipt](live-receiving-002/journey/cleanup.receipt) passes.
+The [artifact comparison](live-receiving-002/analysis.json) records four unchanged guest artifacts despite the WIT comment edits.
+
+The real executor reports `release_closure` throughout the existing 45-second startup allowance.
+Its [log](live-receiving-002/journey/executor-SIGTERM.log) repeatedly reports missing `ExecutorPlatform` credentials for project `receiving`.
+The executor registers its credentials under `default`, then requests them under its declared project.
+The same composition exists at baseline `dfa1c318`.
+Bead `wamn-0h0g.2.7.6` owns this defect.
+
+The fix uses the existing `from_env_for_project` method that the host already uses.
+It preserves each authority class and does not add a default-project alias.
+All 12 [executor unit tests](executor-project-fix-001/executor-tests.log) pass.
+The [existing project tests](executor-project-fix-001/declared-project-tests.log) and [duplicate-source refusal](executor-project-fix-001/duplicate-source-test.log) also pass.
+Scoped [Clippy](executor-project-fix-001/clippy-exit-code.txt) exits 0 with warnings.
+The real executor signal cases still require a new live run.
+The failed run does not reach current telemetry, startup bursts, installed CRDs, or operator recovery.

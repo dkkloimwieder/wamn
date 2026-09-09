@@ -34,8 +34,7 @@ use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProductionClaimResult, ProductionCompletionResult,
     ProductionLeaseRenewal, ProductionReapResult, ProductionRouterAction, ReleaseIdentity,
-    SessionClaims, WamnPostgres, WamnPostgresConfig, production_router_action,
-    production_router_result_action,
+    SessionClaims, WamnPostgres, production_router_action, production_router_result_action,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
@@ -406,13 +405,15 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .ok()
         .filter(|ttl| *ttl > 0)
         .context("--lease-ttl-ms must be a positive signed 64-bit integer")?;
-    let mut postgres_config = WamnPostgresConfig::from_env();
-    postgres_config.credentials = Some(executor_credentials(
+    let postgres_credentials = executor_credentials(
         database_url,
         executor_platform_database_url,
         http_admitter_database_url,
-    ));
-    let postgres = Arc::new(WamnPostgres::new(postgres_config)?);
+    );
+    let postgres = Arc::new(WamnPostgres::from_env_for_project(
+        &args.project,
+        Some(postgres_credentials),
+    )?);
     postgres.register_pool_metrics();
     postgres.bind_session_claims(
         QUEUE_CLAIM_SCOPE,

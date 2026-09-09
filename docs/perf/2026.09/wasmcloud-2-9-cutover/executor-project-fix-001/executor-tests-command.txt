@@ -1,0 +1,1 @@
+cargo test -p wamn-executor --lib --locked --offline -- --include-ignored --test-threads=1

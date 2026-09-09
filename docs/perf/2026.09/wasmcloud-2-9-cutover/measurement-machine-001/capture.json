@@ -1,0 +1,22 @@
+{
+  "captured": "2026-09-09T15:51:19.161619+00:00",
+  "scope": "Read-only machine identity during live-receiving-002 fixture setup; these values are not an idle-load sample.",
+  "commands": [
+    {
+      "argv": [
+        "lscpu",
+        "-J"
+      ],
+      "exit_code": 0,
+      "output": "cpu.json"
+    },
+    {
+      "argv": [
+        "uname",
+        "-a"
+      ],
+      "exit_code": 0,
+      "output": "kernel.txt"
+    }
+  ]
+}

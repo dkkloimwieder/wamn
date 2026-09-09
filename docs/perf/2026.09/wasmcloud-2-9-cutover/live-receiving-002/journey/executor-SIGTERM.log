@@ -1,0 +1,788 @@
+2026-09-09T15:52:08.108630Z  INFO host memory resolved max_guest_memory=45.7GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-09T15:52:08.115038Z  INFO executor router queue driver ready runner=cutover-sigterm tenant=receiving-route-auth package_count=2 environment=dev effective_release_id=1 manifest_digest=sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94 wiring_cache_capacity=1024 lease_ttl_ms=30000
+2026-09-09T15:52:08.115175Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.115279Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:08.115310Z  INFO probe server listening addr=127.0.0.1:48669
+2026-09-09T15:52:08.115335Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.115415Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:08.115527Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.115637Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:08.115672Z  WARN executor release closure is not ready generation=0 attempts=1 refusal="release-readiness-check-failed"
+2026-09-09T15:52:08.367250Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.367250Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.367320Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:08.367326Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:08.618697Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.618759Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:08.618698Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.618810Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:08.870182Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.870182Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:08.870254Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:08.870254Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:09.122287Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:09.122287Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:09.122362Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:09.122363Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:09.373998Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:09.373998Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:09.374049Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:09.374050Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:09.624981Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:09.624981Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:09.625041Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:09.625042Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:09.875792Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:09.875889Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:09.876052Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:09.876113Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:10.116870Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.116952Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:10.116966Z  WARN executor release closure is not ready generation=0 attempts=2 refusal="release-readiness-check-failed"
+2026-09-09T15:52:10.127146Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.127177Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:10.127199Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.127236Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:10.379315Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.379315Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.379369Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:10.379374Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:10.631115Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.631151Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.631175Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:10.631189Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:10.882594Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.882594Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:10.882654Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:10.882657Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:11.134333Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:11.134329Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:11.134381Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:11.134381Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:11.386128Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:11.386127Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:11.386183Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:11.386186Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:11.637951Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:11.637985Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:11.638014Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:11.638035Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:11.888501Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:11.888501Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:11.888566Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:11.888568Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:12.117992Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.118058Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:12.118069Z  WARN executor release closure is not ready generation=0 attempts=3 refusal="release-readiness-check-failed"
+2026-09-09T15:52:12.139437Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.139437Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.139494Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:12.139495Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:12.391212Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.391212Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.391266Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:12.391267Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:12.642878Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.642878Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.642938Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:12.642938Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:12.894372Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.894381Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:12.894429Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:12.894430Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:13.146220Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:13.146222Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:13.146286Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:13.146287Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:13.397772Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:13.397772Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:13.397826Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:13.397827Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:13.649318Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:13.649318Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:13.649374Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:13.649374Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:13.901254Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:13.901254Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:13.901315Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:13.901318Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:14.118535Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.118602Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:14.118618Z  WARN executor release closure is not ready generation=0 attempts=4 refusal="release-readiness-check-failed"
+2026-09-09T15:52:14.153103Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.153103Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.153155Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:14.153156Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:14.405282Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.405282Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.405350Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:14.405350Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:14.656899Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.656899Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.656966Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:14.656967Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:14.907404Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.907404Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:14.907475Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:14.907475Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:15.158889Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:15.158890Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:15.158956Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:15.158952Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:15.409661Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:15.409661Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:15.409718Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:15.409720Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:15.660825Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:15.660825Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:15.660876Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:15.660877Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:15.911441Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:15.911441Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:15.911511Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:15.911513Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:16.119518Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.119584Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:16.119597Z  WARN executor release closure is not ready generation=0 attempts=5 refusal="release-readiness-check-failed"
+2026-09-09T15:52:16.163057Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.163057Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.163116Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:16.163117Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:16.413805Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.413805Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.413896Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:16.413901Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:16.664381Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.664381Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.664442Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:16.664443Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:16.915944Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.915944Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:16.916011Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:16.916012Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:17.166722Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:17.166729Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:17.166781Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:17.166783Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:17.417699Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:17.417699Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:17.417763Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:17.417764Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:17.668738Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:17.668738Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:17.668811Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:17.668812Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:17.919633Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:17.919633Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:17.919686Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:17.919688Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:18.120886Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.120954Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:18.120966Z  WARN executor release closure is not ready generation=0 attempts=6 refusal="release-readiness-check-failed"
+2026-09-09T15:52:18.170468Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.170516Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:18.170514Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.170551Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:18.421347Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.421347Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.421408Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:18.421409Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:18.672543Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.672543Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.672610Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:18.672619Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:18.924094Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.924101Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:18.924141Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:18.924145Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:19.175531Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:19.175529Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:19.175587Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:19.175587Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:19.426401Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:19.426422Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:19.426450Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:19.426459Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:19.677555Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:19.677555Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:19.677609Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:19.677608Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:19.928540Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:19.928540Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:19.928599Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:19.928605Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:20.121500Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.121610Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:20.121645Z  WARN executor release closure is not ready generation=0 attempts=7 refusal="release-readiness-check-failed"
+2026-09-09T15:52:20.180088Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.180107Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.180136Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:20.180142Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:20.431643Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.431643Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.431694Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:20.431694Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:20.683113Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.683113Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.683170Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:20.683170Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:20.935237Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.935245Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:20.935287Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:20.935289Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:21.186576Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:21.186576Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:21.186634Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:21.186637Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:21.438244Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:21.438244Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:21.438315Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:21.438316Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:21.689415Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:21.689415Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:21.689475Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:21.689477Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:21.940506Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:21.940506Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:21.940554Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:21.940557Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:22.123391Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.123453Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:22.123465Z  WARN executor release closure is not ready generation=0 attempts=8 refusal="release-readiness-check-failed"
+2026-09-09T15:52:22.191946Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.191946Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.191998Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:22.191998Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:22.442805Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.442818Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.442880Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:22.442886Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:22.694275Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.694282Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.694327Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:22.694329Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:22.945658Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.945657Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:22.945709Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:22.945710Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:23.196570Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:23.196565Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:23.196619Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:23.196621Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:23.448094Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:23.448094Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:23.448154Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:23.448157Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:23.699859Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:23.699859Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:23.699906Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:23.699912Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:23.950734Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:23.950734Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:23.950794Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:23.950808Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:24.124476Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.124541Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:24.124553Z  WARN executor release closure is not ready generation=0 attempts=9 refusal="release-readiness-check-failed"
+2026-09-09T15:52:24.201679Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.201696Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.201723Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:24.201730Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:24.452603Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.452630Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.452665Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:24.452667Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:24.704462Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.704462Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.704526Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:24.704528Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:24.956269Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.956269Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:24.956347Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:24.956351Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:25.207852Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:25.207852Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:25.207905Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:25.207904Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:25.458721Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:25.458721Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:25.458777Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:25.458780Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:25.709433Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:25.709433Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:25.709494Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:25.709495Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:25.960874Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:25.960874Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:25.960940Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:25.960941Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:26.125398Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.125456Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:26.125467Z  WARN executor release closure is not ready generation=0 attempts=10 refusal="release-readiness-check-failed"
+2026-09-09T15:52:26.212307Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.212307Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.212358Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:26.212359Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:26.463947Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.463947Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.464022Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:26.464023Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:26.715299Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.715299Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.715352Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:26.715360Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:26.967012Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.967012Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:26.967061Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:26.967064Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:27.217985Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:27.218004Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:27.218030Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:27.218039Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:27.468389Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:27.468390Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:27.468441Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:27.468442Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:27.719314Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:27.719314Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:27.719365Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:27.719367Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:27.970843Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:27.970843Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:27.970903Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:27.970905Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:28.127057Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.127117Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:28.127128Z  WARN executor release closure is not ready generation=0 attempts=11 refusal="release-readiness-check-failed"
+2026-09-09T15:52:28.221576Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.221575Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.221632Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:28.221635Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:28.472714Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.472714Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.472794Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:28.472794Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:28.723336Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.723336Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.723393Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:28.723394Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:28.974798Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.974798Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:28.974866Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:28.974872Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:29.225454Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:29.225454Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:29.225512Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:29.225518Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:29.476868Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:29.476868Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:29.476920Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:29.476920Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:29.727261Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:29.727274Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:29.727309Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:29.727322Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:29.978494Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:29.978494Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:29.978559Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:29.978559Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:30.128964Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.129058Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:30.129074Z  WARN executor release closure is not ready generation=0 attempts=12 refusal="release-readiness-check-failed"
+2026-09-09T15:52:30.230317Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.230317Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.230372Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:30.230381Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:30.481840Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.481840Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.481895Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:30.481902Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:30.732892Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.732889Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.732940Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:30.732941Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:30.984351Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.984351Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:30.984403Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:30.984404Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:31.236151Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:31.236151Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:31.236211Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:31.236213Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:31.487523Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:31.487526Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:31.487574Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:31.487583Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:31.738443Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:31.738447Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:31.738496Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:31.738496Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:31.989505Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:31.989552Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:31.989577Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:31.989601Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:32.129781Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.129843Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:32.129855Z  WARN executor release closure is not ready generation=0 attempts=13 refusal="release-readiness-check-failed"
+2026-09-09T15:52:32.240398Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.240416Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.240448Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:32.240452Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:32.491915Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.491915Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.491979Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:32.491979Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:32.743137Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.743137Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.743192Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:32.743194Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:32.994714Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.994714Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:32.994773Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:32.994775Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:33.246237Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:33.246237Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:33.246283Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:33.246289Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:33.497514Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:33.497543Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:33.497560Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:33.497582Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:33.748644Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:33.748644Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:33.748703Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:33.748705Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:33.999673Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:33.999673Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:33.999738Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:33.999739Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:34.131270Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:34.131364Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:34.131385Z  WARN executor release closure is not ready generation=0 attempts=14 refusal="release-readiness-check-failed"
+2026-09-09T15:52:34.251128Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:34.251128Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:34.251195Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:34.251201Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:34.503170Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:34.503257Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:34.503408Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:34.503462Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:34.754972Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:34.754972Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:34.755037Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:34.755038Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:35.006221Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:35.006221Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:35.006274Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:35.006274Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:35.257579Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:35.257579Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:35.257648Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:35.257650Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:35.508768Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:35.508768Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:35.508828Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:35.508830Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:35.759736Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:35.759736Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:35.759790Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:35.759790Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:36.011238Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.011256Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.011284Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:36.011292Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:36.132676Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.132756Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:36.132769Z  WARN executor release closure is not ready generation=0 attempts=15 refusal="release-readiness-check-failed"
+2026-09-09T15:52:36.263216Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.263216Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.263272Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:36.263280Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:36.515281Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.515281Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.515337Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:36.515340Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:36.767014Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.767014Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:36.767080Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:36.767090Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:37.017869Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:37.017869Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:37.017914Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:37.017915Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:37.268984Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:37.268984Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:37.269036Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:37.269037Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:37.519648Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:37.519648Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:37.519701Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:37.519704Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:37.770543Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:37.770535Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:37.770601Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:37.770602Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:38.022005Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.022005Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.022057Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:38.022058Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:38.134357Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.134419Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:38.134431Z  WARN executor release closure is not ready generation=0 attempts=16 refusal="release-readiness-check-failed"
+2026-09-09T15:52:38.273197Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.273197Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.273264Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:38.273266Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:38.524993Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.524993Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.525049Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:38.525049Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:38.775425Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.775425Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:38.775489Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:38.775489Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:39.027067Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:39.027063Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:39.027113Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:39.027112Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:39.278071Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:39.278071Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:39.278140Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:39.278143Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:39.529808Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:39.529808Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:39.529867Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:39.529869Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:39.780693Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:39.780693Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:39.780755Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:39.780770Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:40.031398Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.031398Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.031447Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:40.031448Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:40.136310Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.136390Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:40.136404Z  WARN executor release closure is not ready generation=0 attempts=17 refusal="release-readiness-check-failed"
+2026-09-09T15:52:40.283358Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.283358Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.283421Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:40.283420Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:40.534398Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.534398Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.534448Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:40.534449Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:40.786048Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.786048Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:40.786104Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:40.786106Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:41.036758Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:41.036758Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:41.036816Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:41.036816Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:41.287407Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:41.287407Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:41.287473Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:41.287474Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:41.538490Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:41.538490Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:41.538552Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:41.538554Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:41.790323Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:41.790323Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:41.790379Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:41.790380Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:42.041626Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.041626Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.041691Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:42.041693Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:42.137927Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.138004Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:42.138019Z  WARN executor release closure is not ready generation=0 attempts=18 refusal="release-readiness-check-failed"
+2026-09-09T15:52:42.293012Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.293012Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.293064Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:42.293067Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:42.543874Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.543874Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.543924Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:42.543925Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:42.794504Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.794517Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:42.794552Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:42.794553Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:43.046072Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:43.046072Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:43.046134Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:43.046135Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:43.297973Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:43.297974Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:43.298034Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:43.298056Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:43.548992Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:43.548992Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:43.549042Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:43.549045Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:43.799867Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:43.799865Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:43.799914Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:43.799921Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:44.051028Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.051028Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.051111Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:44.051111Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:44.138443Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.138522Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:44.138535Z  WARN executor release closure is not ready generation=0 attempts=19 refusal="release-readiness-check-failed"
+2026-09-09T15:52:44.301396Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.301396Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.301454Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:44.301456Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:44.552984Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.552984Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.553042Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:44.553043Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:44.803684Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.803698Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:44.803734Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:44.803735Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:45.055061Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:45.055061Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:45.055132Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:45.055136Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:45.306803Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:45.306803Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:45.306861Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:45.306862Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:45.557858Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:45.557858Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:45.557917Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:45.557919Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:45.808547Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:45.808547Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:45.808599Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:45.808600Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:46.060085Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.060085Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.060156Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:46.060157Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:46.139647Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.139754Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:46.139778Z  WARN executor release closure is not ready generation=0 attempts=20 refusal="release-readiness-check-failed"
+2026-09-09T15:52:46.311737Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.311737Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.311789Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:46.311794Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:46.562456Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.562464Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.562502Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:46.562504Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:46.813410Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.813405Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:46.813464Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:46.813462Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:47.064430Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:47.064487Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:47.064582Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:47.064610Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:47.316090Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:47.316102Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:47.316141Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:47.316143Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:47.567683Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:47.567683Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:47.567735Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:47.567738Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:47.819276Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:47.819276Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:47.819330Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:47.819336Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:48.070825Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.070829Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.070905Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:48.070921Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:48.141351Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.141431Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:48.141445Z  WARN executor release closure is not ready generation=0 attempts=21 refusal="release-readiness-check-failed"
+2026-09-09T15:52:48.322325Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.322327Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.322374Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:48.322374Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:48.573718Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.573718Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.573769Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:48.573772Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:48.824416Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.824416Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:48.824471Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:48.824485Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:49.075572Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:49.075572Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:49.075657Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:49.075666Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:49.327113Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:49.327113Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:49.327164Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:49.327173Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:49.578736Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:49.578736Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:49.578783Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:49.578784Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:49.829417Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:49.829417Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:49.829466Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:49.829468Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:50.080941Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.080943Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.080993Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:50.080995Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:50.142832Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.142911Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:50.142922Z  WARN executor release closure is not ready generation=0 attempts=22 refusal="release-readiness-check-failed"
+2026-09-09T15:52:50.331919Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.331919Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.331974Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:50.331983Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:50.582811Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.582811Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.582868Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:50.582866Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:50.833451Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.833451Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:50.833503Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:50.833503Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:51.085129Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:51.085129Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:51.085204Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:51.085206Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:51.336644Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:51.336644Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:51.336735Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:51.336735Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:51.588394Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:51.588394Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:51.588467Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:51.588469Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:51.840280Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:51.840280Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:51.840337Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:51.840340Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:52.091863Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.091863Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.091912Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:52.091913Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:52.143937Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.144027Z  WARN release readiness evaluation failed error=preload release wiring "purchase_order_get" version 1: PgError::ConnectionUnavailable
+2026-09-09T15:52:52.144045Z  WARN executor release closure is not ready generation=0 attempts=23 refusal="release-readiness-check-failed"
+2026-09-09T15:52:52.342471Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.342471Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.342541Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:52.342542Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:52.594052Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.594050Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.594108Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:52.594108Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
+2026-09-09T15:52:52.844767Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.844767Z  WARN wamn.postgres.acquire{wamn.authority_class="executor-platform"}: wamn:postgres: no credentials for project project="receiving" class="executor-platform" lifecycle="platform"
+2026-09-09T15:52:52.844841Z  WARN wiring activation platform-pool LISTEN failed; reconnecting error=PgError::ConnectionUnavailable
+2026-09-09T15:52:52.844841Z  WARN executor queue turn failed; retrying error=production claim checkout janitor connection failed: PgError::ConnectionUnavailable
