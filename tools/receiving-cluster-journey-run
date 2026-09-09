@@ -1553,17 +1553,16 @@ declare -A workload_spec=(
 render_workload_manifest workload_spec "$workload_manifest"
 
 if [[ "$session_host_proof" == true ]]; then
-  # Two replicas must land on two independently identified production hosts.
-  # A load-balanced Service response alone cannot establish that fact.
+  # The native scheduler does not spread replicas. Each arm pins two
+  # one-replica deployments to its two observed production host processes.
   run "${kube[@]}" create --dry-run=client -f "$workload_manifest" -o json \
     >"$work_dir/session-workload-source.json"
   jq -e 'if .kind == "List" and (.items | length) == 2 and
     ([.items[] | select(.kind == "Service" and .metadata.name == "flow-http")] | length) == 1 and
     ([.items[] | select(.kind == "WorkloadDeployment" and .metadata.name == "flow-http")] | length) == 1
-    then (.items[] | select(.kind == "WorkloadDeployment") | .spec.replicas) = 2
+    then .
     else error("session workload render must contain exactly its Service and WorkloadDeployment") end' \
-    "$work_dir/session-workload-source.json" >"$evidence_dir/session-workload.json"
-  run "${kube[@]}" apply -f "$evidence_dir/session-workload.json"
+    "$work_dir/session-workload-source.json" >"$evidence_dir/session-workload-source.json"
   printf '%s\n' "$head" >"$evidence_dir/session-source-head.txt"
   sha256sum Cargo.lock Dockerfile tools/receiving-cluster-journey-run \
     tests/integration/src/host_session_proof.rs tests/integration/src/route_authentication_live.rs \
@@ -1580,18 +1579,62 @@ if [[ "$session_host_proof" == true ]]; then
       -c identity -- /usr/local/bin/wamn-identity "$@" >"$evidence_dir/$receipt.json"
   }
 
+  session_pin_workloads() {
+    local stage=$1
+    run "${kube[@]}" -n "$namespace" get pods -l "$host_selector" -o json \
+      >"$evidence_dir/$stage-pin-pods.json" || return 1
+    run "${kube[@]}" -n "$system_namespace" get hosts -l hostgroup=default -o json \
+      >"$evidence_dir/$stage-pin-hosts.json" || return 1
+    jq -en --arg ns "$namespace" --arg image "$host_image" --arg digest "$host_runtime_digest" \
+      --slurpfile pods "$evidence_dir/$stage-pin-pods.json" \
+      --slurpfile hosts "$evidence_dir/$stage-pin-hosts.json" '
+      [$pods[0].items[] | select(.metadata.deletionTimestamp == null)] as $pods |
+      if ($pods | length) != 2 or (all($pods[];
+        .status.phase == "Running" and
+        any(.spec.containers[]; .name == "host" and .image == $image) and
+        any(.status.containerStatuses[]?; .name == "host" and .ready == true and
+          ((.imageID // "") | endswith($digest)))) | not)
+      then error("two ready production host Pods are required") else
+        [$pods[] | . as $pod | $hosts[0].items[] |
+          select(.metadata.deletionTimestamp == null and .environment == $ns and .httpPort == 80 and
+            (.hostId | length) > 0 and
+            (.hostname == $pod.metadata.name or .hostname == $pod.status.podIP) and
+            any(.status.conditions[]?; .type == "Ready" and .status == "True")) |
+          {host_id:.hostId,pod_uid:$pod.metadata.uid,pod_name:$pod.metadata.name,pod_ip:$pod.status.podIP}] |
+        if length == 2 and (map(.host_id) | unique | length) == 2 and
+          (map(.pod_uid) | unique | length) == 2 and (map(.pod_ip) | unique | length) == 2
+        then sort_by(.pod_name) | to_entries |
+          map(.value + {deployment:("flow-http-session-" + (if .key == 0 then "a" else "b" end))})
+        else error("two distinct ready Host records are required") end
+      end
+    ' >"$evidence_dir/$stage-pins.json" || return 1
+    jq --slurpfile pins "$evidence_dir/$stage-pins.json" '
+      (.items[] | select(.kind == "WorkloadDeployment")) as $template |
+      .items = [(.items[] | select(.kind == "Service")),
+        ($pins[0][] | . as $pin | $template |
+          .metadata.name = $pin.deployment | .spec.replicas = 1 |
+          .spec.template.spec.hostId = $pin.host_id)]
+    ' "$evidence_dir/session-workload-source.json" >"$evidence_dir/$stage-workload.json" || return 1
+    run "${kube[@]}" apply -f "$evidence_dir/$stage-workload.json"
+  }
+
   session_host_endpoints() {
-    local stage=$1 replica_uid
-    run "${kube[@]}" -n "$namespace" get workloaddeployment flow-http -o json \
-      >"$evidence_dir/$stage-workload-deployment.json" || return 1
-    jq -e '.spec.replicas == 2 and .status.currentReplicas == 2 and
-      .status.replicas.expected == 2 and .status.replicas.current == 2 and
-      .status.replicas.ready == 2 and (.status.replicas.unavailable // 0) == 0' \
-      "$evidence_dir/$stage-workload-deployment.json" >/dev/null || return 1
-    run "${kube[@]}" -n "$namespace" get workloadreplicaset \
-      "$(jq -er '.status.currentReplicaSet.name' "$evidence_dir/$stage-workload-deployment.json")" \
-      -o json >"$evidence_dir/$stage-workload-replicaset.json" || return 1
-    replica_uid=$(jq -er '.metadata.uid' "$evidence_dir/$stage-workload-replicaset.json") || return 1
+    local stage=$1
+    local -a replica_names
+    run "${kube[@]}" -n "$namespace" get workloaddeployment \
+      flow-http-session-a flow-http-session-b -o json \
+      >"$evidence_dir/$stage-workload-deployments.json" || return 1
+    jq -e '(.items | length) == 2 and all(.items[];
+      .spec.replicas == 1 and .status.currentReplicas == 1 and
+      .status.replicas.expected == 1 and .status.replicas.current == 1 and
+      .status.replicas.ready == 1 and (.status.replicas.unavailable // 0) == 0 and
+      (.status.currentReplicaSet.name | type == "string" and length > 0) and
+      any(.status.conditions[]?; .type == "Ready" and .status == "True"))' \
+      "$evidence_dir/$stage-workload-deployments.json" >/dev/null || return 1
+    mapfile -t replica_names < <(jq -r '.items[].status.currentReplicaSet.name' \
+      "$evidence_dir/$stage-workload-deployments.json")
+    run "${kube[@]}" -n "$namespace" get workloadreplicaset "${replica_names[@]}" \
+      -o json >"$evidence_dir/$stage-workload-replicasets.json" || return 1
     run "${kube[@]}" -n "$namespace" get workloads -o json \
       >"$evidence_dir/$stage-workloads.json" || return 1
     run "${kube[@]}" -n "$namespace" get pods -l "$host_selector" -o json \
@@ -1603,36 +1646,65 @@ if [[ "$session_host_proof" == true ]]; then
     run "${kube[@]}" -n "$namespace" get endpointslices \
       -l 'kubernetes.io/service-name=flow-http,wasmcloud.dev/route-manager=true' -o json \
       >"$evidence_dir/$stage-endpointslices.json" || return 1
-    jq -en --arg ns "$namespace" --arg rs "$replica_uid" --arg image "$host_image" \
+    jq -en --arg ns "$namespace" --arg image "$host_image" --arg component "$flow_http_ref" \
       --arg digest "$host_runtime_digest" --arg route "$(jq -er '.route_path' "$session_fixture")" \
+      --slurpfile pins "$evidence_dir/$stage-pins.json" \
+      --slurpfile deployments "$evidence_dir/$stage-workload-deployments.json" \
+      --slurpfile replicasets "$evidence_dir/$stage-workload-replicasets.json" \
       --slurpfile work "$evidence_dir/$stage-workloads.json" \
       --slurpfile pods "$evidence_dir/$stage-host-pods.json" \
       --slurpfile hosts "$evidence_dir/$stage-hosts.json" \
       --slurpfile slices "$evidence_dir/$stage-endpointslices.json" \
       --slurpfile service "$evidence_dir/$stage-service.json" '
-      [$work[0].items[] | select(any(.metadata.ownerReferences[]?; .uid == $rs))] as $work |
-      [$hosts[0].items[] | select(.environment == $ns)] as $hosts |
+      [$deployments[0].items[] | . as $deployment |
+        $replicasets[0].items[] | select(.metadata.name == $deployment.status.currentReplicaSet.name and
+          any(.metadata.ownerReferences[]?; .kind == "WorkloadDeployment" and .controller == true and
+            .uid == $deployment.metadata.uid and .name == $deployment.metadata.name)) |
+        . as $replicaset | $work[0].items[] |
+        select(any(.metadata.ownerReferences[]?; .kind == "WorkloadReplicaSet" and .controller == true and
+          .uid == $replicaset.metadata.uid and .name == $replicaset.metadata.name)) |
+        {deployment:$deployment,replicaset:$replicaset,workload:.}] as $placements |
       [$slices[0].items[].endpoints[].addresses[]] as $addresses |
-      if ($work | length) != 2 or ($work | map(.status.hostId) | unique | length) != 2 or
-         ($pods[0].items | length) != 2 or ($hosts | length) != 2 or
+      if ($placements | length) != 2 or ($placements | map(.deployment.metadata.uid) | unique | length) != 2 or
+         ($placements | map(.replicaset.metadata.uid) | unique | length) != 2 or
+         ($placements | map(.workload.metadata.uid) | unique | length) != 2 or
+         ($placements | map(.workload.status.hostId) | unique | length) != 2 or
          ($addresses | length) != 2 or ($addresses | unique | length) != 2 or
-         (all($work[]; .status.environment == $ns and
-           (.status.conditions as $conditions | all(["Config","HostSelection","Placement","Sync","Ready"][];
+         (all($placements[];
+           .deployment.metadata.namespace == $ns and .replicaset.metadata.namespace == $ns and
+           .workload.metadata.namespace == $ns and .workload.status.environment == $ns and
+           .replicaset.spec.replicas == 1 and
+           (.deployment.spec.template.spec.components | length) == 1 and
+           .deployment.spec.template.spec.components[0].image == $component and
+           (.replicaset.spec.template.spec.components | length) == 1 and
+           .replicaset.spec.template.spec.components[0].image == $component and
+           (.workload.spec.components | length) == 1 and .workload.spec.components[0].image == $component and
+           (.workload.status.conditions as $conditions | all(["Config","HostSelection","Placement","Sync","Ready"][];
              . as $type | any($conditions[]?; .type == $type and .status == "True")))) | not) or
          (all($slices[0].items[]; .addressType == "IPv4" and
            any(.metadata.ownerReferences[]?; .uid == $service[0].metadata.uid and .kind == "Service" and .controller == true) and
            (.ports | length) == 1 and .ports[0].port == 80 and .ports[0].protocol == "TCP" and
            all(.endpoints[]; .conditions.ready == true and .conditions.serving == true and (.addresses | length) == 1)) | not)
       then error("two-host placement is not ready") else
-        [$work[] | .status.hostId as $id |
-          $hosts[] | select(.hostId == $id and .httpPort == 80 and
+        [$placements[] | . as $placement | .workload.status.hostId as $id |
+          $pins[0][] | select(.deployment == $placement.deployment.metadata.name and .host_id == $id and
+            $placement.deployment.spec.template.spec.hostId == $id and
+            $placement.replicaset.spec.template.spec.hostId == $id and
+            $placement.workload.spec.hostId == $id and
+            $placement.workload.spec.kubernetes.service.name == "flow-http") | . as $pin |
+          $hosts[0].items[] | select(.hostId == $id and .environment == $ns and .httpPort == 80 and
+            .metadata.deletionTimestamp == null and
             any(.status.conditions[]?; .type == "Ready" and .status == "True")) | .hostname as $hostname |
           $pods[0].items[] | select((.metadata.name == $hostname or .status.podIP == $hostname) and
-            .status.phase == "Running" and any(.spec.containers[]; .image == $image) and
-            any(.status.containerStatuses[]?; .ready == true and
+            .metadata.uid == $pin.pod_uid and .metadata.deletionTimestamp == null and
+            .status.phase == "Running" and any(.spec.containers[]; .name == "host" and .image == $image) and
+            any(.status.containerStatuses[]?; .name == "host" and .ready == true and
               ((.imageID // "") | endswith($digest)))) |
           .status.podIP as $ip | select($addresses | index($ip)) |
-          {host_id:$id,pod_uid:.metadata.uid,pod_name:.metadata.name,pod_ip:$ip,
+          {deployment:$pin.deployment,deployment_uid:$placement.deployment.metadata.uid,
+           replicaset_uid:$placement.replicaset.metadata.uid,
+           workload_uid:$placement.workload.metadata.uid,host_id:$id,
+           pod_uid:.metadata.uid,pod_name:.metadata.name,pod_ip:$ip,
            endpoint:("http://" + $ip + ":80" + $route)}] | sort_by(.host_id) |
         if length == 2 and (map(.pod_uid) | unique | length) == 2 and
            (map(.pod_ip) | unique | length) == 2 then .
@@ -1646,6 +1718,10 @@ if [[ "$session_host_proof" == true ]]; then
     [[ "$session_available" != false ]] || session_stage=host-session-unreachable
     if [[ "$session_available" == false ]]; then
       # A new process pair makes this arm independently warm from the new key.
+      # Recreate only the two owned pinned deployments, so no old Ready
+      # condition can satisfy the next arm's native workload readiness wait.
+      run "${kube[@]}" -n "$namespace" delete workloaddeployment \
+        flow-http-session-a flow-http-session-b --cascade=foreground --wait=true --timeout=120s
       run "${kube[@]}" -n "$namespace" rollout restart deployment/hostgroup-default
       run "${kube[@]}" -n "$namespace" rollout status deployment/hostgroup-default --timeout=240s
     fi
@@ -1698,9 +1774,12 @@ if [[ "$session_host_proof" == true ]]; then
       cat <&"$session_forward_fd" >>"$evidence_dir/session-nested-port-forward.log"
       exec {session_forward_fd}<&-
     fi
-    run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
-      workloaddeployment/flow-http --timeout=240s
-    if ! session_host_endpoints "$session_stage"; then
+    if ! session_pin_workloads "$session_stage" ||
+       ! run "${kube[@]}" -n "$namespace" wait --for=condition=Ready \
+         workloaddeployment/flow-http-session-a workloaddeployment/flow-http-session-b --timeout=240s ||
+       ! session_host_endpoints "$session_stage"; then
+      run "${kube[@]}" -n "$namespace" get workloaddeployments,workloadreplicasets,workloads -o json \
+        >"$evidence_dir/$session_stage-placement-state.json" 2>"$evidence_dir/$session_stage-placement-errors.log" || true
       run "${kube[@]}" -n "$namespace" logs -l "$host_selector" --all-containers --tail=-1 \
         >"$evidence_dir/$session_stage-placement-host.log" 2>&1 || true
       echo "two distinct session-serving hosts did not become ready" >&2
@@ -1709,8 +1788,9 @@ if [[ "$session_host_proof" == true ]]; then
     if [[ "$session_available" == false ]]; then
       jq -en --slurpfile old "$evidence_dir/host-session-reachable-host-endpoints.json" \
         --slurpfile new "$evidence_dir/$session_stage-host-endpoints.json" '
-        ($old[0] | map(.pod_uid)) as $before |
-        all($new[0][]; .pod_uid as $uid | ($before | index($uid)) == null)
+        all(["deployment_uid","replicaset_uid","workload_uid","pod_uid","host_id"][];
+          . as $field | ($old[0] | map(.[$field])) as $before |
+          all($new[0][]; .[$field] as $id | ($before | index($id)) == null))
       ' >/dev/null
     fi
     session_endpoints=$(jq -er 'map(.endpoint) | join(",")' \
