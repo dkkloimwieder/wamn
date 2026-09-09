@@ -2542,6 +2542,74 @@ Run it whenever a guest workspace gains a member or a build flag changes. A
 failure means a component digest has started depending on the build directory
 again, and every pin minted since is a claim about a checkout.
 
+**Both sides of that arm run `build-only m1`, so it cannot see the third
+channel** (`wamn-10yt.61`). A component profile decides which packages one
+`cargo build` compiles, and Cargo unifies features across everything in that one
+invocation, so a package the `proof` profile adds can turn a feature on in a
+crate the `m1` guests already link. The resolved feature NAME LIST goes into
+`-C metadata` whether or not the feature compiles to anything, so the artifact
+moves. Measured at `2a4cd288` and again at `7b456f81`: all four virtualized
+artifacts differ between the two profiles. The three `components/no-std` guests
+are byte-identical, because that workspace is a separate invocation.
+
+The cross-profile arm builds ONE tree twice, once per profile, and compares the
+shared packages. It needs no worktrees; `build-only` already prints the raw
+digest of every artifact it declares, so no virtualization pass runs.
+
+```bash
+set -euo pipefail
+GUEST_PROFILE_SCRATCH="$(mktemp -d /tmp/wamn-guest-profile.XXXXXX)"
+for profile in m1 proof; do
+  CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/$profile" RUSTC_WRAPPER= \
+    ./tools/build-components build-only "$profile" \
+    > "$GUEST_PROFILE_SCRATCH/$profile.json"
+done
+WAMN_DIGEST_PROFILE_M1_PLAN="$GUEST_PROFILE_SCRATCH/m1.json" \
+WAMN_DIGEST_PROFILE_PROOF_PLAN="$GUEST_PROFILE_SCRATCH/proof.json" \
+  cargo test -p wamn-proof-conformance --test guest_workspace_closure \
+  one_commit_built_under_two_profiles_yields_identical_guest_digests \
+  -- --ignored --exact --nocapture
+rm -rf -- "$GUEST_PROFILE_SCRATCH"
+```
+
+Separate target directories are the point: one shared directory makes the second
+profile a rebuild of the first, and a rebuild that reuses cached artifacts hides
+the very difference this arm exists to find. `RUSTC_WRAPPER=` is emptied for the
+same reason a wrapper's cache would answer from the other profile's build.
+
+Run it whenever a Cargo dependency is added or its features change anywhere
+under `components/`. A failure names the packages that moved. To find the cause,
+diff the `features` field of every `.fingerprint/*/lib-*.json` in the two target
+directories; that names the crate whose resolved feature list differs, and
+`cargo tree -e features -i <crate>` names the requester.
+
+**THIS ARM IS RED ON ARRIVAL, and `wamn-10yt.61`'s stated cause is refuted.**
+Measured at `7b456f81` plus the `postgres-sqlx` fix, all four artifacts still
+differ. The bead attributed it to two ungoverned `default-features` declarations
+in `components/data/postgres-sqlx/Cargo.toml`, saying `futures-util`'s default
+set turns on `io`. It does not: `futures-util` 0.3.34 declares
+`default = ["std", "async-await", "async-await-macro"]`, and `io` is not in it.
+`io` comes from `sqlx-core` 0.9.0's own manifest, unconditionally —
+`[dependencies.futures-util] features = ["alloc", "sink", "io"]`, no
+`default-features = false` — and `io = ["std", "futures-io", "memchr"]` is what
+gives `memchr` its `default`, which `serde_json` links, which is how `blob-put`
+moves without going near sqlx. Governing the two declarations moved three of the
+four digests and converged none:
+
+| artifact | m1 | proof, before | proof, after |
+| --- | --- | --- | --- |
+| `blob-put` | `d7e0543a` | `ef5e4aa5` | `ef5e4aa5` |
+| `client-acme-receiving` | `8c2c63d8` | `72124342` | `4cb2fba6` |
+| `receiving` | `666745eb` | `b724c5c4` | `6ae3d667` |
+| `wms` | `e1e14ee6` | `f4e4a629` | `d3c17f29` |
+
+The residual channel is that the `proof` selection compiles `sqlx-core` and `m1`
+does not, so no declaration in this repository closes it. Closing it needs a
+ruling — one `cargo` invocation per guest (measured 116s against 47s and
+declined), or the same member set under both profiles, or a `sqlx-core` fork, or
+profile-scoped pins. Until then, mint every pin under `m1`, which is what
+`[EFFECTIVE-RELEASE-POC]` and `[RECEIVING-ROUTE-JOURNEY]` both build.
+
 ### `[RECEIVING-ROUTE-JOURNEY]` — published base + overlay routes and traces
 
 This gate builds the virtualized Receiving base and Acme overlay components
