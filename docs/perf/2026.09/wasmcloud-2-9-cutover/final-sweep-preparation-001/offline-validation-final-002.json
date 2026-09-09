@@ -1,0 +1,44 @@
+{
+  "scope": "Offline parser and wrapper preparation only; no Cargo, tests, builds, services, or live calls were launched.",
+  "baseline_log": {
+    "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log",
+    "bytes": 286385,
+    "sha256": "43c7fd647c85f2248ac401d410c5cd9e94312368a282a930fad7c3da80157e42"
+  },
+  "baseline_results": {
+    "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-results.json",
+    "bytes": 319752,
+    "sha256": "2780595bfa13630e4deabb501271b4ff739ad2199b1cc9bf378c4c973554bf0a"
+  },
+  "retained_counts_match_exactly": true,
+  "retained_failure_identities_match": 67,
+  "retained_self_skip_entries_match": 85,
+  "excluded_nested_summaries": 1,
+  "full_sweep_argv_matches": true,
+  "environment_filter_control_passed": true,
+  "python_ast_syntax_passed": true,
+  "synthetic_controls": [
+    "Synthetic new startup fixture failure stays separate: 67 baseline identities plus one new unarmed fixture.",
+    "An existing failure name with a changed diagnostic is not classified as the old cause.",
+    "An additional panic after a retained baseline reason is classified as a changed cause.",
+    "A truncated or inconsistent Cargo footer remains unresolved.",
+    "Cargo compilation errors and abnormal process exits remain unresolved."
+  ],
+  "preparation_files": [
+    {
+      "path": "/tmp/wamn-cutover-final-sweep-prepared/run.py",
+      "bytes": 5798,
+      "sha256": "c947f967296610f1393885d6b348e521c000d8a1d27888abddabef3550ee8b75"
+    },
+    {
+      "path": "/tmp/wamn-cutover-final-sweep-prepared/classify.py",
+      "bytes": 14682,
+      "sha256": "e1f9e03bdfe9fdf82b98151340e7afb357032ee5c0e3eb23f408608ee801b6eb"
+    },
+    {
+      "path": "/tmp/wamn-cutover-final-sweep-prepared/validate_offline.py",
+      "bytes": 6259,
+      "sha256": "cc648921676724266654d18f44eb7ec05707302605c6a7c7f12591656e7e62f5"
+    }
+  ]
+}

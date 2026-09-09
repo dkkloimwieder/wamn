@@ -1,0 +1,356 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:27:41Z",
+                "generateName": "runtime-operator-5bc6494bdb-",
+                "generation": 1,
+                "labels": {
+                    "app.kubernetes.io/instance": "wamn",
+                    "app.kubernetes.io/managed-by": "Helm",
+                    "app.kubernetes.io/name": "runtime-operator",
+                    "app.kubernetes.io/version": "2.9.0",
+                    "helm.sh/chart": "runtime-operator-2.9.0",
+                    "pod-template-hash": "5bc6494bdb",
+                    "wasmcloud.com/name": "runtime-operator"
+                },
+                "name": "runtime-operator-5bc6494bdb-zzqnj",
+                "namespace": "wamn-system",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "ReplicaSet",
+                        "name": "runtime-operator-5bc6494bdb",
+                        "uid": "29b7592f-f946-4a37-a947-126d7fd482aa"
+                    }
+                ],
+                "resourceVersion": "1055",
+                "uid": "1a3f6a1b-1eae-462e-87a9-318deb4fcd03"
+            },
+            "spec": {
+                "automountServiceAccountToken": true,
+                "containers": [
+                    {
+                        "args": [
+                            "-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+                            "-nats-ca=/operator-cert/ca.crt",
+                            "-nats-client-cert=/operator-cert/tls.crt",
+                            "-nats-client-key=/operator-cert/tls.key",
+                            "-watch-namespaces=wamn-receiving-journey",
+                            "-host-namespaces=wamn-receiving-journey",
+                            "-allow-shared-hosts=false",
+                            "-leader-elect"
+                        ],
+                        "env": [
+                            {
+                                "name": "OPERATOR_NAMESPACE",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "metadata.namespace"
+                                    }
+                                }
+                            }
+                        ],
+                        "image": "ghcr.io/wasmcloud/runtime-operator:2.9.0",
+                        "imagePullPolicy": "Always",
+                        "livenessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                                "path": "/healthz",
+                                "port": "health",
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 15,
+                            "periodSeconds": 20,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "name": "runtime-operator",
+                        "ports": [
+                            {
+                                "containerPort": 8082,
+                                "name": "health",
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "readinessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                                "path": "/readyz",
+                                "port": "health",
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 5,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "resources": {
+                            "limits": {
+                                "memory": "192Mi"
+                            },
+                            "requests": {
+                                "cpu": "100m",
+                                "memory": "64Mi"
+                            }
+                        },
+                        "securityContext": {
+                            "allowPrivilegeEscalation": false,
+                            "capabilities": {
+                                "drop": [
+                                    "ALL"
+                                ]
+                            },
+                            "readOnlyRootFilesystem": true,
+                            "runAsNonRoot": true
+                        },
+                        "startupProbe": {
+                            "failureThreshold": 24,
+                            "httpGet": {
+                                "path": "/healthz",
+                                "port": "health",
+                                "scheme": "HTTP"
+                            },
+                            "periodSeconds": 5,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/operator-cert",
+                                "name": "operator-cert",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-nmspl",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker2",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Always",
+                "schedulerName": "default-scheduler",
+                "securityContext": {
+                    "fsGroup": 65532,
+                    "runAsGroup": 65532,
+                    "runAsNonRoot": true,
+                    "runAsUser": 65532,
+                    "seccompProfile": {
+                        "type": "RuntimeDefault"
+                    }
+                },
+                "serviceAccount": "wamn-runtime-operator",
+                "serviceAccountName": "wamn-runtime-operator",
+                "terminationGracePeriodSeconds": 45,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "operator-cert",
+                        "secret": {
+                            "defaultMode": 420,
+                            "secretName": "wasmcloud-operator-tls"
+                        }
+                    },
+                    {
+                        "name": "kube-api-access-nmspl",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "allocatedResources": {
+                    "cpu": "100m",
+                    "memory": "64Mi"
+                },
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T16:27:41Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T16:27:41Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T16:27:57Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T16:27:57Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T16:27:41Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "allocatedResources": {
+                            "cpu": "100m",
+                            "memory": "64Mi"
+                        },
+                        "containerID": "containerd://459ae2242dc78c038c7cd5066e239428f71aecb47f719ae1dde4446ec8d23010",
+                        "image": "ghcr.io/wasmcloud/runtime-operator:2.9.0",
+                        "imageID": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+                        "lastState": {
+                            "terminated": {
+                                "containerID": "containerd://6e16bfd3497998f4bb83b383e5b36d1e146f784af61bdc9cdf567248c16d763b",
+                                "exitCode": 1,
+                                "finishedAt": "2026-09-09T16:27:51Z",
+                                "reason": "Error",
+                                "startedAt": "2026-09-09T16:27:46Z"
+                            }
+                        },
+                        "name": "runtime-operator",
+                        "ready": true,
+                        "resources": {
+                            "limits": {
+                                "memory": "192Mi"
+                            },
+                            "requests": {
+                                "cpu": "100m",
+                                "memory": "64Mi"
+                            }
+                        },
+                        "restartCount": 1,
+                        "started": true,
+                        "state": {
+                            "running": {
+                                "startedAt": "2026-09-09T16:27:52Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 65532,
+                                "supplementalGroups": [
+                                    65532
+                                ],
+                                "uid": 65532
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/operator-cert",
+                                "name": "operator-cert",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-nmspl",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.6",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.6"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Running",
+                "podIP": "10.244.1.4",
+                "podIPs": [
+                    {
+                        "ip": "10.244.1.4"
+                    }
+                ],
+                "qosClass": "Burstable",
+                "resources": {
+                    "limits": {
+                        "memory": "192Mi"
+                    },
+                    "requests": {
+                        "cpu": "79m",
+                        "memory": "64Mi"
+                    }
+                },
+                "startTime": "2026-09-09T16:27:41Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

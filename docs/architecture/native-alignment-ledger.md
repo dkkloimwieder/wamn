@@ -59,12 +59,17 @@ The local proof retains full control, probe, and application observations during
 It measures queued demand with one shared HTTP digest, not permit occupancy, CPU use, or a distinct-digest herd under Kubernetes limits.
 The fourth journey then fails while decoding five consecutive CRD objects, before installed-schema assertions or deliberate operator disruption.
 The corrected reader preserves all five distributed schema hashes under `wamn-0h0g.2.7.8`.
-Installed CRD identity and operator recovery remain pending.
+The [fifth run](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-005/journey/operator-recovery/installed-crd-identity.json) passes all five installed CRD identities and the pinned operator image.
+All three Host objects and processes survive the 150.85-second NATS outage and enter the native loss-of-contact state.
+The operator then restarts within the same Pod, and the proof stops before complete recovery.
+The corrected supervision proof requires a recorded native cause and preserves the 120-second ceiling under `wamn-0h0g.2.7.10`.
 
 The armed [authority run](../perf/2026.09/wasmcloud-2-9-cutover/authority-live-001/summary.json) records 40 passes and three failures across 43 tests.
 Its seven runtime claims tests and SQLx transaction isolation pass with explicit fresh database inputs.
 Bead `wamn-0h0g.2.7.9` owns the tenant-floor count and two denial-matrix differences.
-All 29 relevant source files match the baseline, which still requires a live comparison.
+All 29 relevant source files match the baseline, whose live run reproduces all three failures.
+The contract correction removes an obsolete guest UPDATE grant and repairs two stale test expectations without widening authority.
+Fresh-server reruns and the affected protected-write inventory remain pending.
 
 The prepared [engine](../../crates/platform/runtime/src/engine.rs) and [manual stores](../../crates/execution/host/src/router_driver.rs) share the native guest-memory budget in `Count` mode.
 Production rejects `enforce` and `off` through the native memory-mode flag and environment name.
@@ -107,7 +112,7 @@ Namespace scopes, the disabled gateway, and row 8's modern Event overlay remain 
 
 The render and [public operator image metadata](../perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json) prove configuration and distributed artifact identity only.
 The owning Rust render test executes but fails during Kubernetes API discovery because `127.0.0.1:8080` refuses the connection.
-Installed CRD identity, operator recovery, startup measurements, and comparable performance proofs remain pending.
+Installed CRD identity and local startup exposure now pass. Complete operator recovery and comparable performance proofs remain pending.
 The [direct stop/start runbook](../../deploy/README.md#wasmcloud-29-cutover) keeps one active runtime version per environment without a maintenance window or compatibility period.
 
 The [distributed CRD capture](../perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/crd-inventory.json) confirms that all five 2.9 schema files match the pinned source.

@@ -1,0 +1,57 @@
+{
+  "chart": {
+    "app_version": "2.9.0",
+    "chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+    "oci_manifest_digest": "sha256:d70b240cfc3c745f306fc6ebecebff4370e6c8c0568b55c1d02b1eda1716fd17",
+    "package_sha256": "98c4e5e1bf19d4549fb2ca72bf8e7874d2e068a05e254370e75dce6f98329109",
+    "version": "2.9.0"
+  },
+  "crds": [
+    {
+      "defaulted_spec_sha256": "b608f273522f744c0fa5b9b7fd0d78d681bae0f6fd65f59e930fa1cbc1591a33",
+      "distributed_spec_sha256": "822bd091bee0209a72dd953171dc69d152369a0c327ae5e589c4fdb423eab159",
+      "installed_spec_sha256": "51143f247b6abeb81ac327422f75d9ee9a7aae6d60737265e98e9da0fe80b62f",
+      "kind": "Artifact",
+      "name": "artifacts.runtime.wasmcloud.dev",
+      "uid": "1a5a0641-b33c-451c-9498-556a506e70fb"
+    },
+    {
+      "defaulted_spec_sha256": "74de5b7a57a9173518ab853a4c201dd32b3ac418dfe3f9197418e0f16c4ca72f",
+      "distributed_spec_sha256": "ecdd001c039a6822379d80510561f16959cad38f46ab289975d07049322afe6c",
+      "installed_spec_sha256": "800574dd5d95c5383ee94e47a59d12fd3f7a1d1fda76039ae5a552398f158def",
+      "kind": "Host",
+      "name": "hosts.runtime.wasmcloud.dev",
+      "uid": "852ad875-f3b9-4dd2-aa02-6e8e5a4ae1fc"
+    },
+    {
+      "defaulted_spec_sha256": "44d49066fd8c1db5a8d3c9d7aba06b171491f75fc5e12dc3c3bd233959fef1fb",
+      "distributed_spec_sha256": "66cbc474f4199799b02d5263b96e0774b9d12526010c21daf240153e46e7757e",
+      "installed_spec_sha256": "e45dd30c6500b9025ff1656fa41f981e7baade8fcafbd21b31a5cee44ed01a3e",
+      "kind": "WorkloadDeployment",
+      "name": "workloaddeployments.runtime.wasmcloud.dev",
+      "uid": "665f2943-b7c3-4c43-b8f0-fbf83056c214"
+    },
+    {
+      "defaulted_spec_sha256": "739b8c895728731a870c2f7e3ae004b74c52cc10322b616bd1fffd1e7fccbe8d",
+      "distributed_spec_sha256": "b6017a0434466233ae1e51de09e33d36baa79e7479016c035f3598e6a9f6bf84",
+      "installed_spec_sha256": "4b540325c40ed5c220daf040d170ac355c1fa889fe177de7ae9fd22d57223cd4",
+      "kind": "WorkloadReplicaSet",
+      "name": "workloadreplicasets.runtime.wasmcloud.dev",
+      "uid": "979241a0-87f8-4622-a40e-54ef962d1b1e"
+    },
+    {
+      "defaulted_spec_sha256": "cc84726fc4e4588918a786fa9d0f94b80f7b916e6ac53f01140bdf6aa3ddc7df",
+      "distributed_spec_sha256": "9be1e077da54ec84505bf104768f971b00b15974f0010bb4318579b25f2b6242",
+      "installed_spec_sha256": "ab34b8aaf94a0926ba4c541206680463298af2c9902fe57c0306f5c749413ac8",
+      "kind": "Workload",
+      "name": "workloads.runtime.wasmcloud.dev",
+      "uid": "c51cc31e-2ee3-4a08-91d2-bead18e3fb43"
+    }
+  ],
+  "defaults": [
+    "conversion.strategy=None",
+    "preserveUnknownFields=false"
+  ],
+  "result": "pass",
+  "source": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9"
+}

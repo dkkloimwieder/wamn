@@ -1,0 +1,120 @@
+{
+  "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+  "kind": "Workload",
+  "metadata": {
+    "annotations": {
+      "runtime.wasmcloud.dev/workload-replica-set-generation": "59c56ccb68"
+    },
+    "creationTimestamp": "2026-09-09T16:28:13Z",
+    "finalizers": [
+      "runtime.wasmcloud.dev/workload-finalizer"
+    ],
+    "generation": 1,
+    "name": "flow-http-55b96f969b-559b95568d",
+    "namespace": "wamn-receiving-journey",
+    "ownerReferences": [
+      {
+        "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+        "blockOwnerDeletion": true,
+        "controller": true,
+        "kind": "WorkloadReplicaSet",
+        "name": "flow-http-55b96f969b",
+        "uid": "aa2e650c-9637-4c0c-85b1-e5415148c01b"
+      }
+    ],
+    "resourceVersion": "1319",
+    "uid": "11df82aa-f2af-4fcb-9e3c-d5486be8d0e9"
+  },
+  "spec": {
+    "components": [
+      {
+        "image": "172.28.0.9:5000/wamn/flow-http@sha256:f8a24928c8d1dce785eece87e0765a4a0bb37278488b8f2c1ca62fa49603406a",
+        "imagePullPolicy": "Always",
+        "localResources": {
+          "config": {
+            "wamn.catalog": "default",
+            "wamn.environment": "dev",
+            "wamn.project": "receiving",
+            "wamn.schema": "receiving",
+            "wamn.tenant": "receiving-route-auth"
+          }
+        },
+        "name": "flow-http"
+      }
+    ],
+    "environment": "wamn-receiving-journey",
+    "hostInterfaces": [
+      {
+        "config": {
+          "host": "receiving.localhost"
+        },
+        "interfaces": [
+          "incoming-handler"
+        ],
+        "namespace": "wasi",
+        "package": "http"
+      },
+      {
+        "interfaces": [
+          "routing"
+        ],
+        "namespace": "wamn",
+        "package": "flow-http-routing",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "delivery"
+        ],
+        "namespace": "wamn",
+        "package": "router-delivery",
+        "version": "0.1.0"
+      }
+    ],
+    "hostSelector": {
+      "hostgroup": "default"
+    },
+    "kubernetes": {
+      "service": {
+        "name": "flow-http"
+      }
+    }
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-09-09T16:28:13Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Config"
+      },
+      {
+        "lastTransitionTime": "2026-09-09T16:28:13Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "HostSelection"
+      },
+      {
+        "lastTransitionTime": "2026-09-09T16:28:13Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Placement"
+      },
+      {
+        "lastTransitionTime": "2026-09-09T16:28:13Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Sync"
+      },
+      {
+        "lastTransitionTime": "2026-09-09T16:28:13Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Ready"
+      }
+    ],
+    "environment": "wamn-receiving-journey",
+    "hostId": "f0cd804f-04e8-46be-bb73-134d05325abf",
+    "workloadId": "11df82aa-f2af-4fcb-9e3c-d5486be8d0e9"
+  }
+}

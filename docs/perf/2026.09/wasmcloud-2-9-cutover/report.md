@@ -452,3 +452,27 @@ It retains registered operation identity, fresh-credential requirements, depende
 The [scoped Clippy run](fixture-operations-fix-001/exit-code.txt) exits 0 with warnings.
 The updated recipe selects the release artifacts that the current build command produces.
 Bead `wamn-0h0g.2.7.11` remains open until the actual isolation and refusal proof passes.
+
+
+## Installed identities and interrupted operator recovery
+
+The [fifth Receiving run](live-receiving-005/exit-code.txt) exits 1 at clean source `0388e3bc`.
+Current telemetry, startup exposure, production routes, materializer acknowledgment, and idle executor signal cases pass again.
+The [installed CRD receipt](live-receiving-005/journey/operator-recovery/installed-crd-identity.json) passes all five complete schema identities and storage-state assertions.
+The [operator image receipt](live-receiving-005/journey/operator-recovery/operator-image-identity.json) matches the pinned distributed image.
+This live evidence closes the CRD reader finding, `wamn-0h0g.2.7.8`, on commit `0388e3bc`.
+
+The scheduler NATS outage lasts 150.85 seconds.
+All three Host records enter the native loss-of-contact state and retain their object and process identities.
+The [request samples](live-receiving-005/journey/operator-recovery/route-samples.json) record 28 exact successes and 24 transport failures.
+About 13 seconds after NATS restoration, the operator container restarts within the same Pod and reports unready.
+Its prior container exits 0 with reason `Completed`, and its restart count rises from one to two.
+The helper stops on its unchanged-process assertion before it measures full recovery.
+The [owned cleanup](live-receiving-005/journey/cleanup.receipt) passes.
+
+The [native source review](operator-supervision-fix-001/README.md) distinguishes healthy reconnect attempts from terminal NATS closure that triggers Kubernetes supervision.
+The corrected proof accepts only a contiguous graceful restart with previous-container closure logs and a matching Kubernetes liveness event.
+It preserves Host process identity, operator Pod and image identity, exact response checks, and the original 120-second recovery ceiling.
+It requires fresh Host status after a supervised transition and records original and replacement operator diagnostics.
+The [offline controls](operator-supervision-fix-001/offline-validation.json) preserve refusal of the unexplained fifth-run restart.
+Bead `wamn-0h0g.2.7.10` remains open for the next live run and the actual restart cause.

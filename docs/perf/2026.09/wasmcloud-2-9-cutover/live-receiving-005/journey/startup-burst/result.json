@@ -1,0 +1,206 @@
+{
+  "source": "0388e3bc98d231f1e69538e613ec33689c041653",
+  "verdict": "pass",
+  "cleanup": [
+    {
+      "pid": 3461462,
+      "exit_code": 0,
+      "wait_exceeded_host_grace": false
+    },
+    {
+      "pid": 3461450,
+      "exit_code": -15,
+      "wait_exceeded_host_grace": false
+    }
+  ],
+  "deployment_resources": {
+    "limits": {
+      "cpu": "6",
+      "memory": "4Gi"
+    },
+    "requests": {
+      "cpu": "2",
+      "memory": "256Mi"
+    }
+  },
+  "local_process_resource_limit": "inherits runner cgroup; not the Kubernetes 6-CPU quota",
+  "host_binary_sha256": "501bddc80db7d74404e309002a392b8c484b62dbdbcbd7c114be3a676f0f1c88",
+  "profile": "release",
+  "source_requirements": {
+    "wasmtime_parallel_compilation": "Cargo.toml workspace Wasmtime features, captured by source SHA",
+    "guest_memory_mode": "count",
+    "meter_mode": "duration",
+    "start_limit": 4
+  },
+  "input_sha256": {
+    "Cargo.toml": "60ed3fa20c4b104ab03be599a97946df16187974c1d4ef490e31022ad04edb69",
+    "Cargo.lock": "55faac1a84a11c8feac91948a04f71ba71033f4e6a41172532539ff35ff6a40d",
+    "host-deployment.json": "c1f99331e9a2b1a03087b9cd6d099745e06a98a566464cedcd6e5ebb95e38fa9",
+    "production-workload.json": "44a29b8dc920aa21ead3a86458b8e5c4dcaa67e645173fbc5e91c5dfc111690b"
+  },
+  "test_exit_code": 0,
+  "phases": {
+    "cold": {
+      "native_starts": [
+        {
+          "id": "startup-0388e3bc98d2-3447033-cold-7",
+          "trace_id": "31f1ef32db8fa87b03b4efada6e36ece",
+          "span_id": "czFdcxcRT6k=",
+          "source_file": "native-trace-004-31f1ef32db8fa87b03b4efada6e36ece.json",
+          "start_ns": 1788971348727988068,
+          "end_ns": 1788971348980594987
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-cold-6",
+          "trace_id": "284436c0916bb05e5e3a1611225559b3",
+          "span_id": "Tbcb4PpYADk=",
+          "source_file": "native-trace-004-284436c0916bb05e5e3a1611225559b3.json",
+          "start_ns": 1788971348727957918,
+          "end_ns": 1788971348993298818
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-cold-4",
+          "trace_id": "b16b0d1d8e892c750436712c8c3e78df",
+          "span_id": "4/8LKnZB1bs=",
+          "source_file": "native-trace-004-b16b0d1d8e892c750436712c8c3e78df.json",
+          "start_ns": 1788971348727896868,
+          "end_ns": 1788971348989852405
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-cold-5",
+          "trace_id": "ef4f5c5522d06275c595c85266604f8b",
+          "span_id": "KuF/sLJnkUE=",
+          "source_file": "native-trace-004-ef4f5c5522d06275c595c85266604f8b.json",
+          "start_ns": 1788971348727893852,
+          "end_ns": 1788971348989449260
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-cold-3",
+          "trace_id": "3c59b6d24a2a83431b6587abcaf8f03e",
+          "span_id": "3w3eQqwA2lM=",
+          "source_file": "native-trace-004-3c59b6d24a2a83431b6587abcaf8f03e.json",
+          "start_ns": 1788971348727857009,
+          "end_ns": 1788971348932925389
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-cold-2",
+          "trace_id": "6490b7574074e3f8abbe5c5a21f93577",
+          "span_id": "1JqHMFhzSE0=",
+          "source_file": "native-trace-004-6490b7574074e3f8abbe5c5a21f93577.json",
+          "start_ns": 1788971348727824065,
+          "end_ns": 1788971348933204758
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-cold-1",
+          "trace_id": "8b262d7f205910e03e8445c17a6bbd81",
+          "span_id": "aBT1mnicp7o=",
+          "source_file": "native-trace-004-8b262d7f205910e03e8445c17a6bbd81.json",
+          "start_ns": 1788971348727798128,
+          "end_ns": 1788971348933185991
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-cold-0",
+          "trace_id": "73846b6aef7fd8832e5539e0b95be839",
+          "span_id": "kwMTikY1jAY=",
+          "source_file": "native-trace-004-73846b6aef7fd8832e5539e0b95be839.json",
+          "start_ns": 1788971348727789597,
+          "end_ns": 1788971348933035190
+        }
+      ],
+      "max_overlapping_start_handlers": 8,
+      "complete_progress_observations_within_continuous_start_intervals": 4,
+      "continuous_start_intervals_ns": [
+        [
+          1788971348727789597,
+          1788971348993298818
+        ]
+      ],
+      "first_success_seconds": 0.286372198,
+      "all_running_seconds": 0.286430841
+    },
+    "warm": {
+      "native_starts": [
+        {
+          "id": "startup-0388e3bc98d2-3447033-warm-6",
+          "trace_id": "ab6ad87f543caad5c9e2ce79ac73dc39",
+          "span_id": "DHWDPlHLy1A=",
+          "source_file": "native-trace-004-ab6ad87f543caad5c9e2ce79ac73dc39.json",
+          "start_ns": 1788971349020213483,
+          "end_ns": 1788971349149857484
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-warm-3",
+          "trace_id": "9b078f8916fe047ccba212ff3142774e",
+          "span_id": "bZNdzLyfses=",
+          "source_file": "native-trace-004-9b078f8916fe047ccba212ff3142774e.json",
+          "start_ns": 1788971349020209264,
+          "end_ns": 1788971349143813930
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-warm-1",
+          "trace_id": "10a4b99a7c4569ed05202bcc923373a1",
+          "span_id": "lkiITR4y0CY=",
+          "source_file": "native-trace-004-10a4b99a7c4569ed05202bcc923373a1.json",
+          "start_ns": 1788971349020203248,
+          "end_ns": 1788971349124598413
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-warm-4",
+          "trace_id": "2f23653b9bdcaf4eb764f0678eb434d2",
+          "span_id": "KRY0FiBmXqs=",
+          "source_file": "native-trace-004-2f23653b9bdcaf4eb764f0678eb434d2.json",
+          "start_ns": 1788971349020173419,
+          "end_ns": 1788971349128583238
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-warm-5",
+          "trace_id": "9f99e4dc12631ccc90620decec9453fd",
+          "span_id": "IDOGO7jYZPI=",
+          "source_file": "native-trace-004-9f99e4dc12631ccc90620decec9453fd.json",
+          "start_ns": 1788971349020172255,
+          "end_ns": 1788971349101054740
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-warm-7",
+          "trace_id": "e042bf2c628aa7c0497dd8fc114d76d0",
+          "span_id": "0vM73hK+Oag=",
+          "source_file": "native-trace-004-e042bf2c628aa7c0497dd8fc114d76d0.json",
+          "start_ns": 1788971349020166002,
+          "end_ns": 1788971349094876652
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-warm-2",
+          "trace_id": "a94cc5885e7312dbb233153f5c4ee5ba",
+          "span_id": "Qks6tF8L6uM=",
+          "source_file": "native-trace-004-a94cc5885e7312dbb233153f5c4ee5ba.json",
+          "start_ns": 1788971349020155936,
+          "end_ns": 1788971349071325740
+        },
+        {
+          "id": "startup-0388e3bc98d2-3447033-warm-0",
+          "trace_id": "cfc31051f8047a10e19dd00f214699d6",
+          "span_id": "nTbk3YA5KKc=",
+          "source_file": "native-trace-004-cfc31051f8047a10e19dd00f214699d6.json",
+          "start_ns": 1788971349020152554,
+          "end_ns": 1788971349073105362
+        }
+      ],
+      "max_overlapping_start_handlers": 8,
+      "complete_progress_observations_within_continuous_start_intervals": 2,
+      "continuous_start_intervals_ns": [
+        [
+          1788971349020152554,
+          1788971349149857484
+        ]
+      ],
+      "first_success_seconds": 0.065582385,
+      "all_running_seconds": 0.133969101
+    }
+  },
+  "cache_scope": "Fresh host/empty private caches; native HTTP digest is first loaded by cold herd; replicas share native compile deduplication.",
+  "phase_attribution": "Whole native starts and observed progress only. Retired private Wasm/non-Wasm phase attribution unavailable.",
+  "host_ready_seconds": 0.657547136,
+  "first_success_since_process_start_seconds": 0.943988711,
+  "occupancy_limit": "workload_start begins before the permit; overlap proves queued demand, not active permit occupancy or CPU-core use",
+  "comparison_limit": "Distinct from a herd of different cold digests; local host cgroup and new native probe semantics differ from historical in-cluster timings. Existing performance modes are unchanged."
+}

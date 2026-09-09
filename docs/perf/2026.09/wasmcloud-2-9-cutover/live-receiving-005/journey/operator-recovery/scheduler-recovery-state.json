@@ -1,0 +1,2399 @@
+{
+  "endpointslices": [],
+  "hosts": [
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "environment": "wamn-receiving-journey",
+      "hostId": "f0cd804f-04e8-46be-bb73-134d05325abf",
+      "hostname": "10.244.3.6",
+      "httpPort": 80,
+      "kind": "Host",
+      "metadata": {
+        "creationTimestamp": "2026-09-09T16:28:08Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/host-finalizer"
+        ],
+        "generation": 1,
+        "labels": {
+          "hostgroup": "default"
+        },
+        "name": "makeshift-breath-0322",
+        "namespace": "wamn-system",
+        "resourceVersion": "2134",
+        "uid": "b77e1046-507a-4efc-925a-9968c4b7d08b"
+      },
+      "status": {
+        "componentCount": 1,
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-09T16:32:33Z",
+            "message": "context deadline exceeded",
+            "reason": "Reconcile",
+            "status": "False",
+            "type": "Reporting"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:32:53Z",
+            "message": "status unknown: host has not reported recently, but the operator has not been hearing the fleet for 1m0s",
+            "reason": "Reconcile",
+            "status": "Unknown",
+            "type": "Ready"
+          }
+        ],
+        "lastSeen": "2026-09-09T16:31:10Z",
+        "osArch": "x86_64",
+        "osKernel": "unix",
+        "osName": "linux",
+        "systemCPUUsage": "33.27126",
+        "systemMemoryFree": 2118553600,
+        "systemMemoryTotal": 65437421568,
+        "version": "2.9.0",
+        "workloadCount": 1
+      }
+    },
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "environment": "wamn-receiving-journey",
+      "hostId": "3f306643-1816-4547-8c24-0c57a72f50c0",
+      "hostname": "10.244.3.5",
+      "httpPort": 80,
+      "kind": "Host",
+      "metadata": {
+        "creationTimestamp": "2026-09-09T16:28:08Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/host-finalizer"
+        ],
+        "generation": 1,
+        "labels": {
+          "hostgroup": "default"
+        },
+        "name": "righteous-joke-0811",
+        "namespace": "wamn-system",
+        "resourceVersion": "2118",
+        "uid": "e3a4e8cd-4c1c-4082-a037-4911a9182777"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-09T16:32:26Z",
+            "message": "context deadline exceeded",
+            "reason": "Reconcile",
+            "status": "False",
+            "type": "Reporting"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:32:46Z",
+            "message": "status unknown: host has not reported recently, but the operator has not been hearing the fleet for 1m0s",
+            "reason": "Reconcile",
+            "status": "Unknown",
+            "type": "Ready"
+          }
+        ],
+        "lastSeen": "2026-09-09T16:31:10Z",
+        "osArch": "x86_64",
+        "osKernel": "unix",
+        "osName": "linux",
+        "systemCPUUsage": "33.312653",
+        "systemMemoryFree": 2118553600,
+        "systemMemoryTotal": 65437421568,
+        "version": "2.9.0",
+        "workloadCount": 1
+      }
+    },
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "environment": "wamn-receiving-journey",
+      "hostId": "35bcda04-7eba-460d-92dd-670b0e46c41a",
+      "hostname": "10.244.1.6",
+      "httpPort": 80,
+      "kind": "Host",
+      "metadata": {
+        "creationTimestamp": "2026-09-09T16:28:08Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/host-finalizer"
+        ],
+        "generation": 1,
+        "labels": {
+          "hostgroup": "default"
+        },
+        "name": "rustic-lock-5445",
+        "namespace": "wamn-system",
+        "resourceVersion": "2101",
+        "uid": "24bdf101-3829-431a-a7f2-6c8cc2c712a9"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-09T16:32:20Z",
+            "message": "context deadline exceeded",
+            "reason": "Reconcile",
+            "status": "False",
+            "type": "Reporting"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:32:39Z",
+            "message": "status unknown: host has not reported recently, but the operator has not been hearing the fleet for 1m0s",
+            "reason": "Reconcile",
+            "status": "Unknown",
+            "type": "Ready"
+          }
+        ],
+        "lastSeen": "2026-09-09T16:31:10Z",
+        "osArch": "x86_64",
+        "osKernel": "unix",
+        "osName": "linux",
+        "systemCPUUsage": "33.948338",
+        "systemMemoryFree": 2107273216,
+        "systemMemoryTotal": 65437421568,
+        "version": "2.9.0"
+      }
+    }
+  ],
+  "operator_pods": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-09-09T16:27:41Z",
+        "generateName": "runtime-operator-5bc6494bdb-",
+        "generation": 1,
+        "labels": {
+          "app.kubernetes.io/instance": "wamn",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "runtime-operator",
+          "app.kubernetes.io/version": "2.9.0",
+          "helm.sh/chart": "runtime-operator-2.9.0",
+          "pod-template-hash": "5bc6494bdb",
+          "wasmcloud.com/name": "runtime-operator"
+        },
+        "name": "runtime-operator-5bc6494bdb-zzqnj",
+        "namespace": "wamn-system",
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "ReplicaSet",
+            "name": "runtime-operator-5bc6494bdb",
+            "uid": "29b7592f-f946-4a37-a947-126d7fd482aa"
+          }
+        ],
+        "resourceVersion": "2344",
+        "uid": "1a3f6a1b-1eae-462e-87a9-318deb4fcd03"
+      },
+      "spec": {
+        "automountServiceAccountToken": true,
+        "containers": [
+          {
+            "args": [
+              "-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+              "-nats-ca=/operator-cert/ca.crt",
+              "-nats-client-cert=/operator-cert/tls.crt",
+              "-nats-client-key=/operator-cert/tls.key",
+              "-watch-namespaces=wamn-receiving-journey",
+              "-host-namespaces=wamn-receiving-journey",
+              "-allow-shared-hosts=false",
+              "-leader-elect"
+            ],
+            "env": [
+              {
+                "name": "OPERATOR_NAMESPACE",
+                "valueFrom": {
+                  "fieldRef": {
+                    "apiVersion": "v1",
+                    "fieldPath": "metadata.namespace"
+                  }
+                }
+              }
+            ],
+            "image": "ghcr.io/wasmcloud/runtime-operator:2.9.0",
+            "imagePullPolicy": "Always",
+            "livenessProbe": {
+              "failureThreshold": 3,
+              "httpGet": {
+                "path": "/healthz",
+                "port": "health",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 15,
+              "periodSeconds": 20,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "name": "runtime-operator",
+            "ports": [
+              {
+                "containerPort": 8082,
+                "name": "health",
+                "protocol": "TCP"
+              }
+            ],
+            "readinessProbe": {
+              "failureThreshold": 3,
+              "httpGet": {
+                "path": "/readyz",
+                "port": "health",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 5,
+              "periodSeconds": 10,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "resources": {
+              "limits": {
+                "memory": "192Mi"
+              },
+              "requests": {
+                "cpu": "100m",
+                "memory": "64Mi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "readOnlyRootFilesystem": true,
+              "runAsNonRoot": true
+            },
+            "startupProbe": {
+              "failureThreshold": 24,
+              "httpGet": {
+                "path": "/healthz",
+                "port": "health",
+                "scheme": "HTTP"
+              },
+              "periodSeconds": 5,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "volumeMounts": [
+              {
+                "mountPath": "/operator-cert",
+                "name": "operator-cert",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-nmspl",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "wamn-receiving-journey-worker2",
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {
+          "fsGroup": 65532,
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "runAsUser": 65532,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "serviceAccount": "wamn-runtime-operator",
+        "serviceAccountName": "wamn-runtime-operator",
+        "terminationGracePeriodSeconds": 45,
+        "tolerations": [
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/not-ready",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          },
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/unreachable",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          }
+        ],
+        "volumes": [
+          {
+            "name": "operator-cert",
+            "secret": {
+              "defaultMode": 420,
+              "secretName": "wasmcloud-operator-tls"
+            }
+          },
+          {
+            "name": "kube-api-access-nmspl",
+            "projected": {
+              "defaultMode": 420,
+              "sources": [
+                {
+                  "serviceAccountToken": {
+                    "expirationSeconds": 3607,
+                    "path": "token"
+                  }
+                },
+                {
+                  "configMap": {
+                    "items": [
+                      {
+                        "key": "ca.crt",
+                        "path": "ca.crt"
+                      }
+                    ],
+                    "name": "kube-root-ca.crt"
+                  }
+                },
+                {
+                  "downwardAPI": {
+                    "items": [
+                      {
+                        "fieldRef": {
+                          "apiVersion": "v1",
+                          "fieldPath": "metadata.namespace"
+                        },
+                        "path": "namespace"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "status": {
+        "allocatedResources": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:27:41Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:27:41Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:34:07Z",
+            "message": "containers with unready status: [runtime-operator]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:34:07Z",
+            "message": "containers with unready status: [runtime-operator]",
+            "observedGeneration": 1,
+            "reason": "ContainersNotReady",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:27:41Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "cpu": "100m",
+              "memory": "64Mi"
+            },
+            "containerID": "containerd://06effdf1b8b237319af553094d8d2f42712bb78ba7ca5697e58c1660ca198270",
+            "image": "ghcr.io/wasmcloud/runtime-operator:2.9.0",
+            "imageID": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+            "lastState": {
+              "terminated": {
+                "containerID": "containerd://459ae2242dc78c038c7cd5066e239428f71aecb47f719ae1dde4446ec8d23010",
+                "exitCode": 0,
+                "finishedAt": "2026-09-09T16:34:07Z",
+                "reason": "Completed",
+                "startedAt": "2026-09-09T16:27:52Z"
+              }
+            },
+            "name": "runtime-operator",
+            "ready": false,
+            "resources": {
+              "limits": {
+                "memory": "192Mi"
+              },
+              "requests": {
+                "cpu": "100m",
+                "memory": "64Mi"
+              }
+            },
+            "restartCount": 2,
+            "started": true,
+            "state": {
+              "running": {
+                "startedAt": "2026-09-09T16:34:07Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 65532,
+                "supplementalGroups": [
+                  65532
+                ],
+                "uid": 65532
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/operator-cert",
+                "name": "operator-cert",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              },
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-nmspl",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.28.0.6",
+        "hostIPs": [
+          {
+            "ip": "172.28.0.6"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.1.4",
+        "podIPs": [
+          {
+            "ip": "10.244.1.4"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "limits": {
+            "memory": "192Mi"
+          },
+          "requests": {
+            "cpu": "79m",
+            "memory": "64Mi"
+          }
+        },
+        "startTime": "2026-09-09T16:27:41Z"
+      }
+    }
+  ],
+  "pods": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-09-09T16:28:06Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/pod-host-finalizer"
+        ],
+        "generateName": "hostgroup-default-5c6545f56-",
+        "generation": 1,
+        "labels": {
+          "app.kubernetes.io/instance": "wamn-host",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "runtime-operator",
+          "app.kubernetes.io/version": "2.9.0",
+          "helm.sh/chart": "runtime-operator-2.9.0",
+          "pod-template-hash": "5c6545f56",
+          "wasmcloud.com/hostgroup": "default",
+          "wasmcloud.com/name": "hostgroup"
+        },
+        "name": "hostgroup-default-5c6545f56-2qqjk",
+        "namespace": "wamn-receiving-journey",
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "ReplicaSet",
+            "name": "hostgroup-default-5c6545f56",
+            "uid": "de49f6d0-b44a-4d03-95c5-3540e76e83d7"
+          }
+        ],
+        "resourceVersion": "1286",
+        "uid": "80feacfb-7bb0-45a6-84b6-f289769109d8"
+      },
+      "spec": {
+        "automountServiceAccountToken": false,
+        "containers": [
+          {
+            "args": [
+              "host",
+              "--host-name=$(WASMCLOUD_HOST_IP)",
+              "--host-group=default",
+              "--environment=$(WASMCLOUD_HOST_ENVIRONMENT)",
+              "--scheduler-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+              "--scheduler-nats-tls-ca=/runtime-cert/ca.crt",
+              "--scheduler-nats-tls-cert=/runtime-cert/tls.crt",
+              "--scheduler-nats-tls-key=/runtime-cert/tls.key",
+              "--data-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+              "--data-nats-tls-ca=/data-cert/ca.crt",
+              "--data-nats-tls-cert=/data-cert/tls.crt",
+              "--data-nats-tls-key=/data-cert/tls.key",
+              "--oci-cache-dir=/oci-cache",
+              "--drain-delay=5s",
+              "--nats-connect-timeout=60s",
+              "--probe-addr=0.0.0.0:8081",
+              "--http-addr=0.0.0.0:80",
+              "--oci-ca-path=/runtime-cert/ca.crt",
+              "--release-artifact-base=172.28.0.9:5000/wamn/releases",
+              "--release-manifest-digest=sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+              "--allow-insecure-registries"
+            ],
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/tmp"
+              },
+              {
+                "name": "WASMCLOUD_HOST_IP",
+                "valueFrom": {
+                  "fieldRef": {
+                    "apiVersion": "v1",
+                    "fieldPath": "status.podIP"
+                  }
+                }
+              },
+              {
+                "name": "WASMCLOUD_HOST_ENVIRONMENT",
+                "valueFrom": {
+                  "fieldRef": {
+                    "apiVersion": "v1",
+                    "fieldPath": "metadata.namespace"
+                  }
+                }
+              },
+              {
+                "name": "WASH_HOST_MAX_GUEST_MEMORY",
+                "value": "4Gi"
+              },
+              {
+                "name": "WASH_DEFAULT_HEAP_MEMORY",
+                "value": "256MiB"
+              },
+              {
+                "name": "WASH_CORE_INSTANCES",
+                "value": "512"
+              },
+              {
+                "name": "WASH_GUEST_MEMORY_MODE",
+                "value": "count"
+              },
+              {
+                "name": "WASH_MAX_CONCURRENT_STARTS",
+                "value": "4"
+              },
+              {
+                "name": "WAMN_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-guest-acme--receiving--dev"
+                  }
+                }
+              },
+              {
+                "name": "WAMN_PG_GUEST_POOL_MAX",
+                "value": "14"
+              },
+              {
+                "name": "WAMN_PG_PLATFORM_POOL_MAX",
+                "value": "2"
+              },
+              {
+                "name": "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT",
+                "value": "64"
+              },
+              {
+                "name": "WAMN_WASMTIME_CACHE_DIR",
+                "value": "/tmp/wamn-wasmtime-cache"
+              },
+              {
+                "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "value": "http://otel-collector.wamn-system.svc.cluster.local:4317"
+              },
+              {
+                "name": "OTEL_BSP_SCHEDULE_DELAY",
+                "value": "1"
+              },
+              {
+                "name": "OTEL_BSP_MAX_EXPORT_BATCH_SIZE",
+                "value": "1"
+              },
+              {
+                "name": "DOCKER_CONFIG",
+                "value": "/etc/wamn/registry"
+              },
+              {
+                "name": "WAMN_REGISTRY_AUTH_FILE",
+                "value": "/etc/wamn/registry/config.json"
+              },
+              {
+                "name": "WAMN_COMPONENT_ARTIFACT_BASE",
+                "value": "172.28.0.9:5000/wamn/components"
+              },
+              {
+                "name": "WAMN_EVT_NATS_URL",
+                "value": "nats://172.28.0.10:4222"
+              },
+              {
+                "name": "WAMN_ORG",
+                "value": "acme"
+              },
+              {
+                "name": "WAMN_PROJECT",
+                "value": "receiving"
+              },
+              {
+                "name": "WAMN_SCHEMA",
+                "value": "receiving"
+              },
+              {
+                "name": "WAMN_SYSTEM_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-identity-reader-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_EXECUTOR_PLATFORM_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-executor-platform-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_HTTP_ADMITTER_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-http-admitter-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_EVENT_MATERIALIZER_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-event-materializer-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              }
+            ],
+            "image": "wamn-host:receiving-0388e3bc98d2-3447033-release",
+            "imagePullPolicy": "Never",
+            "livenessProbe": {
+              "failureThreshold": 5,
+              "httpGet": {
+                "path": "/livez",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 10,
+              "periodSeconds": 30,
+              "successThreshold": 1,
+              "timeoutSeconds": 5
+            },
+            "name": "host",
+            "ports": [
+              {
+                "containerPort": 80,
+                "name": "http",
+                "protocol": "TCP"
+              },
+              {
+                "containerPort": 8081,
+                "name": "probes",
+                "protocol": "TCP"
+              }
+            ],
+            "readinessProbe": {
+              "failureThreshold": 3,
+              "httpGet": {
+                "path": "/readyz",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 5,
+              "periodSeconds": 10,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "resources": {
+              "limits": {
+                "cpu": "6",
+                "memory": "4Gi"
+              },
+              "requests": {
+                "cpu": "2",
+                "memory": "256Mi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "readOnlyRootFilesystem": true,
+              "runAsNonRoot": true
+            },
+            "startupProbe": {
+              "failureThreshold": 60,
+              "httpGet": {
+                "path": "/livez",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "periodSeconds": 5,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "volumeMounts": [
+              {
+                "mountPath": "/oci-cache",
+                "name": "oci-cache"
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              },
+              {
+                "mountPath": "/runtime-cert",
+                "name": "runtime-cert",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/data-cert",
+                "name": "data-cert",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/etc/wamn/registry",
+                "name": "registry-pull",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "wamn-receiving-journey-worker",
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {
+          "fsGroup": 65532,
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "runAsUser": 65532,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "serviceAccount": "wamn-host-runtime-operator-runtime",
+        "serviceAccountName": "wamn-host-runtime-operator-runtime",
+        "terminationGracePeriodSeconds": 70,
+        "tolerations": [
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/not-ready",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          },
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/unreachable",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          }
+        ],
+        "volumes": [
+          {
+            "emptyDir": {},
+            "name": "oci-cache"
+          },
+          {
+            "emptyDir": {},
+            "name": "tmp"
+          },
+          {
+            "name": "runtime-cert",
+            "secret": {
+              "defaultMode": 420,
+              "secretName": "wasmcloud-runtime-tls"
+            }
+          },
+          {
+            "name": "data-cert",
+            "secret": {
+              "defaultMode": 420,
+              "secretName": "wasmcloud-data-tls"
+            }
+          },
+          {
+            "name": "registry-pull",
+            "secret": {
+              "defaultMode": 420,
+              "items": [
+                {
+                  "key": ".dockerconfigjson",
+                  "path": "config.json"
+                }
+              ],
+              "optional": false,
+              "secretName": "wamn-registry-pull"
+            }
+          }
+        ]
+      },
+      "status": {
+        "allocatedResources": {
+          "cpu": "2",
+          "memory": "256Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:12Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:12Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "cpu": "2",
+              "memory": "256Mi"
+            },
+            "containerID": "containerd://37d634cce610dc5922b0b66a35d2d699c14cbe961e265cb8c58192384906f477",
+            "image": "docker.io/library/wamn-host:receiving-0388e3bc98d2-3447033-release",
+            "imageID": "docker.io/library/import-2026-09-09@sha256:d20104d36b0a055b8deb34906b410f2b00de70af1132f4056da5dee7fd3623c2",
+            "lastState": {},
+            "name": "host",
+            "ready": true,
+            "resources": {
+              "limits": {
+                "cpu": "6",
+                "memory": "4Gi"
+              },
+              "requests": {
+                "cpu": "2",
+                "memory": "256Mi"
+              }
+            },
+            "restartCount": 0,
+            "started": true,
+            "state": {
+              "running": {
+                "startedAt": "2026-09-09T16:28:07Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 65532,
+                "supplementalGroups": [
+                  65532
+                ],
+                "uid": 65532
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/oci-cache",
+                "name": "oci-cache"
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              },
+              {
+                "mountPath": "/runtime-cert",
+                "name": "runtime-cert",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              },
+              {
+                "mountPath": "/data-cert",
+                "name": "data-cert",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              },
+              {
+                "mountPath": "/etc/wamn/registry",
+                "name": "registry-pull",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.28.0.7",
+        "hostIPs": [
+          {
+            "ip": "172.28.0.7"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.3.6",
+        "podIPs": [
+          {
+            "ip": "10.244.3.6"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "limits": {
+            "cpu": "6",
+            "memory": "4Gi"
+          },
+          "requests": {
+            "cpu": "1999m",
+            "memory": "256Mi"
+          }
+        },
+        "startTime": "2026-09-09T16:28:06Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-09-09T16:28:06Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/pod-host-finalizer"
+        ],
+        "generateName": "hostgroup-default-5c6545f56-",
+        "generation": 1,
+        "labels": {
+          "app.kubernetes.io/instance": "wamn-host",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "runtime-operator",
+          "app.kubernetes.io/version": "2.9.0",
+          "helm.sh/chart": "runtime-operator-2.9.0",
+          "pod-template-hash": "5c6545f56",
+          "wasmcloud.com/hostgroup": "default",
+          "wasmcloud.com/name": "hostgroup"
+        },
+        "name": "hostgroup-default-5c6545f56-jr5ck",
+        "namespace": "wamn-receiving-journey",
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "ReplicaSet",
+            "name": "hostgroup-default-5c6545f56",
+            "uid": "de49f6d0-b44a-4d03-95c5-3540e76e83d7"
+          }
+        ],
+        "resourceVersion": "1277",
+        "uid": "e9ff917e-2a6d-43e6-9475-65f2a5035e72"
+      },
+      "spec": {
+        "automountServiceAccountToken": false,
+        "containers": [
+          {
+            "args": [
+              "host",
+              "--host-name=$(WASMCLOUD_HOST_IP)",
+              "--host-group=default",
+              "--environment=$(WASMCLOUD_HOST_ENVIRONMENT)",
+              "--scheduler-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+              "--scheduler-nats-tls-ca=/runtime-cert/ca.crt",
+              "--scheduler-nats-tls-cert=/runtime-cert/tls.crt",
+              "--scheduler-nats-tls-key=/runtime-cert/tls.key",
+              "--data-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+              "--data-nats-tls-ca=/data-cert/ca.crt",
+              "--data-nats-tls-cert=/data-cert/tls.crt",
+              "--data-nats-tls-key=/data-cert/tls.key",
+              "--oci-cache-dir=/oci-cache",
+              "--drain-delay=5s",
+              "--nats-connect-timeout=60s",
+              "--probe-addr=0.0.0.0:8081",
+              "--http-addr=0.0.0.0:80",
+              "--oci-ca-path=/runtime-cert/ca.crt",
+              "--release-artifact-base=172.28.0.9:5000/wamn/releases",
+              "--release-manifest-digest=sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+              "--allow-insecure-registries"
+            ],
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/tmp"
+              },
+              {
+                "name": "WASMCLOUD_HOST_IP",
+                "valueFrom": {
+                  "fieldRef": {
+                    "apiVersion": "v1",
+                    "fieldPath": "status.podIP"
+                  }
+                }
+              },
+              {
+                "name": "WASMCLOUD_HOST_ENVIRONMENT",
+                "valueFrom": {
+                  "fieldRef": {
+                    "apiVersion": "v1",
+                    "fieldPath": "metadata.namespace"
+                  }
+                }
+              },
+              {
+                "name": "WASH_HOST_MAX_GUEST_MEMORY",
+                "value": "4Gi"
+              },
+              {
+                "name": "WASH_DEFAULT_HEAP_MEMORY",
+                "value": "256MiB"
+              },
+              {
+                "name": "WASH_CORE_INSTANCES",
+                "value": "512"
+              },
+              {
+                "name": "WASH_GUEST_MEMORY_MODE",
+                "value": "count"
+              },
+              {
+                "name": "WASH_MAX_CONCURRENT_STARTS",
+                "value": "4"
+              },
+              {
+                "name": "WAMN_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-guest-acme--receiving--dev"
+                  }
+                }
+              },
+              {
+                "name": "WAMN_PG_GUEST_POOL_MAX",
+                "value": "14"
+              },
+              {
+                "name": "WAMN_PG_PLATFORM_POOL_MAX",
+                "value": "2"
+              },
+              {
+                "name": "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT",
+                "value": "64"
+              },
+              {
+                "name": "WAMN_WASMTIME_CACHE_DIR",
+                "value": "/tmp/wamn-wasmtime-cache"
+              },
+              {
+                "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "value": "http://otel-collector.wamn-system.svc.cluster.local:4317"
+              },
+              {
+                "name": "OTEL_BSP_SCHEDULE_DELAY",
+                "value": "1"
+              },
+              {
+                "name": "OTEL_BSP_MAX_EXPORT_BATCH_SIZE",
+                "value": "1"
+              },
+              {
+                "name": "DOCKER_CONFIG",
+                "value": "/etc/wamn/registry"
+              },
+              {
+                "name": "WAMN_REGISTRY_AUTH_FILE",
+                "value": "/etc/wamn/registry/config.json"
+              },
+              {
+                "name": "WAMN_COMPONENT_ARTIFACT_BASE",
+                "value": "172.28.0.9:5000/wamn/components"
+              },
+              {
+                "name": "WAMN_EVT_NATS_URL",
+                "value": "nats://172.28.0.10:4222"
+              },
+              {
+                "name": "WAMN_ORG",
+                "value": "acme"
+              },
+              {
+                "name": "WAMN_PROJECT",
+                "value": "receiving"
+              },
+              {
+                "name": "WAMN_SCHEMA",
+                "value": "receiving"
+              },
+              {
+                "name": "WAMN_SYSTEM_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-identity-reader-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_EXECUTOR_PLATFORM_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-executor-platform-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_HTTP_ADMITTER_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-http-admitter-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_EVENT_MATERIALIZER_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-event-materializer-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              }
+            ],
+            "image": "wamn-host:receiving-0388e3bc98d2-3447033-release",
+            "imagePullPolicy": "Never",
+            "livenessProbe": {
+              "failureThreshold": 5,
+              "httpGet": {
+                "path": "/livez",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 10,
+              "periodSeconds": 30,
+              "successThreshold": 1,
+              "timeoutSeconds": 5
+            },
+            "name": "host",
+            "ports": [
+              {
+                "containerPort": 80,
+                "name": "http",
+                "protocol": "TCP"
+              },
+              {
+                "containerPort": 8081,
+                "name": "probes",
+                "protocol": "TCP"
+              }
+            ],
+            "readinessProbe": {
+              "failureThreshold": 3,
+              "httpGet": {
+                "path": "/readyz",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 5,
+              "periodSeconds": 10,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "resources": {
+              "limits": {
+                "cpu": "6",
+                "memory": "4Gi"
+              },
+              "requests": {
+                "cpu": "2",
+                "memory": "256Mi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "readOnlyRootFilesystem": true,
+              "runAsNonRoot": true
+            },
+            "startupProbe": {
+              "failureThreshold": 60,
+              "httpGet": {
+                "path": "/livez",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "periodSeconds": 5,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "volumeMounts": [
+              {
+                "mountPath": "/oci-cache",
+                "name": "oci-cache"
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              },
+              {
+                "mountPath": "/runtime-cert",
+                "name": "runtime-cert",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/data-cert",
+                "name": "data-cert",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/etc/wamn/registry",
+                "name": "registry-pull",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "wamn-receiving-journey-worker2",
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {
+          "fsGroup": 65532,
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "runAsUser": 65532,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "serviceAccount": "wamn-host-runtime-operator-runtime",
+        "serviceAccountName": "wamn-host-runtime-operator-runtime",
+        "terminationGracePeriodSeconds": 70,
+        "tolerations": [
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/not-ready",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          },
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/unreachable",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          }
+        ],
+        "volumes": [
+          {
+            "emptyDir": {},
+            "name": "oci-cache"
+          },
+          {
+            "emptyDir": {},
+            "name": "tmp"
+          },
+          {
+            "name": "runtime-cert",
+            "secret": {
+              "defaultMode": 420,
+              "secretName": "wasmcloud-runtime-tls"
+            }
+          },
+          {
+            "name": "data-cert",
+            "secret": {
+              "defaultMode": 420,
+              "secretName": "wasmcloud-data-tls"
+            }
+          },
+          {
+            "name": "registry-pull",
+            "secret": {
+              "defaultMode": 420,
+              "items": [
+                {
+                  "key": ".dockerconfigjson",
+                  "path": "config.json"
+                }
+              ],
+              "optional": false,
+              "secretName": "wamn-registry-pull"
+            }
+          }
+        ]
+      },
+      "status": {
+        "allocatedResources": {
+          "cpu": "2",
+          "memory": "256Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:12Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:12Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "cpu": "2",
+              "memory": "256Mi"
+            },
+            "containerID": "containerd://b5546dc58605e338e977f1d0ed8a41ce44578a7bff9ba4e03d5c4f086b471469",
+            "image": "docker.io/library/wamn-host:receiving-0388e3bc98d2-3447033-release",
+            "imageID": "docker.io/library/import-2026-09-09@sha256:d20104d36b0a055b8deb34906b410f2b00de70af1132f4056da5dee7fd3623c2",
+            "lastState": {},
+            "name": "host",
+            "ready": true,
+            "resources": {
+              "limits": {
+                "cpu": "6",
+                "memory": "4Gi"
+              },
+              "requests": {
+                "cpu": "2",
+                "memory": "256Mi"
+              }
+            },
+            "restartCount": 0,
+            "started": true,
+            "state": {
+              "running": {
+                "startedAt": "2026-09-09T16:28:07Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 65532,
+                "supplementalGroups": [
+                  65532
+                ],
+                "uid": 65532
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/oci-cache",
+                "name": "oci-cache"
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              },
+              {
+                "mountPath": "/runtime-cert",
+                "name": "runtime-cert",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              },
+              {
+                "mountPath": "/data-cert",
+                "name": "data-cert",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              },
+              {
+                "mountPath": "/etc/wamn/registry",
+                "name": "registry-pull",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.28.0.6",
+        "hostIPs": [
+          {
+            "ip": "172.28.0.6"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.1.6",
+        "podIPs": [
+          {
+            "ip": "10.244.1.6"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "limits": {
+            "cpu": "6",
+            "memory": "4Gi"
+          },
+          "requests": {
+            "cpu": "1999m",
+            "memory": "256Mi"
+          }
+        },
+        "startTime": "2026-09-09T16:28:06Z"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-09-09T16:28:06Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/pod-host-finalizer"
+        ],
+        "generateName": "hostgroup-default-5c6545f56-",
+        "generation": 1,
+        "labels": {
+          "app.kubernetes.io/instance": "wamn-host",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "runtime-operator",
+          "app.kubernetes.io/version": "2.9.0",
+          "helm.sh/chart": "runtime-operator-2.9.0",
+          "pod-template-hash": "5c6545f56",
+          "wasmcloud.com/hostgroup": "default",
+          "wasmcloud.com/name": "hostgroup"
+        },
+        "name": "hostgroup-default-5c6545f56-kf6tp",
+        "namespace": "wamn-receiving-journey",
+        "ownerReferences": [
+          {
+            "apiVersion": "apps/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "ReplicaSet",
+            "name": "hostgroup-default-5c6545f56",
+            "uid": "de49f6d0-b44a-4d03-95c5-3540e76e83d7"
+          }
+        ],
+        "resourceVersion": "1282",
+        "uid": "798a56d4-fe20-4538-bffb-d7d77c1a6293"
+      },
+      "spec": {
+        "automountServiceAccountToken": false,
+        "containers": [
+          {
+            "args": [
+              "host",
+              "--host-name=$(WASMCLOUD_HOST_IP)",
+              "--host-group=default",
+              "--environment=$(WASMCLOUD_HOST_ENVIRONMENT)",
+              "--scheduler-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+              "--scheduler-nats-tls-ca=/runtime-cert/ca.crt",
+              "--scheduler-nats-tls-cert=/runtime-cert/tls.crt",
+              "--scheduler-nats-tls-key=/runtime-cert/tls.key",
+              "--data-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+              "--data-nats-tls-ca=/data-cert/ca.crt",
+              "--data-nats-tls-cert=/data-cert/tls.crt",
+              "--data-nats-tls-key=/data-cert/tls.key",
+              "--oci-cache-dir=/oci-cache",
+              "--drain-delay=5s",
+              "--nats-connect-timeout=60s",
+              "--probe-addr=0.0.0.0:8081",
+              "--http-addr=0.0.0.0:80",
+              "--oci-ca-path=/runtime-cert/ca.crt",
+              "--release-artifact-base=172.28.0.9:5000/wamn/releases",
+              "--release-manifest-digest=sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+              "--allow-insecure-registries"
+            ],
+            "env": [
+              {
+                "name": "HOME",
+                "value": "/tmp"
+              },
+              {
+                "name": "WASMCLOUD_HOST_IP",
+                "valueFrom": {
+                  "fieldRef": {
+                    "apiVersion": "v1",
+                    "fieldPath": "status.podIP"
+                  }
+                }
+              },
+              {
+                "name": "WASMCLOUD_HOST_ENVIRONMENT",
+                "valueFrom": {
+                  "fieldRef": {
+                    "apiVersion": "v1",
+                    "fieldPath": "metadata.namespace"
+                  }
+                }
+              },
+              {
+                "name": "WASH_HOST_MAX_GUEST_MEMORY",
+                "value": "4Gi"
+              },
+              {
+                "name": "WASH_DEFAULT_HEAP_MEMORY",
+                "value": "256MiB"
+              },
+              {
+                "name": "WASH_CORE_INSTANCES",
+                "value": "512"
+              },
+              {
+                "name": "WASH_GUEST_MEMORY_MODE",
+                "value": "count"
+              },
+              {
+                "name": "WASH_MAX_CONCURRENT_STARTS",
+                "value": "4"
+              },
+              {
+                "name": "WAMN_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-guest-acme--receiving--dev"
+                  }
+                }
+              },
+              {
+                "name": "WAMN_PG_GUEST_POOL_MAX",
+                "value": "14"
+              },
+              {
+                "name": "WAMN_PG_PLATFORM_POOL_MAX",
+                "value": "2"
+              },
+              {
+                "name": "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT",
+                "value": "64"
+              },
+              {
+                "name": "WAMN_WASMTIME_CACHE_DIR",
+                "value": "/tmp/wamn-wasmtime-cache"
+              },
+              {
+                "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "value": "http://otel-collector.wamn-system.svc.cluster.local:4317"
+              },
+              {
+                "name": "OTEL_BSP_SCHEDULE_DELAY",
+                "value": "1"
+              },
+              {
+                "name": "OTEL_BSP_MAX_EXPORT_BATCH_SIZE",
+                "value": "1"
+              },
+              {
+                "name": "DOCKER_CONFIG",
+                "value": "/etc/wamn/registry"
+              },
+              {
+                "name": "WAMN_REGISTRY_AUTH_FILE",
+                "value": "/etc/wamn/registry/config.json"
+              },
+              {
+                "name": "WAMN_COMPONENT_ARTIFACT_BASE",
+                "value": "172.28.0.9:5000/wamn/components"
+              },
+              {
+                "name": "WAMN_EVT_NATS_URL",
+                "value": "nats://172.28.0.10:4222"
+              },
+              {
+                "name": "WAMN_ORG",
+                "value": "acme"
+              },
+              {
+                "name": "WAMN_PROJECT",
+                "value": "receiving"
+              },
+              {
+                "name": "WAMN_SCHEMA",
+                "value": "receiving"
+              },
+              {
+                "name": "WAMN_SYSTEM_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-identity-reader-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_EXECUTOR_PLATFORM_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-executor-platform-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_HTTP_ADMITTER_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-http-admitter-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              },
+              {
+                "name": "WAMN_EVENT_MATERIALIZER_PG_URL",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "url",
+                    "name": "wamn-event-materializer-acme--receiving--dev",
+                    "optional": false
+                  }
+                }
+              }
+            ],
+            "image": "wamn-host:receiving-0388e3bc98d2-3447033-release",
+            "imagePullPolicy": "Never",
+            "livenessProbe": {
+              "failureThreshold": 5,
+              "httpGet": {
+                "path": "/livez",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 10,
+              "periodSeconds": 30,
+              "successThreshold": 1,
+              "timeoutSeconds": 5
+            },
+            "name": "host",
+            "ports": [
+              {
+                "containerPort": 80,
+                "name": "http",
+                "protocol": "TCP"
+              },
+              {
+                "containerPort": 8081,
+                "name": "probes",
+                "protocol": "TCP"
+              }
+            ],
+            "readinessProbe": {
+              "failureThreshold": 3,
+              "httpGet": {
+                "path": "/readyz",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "initialDelaySeconds": 5,
+              "periodSeconds": 10,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "resources": {
+              "limits": {
+                "cpu": "6",
+                "memory": "4Gi"
+              },
+              "requests": {
+                "cpu": "2",
+                "memory": "256Mi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "readOnlyRootFilesystem": true,
+              "runAsNonRoot": true
+            },
+            "startupProbe": {
+              "failureThreshold": 60,
+              "httpGet": {
+                "path": "/livez",
+                "port": "probes",
+                "scheme": "HTTP"
+              },
+              "periodSeconds": 5,
+              "successThreshold": 1,
+              "timeoutSeconds": 1
+            },
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "volumeMounts": [
+              {
+                "mountPath": "/oci-cache",
+                "name": "oci-cache"
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              },
+              {
+                "mountPath": "/runtime-cert",
+                "name": "runtime-cert",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/data-cert",
+                "name": "data-cert",
+                "readOnly": true
+              },
+              {
+                "mountPath": "/etc/wamn/registry",
+                "name": "registry-pull",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "wamn-receiving-journey-worker",
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {
+          "fsGroup": 65532,
+          "runAsGroup": 65532,
+          "runAsNonRoot": true,
+          "runAsUser": 65532,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "serviceAccount": "wamn-host-runtime-operator-runtime",
+        "serviceAccountName": "wamn-host-runtime-operator-runtime",
+        "terminationGracePeriodSeconds": 70,
+        "tolerations": [
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/not-ready",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          },
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/unreachable",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          }
+        ],
+        "volumes": [
+          {
+            "emptyDir": {},
+            "name": "oci-cache"
+          },
+          {
+            "emptyDir": {},
+            "name": "tmp"
+          },
+          {
+            "name": "runtime-cert",
+            "secret": {
+              "defaultMode": 420,
+              "secretName": "wasmcloud-runtime-tls"
+            }
+          },
+          {
+            "name": "data-cert",
+            "secret": {
+              "defaultMode": 420,
+              "secretName": "wasmcloud-data-tls"
+            }
+          },
+          {
+            "name": "registry-pull",
+            "secret": {
+              "defaultMode": 420,
+              "items": [
+                {
+                  "key": ".dockerconfigjson",
+                  "path": "config.json"
+                }
+              ],
+              "optional": false,
+              "secretName": "wamn-registry-pull"
+            }
+          }
+        ]
+      },
+      "status": {
+        "allocatedResources": {
+          "cpu": "2",
+          "memory": "256Mi"
+        },
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:12Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:12Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-09T16:28:06Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "allocatedResources": {
+              "cpu": "2",
+              "memory": "256Mi"
+            },
+            "containerID": "containerd://ed1a47befc51b1a80559e2249eb4ef1ca22376cd8e482c5c8900fd6517d7b949",
+            "image": "docker.io/library/wamn-host:receiving-0388e3bc98d2-3447033-release",
+            "imageID": "docker.io/library/import-2026-09-09@sha256:d20104d36b0a055b8deb34906b410f2b00de70af1132f4056da5dee7fd3623c2",
+            "lastState": {},
+            "name": "host",
+            "ready": true,
+            "resources": {
+              "limits": {
+                "cpu": "6",
+                "memory": "4Gi"
+              },
+              "requests": {
+                "cpu": "2",
+                "memory": "256Mi"
+              }
+            },
+            "restartCount": 0,
+            "started": true,
+            "state": {
+              "running": {
+                "startedAt": "2026-09-09T16:28:07Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 65532,
+                "supplementalGroups": [
+                  65532
+                ],
+                "uid": 65532
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/oci-cache",
+                "name": "oci-cache"
+              },
+              {
+                "mountPath": "/tmp",
+                "name": "tmp"
+              },
+              {
+                "mountPath": "/runtime-cert",
+                "name": "runtime-cert",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              },
+              {
+                "mountPath": "/data-cert",
+                "name": "data-cert",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              },
+              {
+                "mountPath": "/etc/wamn/registry",
+                "name": "registry-pull",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.28.0.7",
+        "hostIPs": [
+          {
+            "ip": "172.28.0.7"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.3.5",
+        "podIPs": [
+          {
+            "ip": "10.244.3.5"
+          }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+          "limits": {
+            "cpu": "6",
+            "memory": "4Gi"
+          },
+          "requests": {
+            "cpu": "1999m",
+            "memory": "256Mi"
+          }
+        },
+        "startTime": "2026-09-09T16:28:06Z"
+      }
+    }
+  ],
+  "workloads": [
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "kind": "Workload",
+      "metadata": {
+        "annotations": {
+          "runtime.wasmcloud.dev/workload-replica-set-generation": "59c56ccb68"
+        },
+        "creationTimestamp": "2026-09-09T16:33:32Z",
+        "generation": 1,
+        "name": "flow-http-55b96f969b-6fbc55df57",
+        "namespace": "wamn-receiving-journey",
+        "ownerReferences": [
+          {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "WorkloadReplicaSet",
+            "name": "flow-http-55b96f969b",
+            "uid": "aa2e650c-9637-4c0c-85b1-e5415148c01b"
+          }
+        ],
+        "resourceVersion": "2226",
+        "uid": "9ca0a1de-f78b-4c84-a4ac-3f412d5e2a24"
+      },
+      "spec": {
+        "components": [
+          {
+            "image": "172.28.0.9:5000/wamn/flow-http@sha256:f8a24928c8d1dce785eece87e0765a4a0bb37278488b8f2c1ca62fa49603406a",
+            "imagePullPolicy": "Always",
+            "localResources": {
+              "config": {
+                "wamn.catalog": "default",
+                "wamn.environment": "dev",
+                "wamn.project": "receiving",
+                "wamn.schema": "receiving",
+                "wamn.tenant": "receiving-route-auth"
+              }
+            },
+            "name": "flow-http"
+          }
+        ],
+        "environment": "wamn-receiving-journey",
+        "hostInterfaces": [
+          {
+            "config": {
+              "host": "receiving.localhost"
+            },
+            "interfaces": [
+              "incoming-handler"
+            ],
+            "namespace": "wasi",
+            "package": "http"
+          },
+          {
+            "interfaces": [
+              "routing"
+            ],
+            "namespace": "wamn",
+            "package": "flow-http-routing",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "delivery"
+            ],
+            "namespace": "wamn",
+            "package": "router-delivery",
+            "version": "0.1.0"
+          }
+        ],
+        "hostSelector": {
+          "hostgroup": "default"
+        },
+        "kubernetes": {
+          "service": {
+            "name": "flow-http"
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "kind": "Workload",
+      "metadata": {
+        "annotations": {
+          "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"Workload\",\"metadata\":{\"annotations\":{},\"labels\":{\"app\":\"flow-http-cross-environment\"},\"name\":\"flow-http-cross-environment\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"components\":[{\"image\":\"172.28.0.9:5000/wamn/flow-http@sha256:f8a24928c8d1dce785eece87e0765a4a0bb37278488b8f2c1ca62fa49603406a\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"config\":{\"wamn.catalog\":\"default\",\"wamn.environment\":\"dev\",\"wamn.project\":\"receiving\",\"wamn.schema\":\"receiving\",\"wamn.tenant\":\"receiving-route-auth\"}},\"name\":\"flow-http\"}],\"environment\":\"wamn-receiving-journey-denied\",\"hostInterfaces\":[{\"config\":{\"host\":\"receiving.localhost\"},\"interfaces\":[\"incoming-handler\"],\"namespace\":\"wasi\",\"package\":\"http\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"kubernetes\":{\"service\":{\"name\":\"flow-http\"}}}}\n"
+        },
+        "creationTimestamp": "2026-09-09T16:29:13Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/workload-finalizer"
+        ],
+        "generation": 1,
+        "labels": {
+          "app": "flow-http-cross-environment"
+        },
+        "name": "flow-http-cross-environment",
+        "namespace": "wamn-receiving-journey",
+        "resourceVersion": "1560",
+        "uid": "c1602d75-ca4b-4250-acab-523096ff8802"
+      },
+      "spec": {
+        "components": [
+          {
+            "image": "172.28.0.9:5000/wamn/flow-http@sha256:f8a24928c8d1dce785eece87e0765a4a0bb37278488b8f2c1ca62fa49603406a",
+            "imagePullPolicy": "Always",
+            "localResources": {
+              "config": {
+                "wamn.catalog": "default",
+                "wamn.environment": "dev",
+                "wamn.project": "receiving",
+                "wamn.schema": "receiving",
+                "wamn.tenant": "receiving-route-auth"
+              }
+            },
+            "name": "flow-http"
+          }
+        ],
+        "environment": "wamn-receiving-journey-denied",
+        "hostInterfaces": [
+          {
+            "config": {
+              "host": "receiving.localhost"
+            },
+            "interfaces": [
+              "incoming-handler"
+            ],
+            "namespace": "wasi",
+            "package": "http"
+          },
+          {
+            "interfaces": [
+              "routing"
+            ],
+            "namespace": "wamn",
+            "package": "flow-http-routing",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "delivery"
+            ],
+            "namespace": "wamn",
+            "package": "router-delivery",
+            "version": "0.1.0"
+          }
+        ],
+        "hostSelector": {
+          "hostgroup": "default"
+        },
+        "kubernetes": {
+          "service": {
+            "name": "flow-http"
+          }
+        }
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-09T16:29:13Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Config"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:29:13Z",
+            "message": "workload targets Environment \"wamn-receiving-journey-denied\" but operator has allowSharedHosts=false",
+            "reason": "Reconcile",
+            "status": "False",
+            "type": "HostSelection"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:29:13Z",
+            "message": "status unknown: waiting for Host Selection",
+            "reason": "Reconcile",
+            "status": "Unknown",
+            "type": "Placement"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:29:13Z",
+            "message": "status unknown: workload is not placed yet",
+            "reason": "Reconcile",
+            "status": "Unknown",
+            "type": "Sync"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:29:13Z",
+            "message": "workload is not placed or not synced",
+            "reason": "Reconcile",
+            "status": "False",
+            "type": "Ready"
+          }
+        ]
+      }
+    },
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "kind": "Workload",
+      "metadata": {
+        "annotations": {
+          "runtime.wasmcloud.dev/workload-replica-set-generation": "fcd68464f"
+        },
+        "creationTimestamp": "2026-09-09T16:28:17Z",
+        "deletionGracePeriodSeconds": 0,
+        "deletionTimestamp": "2026-09-09T16:33:07Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/workload-finalizer"
+        ],
+        "generation": 2,
+        "name": "receiving-materializer-65bf75b8cb-578b4d5c56",
+        "namespace": "wamn-receiving-journey",
+        "ownerReferences": [
+          {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "WorkloadReplicaSet",
+            "name": "receiving-materializer-65bf75b8cb",
+            "uid": "06b26000-6260-4431-a3c2-650774a50a02"
+          }
+        ],
+        "resourceVersion": "2168",
+        "uid": "c0aa8195-e4ae-4d60-90ce-b6cd4803d272"
+      },
+      "spec": {
+        "environment": "wamn-receiving-journey",
+        "hostInterfaces": [
+          {
+            "interfaces": [
+              "types",
+              "client"
+            ],
+            "namespace": "wamn",
+            "package": "postgres",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "types",
+              "consumer"
+            ],
+            "namespace": "wamn",
+            "package": "jetstream",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "routing"
+            ],
+            "namespace": "wamn",
+            "package": "flow-http-routing",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "delivery"
+            ],
+            "namespace": "wamn",
+            "package": "router-delivery",
+            "version": "0.1.0"
+          }
+        ],
+        "hostSelector": {
+          "hostgroup": "default"
+        },
+        "service": {
+          "image": "172.28.0.9:5000/wamn/materializer@sha256:d54980345a83eba5b8f9669118eb3d3a767fba54497a2d7c2a35b6c4f824a92c",
+          "imagePullPolicy": "Always",
+          "localResources": {
+            "config": {
+              "wamn.environment": "dev",
+              "wamn.postgres.authority": "event-materializer",
+              "wamn.project": "receiving",
+              "wamn.tenant": "receiving-route-auth"
+            },
+            "environment": {
+              "config": {
+                "WAMN_MAT_ENV": "dev",
+                "WAMN_MAT_FETCH_MS": "500",
+                "WAMN_MAT_MAX_DELIVER": "5",
+                "WAMN_MAT_ORG": "acme",
+                "WAMN_MAT_PROJECT": "receiving",
+                "WAMN_MAT_STREAM": "EVT_acme_dev",
+                "WAMN_MAT_SWEEP_MS": "500",
+                "WAMN_MAT_TENANT": "receiving-route-auth"
+              }
+            }
+          },
+          "maxRestarts": 5
+        }
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-09T16:28:17Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Config"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:28:17Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "HostSelection"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:28:17Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Placement"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:31:54Z",
+            "message": "context deadline exceeded",
+            "reason": "Reconcile",
+            "status": "False",
+            "type": "Sync"
+          },
+          {
+            "lastTransitionTime": "2026-09-09T16:32:07Z",
+            "message": "workload is not placed or not synced",
+            "reason": "Reconcile",
+            "status": "False",
+            "type": "Ready"
+          }
+        ],
+        "environment": "wamn-receiving-journey",
+        "hostId": "3f306643-1816-4547-8c24-0c57a72f50c0",
+        "workloadId": "c0aa8195-e4ae-4d60-90ce-b6cd4803d272"
+      }
+    }
+  ]
+}

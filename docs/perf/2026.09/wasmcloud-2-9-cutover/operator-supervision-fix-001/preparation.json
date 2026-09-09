@@ -1,0 +1,6 @@
+{
+  "source": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/tools/receiving-operator-recovery-run",
+  "source_sha256": "3b8aed3cec2c44a5d6559f6f01d54d7326d90e5672166b105e7f5acf4730080c",
+  "proposed_sha256": "d9c36a4e80f592d6d3c77d87711a8145196fe0d1d45974a2a26ddea188206934",
+  "scope": "Offline preparation only; no source edits or live execution."
+}
