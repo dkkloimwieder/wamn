@@ -1,0 +1,58 @@
+diff --git a/tools/receiving-operator-recovery-run b/tools/receiving-operator-recovery-run
+index 60a9a6e0..e471a81b 100755
+--- a/tools/receiving-operator-recovery-run
++++ b/tools/receiving-operator-recovery-run
+@@ -78,8 +78,8 @@ def operator_state(items):
+ 
+ 
+ def supervised_restart(previous, current, previous_log, events, since):
+-    # Native /healthz deliberately asks kubelet to restart a terminally closed
+-    # NATS connection. Ordinary reconnecting stays healthy and retries forever.
++    # The cutover permits a kubelet liveness restart during the NATS fault.
++    # Retain the observed trigger without inferring the underlying probe delay.
+     require(current["pod_uid"] == previous["pod_uid"] and current["image_id"] == previous["image_id"],
+             "operator Pod or image changed during the scheduler fault")
+     require(current["restart_count"] == previous["restart_count"] + 1,
+@@ -91,22 +91,34 @@ def supervised_restart(previous, current, previous_log, events, since):
+             "previous operator termination does not identify the observed process")
+     require(termination.get("exitCode") == 0 and termination.get("reason") == "Completed",
+             "operator restart was not a graceful supervised exit")
+-    require("nats connection closed" in previous_log,
+-            "previous operator log does not establish terminal NATS closure")
+     witnesses = []
++    probe_timeouts = []
+     for event in events.get("items", []):
+         obj = event.get("involvedObject", {})
+         stamp = (event.get("series", {}).get("lastObservedTime") or event.get("lastTimestamp")
+                  or event.get("eventTime") or event.get("metadata", {}).get("creationTimestamp"))
+-        if (obj.get("uid") == current["pod_uid"] and event.get("reason") == "Killing"
+-                and (event.get("reportingComponent") or event.get("source", {}).get("component")) == "kubelet"
+-                and "runtime-operator" in event.get("message", "")
+-                and "failed liveness probe" in event.get("message", "") and stamp
+-                and datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp() >= since):
++        if (obj.get("uid") != current["pod_uid"]
++                or (event.get("reportingComponent") or event.get("source", {}).get("component")) != "kubelet"
++                or not stamp
++                or datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp() < since):
++            continue
++        message = event.get("message", "")
++        if (event.get("reason") == "Killing" and "runtime-operator" in message
++                and "failed liveness probe" in message):
+             witnesses.append(event)
++        if (event.get("reason") == "Unhealthy"
++                and obj.get("fieldPath") == "spec.containers{runtime-operator}"
++                and message.startswith("Liveness probe failed:") and "/healthz" in message
++                and "context deadline exceeded" in message):
++            probe_timeouts.append(event)
+     require(witnesses, "operator restart lacks a same-Pod kubelet liveness event from this fault")
++    if "nats connection closed" in previous_log:
++        cause = "terminal-nats-closure-and-kubelet-liveness-restart"
++    else:
++        require(probe_timeouts, "operator restart lacks a recorded terminal NATS closure or liveness HTTP timeout")
++        cause = "kubelet-liveness-http-timeout"
+     return dict(previous=previous, current=current, termination=termination,
+-                cause="terminal-nats-closure-and-kubelet-liveness-restart", events=witnesses)
++                cause=cause, events=witnesses, probe_timeout_events=probe_timeouts)
+ 
+ 
+ def classify_sample(line, expected_id):
