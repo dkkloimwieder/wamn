@@ -48,7 +48,9 @@ dependency. Nothing seeds a database (F20) → grading drives routes.
 
 - `$WAMN_PILOT_HOME` = `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot` (not `/tmp`;
   `build-and-test.md:1134-1139`). `$RUN` = `$WAMN_PILOT_HOME/runs/<nnn>-<agent>-<task>`.
-  `$TARGET` = `$WAMN_PILOT_HOME/target-<short-commit>`, shared per commit.
+  `$TARGET` = `$WAMN_PILOT_HOME/target-<short-commit>`, shared per commit. Both
+  are working state: `down` deletes `$RUN`, and `$TARGET` with it when no other
+  surviving run names it, once A8 has promoted the evidence (`wamn-nvbd.20`).
 - One run per machine at a time; never concurrently with a cluster journey.
   Ports: the documented fixed set (PG 54332, registry 5004, NATS 4224, Tempo 3201,
   OTLP 4319).

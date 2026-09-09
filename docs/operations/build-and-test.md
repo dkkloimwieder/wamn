@@ -2396,6 +2396,21 @@ through `tools/agent-pilot-report`, which writes
 `docs/experiments/agent-authoring/<run>.md` and the raw directory beside it,
 minus the environment and the worktree.
 
+Reclaim the arm after you promote it:
+
+```bash
+tools/agent-pilot-report --run 030
+tools/agent-pilot-run down --run 030
+```
+
+The second `down` deletes the run directory and its per-commit target directory,
+which is where the storage is: twelve targets at roughly 11 GB each reached
+135 GB. It reclaims nothing until `agent-pilot-report` has written
+`docs/experiments/agent-authoring/<run>/run.json`, and it keeps a target that
+another surviving run still names. Running `down` inside `all` is therefore
+always a no-op for storage, and `down` on an already-reclaimed run is a no-op
+too.
+
 Rules the harness enforces rather than asks for:
 
 - One run per machine at a time, and never beside a cluster journey. It takes
