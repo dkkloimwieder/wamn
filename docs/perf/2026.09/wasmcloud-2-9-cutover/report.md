@@ -1,12 +1,34 @@
 # wasmCloud 2.9 cutover evidence
 
-Stage 1 records the pre-change source under `wamn-0h0g.2.7.1`.
-The source is WAMN `dfa1c3187fe8cd671688a442b23106046e502cb6`.
-This increment contains source observations and retained test results.
-No build, test, journey, workload, or performance measurement ran for this capture.
+WAMN now uses direct upstream wasmCloud 2.9.0 at `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`, with no carried patches.
+The [source and build map](stage1-evidence-map-001/evidence-map.json) records the tested source hashes, feature selections, and explicit skips.
 The cutover does not yet carry a release-readiness claim.
 
-The opening sections retain the baseline capture. [Prepared integration](#prepared-integration) records the later source and validation evidence.
+Completed evidence includes the [fresh authority rerun](authority-inventory-live-001/summary.json) at `379faef6` and [guest isolation](virtualization-live-003/summary.json) at `d45a0fe9`.
+The [deadline-memory proof](memory-cancellation-map-001/deadline-refund-execution.json) records resource release after native epoch interruption.
+The [full WMS journey](live-wms-001/journey/journey.receipt) passes at `ab0467f4`.
+Its separate [startup run](live-wms-startup-002/journey/startup-measurement.receipt) passes at `6bfda73b` with four unchanged cache files and a steady ratio of 7.022 against 12.
+The reported 34-second restart recovery starts inside the request job after readiness waits.
+It does not measure the full interval from SIGTERM.
+
+The [final workspace sweep](workspace-sweep-final-001/workspace-results.json) finishes at clean `c6808b12` in 264.834 seconds and exits 101.
+It reports 2,116 test passes, six doctest passes, and 68 failures across 33 targets.
+All 67 baseline failure identities and causes remain unchanged, and the added startup fixture lacks its required input.
+At least 85 reported passes explicitly skip their proof, so the aggregate is not an executed-proof count.
+The [rebuilt host test](workspace-sweep-final-001/workspace.log) passes in 69.63 seconds, and [host Clippy](host-lifecycle-clippy-final-001/summary.json) exits 0 with existing warnings.
+
+The [2.8 performance baseline](performance-baseline-evidence-001/evidence-map.json) passes at clean `dfa1c318`, with 108 completed steps.
+The [first 2.9 attempt](performance-2-9-001/exit-code.txt) exits 1 before timed traffic because its probe assertion omits the default HTTP scheme.
+The [three-line correction](receiving-probe-scheme-fix-001/source.patch) passes replay against the captured deployment and refuses all 12 altered probe cases.
+The repeated comparison remains pending under `wamn-0h0g.2.7.15`.
+The later [host proof](probe-listener-lifecycle-001/summary.json) passes all 15 unit tests, including actual native probe termination, and host Clippy exits 0.
+That run tests the recorded patch above `b8e9881d`, with unchanged source-file hashes during execution.
+The operator restart decision remains under `wamn-0h0g.2.7.10`.
+The production automation admission and active-drain scope decision remains under `wamn-0h0g.2.7.12`.
+
+The sections below through “Proof limits” retain the initial capture at WAMN `dfa1c3187fe8cd671688a442b23106046e502cb6`.
+No build, test, journey, workload, or performance measurement ran for that capture.
+[Prepared integration](#prepared-integration) and the later sections record subsequent source and execution evidence without changing those historical observations.
 
 ## Source and dependency observations
 
@@ -574,3 +596,72 @@ The [automation feasibility record](executor-admission-feasibility-001/feasibili
 Its retained SQL expects permissions that an earlier change deliberately removed.
 Bead `wamn-0h0g.2.7.12` owns the scope decision for automation delivery and shutdown during active work.
 Existing evidence proves idle executor signals and Receiving stream delivery.
+
+
+## Repeated performance baseline and setup correction
+
+The [2.8 run](performance-baseline-001/exit-code.txt) exits 0 at clean `dfa1c3187fe8cd671688a442b23106046e502cb6` and removes its owned resources.
+Its initial one-minute machine load is 0.5605.
+The [evidence map](performance-baseline-evidence-001/evidence-map.json) retains the exact protocol, images, release, guest hashes, startup observations, and proof limits.
+The [retention map](performance-baseline-reduction-001/retention.json) preserves every referenced reducer output beside this report.
+The [independent integrity receipt](performance-baseline-integrity-001/receipt.json) records matching hashes for all 1,567 captured files.
+The original journey manifest covers 119 top-level files, so the later inventory does not extend that original manifest.
+
+Each credential class receives three sweeps through the existing route, no-database route, and direct PostgreSQL controls.
+Concurrency remains 1, 4, 8, 16, 32, and 64, with ten seconds of generated traffic per step.
+All 108 steps finish with zero workload errors and 1,497 separate deadline cutoffs.
+Three sweeps share one host process per source, so neither requests nor sweeps represent independent deployments.
+The existing reducers retain latency percentiles, CPU samples, memory samples, and each repetition's throughput knee.
+The knee is the last concurrency before throughput growth falls below 20 percent.
+
+The service ratio samples are 11.8357, 9.3471, 9.4301, 10.1408, and 10.3571.
+Their median is 10.1408 against the unchanged ceiling of 12.
+The human median is 12.5713 and remains descriptive because the existing gate applies only to the service samples.
+The ratio divides native HTTP handling time by the sum of PostgreSQL statement time and component instantiation time.
+Retired private P2 phases do not enter this denominator and do not remain available for current phase comparisons.
+
+All three service route knees occur at concurrency eight.
+The human route knees occur at eight, sixteen, and eight across their three repetitions.
+Native host startup takes 883 ms cold and 240 ms after restart, with three unchanged cache files.
+These startup durations measure host initialization, not the complete SIGTERM-to-route recovery interval.
+The measured host requests two CPUs and 256 MiB, with limits of six CPUs and 4 GiB.
+Its sampled cgroup memory ranges from 48,230,400 to 70,995,968 bytes, which does not represent peak memory or process RSS.
+
+The [first 2.9 attempt](performance-2-9-001/launch.json) starts at clean `b8e9881dc8afb94971d6f63bdaa844ea9f29c045` with initial machine load 0.6919.
+The release build and pinned chart installation finish, but the measurement setup exits 1 before traffic.
+Its [captured deployment](performance-2-9-001/journey/host-measurement-deployment.json) contains the explicit HTTP scheme on all three native probes.
+The owning assertion expects objects without that Kubernetes-defaulted field.
+The [offline replay](receiving-probe-scheme-fix-001/receipt.json) reproduces the failure and accepts the correction without changing the deployed object.
+Nine altered path, port, or scheme cases and three missing-probe cases still fail.
+
+The correction changes only the three expected objects in `tools/receiving-cluster-journey-run`.
+Shell syntax and whitespace checks pass, while the existing benchmark still requires a clean committed source for its next run.
+The [failure cleanup](performance-2-9-001/journey/cleanup.receipt) passes, and the [later resource read](performance-candidate-failed-state-001/state.json) finds only the frozen cluster containers.
+This failed attempt supplies no 2.9 throughput baseline or latency verdict.
+Bead `wamn-0h0g.2.7.15` owns the correction and repeated benchmark.
+
+## Operator timeout source limits
+
+The [source diagnosis](operator-lock-diagnosis-001/diagnosis.json) identifies a possible NATS connection-lock delay during reconnect I/O.
+It does not establish the cause of the captured operator HTTP timeout.
+The distributed 2.9 chart exposes no operator probe timeout value, so adding an ordinary `timeoutSeconds` value does not change those probes.
+No probe, chart, runtime, or recovery acceptance change follows from this source diagnosis.
+Bead `wamn-0h0g.2.7.10` retains the pending owner decision and the original recovery deadline.
+
+
+## Native probe termination
+
+The [host proof](probe-listener-lifecycle-001/summary.json) executes 15 unit tests with no failures, ignored tests, or filtered tests.
+It tests the retained [source patch](probe-listener-lifecycle-001/source.patch) above `b8e9881d`, and both changed source hashes remain stable through execution.
+The source tree contains uncommitted changes, so this run does not claim a clean committed source.
+Host Clippy exits 0 with the same warning kinds as the earlier host run.
+
+The new test binds the native probe listener and receives HTTP 200 from `/livez`.
+WAMN leaves cleanup unpolled while the listener runs.
+The test then aborts the real probe task and receives its native cancellation error through the task collection.
+The production error translation reports unexpected listener termination, and the existing shutdown path starts cleanup without its 60-second traffic delay.
+The complete test has a five-second bound and uses no database, cluster, native-runtime modification, or synthetic liveness beat.
+
+This case proves listener failure inside the test process.
+It does not prove unexpected listener failure in a WAMN subprocess or active guest drain.
+The earlier native first-beat case and actual host signal tests retain their separate evidence and limits.

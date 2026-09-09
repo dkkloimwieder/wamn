@@ -1,0 +1,3 @@
+layer=route knee=8 turns_at=16 efficiency=0.19 peak_rps=1576 peak_c=16
+layer=nodb knee=16 turns_at=32 efficiency=0.04 peak_rps=13242 peak_c=64
+layer=pg knee=8 turns_at=16 efficiency=-0.00 peak_rps=89804 peak_c=8

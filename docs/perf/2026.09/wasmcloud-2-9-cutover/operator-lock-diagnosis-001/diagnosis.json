@@ -1,0 +1,346 @@
+{
+  "schema": "wamn-operator-nats-lock-diagnosis/v1",
+  "prepared_utc": "2026-09-09T18:28:41.209549+00:00",
+  "scope": "Bounded source diagnosis only. Prior diagnosis read first. No Cargo/Go commands, dependency downloads, builds, tests, Docker, live probes, source edits, Beads writes, acceptance changes or owner-question changes.",
+  "conclusion": {
+    "lock_hypothesis": "Not ruled out: concrete source path exists.",
+    "measured_cause": "Still unknown. Receiving006 establishes kubelet HTTP-header timeout and clean shutdown, not lock contention or terminal NATS closure.",
+    "next_step": "For any later authorized rerun, retain paired health/ready response timing through a longer observational deadline; definitive lock attribution still needs a contemporaneous Go stack or lock trace."
+  },
+  "previous_diagnosis": {
+    "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/operator-timeout-diagnosis-001/diagnosis.json",
+    "sha256": "a657df7b5384405a8cd6593e422693e24d6543e57b5c0bc8d1472df82fbc2bfc"
+  },
+  "local_upstream_identity": {
+    "commit": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+    "inputs": [
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/runtime-operator/go.mod",
+        "sha256": "6ffbc5b16c31754a6d4786f5b9280bcd0f1c78078ef4947c82f9c29a0f985207"
+      },
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/runtime-operator/go.sum",
+        "sha256": "3ce7ae1a24665d2e9fe0685dea99b0feba8bc9bec49ddcbba254ad6940a92bab"
+      },
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/runtime-operator/cmd/main.go",
+        "sha256": "df9b59fc9444de9732e81bbf1c136d496be1583f3a23754a7dc36e8d43a4980a"
+      },
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/runtime-operator/pkg/wasmbus/nats.go",
+        "sha256": "0ef613fc246c8dd69759797ec16516a9f071b05fccd7a159e3da87a4727c1777"
+      },
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/charts/runtime-operator/Chart.yaml",
+        "sha256": "94a984fc0b0784accab0368c9d0b6ea79d0c3233237d15c8fe716cc0571de24e"
+      },
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/charts/runtime-operator/values.yaml",
+        "sha256": "ff86edb0f84853693e9b57f00f6617428f56ca5b9695f1f8bd919fbffc8e23d7"
+      },
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/charts/runtime-operator/templates/operator/deployment.yaml",
+        "sha256": "740abef7d2310168213a391b9272ce73f7ce5f020a5b820b888c9ee6736c690a"
+      }
+    ]
+  },
+  "nats_dependency_identity": {
+    "module": "github.com/nats-io/nats.go",
+    "version": "v1.53.1",
+    "module_sum": "h1:Otsq3uLc/kLdjmkNHkXH0jBqwUquwdKFoe3fq6/3/Xo=",
+    "go_mod_sum": "h1:26HypzazeOkyO3/mqd1zZd53STJN0EjCYF9Uy2ZOBno=",
+    "pin_source": "runtime-operator/go.mod:20; runtime-operator/go.sum:288-289; no replace directive",
+    "local_module_cache": "No matching source found in inspected home Go/cache/tmp paths.",
+    "primary_source_url": "https://raw.githubusercontent.com/nats-io/nats.go/v1.53.1/nats.go",
+    "release_url": "https://github.com/nats-io/nats.go/releases/tag/v1.53.1",
+    "release_commit": "db1375fcffae2eb0b4ced1b7bad4d47c4447e4ac",
+    "release_commit_basis": "The primary release page links this full commit. Raw tag source was readable; commit-addressed raw source and GitHub commit/API reads returned fetch errors. No module download/hash verification or executable build-info verification was performed.",
+    "line_convention": "NATS line positions below are explicitly the web reader's zero-based extraction positions, not asserted GitHub/raw-file line numbers. Symbol names permit rederivation. Local repository line citations are ordinary one-based lines.",
+    "complete_nats_go_sha256": null,
+    "complete_nats_go_sha256_reason": "Full raw bytes were not retained; module h1 and linked release commit are identity evidence, not a fabricated file SHA."
+  },
+  "lock_path": [
+    {
+      "symbol": "Conn.mu; IsClosed; isClosed",
+      "web_lines_zero_based": [
+        597,
+        5803,
+        5804,
+        5805,
+        5806,
+        5988,
+        5989
+      ],
+      "fact": "IsClosed takes the connection RWMutex read lock; no timeout or context."
+    },
+    {
+      "symbol": "doReconnect",
+      "web_lines_zero_based": [
+        3074,
+        3181,
+        3238,
+        3248,
+        3263,
+        3281,
+        3284,
+        3311
+      ],
+      "fact": "Writer lock spans createConn, handshake, subscription replay and pending flush. Reconnect sleep releases it."
+    },
+    {
+      "symbol": "createConn; Options.Connect",
+      "web_lines_zero_based": [
+        1828,
+        1830,
+        2295,
+        2296,
+        2311,
+        2312,
+        2320,
+        2321
+      ],
+      "fact": "Hostname lookup precedes timed TCP dialing. The explicit LookupHost has no NATS Timeout bound; dial timeout divides across resolved addresses."
+    },
+    {
+      "symbol": "processConnectInit; timeoutWriter.Write",
+      "web_lines_zero_based": [
+        2670,
+        2672,
+        2673,
+        2692,
+        6413,
+        6414,
+        6415,
+        6416
+      ],
+      "fact": "Handshake installs a fresh Timeout deadline. Writer separately sets and clears its write deadline; do not infer a whole-lock 5-second ceiling."
+    },
+    {
+      "symbol": "flushReconnectPendingItems; natsWriter; newWriter",
+      "web_lines_zero_based": [
+        2144,
+        2146,
+        2147,
+        2184,
+        2190,
+        2205,
+        2209,
+        3051,
+        3052,
+        3284
+      ],
+      "fact": "Pending replay can write under lock; each timeoutWriter write uses FlusherTimeout. Ordinary pending-mode flush does no socket write."
+    },
+    {
+      "symbol": "FlushTimeout; doReconnect final Flush",
+      "web_lines_zero_based": [
+        3311,
+        3314,
+        5528,
+        5532,
+        5568,
+        5573,
+        5579,
+        5580,
+        5582,
+        5589
+      ],
+      "fact": "Final Flush releases the lock while awaiting PONG, but sendPing writes under lock; its timer starts after lock acquisition."
+    }
+  ],
+  "retained_short_excerpts": [
+    {
+      "path": "/tmp/wamn-cutover-operator-nats-lock-prepared/isclosed.excerpt.txt",
+      "sha256": "7600d54c090b81f5db996a2706eb9965e24d962beec3a9777ddcf34002056f6b",
+      "source_url": "https://raw.githubusercontent.com/nats-io/nats.go/v1.53.1/nats.go",
+      "web_lines_zero_based": [
+        5804,
+        5805,
+        5806
+      ],
+      "hash_scope": "Retained excerpt bytes, not complete upstream file"
+    },
+    {
+      "path": "/tmp/wamn-cutover-operator-nats-lock-prepared/reconnect-dial.excerpt.txt",
+      "sha256": "b62f176a6f0931c0029225fc68389d01016329b27a30a648bfedfd6daaf425c0",
+      "source_url": "https://raw.githubusercontent.com/nats-io/nats.go/v1.53.1/nats.go",
+      "web_lines_zero_based": [
+        3248
+      ],
+      "hash_scope": "Retained excerpt bytes, not complete upstream file"
+    },
+    {
+      "path": "/tmp/wamn-cutover-operator-nats-lock-prepared/reconnect-pending-flush.excerpt.txt",
+      "sha256": "4efc425951b28cebaa42ba1016608aedef741b8f4e92cb48e3f12d78ea241782",
+      "source_url": "https://raw.githubusercontent.com/nats-io/nats.go/v1.53.1/nats.go",
+      "web_lines_zero_based": [
+        3284
+      ],
+      "hash_scope": "Retained excerpt bytes, not complete upstream file"
+    }
+  ],
+  "operator_health_path": {
+    "source": "runtime-operator/cmd/main.go:319-354",
+    "healthz": "healthz.Ping plus natsLivenessCheck; checker discards HTTP request/context, calls nc.IsClosed, and reports failure only after true is returned.",
+    "readyz": "healthz.Ping only.",
+    "implication": "Even an intended healthy reconnect result cannot be returned before IsClosed finishes. A timeout does not imply that the function returned true.",
+    "options_source": "runtime-operator/pkg/wasmbus/nats.go:57-71",
+    "connection_timeout_seconds": 5,
+    "flusher_write_timeout_seconds": 30,
+    "reconnect_wait_seconds": 1,
+    "reconnect_jitter_seconds": {
+      "plain": 0.1,
+      "TLS": 1
+    },
+    "max_reconnects": -1,
+    "initial_connect_window_seconds": 60,
+    "initial_window_scope": "Before initial connection; not a deadline for the existing Receiving006 connection outage."
+  },
+  "deployed_probe_evidence": {
+    "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-006/journey/operator-deployment.json",
+    "sha256": "e7467bc38ad3524ac6723e43a5071721790b35550322f61659a66ca2f53c2b16",
+    "args": [
+      "-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+      "-nats-ca=/operator-cert/ca.crt",
+      "-nats-client-cert=/operator-cert/tls.crt",
+      "-nats-client-key=/operator-cert/tls.key",
+      "-watch-namespaces=wamn-receiving-journey",
+      "-host-namespaces=wamn-receiving-journey",
+      "-allow-shared-hosts=false",
+      "-leader-elect"
+    ],
+    "liveness": {
+      "failureThreshold": 3,
+      "httpGet": {
+        "path": "/healthz",
+        "port": "health",
+        "scheme": "HTTP"
+      },
+      "initialDelaySeconds": 15,
+      "periodSeconds": 20,
+      "successThreshold": 1,
+      "timeoutSeconds": 1
+    },
+    "readiness": {
+      "failureThreshold": 3,
+      "httpGet": {
+        "path": "/readyz",
+        "port": "health",
+        "scheme": "HTTP"
+      },
+      "initialDelaySeconds": 5,
+      "periodSeconds": 10,
+      "successThreshold": 1,
+      "timeoutSeconds": 1
+    },
+    "startup": {
+      "failureThreshold": 24,
+      "httpGet": {
+        "path": "/healthz",
+        "port": "health",
+        "scheme": "HTTP"
+      },
+      "periodSeconds": 5,
+      "successThreshold": 1,
+      "timeoutSeconds": 1
+    },
+    "comparison": "Configured NATS dial timeout5s and flusher timeout30s both exceed measured Kubernetes timeoutSeconds1. This is a configuration/source comparison, not an observed stall duration.",
+    "observed_transition_inputs": [
+      {
+        "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-006/journey/operator-recovery/0328-operator-transition-3-previous-log.stdout",
+        "sha256": "912dbde606168825fd9bbfe6d29f7dd6cc82373bf004be2b43b4802691073f58"
+      },
+      {
+        "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-006/journey/operator-recovery/0329-operator-transition-3-events.stdout",
+        "sha256": "cc7f57c744e070e688ec041f2dd76c7846aea66f37a4060195843f845a56454a"
+      },
+      {
+        "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-006/journey/operator-recovery/operator-transition-3-state.json",
+        "sha256": "aa01a5db0a214e436b14d4c954dbaf1d295c457661aef6e85437063ab500defc"
+      }
+    ]
+  },
+  "distributed_chart_timeout_surface": {
+    "chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+    "version": "2.9.0",
+    "oci_manifest_digest": "sha256:d70b240cfc3c745f306fc6ebecebff4370e6c8c0568b55c1d02b1eda1716fd17",
+    "package_sha256": "98c4e5e1bf19d4549fb2ca72bf8e7874d2e068a05e254370e75dce6f98329109",
+    "identity_receipts": [
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-chart.json",
+        "sha256": "80cbbd48675baf4eb0a6952079e367e5e91fe2164bc28e4a5dcf217de831db9b"
+      },
+      {
+        "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/distributed-chart-identities.json",
+        "sha256": "31e26754bb735279413b59280dd87af110fa66c0f018e4c83c41ef13bb158a3a"
+      }
+    ],
+    "ordinary_timeout_value_path": null,
+    "template_source": "charts/runtime-operator/templates/operator/deployment.yaml:85-116",
+    "values_source": "charts/runtime-operator/values.yaml:153-172",
+    "actual_timeout_seconds": 1,
+    "supported_values": {
+      "operator.probes.startup": {
+        "enabled": true,
+        "periodSeconds": 5,
+        "failureThreshold": 24
+      },
+      "operator.probes.liveness": {
+        "enabled": true,
+        "initialDelaySeconds": 15,
+        "periodSeconds": 20,
+        "failureThreshold": 3
+      },
+      "operator.probes.readiness": {
+        "enabled": true,
+        "initialDelaySeconds": 5,
+        "periodSeconds": 10,
+        "failureThreshold": 3
+      }
+    },
+    "ignored_override": "operator.probes.liveness.timeoutSeconds is not read by the template; adding it alone does not change the rendered Deployment. The same omission applies to startup/readiness.",
+    "verification_scope": "Read tagged source templates and retained distributed-chart identities plus actual deployed fields. The temporary downloaded chart archive was not found and was not pulled again; no new render/override experiment was run.",
+    "possible_remedy_scope": "If the owner chooses timeout tuning, the actual Kubernetes field is spec.template.spec.containers[name=runtime-operator].livenessProbe.timeoutSeconds. The 2.9 chart has no ordinary value for it; any upstream remedy or separately managed manifest transformation needs an explicit owner disposition. No timeout value, live patch, disablement, or acceptance change is proposed."
+  },
+  "later_authorized_rerun_diagnostic": {
+    "integration": "Reuse tools/receiving-operator-recovery-run owned Pod/node identities and existing diagnostic snapshots. Preserve its failure classification.",
+    "trigger": "At the first retained 1-second liveness/header timeout, sample both endpoints concurrently from the exact owned kind node to the exact operator Pod IP.",
+    "argv_templates": [
+      [
+        "docker",
+        "exec",
+        "{exact_owned_kind_node}",
+        "curl",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "1",
+        "--max-time",
+        "7",
+        "--write-out",
+        "\\nhttp=%{http_code} connect=%{time_connect} starttransfer=%{time_starttransfer} total=%{time_total}\\n",
+        "http://{operator_pod_ip}:8082/healthz"
+      ],
+      [
+        "docker",
+        "exec",
+        "{exact_owned_kind_node}",
+        "curl",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "1",
+        "--max-time",
+        "7",
+        "--write-out",
+        "\\nhttp=%{http_code} connect=%{time_connect} starttransfer=%{time_starttransfer} total=%{time_total}\\n",
+        "http://{operator_pod_ip}:8082/readyz"
+      ]
+    ],
+    "why_seven_seconds": "An observational request may retain a delayed response beyond the configured five-second dial budget; it leaves the deployed one-second probe untouched. Seven seconds is not asserted sufficient for DNS or thirty-second writes.",
+    "retain": "Absolute start/end timestamps, response body/status, connect/first-byte/total timing, curl exit, exact Pod UID/container ID, existing transition logs/events, and existing resource diagnostics; raw output private. Stop owned observation children at their finite deadline.",
+    "interpretation": "Health delayed beyond1s while readiness stays prompt would support endpoint-specific delay. Simultaneous delays leave scheduling/transport explanations open. Neither pattern alone identifies nc.mu as the measured cause.",
+    "definitive_missing_diagnostic": "A contemporaneous goroutine stack showing the health checker blocked in sync.RWMutex.RLock and reconnect/write work holding that same connection lock. No pprof listener/flag is exposed in current operator main.go. Do not claim a stack capture command exists; SIGQUIT would terminate the process and require a separate diagnostic disposition, not unchanged-process continuity."
+  },
+  "validation": "Parsed retained JSON; hashed cited local source/evidence and exact short remote excerpts; followed primary pinned-version NATS source. No dynamic reproduction or causal verdict."
+}

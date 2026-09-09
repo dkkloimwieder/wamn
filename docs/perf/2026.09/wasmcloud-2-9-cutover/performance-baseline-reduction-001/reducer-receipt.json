@@ -1,0 +1,31 @@
+{
+  "repeated_reducer": {
+    "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-12-fresh-auth/summarize.jq",
+    "sha256": "c9e5b6188ee9ab027ab2c8d9cf1fb8feb173e872127874e00f1ea76a1035649a",
+    "command": [
+      "jq",
+      "-n",
+      "-f",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-12-fresh-auth/summarize.jq",
+      "/tmp/wamn-cutover-baseline-performance-reduction/before-001/journey/throughput/service-1/summary.json",
+      "/tmp/wamn-cutover-baseline-performance-reduction/before-001/journey/throughput/service-2/summary.json",
+      "/tmp/wamn-cutover-baseline-performance-reduction/before-001/journey/throughput/service-3/summary.json",
+      "/tmp/wamn-cutover-baseline-performance-reduction/before-001/journey/throughput/human-1/summary.json",
+      "/tmp/wamn-cutover-baseline-performance-reduction/before-001/journey/throughput/human-2/summary.json",
+      "/tmp/wamn-cutover-baseline-performance-reduction/before-001/journey/throughput/human-3/summary.json"
+    ],
+    "exit_code": 0,
+    "path_alias": {
+      "from": "/tmp/wamn-cutover-baseline-performance-reduction/before-001",
+      "to": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/performance-baseline-001"
+    },
+    "schema": "unchanged summarize.jq array output; before/001 are required filename labels, not another measurement"
+  },
+  "load_memory_reader": {
+    "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-12-fresh-auth/reduce_load.py",
+    "sha256": "4500d393bd5e3145e8c205790c83d9c325dfea9dd354075eee18e78104917b79",
+    "function": "read_run(root, \"baseline\")",
+    "samples": 216,
+    "scope": "Single baseline only; no before/after comparison invoked."
+  }
+}

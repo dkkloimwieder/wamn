@@ -43,7 +43,7 @@ Runtime harnesses report 1,050 passes, including one explicit NATS large-payload
 Four isolated Git template tests also pass.
 Inactive feature targets and the skipped 2 GiB payload test supply no execution proof.
 
-The [workspace sweep](../perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-results.json) exits 101 with 2,114 reported test passes, six doctest passes, and 67 failures across 32 targets.
+The earlier [workspace sweep](../perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-results.json) exits 101 with 2,114 reported test passes, six doctest passes, and 67 failures across 32 targets.
 All failure names match retained baseline failures: 65 missing inputs, unavailable Kubernetes discovery, and the known undeclared-Secret code failure.
 At least 85 reported passes explicitly skip their proof, so these totals are not executed-proof counts.
 The named memory, Router, lifecycle, saturation, and local development shutdown tests pass.
@@ -62,33 +62,66 @@ The corrected reader preserves all five distributed schema hashes under `wamn-0h
 The [fifth run](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-005/journey/operator-recovery/installed-crd-identity.json) passes all five installed CRD identities and the pinned operator image.
 All three Host objects and processes survive the 150.85-second NATS outage and enter the native loss-of-contact state.
 The operator then restarts within the same Pod, and the proof stops before complete recovery.
-The corrected supervision proof requires a recorded native cause and preserves the 120-second ceiling under `wamn-0h0g.2.7.10`.
+The [sixth-run diagnosis](../perf/2026.09/wasmcloud-2-9-cutover/operator-timeout-diagnosis-001/diagnosis.json) identifies a liveness HTTP timeout that triggers a graceful operator restart before NATS returns.
+The underlying HTTP delay remains unknown.
+Bead `wamn-0h0g.2.7.10` awaits the owner decision on this restart cause with the original 120-second recovery ceiling retained.
 
-The armed [authority run](../perf/2026.09/wasmcloud-2-9-cutover/authority-live-001/summary.json) records 40 passes and three failures across 43 tests.
+The first armed [authority run](../perf/2026.09/wasmcloud-2-9-cutover/authority-live-001/summary.json) records 40 passes and three failures across 43 tests.
 Its seven runtime claims tests and SQLx transaction isolation pass with explicit fresh database inputs.
-Bead `wamn-0h0g.2.7.9` owns the tenant-floor count and two denial-matrix differences.
-All 29 relevant source files match the baseline, whose live run reproduces all three failures.
-The contract correction removes an obsolete guest UPDATE grant and repairs two stale test expectations without widening authority.
-Fresh-server reruns and the affected protected-write inventory remain pending.
+The baseline live run reproduces all three failures.
+The correction removes an obsolete guest UPDATE grant and repairs two stale test expectations without widening authority.
+The [fresh-server rerun](../perf/2026.09/wasmcloud-2-9-cutover/authority-inventory-live-001/summary.json) passes all 24 tenant-floor and denial-matrix tests at clean `379faef6`, with no skips and successful cleanup.
+The [protected-write capture](../perf/2026.09/wasmcloud-2-9-cutover/authority-inventory-live-001/event-registration-protected-write-capture.json) confirms guest SELECT, no non-owner table or column writes, and forced row security.
+The measured inventory correction changes only this relation's grant-removal and author-write fields under `wamn-0h0g.2.7.9`.
 
-The prepared [engine](../../crates/platform/runtime/src/engine.rs) and [manual stores](../../crates/execution/host/src/router_driver.rs) share the native guest-memory budget in `Count` mode.
+The [full WMS journey](../perf/2026.09/wasmcloud-2-9-cutover/live-wms-001/journey/journey.receipt) passes at clean `ab0467f4`.
+It proves the winning movement and stored label, released operations, native scheduling refusal, idle materializer startup, and cleanup.
+The separate [startup run](../perf/2026.09/wasmcloud-2-9-cutover/live-wms-startup-002/journey/runtime-startup.receipt) passes at clean `6bfda73b`, with cold/restart startup times of 12,561/623 ms and four unchanged cache files.
+One [steady request ratio](../perf/2026.09/wasmcloud-2-9-cutover/live-wms-startup-002/journey/overhead-ratio-steady.receipt) is 7.022 against the unchanged ceiling of 12.
+The [restart probe](../perf/2026.09/wasmcloud-2-9-cutover/live-wms-startup-002/journey/first-request-restart-first.receipt) reaches exact 200 after seven HTTP 503 responses and 27 transport failures.
+Its 34-second timer starts after readiness waits.
+It excludes the earlier interval from SIGTERM to the request job.
+
+The [engine](../../crates/platform/runtime/src/engine.rs) and [manual stores](../../crates/execution/host/src/router_driver.rs) share the native guest-memory budget in `Count` mode.
 Production rejects `enforce` and `off` through the native memory-mode flag and environment name.
 The heap ceiling, pooling allocator, fresh invocation stores, and native epoch ticker remain in place.
 The host explicitly selects `Meters::new(MeterKind::Duration)` without fuel accounting.
-The WASI-Virt pin and admitted capability rows remain unchanged.
 
-The prepared host and executor lifecycle uses native `ProbeState` and `Liveness`.
+The [memory evidence map](../perf/2026.09/wasmcloud-2-9-cutover/memory-cancellation-map-001/evidence-map.json) records executed accounting, limit, cancellation, trap, nested-call, and epoch proofs.
+The two manual stores coexist, but their growth calls run in sequence.
+The later [deadline proof](../perf/2026.09/wasmcloud-2-9-cutover/memory-cancellation-map-001/deadline-refund-execution.json) observes two charged guest pages, native epoch interruption, zero usage after store removal, and fresh allocation.
+Its receipt retains the tested source hashes, which match memory correction `5c70b31a`.
+The final workspace sweep below retains its separate failure classification.
+
+The WASI-Virt pin and admitted capability rows remain unchanged.
+Both exact [virtualization tests](../perf/2026.09/wasmcloud-2-9-cutover/virtualization-live-003/summary.json) pass at clean `d45a0fe9`, without skips.
+They prove artifact imports and exports, active-release refusals, sentinel isolation, a real connection, and typed refusal after a guest panic.
+Owned fixture cleanup and the production guest rebuild pass.
+This proof does not close the cross-profile digest finding `wamn-10yt.61`.
+
+The host and executor lifecycle uses native `ProbeState` and `Liveness`.
 Host readiness requires a real command-loop beat and registers the native ingress connection-limit check.
 Executor liveness follows actual queue turns and successful durable lease renewals, while its existing readiness owner retains release and database checks.
 Both services mark draining before bounded cleanup, use native `flush_within`, and cap the final Tokio shutdown wait.
 
 Local tests cover cleanup bounds, real-beat liveness, and native probes during ingress saturation.
-The separate [real host process test](../perf/2026.09/wasmcloud-2-9-cutover/host-lifecycle-live-001/source.json) passes at clean `9d54245c`, covering ingress saturation, a 50-second NATS outage and reconnection, successful SIGTERM/SIGINT exits, and bounded nonzero exit after an observed blocked exporter.
-That release-less local process proof does not establish the initial starting window, first-beat failure, forced native loop/listener failure, active guest drain, or in-cluster recovery under load.
+The final [real host test](../perf/2026.09/wasmcloud-2-9-cutover/workspace-sweep-final-001/workspace.log) passes in 69.63 seconds at clean `c6808b12`.
+The rebuilt host passes ingress saturation and recovery, a 50-second NATS outage and reconnection, and successful SIGTERM/SIGINT exits in 5,015/5,005 ms.
+An observed blocked exporter produces exit 1 after 7,006 ms, with an explicit flush failure.
+The [host Clippy receipt](../perf/2026.09/wasmcloud-2-9-cutover/host-lifecycle-clippy-final-001/summary.json) exits 0 on unchanged clean source, with existing warnings.
+
+A separate [native first-beat case](../perf/2026.09/wasmcloud-2-9-cutover/workspace-sweep-final-001/host-lifecycle/native-missing-first-beat.receipt) exercises ClusterHost and WAMN lifecycle helpers inside the test process.
+It observes 300 ms without a beat, then retrieves the actual subscription error with cleanup in 0 ms.
+This does not prove unexpected failure exit in a WAMN subprocess.
+The local proof leaves the initial starting window, active guest drain, and in-cluster recovery under load unproved.
+A later [host test](../perf/2026.09/wasmcloud-2-9-cutover/probe-listener-lifecycle-001/summary.json) proves actual native probe termination through the production error translation and cleanup.
+All 15 host unit tests and host Clippy pass on the retained patch above `b8e9881d`, with stable source-file hashes.
+The listener case serves HTTP 200 before task cancellation and completes without the configured 60-second traffic delay.
+It runs inside the test process and does not establish unexpected failure in a WAMN subprocess.
 Local development allows 70 seconds after SIGTERM and a separate five seconds for forced-kill reaping.
 Its cleared child environment excludes ambient WASH overrides, so the default 56-second host exit envelope fits that grace.
 
-The prepared [expected-host Router adapter](../../crates/platform/runtime/src/expected_router.rs) wraps native `DynamicRouter` and runs inside native `Ingress`.
+The [expected-host Router adapter](../../crates/platform/runtime/src/expected_router.rs) wraps native `DynamicRouter` and runs inside native `Ingress`.
 It projects explicit HTTP and studio hostnames from the host's already-verified release.
 An expected hostname without a native route returns `RouteError::Unavailable` (503), with no `Retry-After` header.
 An unbound unknown host retains native 404. Application-generated 404 responses pass through unchanged.
@@ -99,7 +132,8 @@ Their unbound requests retain native 404.
 The adapter adds no ingress copy, private dispatch access, or general response rewriting.
 It does not change operation-specific retries or unknown-outcome handling.
 Its [tests pass](../perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log) for bind/unbind transitions, refusals, application responses, and the missing-handle residual.
-The returning missing-handle residual and any measured 2.9 restart/rebind window remain open under `wamn-0h0g.2.7.4`.
+Bead `wamn-0h0g.2.7.4` records the missing-handle 404 as a limitation of the permitted adapter.
+The WMS startup probe records a 2.9 restart/rebind window with no observed 404, within the limited request-job clock described above.
 The closure of `wamn-0h0g.17.20` records the historical fork proof and does not close this residual.
 Neither this adapter nor native probes establish route-aware traffic removal.
 
@@ -112,7 +146,8 @@ Namespace scopes, the disabled gateway, and row 8's modern Event overlay remain 
 
 The render and [public operator image metadata](../perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json) prove configuration and distributed artifact identity only.
 The owning Rust render test executes but fails during Kubernetes API discovery because `127.0.0.1:8080` refuses the connection.
-Installed CRD identity and local startup exposure now pass. Complete operator recovery and comparable performance proofs remain pending.
+Installed CRD identity, local startup exposure, and the separate WMS startup/cache proof now pass.
+Complete operator recovery awaits its owner decision, and comparable performance remains pending.
 The [direct stop/start runbook](../../deploy/README.md#wasmcloud-29-cutover) keeps one active runtime version per environment without a maintenance window or compatibility period.
 
 The [distributed CRD capture](../perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/crd-inventory.json) confirms that all five 2.9 schema files match the pinned source.
@@ -123,6 +158,21 @@ This corrects Helm's existing-install behavior and supplies no installed-schema 
 
 The isolated integration committed at `15f2d4da`; stage 3 has not landed on main.
 The earlier [source capture](../perf/2026.09/wasmcloud-2-9-cutover/validation-004/source-inputs.json) precedes that commit.
+The [final workspace sweep](../perf/2026.09/wasmcloud-2-9-cutover/workspace-sweep-final-001/workspace-results.json) completes at clean `c6808b12` in 264.834 seconds and exits 101.
+It reports 2,116 test passes, six doctest passes, and 68 failures across 33 targets.
+The 67 baseline failures retain their identities and causes: 65 missing inputs, unavailable Kubernetes discovery, and the known undeclared Secret.
+The additional failure is the unarmed startup-burst fixture, with no unresolved classifications.
+The run reports zero ignored tests, two filtered regeneration tests, and at least 85 explicit self-skips.
+These reported passes are not an exact executed-proof count.
+
+The [source receipt](../perf/2026.09/wasmcloud-2-9-cutover/workspace-sweep-final-001/source-stability.json) confirms unchanged clean source before and after the run.
+The [2.8 performance baseline](../perf/2026.09/wasmcloud-2-9-cutover/performance-baseline-evidence-001/evidence-map.json) passes 108 steps with a service ratio median of 10.1408 against 12.
+The first 2.9 benchmark stops before traffic because the exact probe assertion omits the Kubernetes-defaulted HTTP scheme.
+The [correction replay](../perf/2026.09/wasmcloud-2-9-cutover/receiving-probe-scheme-fix-001/receipt.json) passes and preserves every probe refusal.
+Bead `wamn-0h0g.2.7.15` owns the pending repeated comparison.
+Bead `wamn-0h0g.2.7.10` owns the operator restart decision.
+Bead `wamn-0h0g.2.7.12` owns the production automation admission and active-drain scope decision.
+Existing evidence proves idle executor signals and Receiving stream delivery.
 Further live proofs require clean, fixed source, and the recorded results do not establish release readiness.
 
 The charter retires both 2.8 patch deviations by decision.

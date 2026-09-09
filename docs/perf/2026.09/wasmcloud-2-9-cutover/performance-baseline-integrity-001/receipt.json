@@ -1,0 +1,14 @@
+{
+  "observed_at": "2026-09-09T18:50:41.759166+00:00",
+  "scope": "Independent root read of the retained baseline after completion, without invoking any build or live measurement.",
+  "manifest_entries": 119,
+  "manifest_mismatches": [],
+  "complete_inventory_files": 1567,
+  "complete_inventory_mismatches": [],
+  "inventory": {
+    "path": "performance-baseline-reduction-001/baseline-file-hashes.json",
+    "sha256": "e74400672e550d3572e07cd21d0ff8584f16ebbe17eeb5088c92d78fba32c030"
+  },
+  "retention_map": "performance-baseline-reduction-001/retention.json",
+  "limit": "The later complete inventory does not extend the original journey manifest."
+}

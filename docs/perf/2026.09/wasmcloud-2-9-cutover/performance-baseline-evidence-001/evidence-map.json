@@ -1,0 +1,907 @@
+{
+  "schema": "wamn-cutover-baseline-performance-evidence/v1",
+  "evidence_root": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/performance-baseline-001",
+  "generated_utc": "2026-09-09T18:41:09.574482+00:00",
+  "scope": "Baseline-only reduction of existing native report outputs and unchanged committed reducers. No measurement, build, Cargo, Docker, live, source or Beads operation; no candidate comparison or acceptance change.",
+  "run": {
+    "source": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "source_receipt": {
+      "path": "source.txt",
+      "sha256": "f754e34405aa09fab288ade5c1a404bea8bccf010c79fdb40a5468d058cfada2"
+    },
+    "source_status_receipt": {
+      "path": "source-status.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "clean_before": true,
+    "command": "tools/receiving-cluster-journey-run --apply --fresh-auth-bench --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/performance-baseline-001/journey",
+    "command_receipt": {
+      "path": "command.txt",
+      "sha256": "384e053a25a2563ca1ee46591c5c09713b2e35370df6e8987f2482a74e5654a0"
+    },
+    "wrapper": {
+      "path": "run.sh",
+      "sha256": "6f75d5a9a1ca38823c94d4515d03e534a15b3c78e9c46e7ba4ec558f5695237a"
+    },
+    "started_utc": "2026-09-09T17:58:39+00:00",
+    "finished_utc": "2026-09-09T18:32:43+00:00",
+    "wall_seconds": 2044,
+    "exit_code": 0,
+    "launch": {
+      "pid": 3663090,
+      "launch_unix_ns": 1788976719633868518,
+      "load_1_5_15": [
+        0.560546875,
+        2.51513671875,
+        2.79296875
+      ],
+      "source": "dfa1c3187fe8cd671688a442b23106046e502cb6"
+    },
+    "load_before": [
+      0.56,
+      2.52,
+      2.79
+    ],
+    "load_after": [
+      19.91,
+      12.28,
+      10.07
+    ],
+    "source_after_limit": "The later analysis observation found the same clean source. It is not a wrapper-captured end-state receipt.",
+    "after_source_analysis_observation": {
+      "scope": "Analysis-time observation, not wrapper-captured end state. Wrapper run.sh captures only initial source/status.",
+      "repo": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-8-baseline-20260909",
+      "started_utc": "2026-09-09T18:35:54.173670+00:00",
+      "finished_utc": "2026-09-09T18:35:54.204341+00:00",
+      "commit": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+      "clean": true
+    },
+    "after_source_observation_receipt": {
+      "path": "/tmp/wamn-cutover-baseline-performance-reduction/identity-startup.json",
+      "sha256": "75d55112c19a9f5f40ee719e1c633121adfdd2f31bfb2bd7e6f090eddc930b0f"
+    }
+  },
+  "protocol": {
+    "index_schema": "wamn-throughput/v0.1",
+    "sweeps": 6,
+    "repetitions_per_credential": 3,
+    "order": [
+      "service-1",
+      "human-1",
+      "human-2",
+      "service-2",
+      "service-3",
+      "human-3"
+    ],
+    "layers": [
+      "route",
+      "nodb",
+      "pg"
+    ],
+    "concurrency": [
+      1,
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "steps_per_sweep": 18,
+    "completed_steps": 108,
+    "nominal_generator_seconds_per_step": 10,
+    "nominal_generator_seconds_all_steps": 1080,
+    "generator_duration_range_seconds": [
+      10.0,
+      10.017068632
+    ],
+    "counter_sample_window_range_seconds": [
+      13.163,
+      20.888
+    ],
+    "oha_image": "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f",
+    "pgbench_image": "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d",
+    "pgbench_sampling_rate": 0.05,
+    "route": "POST /purchase_order/get, service or human PAT",
+    "nodb": "GET /no-such-route, expected application-generated 404, no auth/database",
+    "pg": "Direct generated purchase_order/get SQL via pgbench prepared mode as postgres",
+    "knee_policy": "Existing Rust report: last concurrency before the first throughput gain below 1.2. Each retained per-repetition verdict is copied without selecting a new knee from medians.",
+    "percentile_scope": "Native summaries retain p50/p99. oha uses completed-request percentiles; pgbench percentiles come from sampled transaction logs. Requests are not independent repetitions."
+  },
+  "repetitions": [
+    {
+      "name": "service-1",
+      "summary": {
+        "path": "journey/throughput/service-1/summary.json",
+        "sha256": "96bc9f1628f537f138a410e618ee976f13f9b3d9fe47c0f88d1788514590a79d"
+      },
+      "step_count": 18,
+      "sample_window_start_utc": "2026-09-09T18:03:28.655000+00:00",
+      "sample_window_end_utc": "2026-09-09T18:08:26.539000+00:00",
+      "verdicts": [
+        {
+          "layer": "route",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.0890458398955698,
+            "efficiency": 0.0890458398955698,
+            "p99_ms_before": 17.766662999999998,
+            "p99_ms_at": 24.434207
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 1416.8022531129347,
+            "p99_ms": 24.434207
+          }
+        },
+        {
+          "layer": "nodb",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.0509515326569083,
+            "efficiency": 0.05095153265690833,
+            "p99_ms_before": 1.989133,
+            "p99_ms_at": 3.141139
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 11962.479273812609,
+            "p99_ms": 3.141139
+          }
+        },
+        {
+          "layer": "pg",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.082135505292238,
+            "efficiency": 0.0821355052922379,
+            "p99_ms_before": 0.251,
+            "p99_ms_at": 0.581
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 86440.293572,
+            "p99_ms": 0.581
+          }
+        }
+      ],
+      "errors": 0,
+      "cut_off": 249
+    },
+    {
+      "name": "human-1",
+      "summary": {
+        "path": "journey/throughput/human-1/summary.json",
+        "sha256": "4bfd7bc2acdb7c898336e73ad550995887dfe5e58b426a2c52a34f59663e2a41"
+      },
+      "step_count": 18,
+      "sample_window_start_utc": "2026-09-09T18:08:29.151000+00:00",
+      "sample_window_end_utc": "2026-09-09T18:13:15.849000+00:00",
+      "verdicts": [
+        {
+          "layer": "route",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.0663667332404247,
+            "efficiency": 0.06636673324042475,
+            "p99_ms_before": 10.104872,
+            "p99_ms_at": 18.942529999999998
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 1655.2261502993456,
+            "p99_ms": 18.942529999999998
+          }
+        },
+        {
+          "layer": "nodb",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.0444166030401183,
+            "efficiency": 0.044416603040118297,
+            "p99_ms_before": 1.728356,
+            "p99_ms_at": 3.080924
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 12264.642875635649,
+            "p99_ms": 3.080924
+          }
+        },
+        {
+          "layer": "pg",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 0.9397554922660851,
+            "efficiency": -0.060244507733914876,
+            "p99_ms_before": 0.285,
+            "p99_ms_at": 0.835
+          },
+          "peak": {
+            "concurrency": 32,
+            "requests_per_second": 82794.136667,
+            "p99_ms": 1.315
+          }
+        }
+      ],
+      "errors": 0,
+      "cut_off": 249
+    },
+    {
+      "name": "human-2",
+      "summary": {
+        "path": "journey/throughput/human-2/summary.json",
+        "sha256": "64f19a8ac8b7dfdf649b2e77fcd1996ab8f2b13abb99fde0ab82e284ebfc3b24"
+      },
+      "step_count": 18,
+      "sample_window_start_utc": "2026-09-09T18:13:18.438000+00:00",
+      "sample_window_end_utc": "2026-09-09T18:18:05.669000+00:00",
+      "verdicts": [
+        {
+          "layer": "route",
+          "knee": {
+            "concurrency": 16,
+            "turns_at": 32,
+            "gain": 0.8579693803353567,
+            "efficiency": -0.14203061966464325,
+            "p99_ms_before": 21.848835,
+            "p99_ms_at": 45.257089
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 1442.0913544784146,
+            "p99_ms": 21.848835
+          }
+        },
+        {
+          "layer": "nodb",
+          "knee": {
+            "concurrency": 4,
+            "turns_at": 8,
+            "gain": 1.1875850758786686,
+            "efficiency": 0.18758507587866857,
+            "p99_ms_before": 1.5224380000000002,
+            "p99_ms_at": 3.916605
+          },
+          "peak": {
+            "concurrency": 64,
+            "requests_per_second": 11954.788283338014,
+            "p99_ms": 12.769615
+          }
+        },
+        {
+          "layer": "pg",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 0.8617365738880786,
+            "efficiency": -0.13826342611192144,
+            "p99_ms_before": 0.211,
+            "p99_ms_at": 0.998
+          },
+          "peak": {
+            "concurrency": 8,
+            "requests_per_second": 87067.65997,
+            "p99_ms": 0.211
+          }
+        }
+      ],
+      "errors": 0,
+      "cut_off": 250
+    },
+    {
+      "name": "service-2",
+      "summary": {
+        "path": "journey/throughput/service-2/summary.json",
+        "sha256": "e3d56f77b8eb699ab5e03fdd87ca9d3cb39de8df0c19eefc51f23aee9294ee64"
+      },
+      "step_count": 18,
+      "sample_window_start_utc": "2026-09-09T18:18:08.298000+00:00",
+      "sample_window_end_utc": "2026-09-09T18:22:57.110000+00:00",
+      "verdicts": [
+        {
+          "layer": "route",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.085936696911867,
+            "efficiency": 0.0859366969118669,
+            "p99_ms_before": 11.627376,
+            "p99_ms_at": 20.427255
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 1500.2216620747693,
+            "p99_ms": 20.427255
+          }
+        },
+        {
+          "layer": "nodb",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.1768273089734662,
+            "efficiency": 0.1768273089734662,
+            "p99_ms_before": 2.965787,
+            "p99_ms_at": 3.79903
+          },
+          "peak": {
+            "concurrency": 64,
+            "requests_per_second": 12375.720915060061,
+            "p99_ms": 10.725555
+          }
+        },
+        {
+          "layer": "pg",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 0.9044018260395784,
+            "efficiency": -0.09559817396042158,
+            "p99_ms_before": 0.221,
+            "p99_ms_at": 0.773
+          },
+          "peak": {
+            "concurrency": 8,
+            "requests_per_second": 84778.82398,
+            "p99_ms": 0.221
+          }
+        }
+      ],
+      "errors": 0,
+      "cut_off": 250
+    },
+    {
+      "name": "service-3",
+      "summary": {
+        "path": "journey/throughput/service-3/summary.json",
+        "sha256": "b24a6601ac6a762695db4691a771c06d4d3cc6e17c33b9f0903cc8d3469b8866"
+      },
+      "step_count": 18,
+      "sample_window_start_utc": "2026-09-09T18:22:59.781000+00:00",
+      "sample_window_end_utc": "2026-09-09T18:27:48.088000+00:00",
+      "verdicts": [
+        {
+          "layer": "route",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.0733571383280986,
+            "efficiency": 0.07335713832809865,
+            "p99_ms_before": 11.699603,
+            "p99_ms_at": 31.293559
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 1536.4445777659253,
+            "p99_ms": 31.293559
+          }
+        },
+        {
+          "layer": "nodb",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.0783757282024358,
+            "efficiency": 0.07837572820243577,
+            "p99_ms_before": 1.804799,
+            "p99_ms_at": 2.869404
+          },
+          "peak": {
+            "concurrency": 64,
+            "requests_per_second": 13176.696160078285,
+            "p99_ms": 10.259309
+          }
+        },
+        {
+          "layer": "pg",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 0.8816771218982609,
+            "efficiency": -0.11832287810173914,
+            "p99_ms_before": 0.234,
+            "p99_ms_at": 0.922
+          },
+          "peak": {
+            "concurrency": 8,
+            "requests_per_second": 85188.293724,
+            "p99_ms": 0.234
+          }
+        }
+      ],
+      "errors": 0,
+      "cut_off": 249
+    },
+    {
+      "name": "human-3",
+      "summary": {
+        "path": "journey/throughput/human-3/summary.json",
+        "sha256": "f326f94c2a19c076ca8e2a99571bed2d22d83273ad056522a76aea27a4f92691"
+      },
+      "step_count": 18,
+      "sample_window_start_utc": "2026-09-09T18:27:50.669000+00:00",
+      "sample_window_end_utc": "2026-09-09T18:32:38.659000+00:00",
+      "verdicts": [
+        {
+          "layer": "route",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 1.186665328023677,
+            "efficiency": 0.18666532802367697,
+            "p99_ms_before": 12.659531999999999,
+            "p99_ms_at": 19.096777
+          },
+          "peak": {
+            "concurrency": 16,
+            "requests_per_second": 1576.474598576659,
+            "p99_ms": 19.096777
+          }
+        },
+        {
+          "layer": "nodb",
+          "knee": {
+            "concurrency": 16,
+            "turns_at": 32,
+            "gain": 1.0380236314117162,
+            "efficiency": 0.03802363141171616,
+            "p99_ms_before": 2.789662,
+            "p99_ms_at": 5.086639
+          },
+          "peak": {
+            "concurrency": 64,
+            "requests_per_second": 13242.272221281226,
+            "p99_ms": 10.344849
+          }
+        },
+        {
+          "layer": "pg",
+          "knee": {
+            "concurrency": 8,
+            "turns_at": 16,
+            "gain": 0.9959354461788414,
+            "efficiency": -0.004064553821158556,
+            "p99_ms_before": 0.202,
+            "p99_ms_at": 0.562
+          },
+          "peak": {
+            "concurrency": 8,
+            "requests_per_second": 89803.903223,
+            "p99_ms": 0.202
+          }
+        }
+      ],
+      "errors": 0,
+      "cut_off": 250
+    }
+  ],
+  "errors_and_cutoffs": {
+    "errors": 0,
+    "cut_off": 1497,
+    "per_layer": {
+      "route": {
+        "errors": 0,
+        "cut_off": 750,
+        "completed": 398657
+      },
+      "nodb": {
+        "errors": 0,
+        "cut_off": 747,
+        "completed": 3309242
+      },
+      "pg": {
+        "errors": 0,
+        "cut_off": 0,
+        "completed": 23751502
+      }
+    },
+    "scope": "Deadline-aborted in-flight oha requests are retained as cut_off, separately from workload errors and completed requests. pgbench sampled_latencies is a sample count, not an additional transaction count.",
+    "raw_result_consistency": {
+      "checked": 108,
+      "mismatches": [],
+      "method": "72 oha raw status/error distributions agree with retained results; 36 pgbench raw failure declarations and retained errors equal zero."
+    }
+  },
+  "ratios": {
+    "formula": "Sum(handle_http_request) / [Sum(wamn.postgres.statement) + Sum(wamn.component.instantiate)], using retained trace-breakdown values.",
+    "service": {
+      "phases": [
+        "steady",
+        "steady-2",
+        "steady-3",
+        "steady-4",
+        "steady-5"
+      ],
+      "ratios": [
+        11.83574879227053,
+        9.347133757961783,
+        9.430114787305873,
+        10.14080459770115,
+        10.357142857142858
+      ],
+      "median": 10.14080459770115,
+      "gate_applied": true,
+      "ceiling": 12,
+      "authentication_ms": [
+        1.221888,
+        1.02528,
+        1.107712,
+        1.8048,
+        1.100032
+      ],
+      "source_file_pattern": "journey/trace-breakdown-<phase>.json; hashes in analysis inventory"
+    },
+    "human": {
+      "phases": [
+        "human-1",
+        "human-2",
+        "human-3",
+        "human-4",
+        "human-5"
+      ],
+      "ratios": [
+        17.38961038961039,
+        12.571310116086236,
+        13.752343750000001,
+        11.158105403602404,
+        11.532725766362882
+      ],
+      "median": 12.571310116086236,
+      "gate_applied": false,
+      "ceiling": null,
+      "authentication_ms": [
+        2.1568,
+        1.547264,
+        1.770496,
+        1.0624,
+        1.022208
+      ],
+      "source_file_pattern": "journey/trace-breakdown-<phase>.json; hashes in analysis inventory"
+    },
+    "service_gate_receipt": {
+      "path": "journey/overhead-ratio-steady.receipt",
+      "sha256": "412d8327d751a724f59335a28d0513f35ac57db4ca1578c1c94e823dcadb13b3"
+    },
+    "human_scope": "Human samples are measured and trace-checked but the existing runner does not apply the service ratio ceiling to them. Median 12.571310116086236 is not a failed applied gate or a threshold change."
+  },
+  "reused_reducers": {
+    "sources": [
+      {
+        "path": "docs/perf/2026.09/ctc8-12-fresh-auth/summarize.jq",
+        "sha256": "c9e5b6188ee9ab027ab2c8d9cf1fb8feb173e872127874e00f1ea76a1035649a",
+        "matches_baseline_commit": true
+      },
+      {
+        "path": "docs/perf/2026.09/ctc8-12-fresh-auth/reduce_load.py",
+        "sha256": "4500d393bd5e3145e8c205790c83d9c325dfea9dd354075eee18e78104917b79",
+        "matches_baseline_commit": true
+      },
+      {
+        "path": "docs/perf/2026.09/ctc8-12-fresh-auth/trace-summary.jq",
+        "sha256": "d6734cb0be19a6101887ff6b21240f6b27400359cee901f4699e9e4a5ea5892a",
+        "matches_baseline_commit": true
+      },
+      {
+        "path": "tests/integration/src/throughput_bench.rs",
+        "sha256": "d2eb69f821ac90069bf877d6b7e76c5266d6b998a482b3820fb1f1f2eac3454c",
+        "matches_baseline_commit": true
+      }
+    ],
+    "receipt": {
+      "path": "/tmp/wamn-cutover-baseline-performance-reduction/reducer-receipt.json",
+      "sha256": "4846744d37d48885687ea2e1bb192ade0fdd2248e22122f205af3545e17960d9"
+    },
+    "repeated_output": {
+      "path": "/tmp/wamn-cutover-baseline-performance-reduction/repeated-summary.json",
+      "sha256": "7536d4387701c4fe70daba32dfa2b4140ef03c0ebb24df7a45be717a5ab8175a"
+    },
+    "repeated_output_schema": "Unchanged summarize.jq array: 36 cells, each min/median/max over 3 distinct sweep repetitions, retaining errors/cutoffs separately.",
+    "path_alias": "A /tmp before-001/journey symlink supplies the unchanged reducer filename pattern and points only to this baseline; no other run is synthesized.",
+    "load_memory_output": {
+      "path": "/tmp/wamn-cutover-baseline-performance-reduction/load-memory-samples.json",
+      "sha256": "bf55acd6091dbf0fffd09abfd3a03d42240bb43caf6c32931c6146df579d2799"
+    },
+    "load_memory_function": "Existing reduce_load.py read_run(root, \"baseline\"), 216 sample edges. No two-run comparison called.",
+    "cpu_deltas": {
+      "path": "/tmp/wamn-cutover-baseline-performance-reduction/cpu-deltas.json",
+      "sha256": "d15bd9450163a5109fc8e382e10cecb6420c628868be47f543fdd73e27fba71c"
+    }
+  },
+  "sampled_resources": {
+    "load_memory_sample_edges": 216,
+    "observed_ranges": {
+      "load1": {
+        "min": 0.96,
+        "max": 26.74
+      },
+      "load5": {
+        "min": 2.18,
+        "max": 14.77
+      },
+      "load15": {
+        "min": 2.66,
+        "max": 10.11
+      },
+      "MemAvailable": {
+        "min": 39237924,
+        "max": 41856020
+      },
+      "memory.current": {
+        "min": 48230400,
+        "max": 70995968
+      }
+    },
+    "units": {
+      "load1": "tasks, 1-minute machine load average",
+      "load5": "tasks, 5-minute machine load average",
+      "load15": "tasks, 15-minute machine load average",
+      "MemAvailable": "KiB, machine /proc/meminfo (Linux kB means 1024 bytes)",
+      "memory.current": "bytes, sampled host cgroup memory (not peak or RSS)"
+    },
+    "cpu_sample_scope": "Native server fields divide CPU usage deltas by before/after counter sample windows, which are longer than the 10-second generator windows. CPU milliseconds/request use completed request counts.",
+    "host_throttled_share_observed_unique": [
+      0.0
+    ],
+    "limit": "memory.current is sampled host cgroup memory, not peak memory, RSS or total deployment use. /proc/loadavg and MemAvailable describe the shared machine, not isolated per-node capacity."
+  },
+  "identity": {
+    "build_profile": "release",
+    "host_image_id": "sha256:3a4e1096b3c5e2cd4cd7a9d937b91f1edd026c322e1aba57b25e88b6766c7c02",
+    "host_image_tag": [
+      "wamn-host:receiving-dfa1c3187fe8-3663114-release"
+    ],
+    "host_image_receipt": {
+      "path": "journey/host-image.json",
+      "sha256": "c586197c19760af12083d605f7230c865b4eafd3152866d1d0b0d0e047895f67"
+    },
+    "node_image_bindings": {
+      "path": "journey/host-image-nodes.jsonl",
+      "sha256": "694e00de5bd27d8dc133ebfe741b9d47ff9bd7208dca290e929db688cd7ff837"
+    },
+    "host_runtime_image_id": "docker.io/library/import-2026-09-09@sha256:d88cff4ced3eef1ef5a905ebcddb54acc8d778f04d625534e2506b406c342dfe",
+    "helm_releases": [
+      {
+        "name": "wamn",
+        "namespace": "wamn-system",
+        "revision": "1",
+        "updated": "2026-09-09 14:00:09.862076222 -0400 EDT",
+        "status": "deployed",
+        "chart": "runtime-operator-2.8.0",
+        "app_version": "2.8.0"
+      },
+      {
+        "name": "wamn-host",
+        "namespace": "wamn-receiving-journey",
+        "revision": "1",
+        "updated": "2026-09-09 14:01:11.33457577 -0400 EDT",
+        "status": "deployed",
+        "chart": "runtime-operator-2.8.0",
+        "app_version": "2.8.0"
+      }
+    ],
+    "helm_receipt": {
+      "path": "journey/helm-releases.json",
+      "sha256": "975889a00902831f25f06e65ab93786dd9818d377bf1ad3d1bb0488c631804ed"
+    },
+    "distributed_chart_digest": "sha256:63e87326539df1146bf2fe9f12982d4eb5cfb4704252067d4a6932478bb34912",
+    "distributed_chart_digest_source": "journey.log:1712,1744",
+    "host_resources": {
+      "limits": {
+        "cpu": "6",
+        "memory": "4Gi"
+      },
+      "requests": {
+        "cpu": "2",
+        "memory": "256Mi"
+      }
+    },
+    "declared_grace_seconds": 0,
+    "selected_environment": {
+      "WASH_HOST_MAX_GUEST_MEMORY": "4Gi",
+      "WASH_DEFAULT_HEAP_MEMORY": "256MiB",
+      "WAMN_PG_GUEST_POOL_MAX": "14",
+      "WAMN_PG_PLATFORM_POOL_MAX": "2",
+      "WAMN_WASMTIME_CACHE_DIR": "/tmp/wamn-wasmtime-cache"
+    },
+    "host_deployment": {
+      "path": "journey/host-measurement-deployment.json",
+      "sha256": "a8c7f6bbdcd1316c7a3f705de1074d164e6dd55038f94ca61bd19c54d662aa7b"
+    },
+    "operator_deployment": {
+      "path": "journey/operator-deployment.json",
+      "sha256": "c1e99670712bd1b9623c318b05fdf6082fad4aa3cfb16c4a4f9005b70aa9c615"
+    },
+    "component_bytes": [
+      "577bc11d109a1fad0e04a5be3e9804f14003dd44a0765cdcb832fea7877ab436  /home/kaalin/.cache/wamn-lanes/wasmcloud-2-8-baseline-20260909/target/wasm32-wasip2/release/http_route.wasm",
+      "c78e7a1440aae3943a7caf2b44eab835cf5998e38f8c4954c1a0081689c6519e  /home/kaalin/.cache/wamn-lanes/wasmcloud-2-8-baseline-20260909/target/wasm32-wasip2/release/materializer.wasm",
+      "1f481deceaea9e217fb19819c750ce39fec8e9a1e19686e43dc2ebf65b1d9fef  /home/kaalin/.cache/wamn-lanes/wasmcloud-2-8-baseline-20260909/target/virtualized/std-empty-environment/receiving.wasm",
+      "710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e  /home/kaalin/.cache/wamn-lanes/wasmcloud-2-8-baseline-20260909/target/virtualized/std-empty-environment/client_acme_receiving.wasm"
+    ],
+    "component_bytes_receipt": {
+      "path": "journey/component-bytes.sha256",
+      "sha256": "ff5cb6a195489cc84a3e2b377a015bd87299366972d297e17c789366b801944f"
+    },
+    "release_receipt": {
+      "path": "journey/print-release-env.receipt",
+      "sha256": "3d52102526854e646c9f8a5fd0145f3e55b4b1f8875c1130c9b9ae24f81b1a5a"
+    },
+    "release_manifest_digest": "sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+    "scope": "2.8 baseline uses TCP host probes and declared zero-second grace. These baseline settings differ from 2.9 native probe/lifecycle configuration. Artifact byte hashes, OCI manifest digests and image config IDs remain distinct identities.",
+    "operator_image": "ghcr.io/wasmcloud/runtime-operator:2.8.0",
+    "operator_runtime_image_id": "No operator Pod imageID receipt retained in this directory.",
+    "operator_resources": {
+      "receipt": "journey/operator-deployment.json",
+      "replicas": 1,
+      "image": "ghcr.io/wasmcloud/runtime-operator:2.8.0",
+      "requests": {
+        "cpu": "100m",
+        "memory": "64Mi"
+      },
+      "limits": {
+        "memory": "192Mi"
+      },
+      "termination_grace_seconds": 0,
+      "liveness_probe": "HTTP /healthz health/8082",
+      "readiness_probe": "HTTP /readyz health/8082",
+      "startup_probe": null,
+      "runtime_image_id_receipt_available": false
+    },
+    "nodes": {
+      "receipt": "journey/nodes.json",
+      "count": 3,
+      "reported_cpu_each": "8",
+      "reported_memory_each": "63903732Ki",
+      "kubelet": "v1.36.1",
+      "container_runtime": "containerd://2.3.1",
+      "shared_boot_id": true,
+      "scope": "Reported Kind node capacities, not summed dedicated physical capacity."
+    }
+  },
+  "startup_cache_restart": {
+    "runtime_receipt": {
+      "path": "journey/runtime-startup.receipt",
+      "sha256": "03f18bd347ff99be6296d2c28274d5de505d4bf5586d77cb162823177debbaea"
+    },
+    "runtime_values": {
+      "verdict": "pass",
+      "pod_uid": "21fb0c8c-05c6-4058-8399-fda8e9de6d30",
+      "cold_startup_ms": 883,
+      "restart_startup_ms": 240,
+      "cache_entries": 3
+    },
+    "requests": [
+      {
+        "phase": "cold",
+        "receipt": {
+          "path": "journey/first-request-cold.receipt",
+          "sha256": "08d598a5762c2a4764aaa306b2584c02b40a397b8c951df394062238f82efe69"
+        },
+        "values": {
+          "verdict": "pass",
+          "phase": "cold",
+          "status": 200,
+          "first_byte_ms": 15.609,
+          "total_ms": 15.74,
+          "recovery_seconds": 1,
+          "ceiling_seconds": 120
+        },
+        "attempt_count": 2,
+        "status_counts": {
+          "000": 1,
+          "200": 1
+        },
+        "raw_log": {
+          "path": "journey/first-request-cold.log",
+          "sha256": "baf058e27f8f4a9425d2469f7fd240912d55a57c49702333249bfbedb2536bf3"
+        }
+      },
+      {
+        "phase": "restart-first",
+        "receipt": {
+          "path": "journey/first-request-restart-first.receipt",
+          "sha256": "c246b0adf8c23eecb1c2570434de470379390bef76471df12d375e566251066e"
+        },
+        "values": {
+          "verdict": "pass",
+          "phase": "restart-first",
+          "status": 200,
+          "first_byte_ms": 15.714,
+          "total_ms": 15.768,
+          "recovery_seconds": 73,
+          "ceiling_seconds": 120
+        },
+        "attempt_count": 73,
+        "status_counts": {
+          "503": 13,
+          "000": 59,
+          "200": 1
+        },
+        "raw_log": {
+          "path": "journey/first-request-restart-first.log",
+          "sha256": "85f185bca0004a9c26722b2874302345361a0bb2cda84a2f43dd2d60fb63471e"
+        }
+      }
+    ],
+    "same_pod_uid": true,
+    "pod_uid": "21fb0c8c-05c6-4058-8399-fda8e9de6d30",
+    "restart_counts": [
+      0,
+      1
+    ],
+    "previous_container_exit": {
+      "containerID": "containerd://11d2eeda5ec6ee0a3bd04e660750d3e90cfd6de8e10cbbd8dd4d3c5412b56208",
+      "exitCode": 0,
+      "finishedAt": "2026-09-09T18:01:29Z",
+      "reason": "Completed",
+      "startedAt": "2026-09-09T18:01:12Z"
+    },
+    "same_image_id": true,
+    "cache_metadata_identical": true,
+    "cache_hash_lists_identical": true,
+    "cache_receipts": [
+      {
+        "path": "journey/cache-cold.txt",
+        "sha256": "1721a723618be754603925df58e3095b11ccabb8de7fa7a1e43ad19b756140f9"
+      },
+      {
+        "path": "journey/cache-warm.txt",
+        "sha256": "1721a723618be754603925df58e3095b11ccabb8de7fa7a1e43ad19b756140f9"
+      },
+      {
+        "path": "journey/cache-cold.sha256",
+        "sha256": "aef401e181a2e96e573dc930a059304ae5eaff4ceae90af1b033f919b3a35d0d"
+      },
+      {
+        "path": "journey/cache-warm.sha256",
+        "sha256": "aef401e181a2e96e573dc930a059304ae5eaff4ceae90af1b033f919b3a35d0d"
+      }
+    ],
+    "scope": "One cold start and one same-Pod container restart. Cache listings after cold and after all measurements show persistence, not persistence after Pod/node replacement. Runtime startup clocks exclude scheduling and route readiness. Restart probe elapsed starts after readiness waits, not at TERM. No cross-version speedup is claimed."
+  },
+  "cleanup_and_hash_integrity": {
+    "final_receipt": {
+      "path": "journey/startup-measurement.receipt",
+      "sha256": "70ab02abe155ceeaf7032519cff343dfe43a0eb501f04262121e576cf6adc8b0"
+    },
+    "cleanup_receipt": {
+      "path": "journey/cleanup.receipt",
+      "sha256": "bb43aac9bb4246e772a38a014dc8868a16d010bdf0002404f0af26b7ec599441"
+    },
+    "cleanup_values": {
+      "verdict": "pass",
+      "cluster": "wamn-receiving-journey",
+      "containers": "wamn-receiving-pg18-dfa1c3187fe8-3663114,wamn-receiving-registry-dfa1c3187fe8-3663114,wamn-receiving-nats-dfa1c3187fe8-3663114",
+      "image": "wamn-host:receiving-dfa1c3187fe8-3663114-release"
+    },
+    "retained_manifest": {
+      "path": "journey/evidence.sha256",
+      "sha256": "d72b2c7e638e908c057d66a260246be9b4e1d9031090655bf25564fee17586af"
+    },
+    "retained_manifest_entries": 119,
+    "mismatches": [],
+    "retained_manifest_scope": "Only 119 top-level journey files. Nested throughput files and outer wrapper logs are not in that retained manifest.",
+    "analysis_file_inventory": {
+      "path": "/tmp/wamn-cutover-baseline-performance-reduction/baseline-file-hashes.json",
+      "sha256": "e74400672e550d3572e07cd21d0ff8584f16ebbe17eeb5088c92d78fba32c030"
+    },
+    "analysis_inventory_file_count": 1567,
+    "analysis_inventory_bytes": 40010390,
+    "analysis_inventory_scope": "New read-only hash inventory captures all baseline files, including nested throughput; it does not retroactively make them members of the original journey manifest.",
+    "cleanup_scope": "Recorded runner cleanup passed for its exact owned cluster, PostgreSQL/registry/NATS containers, host image and temporary directory. No live cleanup commands or probes were run during this reduction."
+  },
+  "limits": [
+    "This is the 2.8 comparison baseline, not a passing 2.9 baseline or release-readiness verdict.",
+    "The startup/fresh-auth arm measures one Receiving read route and then exits before the full application journey. No full WMS, active executor drain or operator outage proof is inferred.",
+    "No new acceptance ceiling, comparison algorithm, per-request independence assumption or exact executed-proof total is introduced."
+  ],
+  "details": {
+    "path": "/tmp/wamn-cutover-baseline-performance-reduction/baseline-evidence-details.json",
+    "sha256": "b83cd47bf56958d438faaba015b30fb74ec113668ceabc848638a510a77ed3d5"
+  }
+}
