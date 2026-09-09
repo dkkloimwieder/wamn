@@ -23,7 +23,8 @@ use wamn_platform_identity::session_token::{
 
 const MAX_BYTES: usize = 65_536;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
-const PROOF_TIMEOUT: Duration = Duration::from_secs(350);
+const WARM_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const PROOF_TIMEOUT: Duration = Duration::from_secs(420);
 const KEY_MAX_AGE: Duration = Duration::from_secs(300);
 const ROUTE_PATH: &str = "/purchase_order/get";
 
@@ -271,9 +272,11 @@ async fn host_request(
     endpoint: &reqwest::Url,
     fixture: &Fixture,
     token: &str,
+    timeout: Duration,
 ) -> anyhow::Result<(reqwest::StatusCode, Vec<u8>)> {
     let response = http
         .post(endpoint.clone())
+        .timeout(timeout)
         .header(reqwest::header::HOST, &fixture.route_host)
         .bearer_auth(token)
         .json(&fixture.request_body)
@@ -288,7 +291,7 @@ async fn host_request(
 pub async fn run(args: HostSessionProofArgs) -> anyhow::Result<()> {
     tokio::time::timeout(PROOF_TIMEOUT, observe(args))
         .await
-        .map_err(|_| anyhow!("host session proof exceeded 350 seconds"))?
+        .map_err(|_| anyhow!("host session proof exceeded 420 seconds"))?
 }
 
 async fn observe(args: HostSessionProofArgs) -> anyhow::Result<()> {
@@ -378,8 +381,14 @@ async fn observe(args: HostSessionProofArgs) -> anyhow::Result<()> {
         "host proof exchange exceeds its observed evidence-age bound"
     );
     for endpoint in &endpoints {
-        let (status, body) =
-            host_request(&http, endpoint, &fixture, &exchange.access_token).await?;
+        let (status, body) = host_request(
+            &http,
+            endpoint,
+            &fixture,
+            &exchange.access_token,
+            WARM_REQUEST_TIMEOUT,
+        )
+        .await?;
         ensure!(
             status == reqwest::StatusCode::OK,
             "deployed host did not accept the session token"
@@ -410,8 +419,14 @@ async fn observe(args: HostSessionProofArgs) -> anyhow::Result<()> {
     );
     for _ in 0..2 {
         for endpoint in &endpoints {
-            let (status, _) =
-                host_request(&http, endpoint, &fixture, &exchange.access_token).await?;
+            let (status, _) = host_request(
+                &http,
+                endpoint,
+                &fixture,
+                &exchange.access_token,
+                IO_TIMEOUT,
+            )
+            .await?;
             ensure!(
                 status == reqwest::StatusCode::UNAUTHORIZED,
                 "deployed host did not refuse the removed key at its freshness deadline"

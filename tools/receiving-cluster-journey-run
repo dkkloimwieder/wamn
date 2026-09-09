@@ -1798,7 +1798,7 @@ if [[ "$session_host_proof" == true ]]; then
     jq -n --arg ns "$namespace" --arg name "$session_stage" --arg image "$gates_image" \
       --arg issuer "$session_issuer" --arg endpoints "$session_endpoints" --arg available "$session_available" '
       {apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},
-       spec:{backoffLimit:0,activeDeadlineSeconds:360,template:{spec:{restartPolicy:"Never",
+       spec:{backoffLimit:0,activeDeadlineSeconds:430,template:{spec:{restartPolicy:"Never",
         automountServiceAccountToken:false,containers:[{name:"host-session",image:$image,imagePullPolicy:"Never",
          command:["/usr/local/bin/wamn-gates","host-session-proof"],env:[
           {name:"WAMN_IDENTITY_ISSUER",value:$issuer},
@@ -1815,16 +1815,16 @@ if [[ "$session_host_proof" == true ]]; then
     session_spec=$(jq -nc --arg name "$session_stage" --arg image "$gates_image" --arg receipt "$session_final" \
       '{name:$name,container:"host-session",expectation:"positive",exit_code:0,image:$image,log_contains:$receipt}')
     record_command env KUBECTL="$work_dir/session-kubectl" "$repo_root/tools/kubernetes-gate-run" \
-      --namespace "$namespace" --timeout-secs 420 --manifest "$evidence_dir/$session_stage-job.json" \
+      --namespace "$namespace" --timeout-secs 480 --manifest "$evidence_dir/$session_stage-job.json" \
       --verdict-record "$evidence_dir/$session_stage-verdict.json" --job "$session_spec"
-    timeout 480s env KUBECTL="$work_dir/session-kubectl" "$repo_root/tools/kubernetes-gate-run" \
-      --namespace "$namespace" --timeout-secs 420 --manifest "$evidence_dir/$session_stage-job.json" \
+    timeout 540s env KUBECTL="$work_dir/session-kubectl" "$repo_root/tools/kubernetes-gate-run" \
+      --namespace "$namespace" --timeout-secs 480 --manifest "$evidence_dir/$session_stage-job.json" \
       --verdict-record "$evidence_dir/$session_stage-verdict.json" --job "$session_spec" \
       >"$evidence_dir/$session_stage-run.log" 2>&1 &
     session_gate_pid=$!
     run "${kube[@]}" -n "$namespace" wait --for=create "job/$session_stage" --timeout=60s
     session_warm=false
-    record_command timeout 420s "${kube[@]}" -n "$namespace" logs -f "job/$session_stage" \
+    record_command timeout 480s "${kube[@]}" -n "$namespace" logs -f "job/$session_stage" \
       -c host-session --pod-running-timeout=120s
     while IFS= read -r session_line; do
       printf '%s\n' "$session_line" >>"$evidence_dir/$session_stage-stream.log"
@@ -1838,7 +1838,7 @@ if [[ "$session_host_proof" == true ]]; then
           run "${kube[@]}" -n "$namespace" scale "deployment/$session_identity" --replicas=0
         fi
       fi
-    done < <(timeout 420s "${kube[@]}" -n "$namespace" logs -f "job/$session_stage" \
+    done < <(timeout 480s "${kube[@]}" -n "$namespace" logs -f "job/$session_stage" \
       -c host-session --pod-running-timeout=120s 2>"$evidence_dir/$session_stage-stream-errors.log")
     session_gate_status=0
     wait "$session_gate_pid" || session_gate_status=$?

@@ -4483,6 +4483,34 @@ async fn nested_session_caller() -> anyhow::Result<()> {
     let traces = TraceHarness::install();
     let (engine, flow_http, routing, bridge, identity_task) =
         build_journey_runtime(&inputs, &credentials, release, Some(verifier)).await?;
+    // The base replays its stored result; the overlay reads the current Acme fields.
+    // The PAT journey updated those fields after it first recorded this command.
+    let expected_replay = project
+        .query_one(
+            "SELECT jsonb_build_object(\
+           'receipt_id', command.receipt_id::text, \
+           'purchase_order_id', command.purchase_order_id::text, \
+           'purchase_order_status', command.purchase_order_status, \
+           'row_version', command.row_version::text, \
+           'acme_inspection_required', purchase.acme_inspection_required, \
+           'acme_quality_status', purchase.acme_quality_status), purchase.row_version \
+         FROM receiving.record_receipt_command AS command \
+         JOIN receiving.purchase_order AS purchase ON purchase.id = command.purchase_order_id \
+         WHERE command.idempotency_key = 'receipt-command-2' \
+           AND purchase.id = '00000000-0000-0000-0000-000000000302'",
+            &[],
+        )
+        .await?;
+    let current_version: i64 = expected_replay.get(1);
+    let expected_replay: Value = expected_replay.get(0);
+    anyhow::ensure!(
+        current_version == 3
+            && expected_replay["purchase_order_status"] == "complete"
+            && expected_replay["row_version"] == "2"
+            && expected_replay["acme_inspection_required"] == true
+            && expected_replay["acme_quality_status"] == "pending",
+        "nested replay requires the completed PAT journey state"
+    );
     let (trace_id, traceparent) = journey_trace(31);
     // Replay the real journey command so this proof does not change the two-host
     // GET fixture or create another materializer event. Both actual guests run.
@@ -4493,10 +4521,7 @@ async fn nested_session_caller() -> anyhow::Result<()> {
     ).await?;
     let value = successful_value(&response, "session-nested-replay")?;
     anyhow::ensure!(
-        value["purchase_order_status"] == "complete"
-            && value["row_version"] == "2"
-            && value["acme_inspection_required"] == false
-            && value["acme_quality_status"] == "not_required",
+        value == expected_replay,
         "nested session replay returned the wrong operation result"
     );
     assert_nested_record_receipt_trace(
