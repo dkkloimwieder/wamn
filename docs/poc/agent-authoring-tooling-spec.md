@@ -14,7 +14,7 @@ interface in A6; they live in the protocol (`docs/experiments/agent-authoring/pr
 
 | # | Fact | Evidence |
 |---|---|---|
-| F1 | Product binary `wamn`, one subcommand `dev`; operator CLI `wamn-ctl`. | `services/ctl/src/bin/wamn.rs:1-23`, `services/ctl/Cargo.toml:21-23`, `services/ctl/src/main.rs:14` |
+| F1 | Product binary `wamn`, one subcommand `dev`; operator CLI `wamn-ctl`. The `wamn-ctl` bin is `src/main.rs`, auto-discovered under the package name, so no `[[bin]]` block names it and `--bin wamn` alone does not build it. | `services/ctl/src/bin/wamn.rs:1-23`, `services/ctl/Cargo.toml:21-23` (`wamn`), `:4` (`default-run`), `services/ctl/src/main.rs:15` |
 | F2 | `wamn dev --config FILE --overlay-root DIR [--watch] [--tui]`; `--tui` is a renderer flag on the same command. | `services/ctl/src/dev/command.rs:28-43`, `:285-291` |
 | F3 | Session modes live in `DevSession::run_with_observer(observer, hold_after_one_shot)`: watch · once+hold · once+teardown. Plain path hard-codes teardown; the TUI calls `run_until_shutdown` (hold). | `command.rs:249-283`, `:242-247`, `:293`, `dev/tui.rs:440` |
 | F4 | Migrate…Gate run on saved bytes; Publish…Activate require a committed source; dirtiness is whole-worktree including untracked files. | `services/ctl/src/dev.rs:95-106`, `:400-415`; `dev/watch.rs:146`, `:194-233` |

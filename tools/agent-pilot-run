@@ -241,7 +241,7 @@ build_binaries() {
   # exactly like a spurious failure.
   if true; then
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
-      cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-ctl --bin wamn --locked --offline
+      cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-ctl --bin wamn --bin wamn-ctl --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
       cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-host --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
@@ -259,7 +259,7 @@ build_binaries() {
   BUILD_SECONDS=$(( $(date +%s) - started ))
   # "Cached" is now a measurement, not a guess: cargo had nothing to do.
   BUILD_CACHED=$([[ $BUILD_SECONDS -lt 30 ]] && echo true || echo false)
-  for artifact in debug/wamn debug/wamn-host debug/wamn-scenario-worker debug/wamn-dev-env; do
+  for artifact in debug/wamn debug/wamn-ctl debug/wamn-host debug/wamn-scenario-worker debug/wamn-dev-env; do
     [[ -x "$TARGET/$artifact" ]] || die "$TARGET/$artifact was not built" "$EX_ENV"
   done
   [[ -s "$TARGET/wasm32-wasip2/debug/http_route.wasm" ]] \
@@ -606,7 +606,14 @@ verb_up() {
   fi
 
   install -m 755 "$TREE/tools/agent-pilot-wamn-shim" "$DIR/bin/wamn"
-  ln -sf "$TARGET/debug/wamn-ctl" "$DIR/bin/wamn-ctl" 2>/dev/null || true
+  # `wamn-ctl` is src/main.rs of the wamn-ctl package, auto-discovered under the
+  # package name; it is the operator CLI the brief promises. The build once asked
+  # for `--bin wamn` alone, so this link dangled in every arm 030..032 and an
+  # agent spent a stall on it. `ln` was `|| true`, which is what hid it: the link
+  # is now strict, and build_binaries asserts the target it points at.
+  ln -sfn "$TARGET/debug/wamn-ctl" "$DIR/bin/wamn-ctl" \
+    || die "could not link wamn-ctl into the run bin directory" "$EX_ENV"
+  [[ -x "$DIR/bin/wamn-ctl" ]] || die "$DIR/bin/wamn-ctl does not resolve" "$EX_ENV"
 
   start_infrastructure
   run_standup
