@@ -1685,10 +1685,7 @@ pub fn authored_base_digests(
             anyhow!(source).context(format!("parse {}", manifest.display())),
         )
     })?;
-    let Some(dependencies) = document
-        .get("base_dependencies")
-        .and_then(Value::as_object)
-    else {
+    let Some(dependencies) = document.get("base_dependencies").and_then(Value::as_object) else {
         return Ok(BTreeMap::new());
     };
     let mut digests = BTreeMap::new();
