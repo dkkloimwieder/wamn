@@ -1849,6 +1849,10 @@ if [[ "$session_host_proof" == true ]]; then
       >"$evidence_dir/$session_stage-pods.json"
     run "${kube[@]}" -n "$namespace" logs "job/$session_stage" -c host-session \
       >"$evidence_dir/$session_stage.log"
+    while IFS= read -r session_pod; do
+      run "${kube[@]}" --request-timeout=30s -n "$namespace" logs "$session_pod" --all-containers \
+        >"$evidence_dir/$session_stage-$session_pod.log"
+    done < <(jq -r '.[].pod_name' "$evidence_dir/$session_stage-host-endpoints.json")
     [[ "$session_warm" == true && "$session_gate_status" == 0 ]] || exit 1
     jq -e --arg image "$gates_image" --arg digest "$gates_runtime_digest" \
       --arg config "$gates_config_id" '.items | length == 1 and
@@ -1858,10 +1862,6 @@ if [[ "$session_host_proof" == true ]]; then
           (((.imageID // "") | endswith($digest)) or .imageID == $config)))' \
       "$evidence_dir/$session_stage-pods.json" >/dev/null
     [[ $(grep -Fxc -- "$session_final" "$evidence_dir/$session_stage.log") == 1 ]] || exit 1
-    while IFS= read -r session_pod; do
-      run "${kube[@]}" -n "$namespace" logs "$session_pod" --all-containers \
-        >"$evidence_dir/$session_stage-$session_pod.log"
-    done < <(jq -r '.[].pod_name' "$evidence_dir/$session_stage-host-endpoints.json")
     # A cold replacement could also refuse the removed key. Preserve proof
     # that both warmed production containers survived the entire observation.
     run "${kube[@]}" --request-timeout=30s -n "$namespace" get pods -l "$host_selector" -o json \

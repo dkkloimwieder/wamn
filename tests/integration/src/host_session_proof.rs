@@ -24,6 +24,7 @@ use wamn_platform_identity::session_token::{
 const MAX_BYTES: usize = 65_536;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const WARM_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const REFUSAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const PROOF_TIMEOUT: Duration = Duration::from_secs(420);
 const KEY_MAX_AGE: Duration = Duration::from_secs(300);
 const ROUTE_PATH: &str = "/purchase_order/get";
@@ -282,7 +283,13 @@ async fn host_request(
         .json(&fixture.request_body)
         .send()
         .await
-        .map_err(|_| anyhow!("deployed host request failed"))?;
+        .map_err(|error| {
+            if error.is_timeout() {
+                anyhow!("deployed host request timed out")
+            } else {
+                anyhow!("deployed host request failed")
+            }
+        })?;
     let status = response.status();
     Ok((status, read_body(response).await?))
 }
@@ -424,7 +431,7 @@ async fn observe(args: HostSessionProofArgs) -> anyhow::Result<()> {
                 endpoint,
                 &fixture,
                 &exchange.access_token,
-                IO_TIMEOUT,
+                REFUSAL_REQUEST_TIMEOUT,
             )
             .await?;
             ensure!(
@@ -466,13 +473,29 @@ async fn observe(args: HostSessionProofArgs) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostSessionProofArgs, ROUTE_PATH, endpoints};
+    use super::{
+        HostSessionProofArgs, IO_TIMEOUT, KEY_MAX_AGE, PROOF_TIMEOUT, REFUSAL_REQUEST_TIMEOUT,
+        ROUTE_PATH, WARM_REQUEST_TIMEOUT, endpoints,
+    };
     use clap::{CommandFactory as _, Parser};
 
     #[derive(Parser)]
     struct Cli {
         #[command(flatten)]
         args: HostSessionProofArgs,
+    }
+
+    #[test]
+    fn host_request_budgets_outlive_key_fetches_and_fit_the_proof() {
+        let required =
+            IO_TIMEOUT * 3 + WARM_REQUEST_TIMEOUT * 2 + KEY_MAX_AGE + REFUSAL_REQUEST_TIMEOUT * 4;
+        for (outer, inner) in [
+            (WARM_REQUEST_TIMEOUT, IO_TIMEOUT),
+            (REFUSAL_REQUEST_TIMEOUT, IO_TIMEOUT),
+            (PROOF_TIMEOUT, required),
+        ] {
+            assert!(outer > inner, "outer proof budget must exceed inner work");
+        }
     }
 
     #[test]

@@ -1328,7 +1328,8 @@ It sends the same session token to two distinct host processes and compares each
 The runner pins one workload to each ready host ID through the existing operator field.
 The proof refuses any host-container restart during either five-minute window.
 Each first host request has a 30-second allowance for cold compilation.
-Identity requests and later refusal requests retain their five-second limit.
+Identity requests retain their five-second limit.
+Later host requests allow ten seconds, so a five-second key fetch can finish before the host returns its refusal.
 After both hosts accept the token, the runner removes its signing key.
 Both hosts must refuse it after the 300-second public-key window, while the token itself remains valid.
 The runner repeats the proof with JWKS unreachable and new host processes.
