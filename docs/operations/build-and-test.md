@@ -159,6 +159,10 @@ passed, 1 failed, 73 ignored, no compile errors.** The one failure is
 `wamn-362o.58`. The `1bffa614` figures above are left as the owner measured
 them.]
 
+[re-measured 2026-09-09 at `3c831ea9`, after wave 11: **206 binaries, 1929
+passed, 1 failed, 77 ignored, no compile errors.** The same one failure, still
+`wamn-362o.58`.]
+
 ## Conformance
 
 ```bash
