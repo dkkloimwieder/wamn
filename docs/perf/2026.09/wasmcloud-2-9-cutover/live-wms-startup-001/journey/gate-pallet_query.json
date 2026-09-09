@@ -1,0 +1,1 @@
+{"document":"response","body":{"schema-version":"0.1","command-id":"gate-wamn_wms-pallet_query","outcome":{"status":"completed","value":{"command":"gate","result":{"report-id":"sha256:dbb814b0540cce73436cc9cb887fa585e5c2e6c4ba695da127310991467dfd49","validated-draft":{"validated-draft-id":"sha256:dbb814b0540cce73436cc9cb887fa585e5c2e6c4ba695da127310991467dfd49"}}}}}}

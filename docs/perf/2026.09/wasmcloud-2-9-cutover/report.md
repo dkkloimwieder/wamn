@@ -526,3 +526,19 @@ A fresh store then allocates and releases one page on the same engine.
 The [execution receipt](memory-cancellation-map-001/deadline-refund-execution.json) records the exact command and tested source hashes.
 This proof resolves the remaining deadline-refund requirement of `wamn-0h0g.2.7.2`.
 The final workspace sweep remains separate.
+
+
+## WMS routes and startup probe correction
+
+The [full WMS journey](live-wms-001/journey/journey.receipt) passes at clean source `ab0467f4`.
+It proves the winning movement and stored label, released operations, native scheduling refusal, and exact cleanup.
+The separate materializer arm establishes idle startup.
+The release manifest digest is `sha256:815452e40e4e6da7ac9feb0788f7279bf3972bfc0891eb44b16904c6d52b53cf`.
+
+The [first startup run](live-wms-startup-001/exit-code.txt) exits 1 after the host becomes available.
+Kubernetes adds `scheme: HTTP` to all three probe objects.
+The proof expects only path and port, so its complete-object comparison rejects the defaulted objects.
+The correction adds the exact HTTP scheme to each expected object and changes no deployed probe.
+The [offline replay](wms-probe-scheme-fix-001/offline-replay.json) accepts the captured deployment and rejects ten altered or missing probe controls.
+Cleanup passes, but this run records no startup latency or trace result.
+Bead `wamn-0h0g.2.7.14` remains open until the corrected live startup proof passes.

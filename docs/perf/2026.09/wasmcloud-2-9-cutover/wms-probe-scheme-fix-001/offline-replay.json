@@ -1,0 +1,62 @@
+{
+  "source_before": "ab0467f415dfd6b31e70323ec6ca049d5d2a5298",
+  "original_refuses_actual": true,
+  "cases": {
+    "actual_defaulted": {
+      "expected_pass": true,
+      "actual_pass": true,
+      "exit_code": 0
+    },
+    "livenessProbe_scheme": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "livenessProbe_port": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "livenessProbe_path": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "readinessProbe_scheme": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "readinessProbe_port": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "readinessProbe_path": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "startupProbe_scheme": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "startupProbe_port": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "startupProbe_path": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    },
+    "missing_startup_probe": {
+      "expected_pass": false,
+      "actual_pass": false,
+      "exit_code": 1
+    }
+  },
+  "scope": "Read-only replay of complete probe equality. No live startup or host configuration change."
+}
