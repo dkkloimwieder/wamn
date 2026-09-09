@@ -1,0 +1,17 @@
+{
+  "command": [
+    "git",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "worktree",
+    "add",
+    "--detach",
+    "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-8-baseline-20260909",
+    "dfa1c3187fe8cd671688a442b23106046e502cb6"
+  ],
+  "exit_code": 0,
+  "worktree": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-8-baseline-20260909",
+  "source": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+  "status": "",
+  "build_or_measurement_started": false
+}

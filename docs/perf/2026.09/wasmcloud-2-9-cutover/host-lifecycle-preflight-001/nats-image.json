@@ -1,0 +1,64 @@
+[
+    {
+        "Id": "sha256:8b9f712ae2148dcbd9d7f3d16a942d515e290526e5d018500931eab62b18e045",
+        "RepoTags": [
+            "nats:2.10-alpine"
+        ],
+        "RepoDigests": [
+            "nats@sha256:b83efabe3e7def1e0a4a31ec6e078999bb17c80363f881df35edc70fcb6bb927"
+        ],
+        "Parent": "",
+        "Comment": "buildkit.dockerfile.v0",
+        "Created": "2026-01-28T02:19:39.327783459Z",
+        "DockerVersion": "",
+        "Author": "",
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Size": 25479410,
+        "GraphDriver": {
+            "Data": {
+                "LowerDir": "/var/lib/docker/overlay2/3492c592244cabbc989d8c6eb7e384501b1b3eaa0cff163320f8c8d2416e1b7c/diff:/var/lib/docker/overlay2/e6134d5a4ab8704e566b4059f47fa2344c0ebaabad7f835508bc33599a8c733d/diff:/var/lib/docker/overlay2/563e7a93ca1a55b07d11a35960ffcad62fabac777f45523723ebb4dc8472eae2/diff",
+                "MergedDir": "/var/lib/docker/overlay2/be3876b53ada25ba31bd32fb794daa0685790ebaa634370ff05b6d3535ec49eb/merged",
+                "UpperDir": "/var/lib/docker/overlay2/be3876b53ada25ba31bd32fb794daa0685790ebaa634370ff05b6d3535ec49eb/diff",
+                "WorkDir": "/var/lib/docker/overlay2/be3876b53ada25ba31bd32fb794daa0685790ebaa634370ff05b6d3535ec49eb/work"
+            },
+            "Name": "overlay2"
+        },
+        "RootFS": {
+            "Type": "layers",
+            "Layers": [
+                "sha256:cce92674e98722970ab3fdce76a2566f54db535beeb24f0b4397f070ab5f6987",
+                "sha256:6f7152c80d2bc779c404e6be268f98b72bfb5d764878ecbaa24e12c07204e6e5",
+                "sha256:445266c64ee39994f2a753c6c7b242fe3a80e5dd6cc4baaa363a28a54cac38e0",
+                "sha256:ffe4ba8023bbcf34c47f45fb33cd193b05f5766df77160992b3e85dfe1e04138"
+            ]
+        },
+        "Metadata": {
+            "LastTagTime": "0001-01-01T00:00:00Z"
+        },
+        "Config": {
+            "Cmd": [
+                "nats-server",
+                "--config",
+                "/etc/nats/nats-server.conf"
+            ],
+            "Entrypoint": [
+                "docker-entrypoint.sh"
+            ],
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "NATS_SERVER=2.10.29"
+            ],
+            "ExposedPorts": {
+                "4222/tcp": {},
+                "6222/tcp": {},
+                "8222/tcp": {}
+            },
+            "Labels": null,
+            "OnBuild": null,
+            "User": "",
+            "Volumes": null,
+            "WorkingDir": "/"
+        }
+    }
+]

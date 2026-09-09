@@ -256,3 +256,31 @@ Current release publication, compiled-guest responses, and measured live restart
 The [final source record](validation-004/source-inputs.json) identifies an uncommitted tree based on `dfa1c318`.
 Stage 3 has not landed, and live proof requires a clean, fixed commit.
 No current result establishes cutover or release readiness.
+
+
+## First deployed 2.9 proof
+
+The prepared integration commits as `15f2d4da26df0bdb46022cfd5276c9550d415d86` on the isolated cutover branch.
+Commit `7798190c7d045a48231a8db41448cc6e29cf3bd8` records the reviewed journey template hashes.
+Main remains at `dfa1c318`, and the stage 3 fence remains held.
+
+The [full Receiving command](live-receiving-001/command.txt) runs from clean source `7798190c` and [exits 0](live-receiving-001/exit-code.txt).
+It starts at 14:30:21 UTC and finishes at 14:49:25 UTC on September 9, 2026.
+The [verdict](live-receiving-001/journey/verdict.json) records production publication, three ready rebuilt hosts, native scheduling, Receiving causation, and exact materializer acknowledgment.
+The [production route log](live-receiving-001/journey/production-route.log) records the real 13-route test passing without a skip.
+The selected materializer test also passes without a skip.
+Both native publication receipts report success with immutable component digests.
+The release manifest is `sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94`.
+
+The [Warning Event](live-receiving-001/journey/cross-environment-event.json) uses `events.k8s.io/v1` and reason `CrossEnvironmentSchedulingDenied`.
+The [permission receipt](live-receiving-001/journey/operator-events-rbac.receipt) grants only `create` and `patch` for modern Events.
+The distributed chart still needs the scoped WAMN overlay.
+The [cleanup receipt](live-receiving-001/journey/cleanup.receipt) passes, and only the three frozen `kind-wamn` containers remain afterward.
+
+This run cites historical telemetry evidence in its verdict.
+It does not establish current invocation traces, effect traces, or metric delivery.
+Operator recovery, startup bursts, bounded process tests, and comparable performance measurements remain open.
+The [comparison plan](performance-plan-001/comparison.json) distinguishes retained 2.8 measurements from the unexecuted source-matched baseline at `dfa1c318`.
+The prepared host process test [compiles](host-lifecycle-build-001/exit-code.txt), and scoped [Clippy](host-lifecycle-build-001/clippy-exit-code.txt) exits 0 with existing dependency warnings.
+Neither result establishes its live process behavior.
+The [NATS extraction record](host-lifecycle-preflight-001/extraction.json) identifies the pinned executable and confirms removal of its stopped extraction container.

@@ -139,6 +139,32 @@ JSON publication receipts must report both `.success` and `.data.success` as tru
 The component digest is `.data.digest`.
 WAMN custom artifact publication remains owned by `wamn-ctl push-component` and its admission proof.
 
+
+### Rebuilt host process lifecycle
+
+The ignored host test starts an owned NATS process on a temporary loopback port.
+It runs the rebuilt WAMN host with cleared environment variables.
+It tests ingress saturation, a 50-second NATS outage, recovery, SIGTERM, SIGINT, and a stalled native trace exporter.
+The normal signal cases must exit successfully within the 70-second deployment grace.
+The stalled exporter must report a flush failure within that grace.
+The test records an initial `starting` response if it observes that brief state.
+It does not prove failure before the first native liveness beat.
+
+Set the NATS executable to an absolute path.
+Set the evidence directory to a new path outside the build worktree.
+Create its parent directory before the command.
+
+```bash
+WAMN_HOST_LIVE_NATS_SERVER_BIN=/absolute/path/to/nats-server \
+WAMN_HOST_LIVE_EVIDENCE_DIR=/absolute/path/to/new-host-evidence \
+  cargo test -p wamn-host --test native_lifecycle_live --locked --offline \
+  rebuilt_host_probes_signals_and_scheduler_recovery -- --ignored --exact --nocapture
+```
+
+The full Receiving journey also tests the actual idle executor with its provisioned credentials.
+It requires native readiness and liveness, then successful SIGTERM and SIGINT exits within the 15-second deployment grace.
+Those idle cases do not establish queued-delivery drain behavior.
+
 ## The full sweep
 
 ```bash
@@ -2977,7 +3003,8 @@ and RoleBinding, proves the operator's actual ServiceAccount has exactly
 `create,patch` on `events.k8s.io/events`, and records both the durable condition
 and matching native Warning Event. The 404 proves only HTTP routing and guest
 execution; the Kubernetes objects independently prove the other arms.
-The updated 2.9.0 cluster journey remains unexecuted.
+The [first 2.9.0 full journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/verdict.json) passes at `7798190c`.
+The later idle executor cases require a new run.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \

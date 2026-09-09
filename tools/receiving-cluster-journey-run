@@ -194,7 +194,7 @@ if [[ "$apply" != true ]]; then
   elif [[ "$measure_startup" == true ]]; then
     printf '  order: build -> production mint/attest -> operator 2.9.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> exact teardown\n'
   else
-    printf '  order: build -> production mint/attest -> CDC + JetStream -> operator 2.9.0 -> host + materializer ready -> HTTP receipt -> causal inspection + ACK -> cross-environment refusal -> exact teardown\n'
+    printf '  order: build -> production mint/attest -> CDC + JetStream -> idle executor probes + SIGTERM/SIGINT -> operator 2.9.0 -> host + materializer ready -> HTTP receipt -> causal inspection + ACK -> cross-environment refusal -> exact teardown\n'
   fi
   exit 0
 fi
@@ -292,6 +292,7 @@ gates_image_owned=false
 identity_image_owned=false
 session_gate_pid=
 session_forward_pid=
+executor_lifecycle_pid=
 run_complete=false
 
 cleanup() {
@@ -307,6 +308,12 @@ cleanup() {
     sleep "$WAMN_JOURNEY_HOLD_SECONDS" || true
   fi
   set +e
+
+  if [[ -n "$executor_lifecycle_pid" ]]; then
+    kill -TERM "$executor_lifecycle_pid" >/dev/null 2>&1 || true
+    wait "$executor_lifecycle_pid" >/dev/null 2>&1 || true
+    kill -0 "$executor_lifecycle_pid" >/dev/null 2>&1 && cleanup_failed=true
+  fi
 
   if [[ -n "$session_gate_pid" ]]; then
     kill -TERM "$session_gate_pid" >/dev/null 2>&1 || true
@@ -552,7 +559,7 @@ if [[ "$standard_images" != true ]]; then
     cargo build --locked --release -p wamn-host
 fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker
+  cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor
 if [[ "$fresh_auth_bench" == true ]]; then
   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
     cargo build --locked --offline -p wamn-gates
@@ -1095,6 +1102,197 @@ if [[ ${#digest_lines[@]} -ne 1 ]]; then
   exit 1
 fi
 manifest_digest=${digest_lines[0]#*=}
+
+# Reuse the released closure and scoped generations before materializer traffic.
+# This proves real idle executor probes and shutdown, not queued delivery drain.
+if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true ]]; then
+record_command executor-native-lifecycle "$cargo_target_dir/debug/wamn-run-worker" \
+  '<private fixture credentials>' "$manifest_digest" SIGTERM SIGINT
+python3 - "$cargo_target_dir/debug/wamn-run-worker" "$host_secret_directory" \
+  "$component_artifact_base" "$release_artifact_base" "$manifest_digest" \
+  "$docker_config_directory/config.json" "$nats_url" "$app_project" "$app_schema" \
+  "$evidence_dir" "$head" <<'PY_EXECUTOR' &
+import base64
+import hashlib
+import http.client
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from urllib.parse import unquote, urlsplit
+
+(binary, secrets, components, releases, digest, auth, nats, project, schema,
+ evidence, source) = sys.argv[1:]
+evidence = Path(evidence)
+result = {'source': source, 'manifest_digest': digest, 'binary': binary,
+          'scope': 'Real idle executor probes and signal shutdown; no queued-delivery claim.',
+          'startup_budget_seconds': 45, 'deployment_grace_seconds': 15,
+          'verdict': 'fail', 'cases': []}
+status = 1
+stage = 'credentials'
+
+
+def interrupted(signum, frame):
+    # A second interrupt must not cancel reaping the executor owned by this process.
+    for owned_signal in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(owned_signal, signal.SIG_IGN)
+    raise KeyboardInterrupt('journey interrupted')
+
+
+for owned_signal in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(owned_signal, interrupted)
+
+
+def credential(stem):
+    value = json.loads((Path(secrets) / (stem + '.json')).read_text())['stringData']['url']
+    if not isinstance(value, str) or not value:
+        raise RuntimeError('missing provisioned executor credential')
+    return value
+
+
+try:
+    urls = {name: credential(stem) for name, stem in (
+        ('WAMN_PG_URL', 'guest-sql'),
+        ('WAMN_EXECUTOR_PLATFORM_PG_URL', 'executor-platform'),
+        ('WAMN_HTTP_ADMITTER_PG_URL', 'http-admitter'))}
+    redactions = set(urls.values())
+    for url in urls.values():
+        password = urlsplit(url).password
+        if password:
+            redactions.update((password, unquote(password)))
+    for entry in json.loads(Path(auth).read_text())['auths'].values():
+        for key in ('auth', 'password', 'identitytoken', 'registrytoken'):
+            if entry.get(key):
+                redactions.add(entry[key])
+        if entry.get('auth'):
+            pair = base64.b64decode(entry['auth'], validate=True).decode()
+            redactions.update((pair, pair.split(':', 1)[1]))
+    redactions = sorted((value for value in redactions if value), key=len, reverse=True)
+
+    def redact(text):
+        for value in redactions:
+            text = text.replace(value, '<redacted>')
+        return text
+
+    def request(port, path):
+        started = time.monotonic()
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=1)
+        try:
+            connection.request('GET', path)
+            response = connection.getresponse()
+            body = response.read(4097)
+            if len(body) > 4096:
+                raise RuntimeError('native probe response exceeded its evidence bound')
+            return {'path': path, 'status': response.status,
+                    'body': redact(body.decode(errors='replace')),
+                    'elapsed_seconds': time.monotonic() - started}
+        finally:
+            connection.close()
+
+    stage = 'binary identity'
+    with open(binary, 'rb') as built:
+        result['binary_sha256'] = hashlib.file_digest(built, 'sha256').hexdigest()
+    env = {'PATH': os.environ['PATH'], **urls, 'WAMN_EVT_NATS_URL': nats}
+    for stop_signal in (signal.SIGTERM, signal.SIGINT):
+        record = {'signal': stop_signal.name, 'verdict': 'fail', 'ready_attempts': 0,
+                  'cleanup_killed': False}
+        result['cases'].append(record)
+        child = None
+        started = time.monotonic()
+        stage = 'probe port'
+        with socket.socket() as reserve:
+            reserve.bind(('127.0.0.1', 0))
+            port = reserve.getsockname()[1]
+        record['probe_bind'] = '127.0.0.1:' + str(port)
+        command = [binary, '--project', project, '--schema', schema,
+                   '--runner', 'cutover-' + stop_signal.name.lower(),
+                   '--component-artifact-base', components,
+                   '--release-artifact-base', releases,
+                   '--release-manifest-digest', digest,
+                   '--registry-auth-file', auth, '--allow-insecure-registries',
+                   '--readiness-bind', record['probe_bind']]
+        # Raw child output stays in the private fixture directory until redacted.
+        with tempfile.TemporaryFile(dir=secrets) as private_log:
+            try:
+                stage = 'executor start'
+                child = subprocess.Popen(command, env=env, start_new_session=True,
+                                         stdout=private_log, stderr=subprocess.STDOUT)
+                record['pid'] = child.pid
+                stage = 'native readiness'
+                deadline = time.monotonic() + result['startup_budget_seconds']
+                while True:
+                    if child.poll() is not None:
+                        raise RuntimeError('executor exited before native readiness')
+                    record['ready_attempts'] += 1
+                    try:
+                        record['ready'] = request(port, '/readyz')
+                        if record['ready']['status'] == 200:
+                            break
+                    except (OSError, http.client.HTTPException) as error:
+                        record['last_probe_error_type'] = type(error).__name__
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError('executor did not reach native readiness')
+                    time.sleep(0.05)
+                record['ready_seconds'] = time.monotonic() - started
+                stage = 'native liveness'
+                record['live'] = request(port, '/livez')
+                if record['live']['status'] != 200:
+                    raise RuntimeError('ready executor is not live')
+                stage = 'signal shutdown'
+                if child.poll() is not None:
+                    raise RuntimeError('executor exited before its shutdown signal')
+                shutdown_started = time.monotonic()
+                child.send_signal(stop_signal)
+                record['signal_sent'] = True
+                try:
+                    record['exit_code'] = child.wait(timeout=result['deployment_grace_seconds'])
+                finally:
+                    record['shutdown_seconds'] = time.monotonic() - shutdown_started
+                if record['exit_code'] != 0:
+                    raise RuntimeError('executor signal shutdown failed')
+                if record['shutdown_seconds'] >= result['deployment_grace_seconds']:
+                    raise RuntimeError('executor exceeded deployment grace')
+                record['verdict'] = 'pass'
+            finally:
+                try:
+                    if child is not None:
+                        if child.poll() is None:
+                            record['cleanup_killed'] = True
+                            child.kill()
+                        record['exit_code'] = child.wait(timeout=5)
+                finally:
+                    private_log.seek(0)
+                    log_name = 'executor-' + stop_signal.name + '.log'
+                    (evidence / log_name).write_text(redact(private_log.read().decode(errors='replace')))
+                    record['log'] = log_name
+                    record['case_seconds'] = time.monotonic() - started
+    result['verdict'] = 'pass'
+    status = 0
+except BaseException as error:
+    result['failure'] = {'stage': stage, 'error_type': type(error).__name__}
+    if result['cases']:
+        result['cases'][-1]['verdict'] = 'fail'
+        result['cases'][-1]['failure'] = result['failure']
+    status = 130 if isinstance(error, KeyboardInterrupt) else 1
+    print('executor native lifecycle failed; see executor-lifecycle.json', file=sys.stderr)
+finally:
+    (evidence / 'executor-lifecycle.json').write_text(json.dumps(result, indent=2) + '\n')
+sys.exit(status)
+PY_EXECUTOR
+executor_lifecycle_pid=$!
+executor_lifecycle_status=0
+wait "$executor_lifecycle_pid" || executor_lifecycle_status=$?
+executor_lifecycle_pid=
+if [[ $executor_lifecycle_status -ne 0 ]]; then
+  exit "$executor_lifecycle_status"
+fi
+fi
+
 if [[ "$session_host_proof" == true ]]; then
   [[ "$manifest_digest" == "$(jq -er '.manifest_digest' "$session_fixture")" ]] || {
     echo "session fixture differs from the frozen release receipt" >&2

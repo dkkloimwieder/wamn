@@ -1,0 +1,11 @@
+{
+  "head": "7798190c7d045a48231a8db41448cc6e29cf3bd8",
+  "source_status": " M services/host/Cargo.toml\n M tools/receiving-cluster-journey-run\n?? services/host/tests/\n",
+  "sha256": {
+    "services/host/Cargo.toml": "355d192fa1b1e6d51db3acb2d9e6e3cf2d500acff27d5da7d104bfa5b62086d8",
+    "services/host/tests/native_lifecycle_live.rs": "fc14f008886e7af1434c417599d98ba331802fee34b994db77655f61704a2e68",
+    "tools/receiving-cluster-journey-run": "34c9b618a4ac20e8491f004faa089f5d8888207be94947bf60c6d21460dbb170"
+  },
+  "command": "cargo test -p wamn-host --test native_lifecycle_live --locked --offline --no-run",
+  "started": "2026-09-09T14:52:33.544332+00:00"
+}

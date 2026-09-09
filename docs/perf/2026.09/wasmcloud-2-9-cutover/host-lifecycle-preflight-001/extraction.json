@@ -1,0 +1,12 @@
+{
+  "image": "nats@sha256:b83efabe3e7def1e0a4a31ec6e078999bb17c80363f881df35edc70fcb6bb927",
+  "container": "9438d9d942a6480ba44758de13acd808458e2421f770ac19461d4c4ab58069bf",
+  "started": false,
+  "extracted": true,
+  "removed": true,
+  "at": "2026-09-09T14:52:28.678411+00:00",
+  "source_path": "/usr/local/bin/nats-server",
+  "path": "/tmp/wamn-cutover-nats-bin-20260909/nats-server",
+  "sha256": "e6375afff3dbe7bd6ffc59c3eed3092c0e3b0c5936b166fb959fd240271ead4c",
+  "version": "nats-server: v2.10.29"
+}

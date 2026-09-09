@@ -23,7 +23,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 # in at the one construction site here — which is why this dep edge belongs to
 # the host and not to the bridge's crate.
 opentelemetry = { workspace = true, features = ["metrics"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util", "process"] }
 tokio-postgres = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
