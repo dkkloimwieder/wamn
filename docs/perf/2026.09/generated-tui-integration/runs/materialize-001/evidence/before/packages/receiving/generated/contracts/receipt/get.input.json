@@ -1,0 +1,1 @@
+{"id":{"required":true,"type":"uuid"},"request_id":{"required":true,"type":"string"},"server_owned_fields":{"fields":["id","idempotency_key","purchase_order_id","receipt_reference","occurred_at","created_at"],"if_supplied":"invalid_input"},"writable_fields":[]}

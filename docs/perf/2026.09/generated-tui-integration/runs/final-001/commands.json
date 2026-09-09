@@ -1,0 +1,30 @@
+{
+  "materialize-fixture": [
+    "cargo",
+    "test",
+    "-p",
+    "wamn-schema-generator",
+    "--lib",
+    "--locked",
+    "--offline",
+    "materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection",
+    "--",
+    "--exact",
+    "--include-ignored",
+    "--nocapture"
+  ],
+  "contract-diff": [
+    "tools/contract-diff",
+    "run"
+  ],
+  "build-wamn": [
+    "cargo",
+    "build",
+    "-p",
+    "wamn-ctl",
+    "--bin",
+    "wamn",
+    "--locked",
+    "--offline"
+  ]
+}

@@ -1,0 +1,49 @@
+recorded org "[redacted]" (template "trials") in registry.orgs + 2 env policy row(s) stamped insert-if-absent (wamn_system)
+org "[redacted]" (template "trials", pooled): placed on the shared pool "route-auth-pg18" (owns no clusters)
+project-env [redacted]/[redacted]/[redacted]: database "wamn-db-[redacted]--[redacted]--[redacted]--ly7dz0xc" on cluster "route-auth-pg18" (owner wamn_db_owner)
+wrote <private-scratch>/environment/database.json (Database CR (kubectl apply))
+wrote <private-scratch>/environment/roles.sql (role SQL (psql the TARGET cluster BEFORE the Database CR))
+wrote <private-scratch>/environment/privileges.sql (privilege SQL (psql the TARGET cluster AFTER the Database is ready))
+wrote <private-scratch>/environment/database-secret.json (database credential Secret; kubectl apply)
+recorded project "[redacted]" + project-env [redacted]/[redacted]/[redacted] in the registry (wamn_system)
+environment namespace "wamn-[redacted]--[redacted]--[redacted]--ly7dz0xc" (instance suffix "ly7dz0xc")
+wrote <private-scratch>/environment/[redacted]-pat.json ([redacted] PAT Secret; kubectl apply)
+wrote <private-scratch>/environment/[redacted]-pat.json ([redacted] PAT Secret; kubectl apply)
+applied EnsureSchema: wamn_run
+applied RepairHelperFunction: require_executor_platform_authority
+applied RepairHelperFunction: require_management_admission_authority
+applied RepairHelperFunction: pin_run_durability_class
+applied RepairHelperFunction: guard_event_lineage_immutable
+applied RepairHelperFunction: guard_run_admission_pins_immutable
+applied RepairHelperFunction: guard_terminal_run_delete
+applied RepairHelperFunction: reject_immutable_effect_fact_change
+applied RepairHelperFunction: reject_immutable_operator_run_action_change
+applied CreateTable: environment_policies
+applied CreateTable: runs
+applied CreateTable: effect_attempts
+applied CreateTable: effect_attempt_dispatches
+applied CreateTable: effect_attempt_outcomes
+applied CreateTable: operator_run_actions
+applied CreateTable: run_queue
+applied RepairEffectWriterPrivilege: wamn_run.usage
+applied RepairAuthoringPrivilege: wamn_run.usage
+applied RepairDispatchReaderPrivilege: wamn_run.dispatch-reader-read-surface
+  converged environment policy tenant="[redacted]-route-auth" environment="[redacted]" durability_class=standard
+prepared and authenticated app credential generation a for [redacted]/[redacted]/[redacted]; wrote <private-scratch>/environment/guest-sql.json
+prepared and authenticated executor-platform credential generation a for [redacted]/[redacted]/[redacted]; wrote <private-scratch>/environment/executor-platform.json
+prepared and authenticated event-materializer credential generation a for [redacted]/[redacted]/[redacted]; wrote <private-scratch>/environment/event-materializer.json
+prepared and authenticated http-admitter credential generation a for [redacted]/[redacted]/[redacted]; wrote <private-scratch>/environment/http-admitter.json
+prepared and authenticated identity-reader credential generation a for [redacted]/[redacted]/[redacted]; wrote <private-scratch>/environment/identity-reader.json
+prepared and authenticated control-author credential generation a for [redacted]/[redacted]/[redacted]; wrote <private-scratch>/environment/control-author.json
+prepared and authenticated management-admitter credential generation a for [redacted]/[redacted]/[redacted]; wrote <private-scratch>/environment/management-admitter.json
+environment ready
+  gate:   http://127.0.0.1:59483/authoring
+  config: <private-scratch>/environment/[redacted].json
+  pat:    <private-scratch>/environment/[redacted]-pat.json (operator [redacted] PAT, at .stringData.token)
+
+run the loop from the repository root, in another terminal:
+  wamn [redacted] --config <private-scratch>/environment/[redacted].json --overlay-root <tree>/packages/client_[redacted]_[redacted] --tui
+
+this process holds the Gate; stop it with Ctrl-C when the loop is done
+2026-09-09T10:53:34.688278Z  WARN project admission database connection ended error=db error
+2026-09-09T10:54:20.171475Z  WARN project admission database connection ended error=db error
