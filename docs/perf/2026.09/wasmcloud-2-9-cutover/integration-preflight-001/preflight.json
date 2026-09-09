@@ -1,0 +1,12 @@
+{
+  "base": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+  "candidate": "956c6c21e62f3bdf5105334c1e9babaec36050df",
+  "matching_untracked_files": 5979,
+  "protected_sha256": {
+    ".beads/interactions.jsonl": "8eca050c36104554abcc332b347281ee3858afabfb2b60e62a99a094ff5d0aec",
+    ".beads/issues.jsonl": "7b38b00726988d6a608284edc809c2bfef1fe6827f8d2b42c9eb35e26b1e8ad0",
+    "docs/poc/wamn_testing_spec.md": "ef14838c350f82559d067651392e87b32e605635e41fcfe0a599e625cfa88aac",
+    "docs/poc/generated-tui-spec.md": "9205b1b56955bcc1af4817aa5f8dac0d4c35913ad048c7200c0b9e0e6aa71d5a"
+  },
+  "applied": false
+}

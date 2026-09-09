@@ -1,0 +1,13 @@
+{
+  "pid": 4035313,
+  "started_at": "2026-09-09T21:58:16.121219+00:00",
+  "source": "38318082c7ea443a0776fce5197386f01f5ea978",
+  "load": [
+    0.5498046875,
+    0.62353515625,
+    0.84130859375
+  ],
+  "mode": "full correctness journey; no benchmark options",
+  "reused_harness_proof": "live-receiving-007/preparation/summary.json",
+  "restart_replay": "operator-supervision-004/receipt.json"
+}

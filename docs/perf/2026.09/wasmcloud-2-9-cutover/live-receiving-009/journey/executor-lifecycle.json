@@ -1,0 +1,66 @@
+{
+  "source": "38318082c7ea443a0776fce5197386f01f5ea978",
+  "manifest_digest": "sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+  "binary": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/target/debug/wamn-run-worker",
+  "scope": "Real idle executor probes and signal shutdown; no queued-delivery claim.",
+  "startup_budget_seconds": 45,
+  "deployment_grace_seconds": 15,
+  "verdict": "pass",
+  "cases": [
+    {
+      "signal": "SIGTERM",
+      "verdict": "pass",
+      "ready_attempts": 130,
+      "cleanup_killed": false,
+      "probe_bind": "127.0.0.1:40003",
+      "pid": 4043063,
+      "last_probe_error_type": "ConnectionRefusedError",
+      "ready": {
+        "path": "/readyz",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.0008029209566302598
+      },
+      "ready_seconds": 6.8898108410066925,
+      "live": {
+        "path": "/livez",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.00038108398439362645
+      },
+      "signal_sent": true,
+      "exit_code": 0,
+      "shutdown_seconds": 0.015380116004962474,
+      "log": "executor-SIGTERM.log",
+      "case_seconds": 6.905933147994801
+    },
+    {
+      "signal": "SIGINT",
+      "verdict": "pass",
+      "ready_attempts": 150,
+      "cleanup_killed": false,
+      "probe_bind": "127.0.0.1:45529",
+      "pid": 4043261,
+      "last_probe_error_type": "ConnectionRefusedError",
+      "ready": {
+        "path": "/readyz",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.0008624959737062454
+      },
+      "ready_seconds": 7.9789779399870895,
+      "live": {
+        "path": "/livez",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.00035627797478809953
+      },
+      "signal_sent": true,
+      "exit_code": 0,
+      "shutdown_seconds": 0.031411934993229806,
+      "log": "executor-SIGINT.log",
+      "case_seconds": 8.011012941016816
+    }
+  ],
+  "binary_sha256": "7c5fdc630f9ec9064fadfa50a6af4a3ca248911e3411b18de335ad2e4811ce70"
+}

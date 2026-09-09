@@ -1,0 +1,13 @@
+{
+  "utc": "2026-09-09T22:14:30.303950+00:00",
+  "workspace_wrapper_stopped": true,
+  "cargo_rustc_absent": true,
+  "remaining_containers": [
+    "wamn-worker2",
+    "wamn-worker",
+    "wamn-control-plane"
+  ],
+  "no_additional_benchmark": true,
+  "receiving_exit_code": 0,
+  "workspace_exit_code": 101
+}

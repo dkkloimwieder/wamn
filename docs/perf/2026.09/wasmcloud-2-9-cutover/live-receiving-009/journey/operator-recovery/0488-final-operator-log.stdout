@@ -1,0 +1,31 @@
+2026-09-09T22:07:49Z	INFO	setup	starting manager
+2026-09-09T22:07:49Z	INFO	controller-runtime.metrics	Starting metrics server
+2026-09-09T22:07:49Z	INFO	starting server	{"name": "health probe", "addr": "[::]:8082"}
+2026-09-09T22:07:49Z	INFO	controller-runtime.metrics	Serving metrics server	{"bindAddress": ":8081", "secure": false}
+I0909 22:07:49.800328       1 leaderelection.go:258] "Attempting to acquire leader lease..." lock="wamn-system/d34db3ef.wasmcloud.dev"
+I0909 22:08:11.665907       1 leaderelection.go:272] "Successfully acquired lease" lock="wamn-system/d34db3ef.wasmcloud.dev"
+2026-09-09T22:08:11Z	DEBUG	events	runtime-operator-5bbc5f959d-kjshq_06f8d7ba-48de-4e4d-b10c-4acf8c61d165 became leader	{"type": "Normal", "object": {"kind":"Lease","namespace":"wamn-system","name":"d34db3ef.wasmcloud.dev","uid":"6d129a18-2bd2-44f1-863f-14626b82a029","apiVersion":"coordination.k8s.io/v1","resourceVersion":"2624"}, "reason": "LeaderElection"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "runtime-artifact", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Artifact", "source": "kind source: *v1alpha1.Artifact"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "host-pod", "controllerGroup": "", "controllerKind": "Pod", "source": "kind source: *v1.Pod"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "workload-host", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Host", "source": "kind source: *v1alpha1.Host"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "workload-route", "source": "kind source: *v1alpha1.Workload"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "workload-replicaset", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "WorkloadReplicaSet", "source": "kind source: *v1alpha1.Workload"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "workload-deployment", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "WorkloadDeployment", "source": "kind source: *v1alpha1.WorkloadReplicaSet"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "workload-replica", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Workload", "source": "kind source: *v1alpha1.Workload"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "workload-replicaset", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "WorkloadReplicaSet", "source": "kind source: *v1alpha1.WorkloadReplicaSet"}
+2026-09-09T22:08:11Z	INFO	Starting EventSource	{"controller": "workload-deployment", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "WorkloadDeployment", "source": "kind source: *v1alpha1.WorkloadDeployment"}
+2026-09-09T22:08:11Z	INFO	Starting Controller	{"controller": "workload-route"}
+2026-09-09T22:08:11Z	INFO	Starting workers	{"controller": "workload-route", "worker count": 1}
+2026-09-09T22:08:11Z	INFO	Starting Controller	{"controller": "workload-replicaset", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "WorkloadReplicaSet"}
+2026-09-09T22:08:11Z	INFO	Starting workers	{"controller": "workload-replicaset", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "WorkloadReplicaSet", "worker count": 1}
+2026-09-09T22:08:11Z	INFO	Starting Controller	{"controller": "runtime-artifact", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Artifact"}
+2026-09-09T22:08:11Z	INFO	Starting Controller	{"controller": "workload-replica", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Workload"}
+2026-09-09T22:08:11Z	INFO	Starting Controller	{"controller": "workload-deployment", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "WorkloadDeployment"}
+2026-09-09T22:08:11Z	INFO	Starting workers	{"controller": "workload-replica", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Workload", "worker count": 1}
+2026-09-09T22:08:11Z	INFO	Starting workers	{"controller": "workload-deployment", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "WorkloadDeployment", "worker count": 1}
+2026-09-09T22:08:11Z	INFO	Starting workers	{"controller": "runtime-artifact", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Artifact", "worker count": 1}
+2026-09-09T22:08:11Z	INFO	Starting Controller	{"controller": "workload-host", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Host"}
+2026-09-09T22:08:11Z	INFO	Starting workers	{"controller": "workload-host", "controllerGroup": "runtime.wasmcloud.dev", "controllerKind": "Host", "worker count": 1}
+2026-09-09T22:08:11Z	DEBUG	events	Event occurred	{"object": {"name":"flow-http-cross-environment","namespace":"wamn-receiving-journey"}, "kind": "Workload", "apiVersion": "runtime.wasmcloud.dev/v1alpha1", "type": "Warning", "reason": "CrossEnvironmentSchedulingDenied", "action": "Reject", "note": "Environment \"wamn-receiving-journey-denied\" is outside \"wamn-receiving-journey\" and operator has allowSharedHosts=false"}
+2026-09-09T22:08:11Z	INFO	Starting Controller	{"controller": "host-pod", "controllerGroup": "", "controllerKind": "Pod"}
+2026-09-09T22:08:11Z	INFO	Starting workers	{"controller": "host-pod", "controllerGroup": "", "controllerKind": "Pod", "worker count": 1}

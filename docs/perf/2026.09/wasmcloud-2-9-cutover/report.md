@@ -11,7 +11,7 @@ Its separate [startup run](live-wms-startup-002/journey/startup-measurement.rece
 The reported 34-second restart recovery starts inside the request job after readiness waits.
 It does not measure the full interval from SIGTERM.
 
-The [final workspace sweep](workspace-sweep-final-001/workspace-results.json) finishes at clean `c6808b12` in 264.834 seconds and exits 101.
+The [previous final workspace sweep](workspace-sweep-final-001/workspace-results.json) finishes at clean `c6808b12` in 264.834 seconds and exits 101.
 It reports 2,116 test passes, six doctest passes, and 68 failures across 33 targets.
 All 67 baseline failure identities and causes remain unchanged, and the added startup fixture lacks its required input.
 At least 85 reported passes explicitly skip their proof, so the aggregate is not an executed-proof count.
@@ -25,10 +25,22 @@ Its service ratio median is 8.8608 against the unchanged ceiling of 12.
 The [completed comparison](performance-comparison-001/tables.md) retains the measured spread and separate deadline cutoffs. It does not establish a general performance improvement.
 The later [host proof](probe-listener-lifecycle-001/summary.json) passes all 15 unit tests, including actual native probe termination, and host Clippy exits 0.
 That run tests the recorded patch above `b8e9881d`, with unchanged source-file hashes during execution.
-The owner accepts the documented supervised restart path under `wamn-0h0g.2.7.10`.
-The [eighth run](live-receiving-008/exit-code.txt) passes sampler startup, then stops during the NATS outage when the restarted operator refuses its initial connection.
-The [native source and log record](operator-startup-refusal-001/source-map.json) preserves the exact setup refusal and its limits.
-Complete operator recovery remains unproved under `wamn-0h0g.2.7.10`.
+
+The [ninth full Receiving run](live-receiving-009/journey/verdict.json) passes at clean `38318082`, including [operator recovery](live-receiving-009/journey/operator-recovery/result.json) and [owned cleanup](live-receiving-009/journey/cleanup.receipt).
+All three Host objects and processes survive the 154.9018-second scheduler NATS outage and satisfy the native fleet-deaf guards.
+Scheduler recovery takes 85.1282 seconds. Deliberate operator replacement takes 38.2015 seconds. Both reach fresh Host status and exact HTTP 200 within their original 120-second ceilings.
+
+This run records no natural operator restarts and does not prove recovery after the startup refusals observed in failed Receiving008.
+The earlier failed runs remain failed. The native retry gap remains unproved under `wamn-10yt.76`.
+The passing evidence fulfills the operator recovery requirement under `wamn-0h0g.2.7.10`.
+
+The [integration workspace check](workspace-integration-001/workspace-results.json) completes at the same clean `38318082` in 163.036 seconds and exits 101.
+It reports 2,117 test passes, six doctest passes, and 68 failures across 33 targets.
+All 67 baseline identities and causes remain unchanged. The unarmed startup fixture accounts for the other failure.
+
+There are no unresolved classifications. At least 85 reported passes explicitly skip their proof, and the rebuilt host live test passes in 69.78 seconds.
+The [source receipt](workspace-integration-001/source-stability.json) confirms clean, unchanged source. The parent bead `wamn-0h0g.2.7` records main integration and the shared-file fence.
+
 The accepted `wamn-0h0g.2.7.12` scope excludes the missing production automation producer and its dependent queued-execution and active-work drain proofs.
 The unproved producer belongs to `wamn-10yt.74`, and dependent active-work shutdown belongs to `wamn-10yt.75`.
 No retired grant or substitute admission path is introduced.
@@ -678,6 +690,7 @@ The earlier native first-beat case and actual host signal tests retain their sep
 
 The [second candidate run](performance-2-9-002/started.txt) starts at 19:51:44 UTC on clean `e7033f72ca32e92b02c3bbe1dc4af420cb23b145`.
 It [finishes](performance-2-9-002/finished.txt) at 20:29:51 UTC with exit 0 and [exact owned cleanup](performance-2-9-002/journey/cleanup.receipt).
+
 The [completion observation](performance-completion-002/state.json) confirms both measured source revisions remain clean afterward and only the frozen cluster containers remain.
 This receipt supplements the wrappers, which capture source identity only before execution.
 
@@ -750,3 +763,36 @@ No upstream patch or broad restart allowance follows. `live-receiving-009` must 
 
 The [final offline replay](operator-supervision-004/receipt.json) accepts the recorded liveness and startup cases and refuses all 25 altered-evidence controls.
 The startup address is a declared replay fixture. The live run must obtain it independently from the scheduler Service.
+
+## Receiving009 complete recovery (2026-09-09)
+
+The [ninth Receiving run](live-receiving-009/source.txt) uses clean `38318082c7ea443a0776fce5197386f01f5ea978` and [exits 0](live-receiving-009/exit-code.txt) at 22:08:29 UTC.
+Its [full verdict](live-receiving-009/journey/verdict.json) passes, including idle executor signals, telemetry, startup bursts, native scheduling, and materializer delivery.
+The [installed CRD receipt](live-receiving-009/journey/operator-recovery/installed-crd-identity.json) matches all five schemas to distributed chart 2.9.0 with only the recorded Kubernetes defaults.
+The [operator identity receipt](live-receiving-009/journey/operator-recovery/operator-image-identity.json) records the pinned native image.
+
+The [recovery result](live-receiving-009/journey/operator-recovery/result.json) records a 154.9018-second outage of the chart's shared scheduler NATS.
+All three Host objects and processes remain unchanged, and all three native fleet-deaf guards occur. The external event NATS stays running.
+Fresh Host status and exact HTTP 200 return after 85.1282 seconds from scheduler restoration.
+Deliberate replacement of the operator Pod on the same image reaches the same conditions after 38.2015 seconds.
+Both clocks retain their original 120-second ceilings. Workload UID changes are recorded rather than treated as Host identity changes.
+
+The scheduler phase records `scheduler_operator_transitions=[]`: no natural operator restart occurs in this passing run.
+It therefore does not prove recovery after the graceful restart or native startup refusal seen in earlier failed runs 006 and 008.
+Those runs remain failed, and `wamn-10yt.76` retains the unproved native startup retry gap.
+Both [helper cleanup](live-receiving-009/journey/operator-recovery/cleanup.json) and [full owned cleanup](live-receiving-009/journey/cleanup.receipt) pass.
+
+The passing evidence fulfills the operator recovery requirement under `wamn-0h0g.2.7.10`.
+
+The [final integration workspace check](workspace-integration-001/workspace-results.json) completes at the same clean `38318082` in 163.036 seconds, with exit 101 and no unresolved classifications.
+Its 68 failures retain all 67 baseline identities and causes plus the unarmed startup fixture.
+Its 2,117 reported test passes and six doctest passes include at least 85 explicit self-skips.
+The [exact command](workspace-integration-001/command.json) includes ignored tests, continues after failures, uses one test thread, and excludes only the two schema regeneration tests.
+The [unchanged wrapper](workspace-integration-preparation-001/run.py), [classifier](workspace-integration-preparation-001/classify.py), and [launcher receipt](workspace-integration-preparation-001/launch.json) retain the execution inputs.
+The rebuilt host live test passes in 69.78 seconds. These aggregates are not exact executed-proof counts.
+
+The [completion observation](completion-preflight-001/execution-stopped.json) records no remaining migration build or proof process and only the frozen cluster containers.
+The parent bead `wamn-0h0g.2.7` records main integration and the shared-file fence.
+The completed performance comparison remains the two retained runs at `dfa1c318` and `e7033f72`. Receiving009 adds no benchmark.
+Production automation admission and dependent active-work executor shutdown remain outside this cutover under `wamn-10yt.74` and `wamn-10yt.75`.
+This status does not establish release readiness.

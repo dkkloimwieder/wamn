@@ -1,0 +1,110 @@
+{
+  "id": "a97fbc08-a90d-406d-8aae-de4f4a106829",
+  "hostname": "host-int",
+  "friendlyName": "ill-informed-toothbrush-7710",
+  "version": "2.9.0",
+  "labels": {
+    "hostgroup": "lifecycle-proof"
+  },
+  "startedAt": "2026-09-09T22:11:25.247363296+00:00",
+  "osArch": "x86_64",
+  "osName": "linux",
+  "osKernel": "unix",
+  "systemCpuUsage": 22.674873,
+  "systemMemoryTotal": "65437421568",
+  "systemMemoryFree": "6983409664",
+  "imports": [
+    {
+      "namespace": "wasi",
+      "package": "otel",
+      "version": "0.2.0-rc.2",
+      "interfaces": [
+        "types",
+        "tracing",
+        "metrics",
+        "logs"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "types"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "doorbell"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "consumer"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "jetstream",
+      "version": "0.1.0",
+      "interfaces": [
+        "producer"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "statements"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "client"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "postgres",
+      "version": "0.1.0",
+      "interfaces": [
+        "types"
+      ]
+    },
+    {
+      "namespace": "wasi",
+      "package": "logging",
+      "interfaces": [
+        "logging"
+      ]
+    },
+    {
+      "namespace": "wamn",
+      "package": "flow-http-routing",
+      "version": "0.1.0",
+      "interfaces": [
+        "routing"
+      ]
+    },
+    {
+      "namespace": "wasi",
+      "package": "config",
+      "version": "0.2.0-rc.1",
+      "interfaces": [
+        "store"
+      ]
+    }
+  ],
+  "httpPort": 42927,
+  "environment": "lifecycle-proof"
+}

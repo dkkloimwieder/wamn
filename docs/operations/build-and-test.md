@@ -139,7 +139,6 @@ JSON publication receipts must report both `.success` and `.data.success` as tru
 The component digest is `.data.digest`.
 WAMN custom artifact publication remains owned by `wamn-ctl push-component` and its admission proof.
 
-
 ### Rebuilt host process lifecycle
 
 The ignored host test starts an owned NATS process on a temporary loopback port.
@@ -3011,12 +3010,13 @@ and matching native Warning Event. The 404 proves only HTTP routing and guest
 execution; the Kubernetes objects independently prove the other arms.
 The [first 2.9.0 full journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/verdict.json) passes at `7798190c`.
 The later idle executor, telemetry, and startup-burst cases have executed evidence.
-Complete operator recovery still requires the corrected proof rerun.
-Receiving008 passes sampler startup, then the restarted operator refuses its initial NATS connection during the outage.
-The [native refusal record](../perf/2026.09/wasmcloud-2-9-cutover/operator-startup-refusal-001/source-map.json) retains the exact log, container history, and source limits.
-Run the full mode from the next clean source commit, after its build preparation finishes.
-Keep new evidence in the main repository's `docs/perf`, outside the isolated build worktree.
-Select a fresh directory. The runner must not overwrite an earlier receipt.
+The [ninth full journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/verdict.json) passes at clean `38318082`, including scheduler recovery, deliberate operator replacement, and owned cleanup.
+The [recovery receipt](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/operator-recovery/result.json) records a 154.9018-second scheduler outage and recovery in 85.1282 seconds.
+Deliberate same-image operator replacement recovers in 38.2015 seconds. Both phases preserve all three Host objects and processes and reach fresh status plus exact HTTP 200 within 120 seconds.
+No natural operator restart occurs in this passing run. Earlier failed runs and the native startup retry gap under `wamn-10yt.76` retain their limits.
+The completed invocation below writes evidence outside the isolated build worktree.
+If a later rerun is required, use clean committed source and a fresh evidence directory.
+Do not overwrite this receipt.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \
@@ -3027,7 +3027,7 @@ The runner supplies the existing private kubeconfig, authorities, release, and f
 No extra production flag or manually copied credential is needed.
 Each helper must pass before the runner writes the full verdict.
 Current [telemetry](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-003/journey/telemetry/receipt.json) passes at `a40d1c18`.
-The [startup exposure proof](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-004/journey/startup-burst/result.json) passes at `802aed06`. Complete operator recovery remains pending.
+The [startup exposure proof](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-004/journey/startup-burst/result.json) passes at `802aed06` and passes again in [Receiving009](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/startup-burst/result.json).
 
 | Helper and receipt | Required proof and limit |
 |---|---|
@@ -3048,7 +3048,15 @@ A startup refusal requires exit 1 with reason `Error` from a previously observed
 Its exact fault-time native setup line must report a TCP i/o timeout at the independently captured scheduler Service ClusterIP on port 4222.
 Unrelated exit-1 failures remain refused. `wamn-10yt.76` separately owns the native retry gap.
 Host identities, fresh Host status, exact HTTP 200, and both original 120-second recovery ceilings remain required.
-The revised proof must run from a clean committed source. The earlier failed runs remain failed.
+Receiving009 passes from clean committed source without exercising the natural-restart acceptance paths.
+It does not prove recovery after native startup refusal. The earlier failed runs remain failed.
+
+The [integration workspace check](../perf/2026.09/wasmcloud-2-9-cutover/workspace-integration-001/workspace-results.json) completes at the same clean `38318082` in 163.036 seconds and exits 101.
+Its 68 failures retain 67 baseline identities and causes plus the unarmed startup fixture, with no unresolved classifications.
+The 2,117 reported test passes and six doctest passes include at least 85 explicit self-skips.
+The rebuilt host live test passes in 69.78 seconds.
+The [retained command](../perf/2026.09/wasmcloud-2-9-cutover/workspace-integration-001/command.json) preserves the full workspace, ignored tests, one test thread, and only the two schema regeneration exclusions.
+The parent bead `wamn-0h0g.2.7` records main integration and the shared-file fence. These results do not establish release readiness.
 
 Under `wamn-0h0g.2.7.12`, the owner excludes the absent production automation producer and its dependent queued-execution and active-work drain proofs from this cutover.
 Producer implementation belongs to `wamn-10yt.74`, and active-work executor shutdown proof depends on it under `wamn-10yt.75`.
@@ -3099,7 +3107,6 @@ been mutation-tested on exit code.
 They are deliberately NOT a `cargo test`: they are shell over checked-in
 templates, and wiring them into the Rust gate would make a one-second check
 cost a build.
-
 
 `wamn-10yt.8` measures the published release with runtime-operator 2.9.0's native
 HTTP probes. The runner asserts `/livez` and `/readyz` on port `8081`, including

@@ -1,0 +1,29 @@
+{
+  "pid": 4063345,
+  "utc": "2026-09-09T22:10:17.229032+00:00",
+  "command": [
+    "python3",
+    "-B",
+    "/tmp/wamn-cutover-integration-sweep-prepared/run.py",
+    "--source-tree",
+    "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "--expected-source",
+    "38318082c7ea443a0776fce5197386f01f5ea978",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/workspace-integration-001",
+    "--host-nats-bin",
+    "/tmp/wamn-cutover-nats-bin-20260909/nats-server"
+  ],
+  "preserved_frozen_cluster_nats_pids": [
+    11053,
+    11160,
+    11395,
+    12767
+  ],
+  "remaining_containers": [
+    "wamn-worker2",
+    "wamn-worker",
+    "wamn-control-plane"
+  ],
+  "prior_attempt": "Did not launch: generic NATS guard found these four pre-existing frozen cluster processes."
+}

@@ -1,0 +1,50 @@
+{
+  "schema": "wamn-receiving-cluster-journey/v0.1",
+  "verdict": "pass",
+  "source": "38318082c7ea443a0776fce5197386f01f5ea978",
+  "namespace": "wamn-receiving-journey",
+  "release_manifest_digest": "sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+  "route_host": "receiving.localhost",
+  "passing_arms": [
+    "installed-distributed-crd-identity",
+    "shared-scheduler-nats-recovery",
+    "native-fleet-deaf-host-preservation",
+    "operator-restart-with-exact-serving-recovery",
+    "production-mint-and-attestation",
+    "production-cdc-reader-session",
+    "operator-before-host-2.9.0",
+    "three-ready-default-hosts",
+    "flow-http-workload-ready",
+    "materializer-workload-ready",
+    "native-startup-burst",
+    "operator-endpointslice",
+    "exact-route-not-found-reachability",
+    "receipt-root-causation",
+    "inspection-derived-causation",
+    "exactly-one-pending-inspection",
+    "exact-materializer-durable-ack",
+    "zero-materializer-dead-letter",
+    "cross-environment-scheduling-refusal",
+    "live-invocation-effect-traces-and-selected-metrics"
+  ],
+  "evidence_scope": {
+    "cited_immutable_rc": {
+      "close": "851acb80",
+      "source": "79d2ab64",
+      "arms": [
+        "bootstrap",
+        "M2-supersession",
+        "socketguard",
+        "traceproof",
+        "scoped-RegistryReader"
+      ]
+    },
+    "rerun": [
+      "materializer-journey",
+      "native-scheduling",
+      "live-invocation-effect-traces-and-selected-metrics",
+      "exact-cleanup"
+    ]
+  },
+  "reachability_scope": "The exact 404 proves HTTP routing and guest execution only."
+}

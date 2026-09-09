@@ -65,7 +65,8 @@ The operator then restarts within the same Pod, and the proof stops before compl
 The [sixth-run diagnosis](../perf/2026.09/wasmcloud-2-9-cutover/operator-timeout-diagnosis-001/diagnosis.json) identifies a liveness HTTP timeout that triggers a graceful operator restart before NATS returns.
 The underlying HTTP delay remains unknown.
 The owner now accepts the documented supervised restart path under `wamn-0h0g.2.7.10`, with the original 120-second recovery ceiling retained.
-Complete recovery still needs execution. The failed runs remain failed and the underlying HTTP delay remains unproved.
+The later [ninth run](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/operator-recovery/result.json) completes scheduler recovery and deliberate operator replacement.
+It records no natural operator restart. The failed runs remain failed, and the underlying HTTP delay remains unproved.
 
 The first armed [authority run](../perf/2026.09/wasmcloud-2-9-cutover/authority-live-001/summary.json) records 40 passes and three failures across 43 tests.
 Its seven runtime claims tests and SQLx transaction isolation pass with explicit fresh database inputs.
@@ -151,7 +152,8 @@ Installed CRD identity, local startup exposure, and the separate WMS startup/cac
 The [eighth run](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-008/exit-code.txt) passes sampler startup and reaches the scheduler NATS outage.
 After an accepted graceful restart, the never-ready operator replacement exits 1 with an initial NATS dial timeout.
 The [native source/log record](../perf/2026.09/wasmcloud-2-9-cutover/operator-startup-refusal-001/source-map.json) preserves this refusal without claiming its concrete Go error type.
-Host identities persist and cleanup passes. Complete operator recovery still requires the corrected proof rerun.
+Host identities persist and cleanup passes. This eighth run remains failed.
+The [ninth full journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/verdict.json) passes at clean `38318082`, including both recovery phases and owned cleanup.
 The [repeated performance comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) is complete. It does not establish a general improvement.
 The [direct stop/start runbook](../../deploy/README.md#wasmcloud-29-cutover) keeps one active runtime version per environment without a maintenance window or compatibility period.
 
@@ -161,9 +163,9 @@ Workload, WorkloadDeployment, and WorkloadReplicaSet each add `reclaimMinInstanc
 The runbook applies these pinned CRDs before operator upgrade, with visible ownership conflicts and no `--force-conflicts`.
 This corrects Helm's existing-install behavior and supplies no installed-schema proof.
 
-The isolated integration committed at `15f2d4da`; stage 3 has not landed on main.
+The isolated integration committed at `15f2d4da`. The parent bead `wamn-0h0g.2.7` records its later main integration.
 The earlier [source capture](../perf/2026.09/wasmcloud-2-9-cutover/validation-004/source-inputs.json) precedes that commit.
-The [final workspace sweep](../perf/2026.09/wasmcloud-2-9-cutover/workspace-sweep-final-001/workspace-results.json) completes at clean `c6808b12` in 264.834 seconds and exits 101.
+The [previous final workspace sweep](../perf/2026.09/wasmcloud-2-9-cutover/workspace-sweep-final-001/workspace-results.json) completes at clean `c6808b12` in 264.834 seconds and exits 101.
 It reports 2,116 test passes, six doctest passes, and 68 failures across 33 targets.
 The 67 baseline failures retain their identities and causes: 65 missing inputs, unavailable Kubernetes discovery, and the known undeclared Secret.
 The additional failure is the unarmed startup-burst fixture, with no unresolved classifications.
@@ -186,12 +188,23 @@ A graceful restart requires kubelet liveness evidence plus terminal NATS closure
 A startup refusal requires exit 1 with reason `Error` from a previously observed unready container, with matching start and termination times.
 The exact fault-time native setup log must name the independently captured scheduler Service ClusterIP on port 4222 and a TCP i/o timeout.
 The native retry-gap follow-up belongs to `wamn-10yt.76`. The cutover carries no upstream patch.
-Host identities, fresh Host status, exact HTTP 200, and the original 120-second ceiling remain required. Execution is pending.
+The [ninth-run result](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/operator-recovery/result.json) preserves all three Host objects and processes through a 154.9018-second scheduler outage.
+Scheduler recovery takes 85.1282 seconds. Deliberate same-image operator replacement takes 38.2015 seconds.
+Both phases reach fresh Host status and exact HTTP 200 within their original 120-second ceilings. Helper and full cleanup pass.
+There are no natural operator restarts in this run, so recovery after a native startup refusal remains unproved under `wamn-10yt.76`.
+The passing evidence fulfills the operator recovery requirement under `wamn-0h0g.2.7.10`.
+
 The accepted `wamn-0h0g.2.7.12` scope excludes missing production automation admission and its dependent queued-execution and active-work drain proofs.
 Producer implementation belongs to `wamn-10yt.74`. Dependent active-work shutdown proof belongs to `wamn-10yt.75`.
 Both remain unproved, without restoring retired grants or introducing substitute admission.
 Existing evidence proves idle executor signals and Receiving stream delivery.
-Main integration has not occurred. Further live proof requires clean, fixed source and does not inherit a release-readiness claim.
+
+The [integration workspace check](../perf/2026.09/wasmcloud-2-9-cutover/workspace-integration-001/workspace-results.json) completes at clean `38318082` in 163.036 seconds and exits 101.
+It reports 2,117 test passes, six doctest passes, and 68 failures across 33 targets.
+All 67 baseline identities and causes remain unchanged. The unarmed startup fixture accounts for the other failure, with no unresolved classifications.
+At least 85 reported passes explicitly skip their proof. The rebuilt host live test passes in 69.78 seconds.
+The [source receipt](../perf/2026.09/wasmcloud-2-9-cutover/workspace-integration-001/source-stability.json) confirms clean, unchanged source. The parent bead `wamn-0h0g.2.7` records main integration and the shared-file fence.
+The retained performance comparison needs no rerun. These results do not establish release readiness.
 
 The charter retires both 2.8 patch deviations by decision.
 Upstream 2.9 does not incorporate the former missing-route/missing-handle 503 patches or the nine private P2 phase spans.
