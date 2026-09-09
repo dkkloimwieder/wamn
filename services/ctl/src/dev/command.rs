@@ -49,9 +49,13 @@ pub struct DevCommandArgs {
     #[arg(long)]
     hold: bool,
 
-    /// Render the development session in the interactive terminal client.
-    #[arg(long)]
-    tui: bool,
+    /// Open the developer console, or the named package's operator terminal.
+    #[arg(long, num_args = 0..=1, value_name = "PACKAGE")]
+    #[allow(
+        clippy::option_option,
+        reason = "clap distinguishes omitted --tui, bare --tui, and --tui PACKAGE"
+    )]
+    tui: Option<Option<String>>,
 }
 
 impl DevCommandArgs {
@@ -62,7 +66,7 @@ impl DevCommandArgs {
             overlay_root,
             watch,
             hold: false,
-            tui: false,
+            tui: None,
         }
     }
 
@@ -75,8 +79,8 @@ impl DevCommandArgs {
 
     /// Select the interactive terminal client.
     #[must_use]
-    pub const fn with_tui(mut self, tui: bool) -> Self {
-        self.tui = tui;
+    pub fn with_tui(mut self, tui: bool) -> Self {
+        self.tui = if tui { Some(None) } else { None };
         self
     }
 
@@ -85,7 +89,18 @@ impl DevCommandArgs {
     }
 
     const fn tui(&self) -> bool {
-        self.tui
+        matches!(self.tui, Some(None))
+    }
+
+    /// Select the generated terminal owned by this package directory.
+    #[must_use]
+    pub fn with_package_tui(mut self, package: String) -> Self {
+        self.tui = Some(Some(package));
+        self
+    }
+
+    fn operator_package(&self) -> Option<&str> {
+        self.tui.as_ref().and_then(Option::as_deref)
     }
 }
 
@@ -113,6 +128,59 @@ impl fmt::Display for CommandInvalidationError {
 impl Error for CommandInvalidationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(self.source.as_ref())
+    }
+}
+
+struct NativeInvalidations {
+    filesystem: FilesystemInvalidationSource,
+    repository_root: PathBuf,
+    package_roots: Vec<PathBuf>,
+}
+
+impl DevInvalidationSource for NativeInvalidations {
+    type Error = CommandInvalidationError;
+
+    async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+        // The engine calls next only after the prior run finishes. Metadata
+        // never competes with the Build stage, and the first run can Generate
+        // a missing native manifest before this refresh needs it.
+        let packages = super::native_tui::generated_packages(&self.package_roots)
+            .map_err(|source| CommandInvalidationError::new("read native package names", source))?;
+        if packages.iter().all(|package| {
+            package
+                .root
+                .join("generated")
+                .join(format!("{}-tui/Cargo.toml", package.directory))
+                .is_file()
+        }) {
+            let selected = packages
+                .iter()
+                .map(|package| package.cargo_package.clone())
+                .collect::<Vec<_>>();
+            match super::native_tui::native_dependency_roots(&self.repository_root, &selected).await
+            {
+                Ok(inputs) => self
+                    .filesystem
+                    .replace_native_inputs(inputs.directories, inputs.files)
+                    .await
+                    .map_err(|source| {
+                        CommandInvalidationError::new("watch native build dependencies", source)
+                    })?,
+                Err(error) => {
+                    tracing::warn!(%error, "retain the previous native watches until Cargo metadata parses");
+                }
+            }
+        }
+        self.filesystem
+            .next()
+            .await
+            .map_err(|source| CommandInvalidationError::new("read filesystem changes", source))
+    }
+
+    fn try_next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+        self.filesystem.try_next().map_err(|source| {
+            CommandInvalidationError::new("read queued filesystem changes", source)
+        })
     }
 }
 
@@ -179,7 +247,7 @@ impl DevWatchObserver for CommandObserver {
             Ok(receipt) => {
                 print_receipt("watch", &receipt);
                 // Absent whenever the run stopped before Activate, which the
-                // read handle reports by clearing the endpoint on reset.
+                // read handle reports at the actual shutdown boundary.
                 let snapshot = self.read.snapshot();
                 if let Some(endpoint) = snapshot.runtime_endpoint() {
                     print_served(endpoint);
@@ -208,6 +276,24 @@ impl DevWatchObserver for CommandObserver {
         }
         println!("run holding");
         let _ = io::stdout().flush();
+    }
+}
+
+// A failed initial run has no operator terminal to show its failure. Keep
+// errors visible there without writing over an existing operator session.
+struct OperatorObserver {
+    read: DevReadHandle,
+}
+
+impl DevWatchObserver for OperatorObserver {
+    fn completed(&mut self, outcome: DevWatchOutcome) {
+        if let Err(error) = outcome.into_result() {
+            if self.read.snapshot().runtime_endpoint().is_none() {
+                eprintln!("{error}");
+            } else {
+                tracing::warn!(%error, "watch run failed; the previous operator target remains active");
+            }
+        }
     }
 }
 
@@ -250,6 +336,7 @@ pub struct DevSession {
     git: GitSource,
     control: DevSessionControl,
     shutdown: watch::Receiver<bool>,
+    last_served: Option<DevRuntimeEndpoint>,
 }
 
 impl DevSession {
@@ -258,6 +345,23 @@ impl DevSession {
         let bytes = fs::read(&args.config)
             .with_context(|| format!("read development config {}", args.config.display()))?;
         let config = parse_config(&bytes).context("validate development config")?;
+        let operator_package = if let Some(selected) = args.operator_package() {
+            anyhow::ensure!(
+                config.operator_bearer_token().is_some(),
+                "--tui <package> requires operator_bearer_token in dev.json"
+            );
+            let packages = resolve_dev_packages(&config, &args.overlay_root)
+                .context("resolve operator package closure")?;
+            let roots = packages
+                .base_packages()
+                .iter()
+                .map(|package| package.root().to_owned())
+                .chain(std::iter::once(packages.overlay_root().to_owned()))
+                .collect::<Vec<_>>();
+            Some(super::native_tui::select_package(&roots, selected)?)
+        } else {
+            None
+        };
         preflight_config(&config)
             .await
             .context("reach configured development endpoints")?;
@@ -273,6 +377,10 @@ impl DevSession {
             .await
             .context("start development observation readers")?;
         let (shutdown, shutdown_receiver) = watch::channel(false);
+        let control = DevSessionControl { shutdown };
+        if let Some(package) = operator_package {
+            runner.configure_operator(package, super::operator::spawn(control.clone()));
+        }
 
         Ok(Self {
             config,
@@ -280,8 +388,9 @@ impl DevSession {
             watch: args.watch,
             runner,
             git,
-            control: DevSessionControl { shutdown },
+            control,
             shutdown: shutdown_receiver,
+            last_served: None,
         })
     }
 
@@ -347,6 +456,7 @@ impl DevSession {
             }
             result
         };
+        self.last_served = self.read_handle().snapshot().runtime_endpoint().cloned();
         let cleanup = self.runner.shutdown().await;
         finish_with_cleanup(result, cleanup)
     }
@@ -358,6 +468,14 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
         // The interactive client holds a whole session future; box it so the
         // one-shot caller does not carry it on the stack.
         return Box::pin(super::tui::run(args)).await;
+    }
+    if args.operator_package().is_some() {
+        let mut session = DevSession::prepare(args).await?;
+        let mut observer = OperatorObserver {
+            read: session.read_handle(),
+        };
+        session.run_with_observer(&mut observer, true).await?;
+        return Ok(());
     }
     let hold = args.hold();
     let mut session = DevSession::prepare(args).await?;
@@ -404,9 +522,35 @@ async fn run_watch_command(
         )
         .collect::<Vec<_>>();
     let component_roots = component_build_watch_roots(git.repository_root()).await?;
-    let filesystem = FilesystemInvalidationSource::new(package_roots, component_roots, git.clone())
-        .await
-        .context("watch package and component inputs")?;
+    let repository_root = git.repository_root().to_owned();
+    let native_files = [
+        "Cargo.toml",
+        "Cargo.lock",
+        ".cargo/config",
+        ".cargo/config.toml",
+        "rust-toolchain",
+        "rust-toolchain.toml",
+    ]
+    .map(|file| repository_root.join(file));
+    let mut filesystem = FilesystemInvalidationSource::with_native_inputs(
+        package_roots.clone(),
+        component_roots,
+        [repository_root.join("crates/client")],
+        native_files,
+        git.clone(),
+    )
+    .await
+    .context("watch package, component and native client inputs")?;
+    runner.configure_generated_native_outputs(
+        filesystem
+            .watch_generated_native_outputs()
+            .context("watch generated native outputs at their emission boundary")?,
+    );
+    let native = NativeInvalidations {
+        filesystem,
+        repository_root,
+        package_roots,
+    };
     let source_state = git
         .snapshot()
         .await
@@ -417,7 +561,7 @@ async fn run_watch_command(
             from: DevStage::Migrate,
             source_state,
         }),
-        source: filesystem,
+        source: native,
         shutdown,
     };
     run_watch_with_source_state_provider(config, runner, &mut source, observer, git)
@@ -528,16 +672,17 @@ fn finish_with_cleanup<T>(
 /// purpose: the one-shot loop has already torn the environment down by the time
 /// this prints, while --tui holds it and shows the same fact live.
 fn print_serving(session: &DevSession) {
-    if let Some(endpoint) = session.read_handle().snapshot().runtime_endpoint() {
+    if let Some(endpoint) = &session.last_served {
         print_served(endpoint);
     }
 }
 
 fn print_served(endpoint: &DevRuntimeEndpoint) {
     println!(
-        "run served: {} host={}",
+        "run served: {} host={} target_instance={}",
         endpoint.base_url(),
-        endpoint.route_host()
+        endpoint.route_host(),
+        endpoint.target_instance()
     );
 }
 
@@ -623,7 +768,7 @@ mod tests {
             PathBuf::from("packages/client_acme_receiving")
         );
         assert!(parsed.args.watch);
-        assert!(!parsed.args.tui);
+        assert!(parsed.args.tui.is_none());
         assert!(!parsed.args.hold);
 
         let one_shot = TestCli::try_parse_from([
@@ -635,7 +780,7 @@ mod tests {
         ])
         .expect("parse the default one-shot command");
         assert!(!one_shot.args.watch);
-        assert!(!one_shot.args.tui);
+        assert!(one_shot.args.tui.is_none());
         assert!(!one_shot.args.hold);
 
         let tui = TestCli::try_parse_from([
@@ -647,7 +792,7 @@ mod tests {
             "--tui",
         ])
         .expect("parse the interactive terminal client");
-        assert!(tui.args.tui);
+        assert!(tui.args.tui());
 
         let missing = TestCli::try_parse_from(["wamn-dev", "--config", "dev.json"])
             .expect_err("an omitted overlay root must refuse");
@@ -681,7 +826,7 @@ mod tests {
         let hold = parse(&["--hold"]).expect("parse the held one-shot session");
         assert!(hold.hold);
         assert!(!hold.watch);
-        assert!(!hold.tui);
+        assert!(hold.tui.is_none());
 
         // Session mode and renderer are independent axes, so clap must accept
         // both pairings rather than declare a conflict. --hold is redundant
@@ -689,7 +834,14 @@ mod tests {
         // never reaches the one-shot hold at all.
         let with_tui = parse(&["--hold", "--tui"]).expect("parse hold beside the terminal client");
         assert!(with_tui.hold);
-        assert!(with_tui.tui);
+        assert!(with_tui.tui());
+
+        let operator = parse(&["--watch", "--tui", "receiving"])
+            .expect("parse generated operator session without hold");
+        assert_eq!(operator.operator_package(), Some("receiving"));
+        assert!(!operator.tui());
+        assert!(!operator.hold());
+        assert!(operator.watch);
 
         let with_watch = parse(&["--hold", "--watch"]).expect("parse hold beside watch");
         assert!(with_watch.hold);

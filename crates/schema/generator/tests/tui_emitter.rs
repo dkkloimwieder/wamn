@@ -130,6 +130,9 @@ fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
         assert!(cargo.contains(&format!("{dependency} = {{ workspace = true")));
     }
     let main = source(&files, "generated/client_acme_receiving-tui/src/main.rs");
+    assert!(main.contains(
+        "async fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>>"
+    ));
     assert!(main.contains("#[tokio::main]"));
     assert!(main.contains("wamn_client_terminal::operator::run(\"client_acme_receiving\", wamn_generated_client_acme_receiving_tui::screens).await"));
 }

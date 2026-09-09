@@ -322,11 +322,11 @@ class Session:
             require(self.process.poll() is None, "operator exited during a quiet request boundary")
             require(len(self.fixture.snapshot()) == count, "an extra or replayed HTTP request was sent")
 
-    def finish(self, unresolved=False):
+    def finish(self, unresolved=False, exit_code=0):
         self.until(lambda: self.process.poll() is not None, "operator shutdown", allow_exit=True)
         while not self.eof and select.select([self.master], [], [], 0)[0]:
             self.pump(0)
-        require(self.process.returncode == 0, "operator did not exit successfully")
+        require(self.process.returncode == exit_code, "operator reported the wrong exit reason")
         require(termios.tcgetattr(self.slave) == self.original, "operator did not restore the original terminal attributes")
         entered = self.output.find(b"\x1b[?1049h")
         left = self.output.rfind(b"\x1b[?1049l")
@@ -401,7 +401,7 @@ def prove(binary, root):
             session.quiet(2)
             require(not old.release.is_set() and not old.finished.is_set(), "held response completed before SIGTERM")
             session.process.send_signal(signal.SIGTERM)
-            session.finish(unresolved=True)
+            session.finish(unresolved=True, exit_code=143)
 
         fixture.configure(False, "PTY-NEW-TARGET")
         with Session(binary, root, fixture, "pty-target-replacement") as session:
@@ -420,6 +420,16 @@ def prove(binary, root):
             session.send(b"q")
             session.finish()
         require(len(fixture.snapshot()) == 3, "replacement session sent an extra request")
+
+        for target, interrupt in [("pty-sigint", True), ("pty-ctrl-c", False)]:
+            with Session(binary, root, fixture, target) as session:
+                session.open_location()
+                if interrupt:
+                    session.process.send_signal(signal.SIGINT)
+                else:
+                    session.send(b"\x03")
+                session.finish()
+        require(len(fixture.snapshot()) == 3, "operator interruption submitted a request")
     finally:
         fixture.close()
 

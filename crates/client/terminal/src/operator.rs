@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::io;
 use std::pin::Pin;
+use std::process::{ExitCode, Termination};
 use std::sync::Arc;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -23,6 +24,29 @@ use wamn_client_tui::screen::{ExitState, IntentValues, Screen, ScreenSpec};
 use wamn_client_tui::submission::{Attempt, SessionBinding, State, recovery_message};
 
 use crate::TerminalSession;
+
+/// Exit status acknowledging SIGTERM after the terminal has been restored.
+///
+/// The supervisor distinguishes this conventional 128 + 15 status from operator quit.
+pub const SUPERVISOR_STOP_EXIT_CODE: u8 = 143;
+
+/// Why the shared terminal loop ended after restoring the terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitReason {
+    /// The operator quit, sent Ctrl-C or SIGINT, or closed the input stream.
+    Operator,
+    /// The supervisor requested termination with SIGTERM.
+    SupervisorStop,
+}
+
+impl Termination for ExitReason {
+    fn report(self) -> ExitCode {
+        match self {
+            Self::Operator => ExitCode::SUCCESS,
+            Self::SupervisorStop => ExitCode::from(SUPERVISOR_STOP_EXIT_CODE),
+        }
+    }
+}
 
 #[derive(Debug)]
 struct HttpTransport(reqwest::Client);
@@ -67,7 +91,7 @@ fn required_env(name: &str) -> Result<String, io::Error> {
 pub async fn run(
     label: &str,
     screens: impl Fn(SessionBinding) -> Vec<Screen>,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<ExitReason, Box<dyn Error>> {
     run_application(label, |label, binding| {
         GeneratedApplication::new(label, screens(binding))
     })
@@ -84,7 +108,7 @@ pub async fn run(
 pub async fn run_application<A: Application>(
     label: &str,
     factory: impl FnOnce(&str, SessionBinding) -> A,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<ExitReason, Box<dyn Error>> {
     let binding = SessionBinding {
         url: required_env("WAMN_BASE_URL")?,
         host: std::env::var("WAMN_HOST")
@@ -107,11 +131,12 @@ pub async fn run_application<A: Application>(
     let mut pending: FuturesUnordered<Pending> = FuturesUnordered::new();
     let mut terminal = TerminalSession::enter()?;
     let result = async {
+        let mut exit_reason = ExitReason::Operator;
         loop {
             terminal.draw(ApplicationWidget(&app))?;
             let transport_pending = !pending.is_empty();
             let action = tokio::select! {
-                signal = &mut shutdown => { signal?; Action::Exit },
+                signal = &mut shutdown => { exit_reason = signal?; Action::Exit },
                 Some((index, attempt, response)) = pending.next(), if transport_pending => {
                     app.resolve(index, attempt, response);
                     Action::None
@@ -141,7 +166,7 @@ pub async fn run_application<A: Application>(
                 }
             }
         }
-        Ok::<(), io::Error>(())
+        Ok::<ExitReason, io::Error>(exit_reason)
     }
     .await;
     let unresolved = app.unresolved() || !pending.is_empty();
@@ -152,8 +177,7 @@ pub async fn run_application<A: Application>(
             "Client exited. The server request was not cancelled; its outcome is unknown and it may still complete."
         );
     }
-    result?;
-    Ok(())
+    Ok(result?)
 }
 
 /// Application decisions around the shared request and terminal machinery.
@@ -226,7 +250,7 @@ fn prepare_application(
 type Pending =
     Pin<Box<dyn Future<Output = (usize, Attempt, Result<HttpResponse, ClientError>)> + Send>>;
 
-fn shutdown_signal() -> io::Result<impl Future<Output = io::Result<()>>> {
+fn shutdown_signal() -> io::Result<impl Future<Output = io::Result<ExitReason>>> {
     #[cfg(unix)]
     {
         let mut interrupt =
@@ -235,13 +259,13 @@ fn shutdown_signal() -> io::Result<impl Future<Output = io::Result<()>>> {
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         Ok(async move {
             tokio::select! {
-                _ = interrupt.recv() => Ok(()),
-                _ = terminate.recv() => Ok(()),
+                _ = interrupt.recv() => Ok(ExitReason::Operator),
+                _ = terminate.recv() => Ok(ExitReason::SupervisorStop),
             }
         })
     }
     #[cfg(not(unix))]
-    Ok(tokio::signal::ctrl_c())
+    Ok(async { tokio::signal::ctrl_c().await.map(|()| ExitReason::Operator) })
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

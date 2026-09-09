@@ -53,6 +53,14 @@ enum DevEnvironmentCommand {
 #[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    if std::env::var_os("RUST_LOG").is_some() {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .context("read the development diagnostics filter")?;
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .init();
+    }
     let Command::Dev(dev) = Cli::parse().command;
     match dev.environment {
         Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(args).await,

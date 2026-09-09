@@ -12,7 +12,11 @@ pub mod config;
 pub mod coordinator;
 pub mod environment;
 #[cfg(target_os = "linux")]
+mod native_tui;
+#[cfg(target_os = "linux")]
 pub mod observations;
+#[cfg(target_os = "linux")]
+mod operator;
 pub mod read;
 pub mod target_database;
 #[cfg(target_os = "linux")]

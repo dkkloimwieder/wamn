@@ -212,19 +212,26 @@ pub struct DevTraceObservation {
 pub struct DevRuntimeEndpoint {
     base_url: Box<str>,
     route_host: Box<str>,
+    target_instance: Box<str>,
 }
 
 impl DevRuntimeEndpoint {
-    pub(crate) fn new(base_url: String, route_host: &str) -> Self {
+    pub(crate) fn new(base_url: String, route_host: &str, target_instance: &str) -> Self {
         Self {
             base_url: base_url.into_boxed_str(),
             route_host: route_host.into(),
+            target_instance: target_instance.into(),
         }
     }
 
     /// Loopback base URL published by the supervised host.
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Exact creation of the target database served by this activation.
+    pub fn target_instance(&self) -> &str {
+        &self.target_instance
     }
 
     /// Deployment-owned Host header bound during publication.
@@ -435,9 +442,6 @@ impl DevReadPublisher {
             if from.position() <= DevStage::Release.position() {
                 snapshot.release = None;
             }
-            if from.position() <= DevStage::Activate.position() {
-                snapshot.runtime_endpoint = None;
-            }
             snapshot.traces.clear();
             snapshot.taps.clear();
         });
@@ -491,6 +495,11 @@ impl DevReadPublisher {
     /// Publish the route endpoint selected by the exact activated host.
     pub(crate) fn set_runtime_endpoint(&self, endpoint: DevRuntimeEndpoint) {
         self.update(|snapshot| snapshot.runtime_endpoint = Some(endpoint));
+    }
+
+    /// Remove live availability at the actual target shutdown boundary.
+    pub(crate) fn clear_runtime_endpoint(&self) {
+        self.update(|snapshot| snapshot.runtime_endpoint = None);
     }
 
     /// Merge one Tempo page while retaining the bounded newest distinct traces.
@@ -637,6 +646,7 @@ mod tests {
         publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
             "http://127.0.0.1:38080".to_owned(),
             "receiving.localhost",
+            "target-one",
         ));
 
         publisher.reset(DevStage::Apply);
@@ -655,7 +665,21 @@ mod tests {
             &DevStageState::Awaiting
         );
         assert!(snapshot.release().is_none());
-        assert!(snapshot.runtime_endpoint().is_none());
+        assert_eq!(
+            snapshot.runtime_endpoint().unwrap().target_instance(),
+            "target-one"
+        );
+        publisher.stage_failed(
+            DevStage::Apply,
+            super::super::DevStageFailure::new(
+                "preparation-failed",
+                "the previous activation remains",
+                None,
+            ),
+        );
+        assert!(handle.snapshot().runtime_endpoint().is_some());
+        publisher.clear_runtime_endpoint();
+        assert!(handle.snapshot().runtime_endpoint().is_none());
     }
 
     #[test]
@@ -666,6 +690,7 @@ mod tests {
         publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
             "http://127.0.0.1:38080".to_owned(),
             "receiving.localhost",
+            "target-one",
         ));
         let snapshot = handle.snapshot();
 

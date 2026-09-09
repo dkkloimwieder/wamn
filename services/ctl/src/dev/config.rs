@@ -51,6 +51,7 @@ const REGISTRY_AUTH_FILE: &str = "registry_auth_file";
 const INSECURE_REGISTRY: &str = "insecure_registry";
 const GATE_URL: &str = "gate_url";
 const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
+const OPERATOR_BEARER_TOKEN: &str = "operator_bearer_token";
 const ROUTE_HOST: &str = "route_host";
 const FLOW_HTTP_WORKLOAD_IMAGE: &str = "flow_http_workload_image";
 const PACKAGE_SOURCES: &str = "package_sources";
@@ -99,6 +100,9 @@ struct DevConfigDocument {
     insecure_registry: bool,
     gate_url: String,
     gate_bearer_token: String,
+    #[serde(default)]
+    #[schemars(with = "String")]
+    operator_bearer_token: Option<String>,
     route_host: String,
     flow_http_workload_image: String,
     package_sources: Vec<PathBuf>,
@@ -585,6 +589,7 @@ pub struct DevConfig {
     insecure_registry: bool,
     gate_url: Box<str>,
     gate_bearer_token: Box<str>,
+    operator_bearer_token: Option<Box<str>>,
     route_host: Box<str>,
     flow_http_workload_image: Box<str>,
     package_sources: Box<[PathBuf]>,
@@ -803,6 +808,11 @@ impl DevConfig {
         &self.gate_bearer_token
     }
 
+    /// Operator credential for generated clients, separate from Gate authority.
+    pub fn operator_bearer_token(&self) -> Option<&str> {
+        self.operator_bearer_token.as_deref()
+    }
+
     /// Deployment-owned route hostname supplied at publication.
     pub fn route_host(&self) -> &str {
         &self.route_host
@@ -900,6 +910,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         insecure_registry,
         gate_url,
         gate_bearer_token,
+        operator_bearer_token,
         route_host,
         flow_http_workload_image,
         package_sources,
@@ -949,6 +960,9 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         nonempty_path(target_database_acl_file, TARGET_DATABASE_ACL_FILE)?;
     let gate_url = nonempty_string(gate_url, GATE_URL)?;
     let gate_bearer_token = nonempty_string(gate_bearer_token, GATE_BEARER_TOKEN)?;
+    let operator_bearer_token = operator_bearer_token
+        .map(|token| nonempty_string(token, OPERATOR_BEARER_TOKEN))
+        .transpose()?;
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
     let flow_http_workload_image =
         nonempty_string(flow_http_workload_image, FLOW_HTTP_WORKLOAD_IMAGE)?;
@@ -1092,6 +1106,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         insecure_registry,
         gate_url,
         gate_bearer_token,
+        operator_bearer_token,
         route_host,
         flow_http_workload_image,
         package_sources,
@@ -1796,6 +1811,32 @@ mod tests {
             listener.accept().await.expect("accept preflight probe");
         });
         (address, accepted)
+    }
+
+    #[test]
+    fn operator_token_is_optional_redacted_and_separate_from_gate_authority() {
+        let address: SocketAddr = "127.0.0.1:5432".parse().unwrap();
+        let mut document = complete_document(&[address; ENDPOINT_COUNT]);
+        let parse = |value: &Value| parse_config(&serde_json::to_vec(value).unwrap());
+        assert!(parse(&document).unwrap().operator_bearer_token().is_none());
+        document[OPERATOR_BEARER_TOKEN] = Value::String("operator-private-token".into());
+        let config = parse(&document).unwrap();
+        assert_eq!(
+            config.operator_bearer_token(),
+            Some("operator-private-token")
+        );
+        assert_ne!(
+            config.operator_bearer_token(),
+            Some(config.gate_bearer_token())
+        );
+        assert!(!format!("{config:?}").contains("operator-private-token"));
+        for invalid in [Value::Null, Value::Bool(true), Value::String(String::new())] {
+            document[OPERATOR_BEARER_TOKEN] = invalid;
+            assert_eq!(
+                parse(&document).unwrap_err().kind(),
+                DevConfigErrorKind::InvalidValue
+            );
+        }
     }
 
     #[test]

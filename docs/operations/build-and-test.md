@@ -1887,10 +1887,23 @@ a second set. The Gate port is the one that is not negotiable per-process:
 `wamn dev up --gate-bind` names it, the configuration written outlives the
 process that wrote it, and a stray listener there is a hard failure.
 
-**Which binary carries which command.** `wamn` carries exactly two: `wamn dev`
-and `wamn dev up`. `wamn-receiving` is the operator terminal. `wamn-host` and
-`wamn-scenario-worker` are servers the loop supervises and spawns, never typed
-by hand. The operations verbs — `apply-package`,
+The `wamn` binary carries `dev` and `dev up`.
+Bare `--tui` opens the developer console.
+`--tui <package>` opens that package's generated operator terminal and holds
+activation until the operator exits, without `--hold`.
+Without `--tui`, `--hold` retains its existing meaning.
+
+The loop records host output in a private file beside the Wasmtime cache.
+The log directory uses the cache path with `.operator-logs` appended.
+It prints the path before it opens the operator terminal.
+
+After an emitter source change, rebuild `wamn` and restart `wamn dev`.
+The running process uses the emitter linked into its binary.
+
+This recipe uses the existing `wamn-receiving` terminal.
+The loop starts and supervises `wamn-host` and `wamn-scenario-worker`.
+
+The operations verbs — `apply-package`,
 `reconcile-package-data-access` and the rest of the provisioning surface — are
 subcommands of `wamn-ctl`, a different binary, and typing one after `wamn` gets
 an unrecognized-subcommand error.
@@ -2054,7 +2067,7 @@ interchangeable.
 
 - The **operator** credential — the one a client presents on a published route
   — is `$WAMN_TUI_ENV_DIR/route-caller-pat.json`, at `.stringData.token`. It is
-  **not** in `dev.json` at all.
+  also in `dev.json` as `operator_bearer_token` for generated operator launch.
 - `dev.json` carries `gate_bearer_token`, and that is the **management-author**
   PAT the loop presents to the authoring Gate. Handing it to the operator
   client is a different principal with a different project role.

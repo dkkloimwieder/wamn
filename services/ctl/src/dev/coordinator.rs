@@ -363,6 +363,12 @@ pub struct ProductionDevStageRunner {
     publish_provenance: Option<CommitProvenance>,
     release: Option<ReleaseCarrier>,
     activation: Option<DevActivation>,
+    operator: Option<(
+        super::native_tui::NativePackage,
+        super::operator::OperatorControl,
+    )>,
+    native_binaries: BTreeMap<String, PathBuf>,
+    generated_native_outputs: Option<super::watch::GeneratedNativeOutputs>,
     generate_input_digest: Option<String>,
     generate_input_candidate: Option<String>,
     read_publisher: DevReadPublisher,
@@ -433,6 +439,9 @@ impl ProductionDevStageRunner {
             publish_provenance: None,
             release: None,
             activation: None,
+            operator: None,
+            native_binaries: BTreeMap::new(),
+            generated_native_outputs: None,
             generate_input_digest: None,
             generate_input_candidate: None,
             read_publisher,
@@ -499,15 +508,51 @@ impl ProductionDevStageRunner {
         self.release.as_ref()
     }
 
+    /// Select one operator package before this runner starts its first run.
+    pub(super) fn configure_operator(
+        &mut self,
+        package: super::native_tui::NativePackage,
+        control: super::operator::OperatorControl,
+    ) {
+        self.operator = Some((package, control));
+    }
+
+    /// Share each successful package emission with the filesystem watcher.
+    pub(super) fn configure_generated_native_outputs(
+        &mut self,
+        outputs: super::watch::GeneratedNativeOutputs,
+    ) {
+        self.generated_native_outputs = Some(outputs);
+    }
+
     /// Stop any active workload and local host owned by this runner.
     pub async fn shutdown(&mut self) -> Result<(), ProductionDevStageError> {
-        let Some(active) = self.activation.take() else {
-            return Ok(());
+        self.read_publisher.clear_runtime_endpoint();
+        let operator_result = if let Some((_, control)) = &self.operator {
+            match control.stop("the target is unavailable").await {
+                Ok(()) => Ok(()),
+                Err(source) if source.process_stopped() => Err(ProductionDevStageError::owner(
+                    "operator terminal exited",
+                    source.into(),
+                )),
+                Err(source) => {
+                    return Err(ProductionDevStageError::owner(
+                        "stop the operator terminal before target shutdown",
+                        source.into(),
+                    ));
+                }
+            }
+        } else {
+            Ok(())
         };
-        active
+        let Some(active) = self.activation.take() else {
+            return operator_result;
+        };
+        let activation_result = active
             .shutdown()
             .await
-            .map_err(|source| ProductionDevStageError::owner("clean up activation", source.into()))
+            .map_err(|source| ProductionDevStageError::owner("clean up activation", source.into()));
+        operator_result.and(activation_result)
     }
 
     async fn migrate(&mut self) -> Result<(), ProductionDevStageError> {
@@ -597,6 +642,16 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("materialize generated package", source)
             })?;
+            // Acknowledge this emission now: accepting snapshots after Build
+            // would hide external edits made while the later stages were running.
+            if let Some(outputs) = &self.generated_native_outputs {
+                outputs.acknowledge(&package.root).map_err(|source| {
+                    ProductionDevStageError::owner(
+                        "acknowledge generated native outputs",
+                        source.into(),
+                    )
+                })?;
+            }
         }
         Ok(())
     }
@@ -626,6 +681,16 @@ impl ProductionDevStageRunner {
             bytes: output.stdout.into_boxed_slice(),
             plan,
         });
+        let roots = self
+            .package_inputs()?
+            .into_iter()
+            .map(|package| package.root)
+            .collect::<Vec<_>>();
+        self.native_binaries = super::native_tui::build(self.git.repository_root(), &roots)
+            .await
+            .map_err(|source| {
+                ProductionDevStageError::owner("build native operator terminals", source.into())
+            })?;
         Ok(())
     }
 
@@ -1114,23 +1179,100 @@ impl ProductionDevStageRunner {
                 "the Release stage produced no carrier",
             )
         })?;
+        let target_instance = self.target_instance.as_deref().ok_or_else(|| {
+            ProductionDevStageError::invalid(
+                "activate operator session",
+                "the target creation is absent",
+            )
+        })?;
+        let host_output_log = self.operator.as_ref().map(|_| {
+            // Wasmtime deletes unrecognized files inside its cache. Keep
+            // retained diagnostics in a sibling namespace owned by the loop.
+            let mut directory = self
+                .config
+                .wasmtime_cache_dir()
+                .components()
+                .collect::<PathBuf>()
+                .into_os_string();
+            directory.push(".operator-logs");
+            PathBuf::from(directory).join(format!(
+                "operator-host-{}-{target_instance}.log",
+                std::process::id()
+            ))
+        });
+        if let Some(path) = &host_output_log {
+            eprintln!("Host diagnostics: {}", path.display());
+        }
         let activation = activation::activate(DevActivationRequest {
             config: &self.config,
             release,
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
             wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
+            host_output_log: host_output_log.as_deref(),
         })
         .await
         .map_err(|source| {
-            ProductionDevStageError::owner("activate local host and flow-http", source.into())
+            let context = host_output_log
+                .as_ref()
+                .map(|path| format!("{source}; host diagnostics: {}", path.display()));
+            let source = anyhow::Error::new(source);
+            let source = if let Some(context) = context {
+                source.context(context)
+            } else {
+                source
+            };
+            ProductionDevStageError::owner("activate local host and flow-http", source)
         })?;
-        self.read_publisher
-            .set_runtime_endpoint(DevRuntimeEndpoint::new(
-                activation.http_base_url(),
-                self.config.route_host(),
-            ));
+        let endpoint = DevRuntimeEndpoint::new(
+            activation.http_base_url(),
+            self.config.route_host(),
+            target_instance,
+        );
         self.activation = Some(activation);
+        self.read_publisher.set_runtime_endpoint(endpoint.clone());
+        if let Some((package, control)) = &self.operator {
+            let launched = async {
+                let executable = self
+                    .native_binaries
+                    .get(&package.directory)
+                    .ok_or_else(|| {
+                        ProductionDevStageError::invalid(
+                            "launch operator terminal",
+                            "Build produced no selected native binary",
+                        )
+                    })?;
+                let operator_token = self.config.operator_bearer_token().ok_or_else(|| {
+                    ProductionDevStageError::invalid(
+                        "launch operator terminal",
+                        "dev.json has no operator_bearer_token",
+                    )
+                })?;
+                control
+                    .start(super::operator::LaunchSpec {
+                        executable: executable.clone(),
+                        base_url: endpoint.base_url().to_owned(),
+                        route_host: endpoint.route_host().to_owned(),
+                        target_instance: endpoint.target_instance().to_owned(),
+                        operator_token: operator_token.to_owned(),
+                    })
+                    .await
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("launch operator terminal", source.into())
+                    })
+            }
+            .await;
+            if let Err(error) = launched {
+                if let Err(cleanup) = self.shutdown().await {
+                    return Err(ProductionDevStageError::owner(
+                        "clean up failed operator launch",
+                        anyhow::Error::new(error)
+                            .context(format!("activation cleanup also failed: {cleanup}")),
+                    ));
+                }
+                return Err(error);
+            }
+        }
         Ok(())
     }
 
@@ -1631,10 +1773,7 @@ pub fn authored_base_digests(
             anyhow!(source).context(format!("parse {}", manifest.display())),
         )
     })?;
-    let Some(dependencies) = document
-        .get("base_dependencies")
-        .and_then(Value::as_object)
-    else {
+    let Some(dependencies) = document.get("base_dependencies").and_then(Value::as_object) else {
         return Ok(BTreeMap::new());
     };
     let mut digests = BTreeMap::new();

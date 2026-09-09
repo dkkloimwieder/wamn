@@ -101,7 +101,7 @@ pub fn emit_tui(
     files.insert(
         format!("{prefix}/src/main.rs"),
         format!(
-            "// @generated; do not edit.\n\n#[tokio::main]\nasync fn main() -> Result<(), Box<dyn std::error::Error>> {{\n    wamn_client_terminal::operator::run({:?}, {crate_name}::screens).await\n}}\n",
+            "// @generated; do not edit.\n\n#[tokio::main]\nasync fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>> {{\n    wamn_client_terminal::operator::run({:?}, {crate_name}::screens).await\n}}\n",
             ir.package
         ),
     );

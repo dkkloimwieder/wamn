@@ -161,12 +161,8 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     println!("environment ready");
     println!("  gate:   http://{}/authoring", gate.bind());
     println!("  config: {}", config.display());
-    // Two PATs are minted and they are NOT interchangeable. This one is the
-    // operator credential a client presents on a published route, and it is
-    // not in dev.json at all; dev.json's gate_bearer_token is the
-    // management-author PAT, a different principal with a different project
-    // role. Without this line the operator path appeared once, buried in the
-    // provisioning log above (wamn-10yt.56).
+    // The operator token is also in dev.json for generated client launch.
+    // Gate uses its separate management-author token.
     println!(
         "  pat:    {} (operator route-caller PAT, at .stringData.token)",
         args.root.join(ROUTE_CALLER_PAT_FILE).display()

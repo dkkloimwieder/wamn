@@ -2,6 +2,14 @@ use super::*;
 use wamn_client_tui::screen::{RecordLink, RevisionBinding, SuppliedField, SuppliedKind};
 use wamn_client_tui::submission::{Replay, ResponseContract};
 
+#[test]
+fn main_result_preserves_the_terminal_exit_reason() {
+    let operator = Ok::<_, io::Error>(ExitReason::Operator);
+    let supervisor = Ok::<_, io::Error>(ExitReason::SupervisorStop);
+    assert_eq!(operator.report(), ExitCode::SUCCESS);
+    assert_eq!(supervisor.report(), ExitCode::from(143));
+}
+
 const fn field(path: &'static str, kind: &'static str) -> FieldSchema {
     FieldSchema {
         field: FieldDescriptor {
