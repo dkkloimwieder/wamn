@@ -61,6 +61,22 @@ pub enum AccessErrorKind {
 }
 
 impl AccessErrorKind {
+    /// Every class, so a drift guard can walk the whole vocabulary. A variant
+    /// added without being listed here is invisible to that guard.
+    #[cfg(test)]
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::InvalidInput,
+        Self::NotFound,
+        Self::ConcurrencyConflict,
+        Self::UniqueViolation,
+        Self::ForeignKeyViolation,
+        Self::CheckViolation,
+        Self::Retry,
+        Self::Timeout,
+        Self::PermissionDenied,
+        Self::InternalError,
+    ];
+
     /// Frozen operation-contract literal for this error class.
     pub const fn literal(self) -> &'static str {
         match self {
@@ -369,6 +385,108 @@ mod tests {
             assert_eq!(
                 classify(kind, None, AllowedConstraints::NONE),
                 (expected_kind, None)
+            );
+        }
+    }
+
+    /// Literals this package's operations declare, read from the closed
+    /// contracts the generator writes beside the accessors.
+    fn declared(operations: &[&str]) -> std::collections::BTreeSet<String> {
+        operations
+            .iter()
+            .flat_map(|operation| {
+                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../packages/receiving/generated/contracts")
+                    .join(format!("{operation}.errors.json"));
+                let contract: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(&path)
+                        .unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+                )
+                .expect("parses");
+                contract["cases"]
+                    .as_array()
+                    .expect("cases")
+                    .iter()
+                    .map(|case| case["literal"].as_str().expect("literal").to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// The PIN between this crate's hand-copied vocabulary and the generator's.
+    ///
+    /// The generator owns one platform vocabulary, `AccessOperationErrorLiteral`,
+    /// and writes every operation's closed case list from it. Both error enums
+    /// here are HAND copies of the part this package uses, and nothing held the
+    /// copies to the source: when `exclusion_violation` joined the platform
+    /// vocabulary the copies did not grow, and `classify` above had to record
+    /// that gap in prose. This test holds them together in both directions.
+    #[test]
+    fn the_hand_copied_vocabulary_agrees_with_the_generated_contracts() {
+        /// Operations this crate implements. `record_receipt` answers with
+        /// `RecordReceiptErrorKind`; the rest answer with `AccessErrorKind`.
+        const OPERATIONS: &[&str] = &[
+            "location/list",
+            "purchase_order/get",
+            "purchase_order/query",
+            "purchase_order/update",
+            "receipt/get",
+            "receipt/query",
+            "receiving/load_receipt_screen",
+            "receiving/record_receipt",
+        ];
+        /// The copy's one live disagreement, held at exactly these three.
+        ///
+        /// No `packages/receiving` contract declares any of them, yet
+        /// `operation::operation_error` puts `AccessErrorKind::literal()`
+        /// straight into the wire `code`. They are out of reach today only
+        /// because every generated `UPDATE_*_CONSTRAINTS` slice is empty;
+        /// naming one constraint in the manifest would put an undeclared code
+        /// on the wire of a contract that says `closed: true`. Whether they
+        /// should be renamed to a domain literal --- the way the manifest
+        /// renames `unique_violation` to `receipt_reference_conflict` --- or
+        /// dropped is a package-level decision this test does not take.
+        const UNDECLARED: &[&str] = &[
+            "unique_violation",
+            "foreign_key_violation",
+            "check_violation",
+        ];
+
+        let declared = declared(OPERATIONS);
+        let spelled: std::collections::BTreeSet<&str> = AccessErrorKind::ALL
+            .iter()
+            .map(|kind| kind.literal())
+            .chain(
+                crate::record_receipt::RecordReceiptErrorKind::ALL
+                    .iter()
+                    .map(|kind| kind.literal()),
+            )
+            .collect();
+
+        for literal in &spelled {
+            if UNDECLARED.contains(literal) {
+                assert!(
+                    !declared.contains(*literal),
+                    "{literal} is declared now; drop it from UNDECLARED"
+                );
+            } else {
+                assert!(
+                    declared.contains(*literal),
+                    "{literal} is spelled here but declared by no contract this crate implements"
+                );
+            }
+        }
+        for literal in UNDECLARED {
+            assert!(
+                spelled.contains(literal),
+                "{literal} is no longer spelled here; drop it from UNDECLARED"
+            );
+        }
+        for literal in &declared {
+            assert!(
+                spelled.contains(literal.as_str()),
+                "{literal} is declared by a contract this crate implements, \
+                 but no error kind here spells it"
             );
         }
     }
