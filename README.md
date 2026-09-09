@@ -132,6 +132,10 @@ on a fixed port, holds that Gate open, and prints the `wamn dev --tui` line to
 run in a second terminal. For the disposable services it needs and the exact
 flags, read `[WAMN-DEV-ENVIRONMENT]` in `docs/operations/build-and-test.md`.
 
+Watch mode requires the Git reflog. `wamn dev --watch` refuses to start when
+`core.logAllRefUpdates` is false, because Git then writes no `HEAD` reflog and a
+commit would not rerun the loop.
+
 ## Test
 
 ```bash

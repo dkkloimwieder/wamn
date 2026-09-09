@@ -263,8 +263,9 @@ impl DevSourceStateProvider for GitSource {
     }
 }
 
-/// The commit-metadata paths inside this worktree: `HEAD`, its ref, and the
-/// packed refs that ref can be folded into.
+/// The commit-metadata paths this worktree may watch: `HEAD`, the `HEAD`
+/// reflog beside it, the current branch ref, and the packed refs that ref can
+/// be folded into. Which of them survive is decided by the retain rule below.
 ///
 /// Two paths Git will happily name are deliberately absent.
 ///
@@ -290,11 +291,21 @@ impl DevSourceStateProvider for GitSource {
 /// session's loop. In a normal checkout the two directories are the same path
 /// inside the worktree, so the added arm admits nothing new there.
 ///
-/// What a linked worktree recovers is therefore `HEAD` alone: a branch switch
-/// or a commit on a DETACHED `HEAD` rewrites it and reruns the loop, but a
-/// commit on an attached branch moves only the shared branch ref, so it is
-/// still not seen. The index is inside the private directory too, so the rule
-/// names and drops it for the reason above.
+/// A LINKED worktree therefore keeps `HEAD` and `logs/HEAD` and drops
+/// `packed-refs` and `refs/<branch>`, which resolve into the common directory
+/// it must not watch. The REFLOG is what makes that enough: a commit on an
+/// attached branch moves only the shared branch ref, but it appends to the
+/// private `logs/HEAD`, which a checkout and a reset also write and a plain
+/// `git status` does not — the same property that keeps the index out. The
+/// index is inside the private directory too, so the rule names and drops it
+/// for the reason above.
+///
+/// That witness is configurable, so it is checked rather than assumed:
+/// `core.logAllRefUpdates=false` stops Git creating the reflog at all, and
+/// [`FilesystemInvalidationSource::new`] refuses to start watch mode there,
+/// naming the setting. It refuses on the setting rather than probing for the
+/// file, because an existing reflog is still appended to while a worktree
+/// created under that setting gets none.
 async fn discover_metadata_paths(
     repository_root: &Path,
     git_dir: &Path,
@@ -311,7 +322,7 @@ async fn discover_metadata_paths(
         "discover packed Git refs",
     )
     .await?;
-    let mut paths = BTreeSet::from([git_dir.join("HEAD"), packed_refs]);
+    let mut paths = BTreeSet::from([git_dir.join("HEAD"), git_dir.join("logs/HEAD"), packed_refs]);
     let symbolic = git_output_allowing_detached(
         repository_root,
         &["symbolic-ref", "-q", "HEAD"],
@@ -1135,6 +1146,10 @@ impl fmt::Debug for FilesystemInvalidationSource {
 
 impl FilesystemInvalidationSource {
     /// Register recursive event watches for exact roots supplied by the caller.
+    ///
+    /// This constructor delegates to [`Self::with_native_inputs`], which checks
+    /// the reflog for both watcher entry points. A one-shot run does not build
+    /// a watcher, so the refusal does not affect it.
     pub async fn new(
         package_roots: impl IntoIterator<Item = PathBuf>,
         component_build_roots: impl IntoIterator<Item = PathBuf>,
@@ -1158,6 +1173,7 @@ impl FilesystemInvalidationSource {
         native_files: impl IntoIterator<Item = PathBuf>,
         git: GitSource,
     ) -> Result<Self, FilesystemInvalidationError> {
+        require_head_reflog(git.repository_root()).await?;
         let mut roots = WatchRoots::new(package_roots, component_build_roots, &git)?;
         roots.replace_native_inputs(native_directories, native_files, git.repository_root())?;
         let descriptor =
@@ -1557,6 +1573,47 @@ fn read_subdirectories(directory: &Path) -> Result<Vec<PathBuf>, FilesystemInval
         }
     }
     Ok(children)
+}
+
+/// Refuse watch mode when the repository has turned the `HEAD` reflog off.
+///
+/// `logs/HEAD` is the only per-worktree witness of a commit on an attached
+/// branch, so `core.logAllRefUpdates=false` would leave the loop watching a
+/// file Git never creates and losing commit detection in silence. Naming the
+/// setting turns that into something an operator can act on without reading
+/// this file. Git's default for a non-bare repository is on, so the common
+/// case pays one `git config` read and nothing else.
+///
+/// Only an explicit boolean false disables it, so only a zero exit reporting
+/// `false` refuses. Every non-zero exit means it is not off: 1 is unset, and
+/// 128 is a non-boolean value such as `always`, which logs more, not less.
+async fn require_head_reflog(repository_root: &Path) -> Result<(), FilesystemInvalidationError> {
+    let output = Command::new("git")
+        .arg("--no-optional-locks")
+        .arg("-C")
+        .arg(repository_root)
+        .args(["config", "--bool", "--get", "core.logAllRefUpdates"])
+        .kill_on_drop(true)
+        .output()
+        .await
+        .map_err(|source| {
+            FilesystemInvalidationError::with_source(
+                FilesystemInvalidationErrorKind::Git,
+                repository_root,
+                "cannot read core.logAllRefUpdates",
+                source,
+            )
+        })?;
+    if output.status.success() && trim_ascii(&output.stdout) == b"false" {
+        return Err(FilesystemInvalidationError::new(
+            FilesystemInvalidationErrorKind::Git,
+            repository_root,
+            "core.logAllRefUpdates is false, so Git writes no HEAD reflog and a \
+             commit would not rerun the loop; set core.logAllRefUpdates=true to \
+             watch this repository",
+        ));
+    }
+    Ok(())
 }
 
 fn metadata_watch_directories(paths: &[PathBuf]) -> BTreeSet<PathBuf> {
@@ -2465,7 +2522,8 @@ mod tests {
     /// sibling worktree writes, `HEAD` and the index in the private
     /// `.git/worktrees/<name>` beside it. Watching the common directory let an
     /// unrelated checkout's rebase invalidate this session's loop; watching
-    /// the private one cannot, and is what brings `HEAD` back (wamn-10yt.71).
+    /// the private one cannot, and brings back `HEAD` and the `HEAD` reflog —
+    /// which together see a commit on an attached branch (wamn-10yt.71).
     #[tokio::test]
     async fn a_linked_worktree_watches_its_own_git_directory_and_not_the_shared_one() {
         let repository = TempRepository::new();
@@ -2536,18 +2594,13 @@ mod tests {
             .await
             .is_err();
 
-        // A commit this worktree makes must reach it. Detaching is what puts
-        // the commit in the private directory: on an attached branch the
-        // commit moves only the SHARED branch ref, which is unwatched by
-        // design, so `HEAD` is the whole of what a linked worktree recovers.
-        git(&linked, &["checkout", "--detach", "--quiet"]);
-        while tokio::time::timeout(Duration::from_millis(500), source.next())
-            .await
-            .is_ok()
-        {}
+        // A commit this worktree makes must reach it, on the ATTACHED branch
+        // that is the ordinary case. That commit moves only the shared branch
+        // ref, which stays unwatched, and touches no working-tree file; the
+        // private `logs/HEAD` it appends to is the whole of the witness.
         git(
             &linked,
-            &["commit", "--quiet", "--allow-empty", "-m", "head"],
+            &["commit", "--quiet", "--allow-empty", "-m", "reflog"],
         );
         let committed = tokio::time::timeout(Duration::from_secs(2), source.next()).await;
         let committed = match committed {
@@ -2588,9 +2641,10 @@ mod tests {
         );
         assert_eq!(
             metadata,
-            vec![own_git_dir.join("HEAD")],
-            "only `HEAD` in the private Git directory is watchable from a \
-             linked worktree; the shared refs and the private index are not"
+            vec![own_git_dir.join("HEAD"), own_git_dir.join("logs/HEAD")],
+            "only `HEAD` and its reflog in the private Git directory are \
+             watchable from a linked worktree; the shared refs and the private \
+             index are not"
         );
         assert!(
             quiet,
@@ -2598,7 +2652,42 @@ mod tests {
         );
         assert!(
             committed,
-            "a commit that changed no working-tree file must rerun the loop"
+            "a commit on an attached branch that changed no working-tree file \
+             must rerun the loop"
+        );
+    }
+
+    /// The reflog is the linked worktree's only witness of a commit on an
+    /// attached branch, and `core.logAllRefUpdates` can turn it off. Watch
+    /// mode refuses rather than watching a file Git will never write, and the
+    /// refusal names the setting so an operator can act on it.
+    #[tokio::test]
+    async fn watch_mode_refuses_a_repository_with_the_reflog_turned_off() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        git(
+            &repository.root,
+            &["config", "core.logAllRefUpdates", "false"],
+        );
+        let git_source = GitSource::discover(&repository.root)
+            .await
+            .expect("discover source repository");
+
+        let refusal = FilesystemInvalidationSource::new(
+            [repository.package()],
+            [repository.component()],
+            git_source,
+        )
+        .await
+        .err()
+        .map(|error| (error.kind(), error.to_string()));
+
+        let (kind, rendered) = refusal.expect("watch mode must refuse a disabled reflog");
+        assert_eq!(kind, FilesystemInvalidationErrorKind::Git);
+        assert!(
+            rendered.contains("core.logAllRefUpdates"),
+            "the refusal must name the setting an operator has to change: \
+             {rendered}"
         );
     }
 

@@ -212,7 +212,9 @@ async fn admit_components(
         // the render -- not a tenant substitution -- is what makes it a
         // declaration (wamn-10yt.50).
         let base_digests = crate::dev::coordinator::authored_base_digests(&input.root)
-            .unwrap_or_else(|error| panic!("read {}@{} base pins: {error}", input.id, input.version));
+            .unwrap_or_else(|error| {
+                panic!("read {}@{} base pins: {error}", input.id, input.version)
+            });
         let declaration = crate::dev::coordinator::render_declaration_document(
             &input.component_declaration,
             TENANT,
