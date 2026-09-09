@@ -20,11 +20,15 @@ The [rebuilt host test](workspace-sweep-final-001/workspace.log) passes in 69.63
 The [2.8 performance baseline](performance-baseline-evidence-001/evidence-map.json) passes at clean `dfa1c318`, with 108 completed steps.
 The [first 2.9 attempt](performance-2-9-001/exit-code.txt) exits 1 before timed traffic because its probe assertion omits the default HTTP scheme.
 The [three-line correction](receiving-probe-scheme-fix-001/source.patch) passes replay against the captured deployment and refuses all 12 altered probe cases.
-The repeated comparison remains pending under `wamn-0h0g.2.7.15`.
+The [second 2.9 run](performance-2-9-002/exit-code.txt) exits 0 at clean `e7033f72`, with all 108 steps complete.
+Its service ratio median is 8.8608 against the unchanged ceiling of 12.
+The [completed comparison](performance-comparison-001/tables.md) retains the measured spread and separate deadline cutoffs. It does not establish a general performance improvement.
 The later [host proof](probe-listener-lifecycle-001/summary.json) passes all 15 unit tests, including actual native probe termination, and host Clippy exits 0.
 That run tests the recorded patch above `b8e9881d`, with unchanged source-file hashes during execution.
-The operator restart decision remains under `wamn-0h0g.2.7.10`.
-The production automation admission and active-drain scope decision remains under `wamn-0h0g.2.7.12`.
+The owner accepts the documented supervised restart path under `wamn-0h0g.2.7.10`. Complete operator recovery still needs execution.
+The accepted `wamn-0h0g.2.7.12` scope excludes the missing production automation producer and its dependent queued-execution and active-work drain proofs.
+The unproved producer belongs to `wamn-10yt.74`, and dependent active-work shutdown belongs to `wamn-10yt.75`.
+No retired grant or substitute admission path is introduced.
 
 The sections below through “Proof limits” retain the initial capture at WAMN `dfa1c3187fe8cd671688a442b23106046e502cb6`.
 No build, test, journey, workload, or performance measurement ran for that capture.
@@ -665,3 +669,43 @@ The complete test has a five-second bound and uses no database, cluster, native-
 This case proves listener failure inside the test process.
 It does not prove unexpected listener failure in a WAMN subprocess or active guest drain.
 The earlier native first-beat case and actual host signal tests retain their separate evidence and limits.
+
+
+## Completed comparison and accepted scope (2026-09-09)
+
+The [second candidate run](performance-2-9-002/started.txt) starts at 19:51:44 UTC on clean `e7033f72ca32e92b02c3bbe1dc4af420cb23b145`.
+It [finishes](performance-2-9-002/finished.txt) at 20:29:51 UTC with exit 0 and [exact owned cleanup](performance-2-9-002/journey/cleanup.receipt).
+The [completion observation](performance-completion-002/state.json) confirms both measured source revisions remain clean afterward and only the frozen cluster containers remain.
+This receipt supplements the wrappers, which capture source identity only before execution.
+
+The [candidate map](performance-candidate-evidence-001/evidence-map.json) records the host image, chart, release, resources, startup clocks, and proof limits.
+All four selected guest byte hashes match the baseline, as does the mounted release digest.
+Both runs use one measured host with requests of two CPUs and 256 MiB, and limits of six CPUs and 4 GiB.
+The candidate retains native Count accounting, Duration meters, and four concurrent starts.
+Its benchmark directory records the operator Deployment tag, without an operator Pod imageID.
+
+The [runtime receipt](performance-2-9-002/journey/runtime-startup.receipt) reports 747 ms cold and 231 ms after one same-Pod container restart, with three unchanged cache files.
+The [restart request](performance-2-9-002/journey/first-request-restart-first.receipt) reaches exact HTTP 200 after four HTTP 503 responses and 60 transport failures.
+Its 64-second clock starts inside the request job after readiness waits, not at SIGTERM.
+These single startup observations do not establish a distribution or cache persistence after Pod replacement.
+
+The [existing comparison output](performance-comparison-001/comparison.json) retains all repetitions, control layers, latency percentiles, CPU windows, and memory samples.
+The candidate completes 108 steps with zero workload errors and 1,499 separate deadline cutoffs.
+Its five service ratios have a median of 8.8608 against 12. The baseline median is 10.1408.
+The [tables](performance-comparison-001/tables.md) show mixed results across concurrency levels, with no new acceptance rule or significance claim.
+No further benchmark is required by this status update.
+
+The owner accepts a contiguous graceful operator restart in the same Pod and image when retained evidence identifies the permitted cause.
+The cause must pair a kubelet liveness Killing event with either terminal NATS closure or a fault-time HTTP timeout for that same container.
+All Host object and process identities, fresh Host status, exact HTTP 200 recovery, and the original 120-second ceiling remain required.
+The revised proof still needs a clean-source run under `wamn-0h0g.2.7.10`. Failed Receiving runs 005 and 006 remain failed.
+
+The owner closes the `wamn-0h0g.2.7.12` scope decision and assigns missing production automation admission to `wamn-10yt.74`.
+Dependent active-work executor shutdown proof belongs to `wamn-10yt.75`. Both remain outside this cutover and unproved.
+Idle executor signal proof and Receiving stream delivery remain the evidence for their existing paths.
+No queue rows, producer API, or restored grants are substituted for the absent production path.
+Main integration has not occurred, and operator recovery remains the next correctness proof.
+The recorded scope and inherited test failures do not establish release readiness.
+
+The [cleanup receipt](cache-cleanup-001/receipt.json) records removal of the clean 2.8 baseline and upstream test checkouts at the owner's request.
+The migration lane and retained evidence remain available. No further measurements are implied by that cleanup.

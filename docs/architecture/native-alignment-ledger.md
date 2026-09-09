@@ -64,7 +64,8 @@ All three Host objects and processes survive the 150.85-second NATS outage and e
 The operator then restarts within the same Pod, and the proof stops before complete recovery.
 The [sixth-run diagnosis](../perf/2026.09/wasmcloud-2-9-cutover/operator-timeout-diagnosis-001/diagnosis.json) identifies a liveness HTTP timeout that triggers a graceful operator restart before NATS returns.
 The underlying HTTP delay remains unknown.
-Bead `wamn-0h0g.2.7.10` awaits the owner decision on this restart cause with the original 120-second recovery ceiling retained.
+The owner now accepts the documented supervised restart path under `wamn-0h0g.2.7.10`, with the original 120-second recovery ceiling retained.
+Complete recovery still needs execution. The failed runs remain failed and the underlying HTTP delay remains unproved.
 
 The first armed [authority run](../perf/2026.09/wasmcloud-2-9-cutover/authority-live-001/summary.json) records 40 passes and three failures across 43 tests.
 Its seven runtime claims tests and SQLx transaction isolation pass with explicit fresh database inputs.
@@ -147,7 +148,8 @@ Namespace scopes, the disabled gateway, and row 8's modern Event overlay remain 
 The render and [public operator image metadata](../perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json) prove configuration and distributed artifact identity only.
 The owning Rust render test executes but fails during Kubernetes API discovery because `127.0.0.1:8080` refuses the connection.
 Installed CRD identity, local startup exposure, and the separate WMS startup/cache proof now pass.
-Complete operator recovery awaits its owner decision, and comparable performance remains pending.
+Complete operator recovery awaits the accepted proof rerun.
+The [repeated performance comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) is complete. It does not establish a general improvement.
 The [direct stop/start runbook](../../deploy/README.md#wasmcloud-29-cutover) keeps one active runtime version per environment without a maintenance window or compatibility period.
 
 The [distributed CRD capture](../perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/crd-inventory.json) confirms that all five 2.9 schema files match the pinned source.
@@ -169,11 +171,21 @@ The [source receipt](../perf/2026.09/wasmcloud-2-9-cutover/workspace-sweep-final
 The [2.8 performance baseline](../perf/2026.09/wasmcloud-2-9-cutover/performance-baseline-evidence-001/evidence-map.json) passes 108 steps with a service ratio median of 10.1408 against 12.
 The first 2.9 benchmark stops before traffic because the exact probe assertion omits the Kubernetes-defaulted HTTP scheme.
 The [correction replay](../perf/2026.09/wasmcloud-2-9-cutover/receiving-probe-scheme-fix-001/receipt.json) passes and preserves every probe refusal.
-Bead `wamn-0h0g.2.7.15` owns the pending repeated comparison.
-Bead `wamn-0h0g.2.7.10` owns the operator restart decision.
-Bead `wamn-0h0g.2.7.12` owns the production automation admission and active-drain scope decision.
+The [second candidate run](../perf/2026.09/wasmcloud-2-9-cutover/performance-2-9-002/exit-code.txt) passes at clean `e7033f72`, with 108 completed steps and a service ratio median of 8.8608 against 12.
+The [completion receipt](../perf/2026.09/wasmcloud-2-9-cutover/performance-completion-002/state.json) confirms both measured source revisions remain clean afterward.
+The four guest byte hashes, mounted release digest, and measured host resources match the baseline.
+Runtime, chart, feature, and instrumentation changes remain part of the complete cutover comparison.
+Cold/restart startup is 747/231 ms, with three unchanged cache files. The 64-second route recovery clock starts after readiness waits.
+The [candidate map](../perf/2026.09/wasmcloud-2-9-cutover/performance-candidate-evidence-001/evidence-map.json) retains exact image identities and the missing operator Pod imageID receipt.
+
+The accepted `wamn-0h0g.2.7.10` proof permits contiguous graceful restarts in the same operator Pod and image, with recorded kubelet liveness evidence.
+A prior terminal NATS closure or fault-time HTTP timeout must identify the permitted cause for that same container.
+Host identities, fresh Host status, exact HTTP 200, and the original 120-second ceiling remain required. Execution is pending.
+The accepted `wamn-0h0g.2.7.12` scope excludes missing production automation admission and its dependent queued-execution and active-work drain proofs.
+Producer implementation belongs to `wamn-10yt.74`. Dependent active-work shutdown proof belongs to `wamn-10yt.75`.
+Both remain unproved, without restoring retired grants or introducing substitute admission.
 Existing evidence proves idle executor signals and Receiving stream delivery.
-Further live proofs require clean, fixed source, and the recorded results do not establish release readiness.
+Main integration has not occurred. Further live proof requires clean, fixed source and does not inherit a release-readiness claim.
 
 The charter retires both 2.8 patch deviations by decision.
 Upstream 2.9 does not incorporate the former missing-route/missing-handle 503 patches or the nine private P2 phase spans.

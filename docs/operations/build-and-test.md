@@ -3010,21 +3010,22 @@ and RoleBinding, proves the operator's actual ServiceAccount has exactly
 and matching native Warning Event. The 404 proves only HTTP routing and guest
 execution; the Kubernetes objects independently prove the other arms.
 The [first 2.9.0 full journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/verdict.json) passes at `7798190c`.
-The later idle executor, telemetry, startup-burst, and operator-recovery cases require a new run.
+The later idle executor, telemetry, and startup-burst cases have executed evidence.
+Complete operator recovery still requires the accepted proof rerun.
 Run the full mode from the next clean source commit, after its build preparation finishes.
 Keep new evidence in the main repository's `docs/perf`, outside the isolated build worktree.
 Select a fresh directory. The runner must not overwrite an earlier receipt.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \
-  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-002/journey
+  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-007/journey
 ```
 
 The runner supplies the existing private kubeconfig, authorities, release, and fixture inputs to the helpers.
 No extra production flag or manually copied credential is needed.
 Each helper must pass before the runner writes the full verdict.
 Current [telemetry](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-003/journey/telemetry/receipt.json) passes at `a40d1c18`.
-Startup trace exposure and operator recovery remain pending.
+The [startup exposure proof](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-004/journey/startup-burst/result.json) passes at `802aed06`. Complete operator recovery remains pending.
 
 | Helper and receipt | Required proof and limit |
 |---|---|
@@ -3036,7 +3037,18 @@ The 150-second scheduler outage exceeds native TTL 60 seconds, reconciliation 60
 Actual responses during the outage are retained and checked; arbitrary error responses cannot satisfy the helper.
 The helpers retain command, trace, metric, identity, cleanup, and hash receipts beneath their named evidence directories.
 They run only in full mode. `--measure-startup` exits earlier and keeps its existing timing protocol and thresholds.
-The 2.8 [prebuilds](../perf/2026.09/wasmcloud-2-9-cutover/report.md#completed-28-comparison-prebuilds) pass. Comparable live performance measurements remain pending.
+The [completed comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) records 108 steps per source at `dfa1c318` and `e7033f72`.
+Both runs pass their existing service ratio ceiling of 12. No further benchmark is requested.
+
+The accepted operator proof permits a contiguous graceful restart in the same Pod and image only with recorded kubelet liveness evidence.
+That evidence must identify terminal NATS closure or a fault-time HTTP timeout for the same container.
+Host identities, fresh Host status, exact HTTP 200, and both original 120-second recovery ceilings remain required.
+The revised proof must run from a clean committed source. The earlier failed runs remain failed.
+
+Under `wamn-0h0g.2.7.12`, the owner excludes the absent production automation producer and its dependent queued-execution and active-work drain proofs from this cutover.
+Producer implementation belongs to `wamn-10yt.74`, and active-work executor shutdown proof depends on it under `wamn-10yt.75`.
+Idle executor shutdown and Receiving stream delivery do not stand in for those unproved paths.
+Do not restore retired grants, seed substitute queue rows, or introduce a producer API to make this cutover gate pass.
 
 **Run the ten harness proofs first. They cost a second and they stand in
 front of a twenty-five-minute cluster run.**
@@ -3219,6 +3231,11 @@ Use separate repository evidence directories for the baseline and changed source
 Keep the measurement source worktree clean during each run.
 Run builds and measurements serially, and report the spread across all repetitions.
 Do not claim a latency improvement when the observed variance obscures it.
+
+The completed 2.9 cutover measurements are retained under `performance-baseline-001` and `performance-2-9-002`.
+The [comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) preserves the existing reducer results and their spread.
+The [candidate map](../perf/2026.09/wasmcloud-2-9-cutover/performance-candidate-evidence-001/evidence-map.json) records matching guest hashes, resource identity, and startup/cache limits.
+The redundant baseline and upstream test checkouts were removed after evidence capture. The migration worktree remains.
 
 ### Other live gates that carry their command in-source
 

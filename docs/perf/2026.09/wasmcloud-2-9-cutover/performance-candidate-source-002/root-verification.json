@@ -1,0 +1,16 @@
+{
+  "observed_utc": "2026-09-09T20:05:17.002706+00:00",
+  "source": "e7033f72ca32e92b02c3bbe1dc4af420cb23b145",
+  "clean_source": true,
+  "candidate_owner_file_count": 24,
+  "owner_hash_mismatches": [],
+  "matching_guest_hashes": {
+    "http_route.wasm": "577bc11d109a1fad0e04a5be3e9804f14003dd44a0765cdcb832fea7877ab436",
+    "materializer.wasm": "c78e7a1440aae3943a7caf2b44eab835cf5998e38f8c4954c1a0081689c6519e",
+    "receiving.wasm": "1f481deceaea9e217fb19819c750ce39fec8e9a1e19686e43dc2ebf65b1d9fef",
+    "client_acme_receiving.wasm": "710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e"
+  },
+  "baseline_guest_capture": "performance-baseline-001/journey/component-bytes.sha256",
+  "candidate_guest_capture": "performance-2-9-002/journey/component-bytes.sha256",
+  "scope": "Independent root comparison of finished source/artifact captures. The candidate load sweep is still running; no performance verdict is asserted."
+}

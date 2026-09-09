@@ -1,0 +1,7 @@
+{
+  "comparison": "docs/perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/comparison.json",
+  "comparison_sha256": "e71032c3564614fc163629e5261e1cb775b0e86b07138642eb369727ab580636",
+  "output": "docs/perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md",
+  "output_sha256": "497fcd23e0ab97e8809bca81ddbe21c21aacda6a7fabba5360cf72d3568d83e4",
+  "scope": "Formatting existing reducer results only. No measurements or comparison calculations are replaced."
+}
