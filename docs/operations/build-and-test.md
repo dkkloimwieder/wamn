@@ -325,13 +325,74 @@ sha256 lives in `generated/platform-policy/data-access.json`, and
 whole introspected catalog, so an introspection change moves it as well.
 Regenerate after either kind of edit.
 
-# Two independent derivations must each equal the exact shipped path/byte set.
-WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
-  cargo run -p wamn-schema-generator --example materialize_package \
-  --locked --offline -- check packages/receiving
-WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
-  cargo run -p wamn-schema-generator --example materialize_package \
-  --locked --offline -- check packages/receiving
+# EVERY package root under packages/, derived from the tree and never listed.
+# The list used to be the single literal `packages/receiving`, which is why
+# packages/wms/generated/client could go missing at 891aa296 and nothing went
+# red (wamn-10yt.57): no gate named wms. A hardcoded list makes the next package
+# added the next silent gap, so this one is found (wamn-10yt.58). Each root gets
+# its own database, for the reason the paragraph above gives, inside the
+# container this gate already runs. A root's base_dependencies are applied
+# first, resolved through `.package.id`, so an overlay never introspects without
+# its base. The CREATE SCHEMA list is the generator's own derivation
+# (`application_schemas` in crates/schema/generator/src/data_access.rs):
+# `wamn ctl apply-package` creates those schemas and the migrations assume them.
+mapfile -t MATERIALIZE_ROOTS < <(
+  find packages -mindepth 2 -maxdepth 2 -name wamn.json -printf '%h\n' | sort
+)
+declare -A MATERIALIZE_ROOT_BY_ID=()
+for MATERIALIZE_ROOT in "${MATERIALIZE_ROOTS[@]}"; do
+  MATERIALIZE_ROOT_BY_ID["$(
+    jq -r '.package.id' "$MATERIALIZE_ROOT/wamn.json"
+  )"]="$MATERIALIZE_ROOT"
+done
+FUNCNEST=32  # a base_dependencies cycle errors instead of recursing forever
+materialize_apply() {
+  local root="$1" base schema migration
+  for base in $(jq -r '(.base_dependencies // {})[] | .package' "$root/wamn.json"); do
+    materialize_apply "${MATERIALIZE_ROOT_BY_ID[$base]:?no package root declares $base}"
+  done
+  for schema in $(jq -r '[(.models // {})[].schema]
+      + [(.custom_operations // {})[].relations[]?.schema] | unique[]' \
+      "$root/wamn.json"); do
+    docker exec "$RECEIVING_PG_CONTAINER" psql -h 127.0.0.1 -U postgres \
+      -d "$MATERIALIZE_DATABASE" -v ON_ERROR_STOP=1 -q \
+      -c "CREATE SCHEMA IF NOT EXISTS \"$schema\""
+  done
+  for migration in "$root"/migrations/*.sql; do
+    docker exec -i "$RECEIVING_PG_CONTAINER" psql -h 127.0.0.1 -U postgres \
+      -d "$MATERIALIZE_DATABASE" -v ON_ERROR_STOP=1 -q -f - < "$migration"
+  done
+}
+MATERIALIZE_CHECKED=0
+for MATERIALIZE_ROOT in "${MATERIALIZE_ROOTS[@]}"; do
+  MATERIALIZE_DATABASE="wamn_materialize_$(basename "$MATERIALIZE_ROOT")"
+  docker exec "$RECEIVING_PG_CONTAINER" psql -h 127.0.0.1 -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$MATERIALIZE_DATABASE\""
+  materialize_apply "$MATERIALIZE_ROOT"
+  MATERIALIZE_URL="postgresql://postgres:probe@127.0.0.1:${RECEIVING_PG_PORT}/$MATERIALIZE_DATABASE"
+  # Two independent derivations must each equal the exact shipped path/byte set.
+  WAMN_SCHEMA_INTROSPECTION_PG_URL="$MATERIALIZE_URL" \
+    cargo run -p wamn-schema-generator --example materialize_package \
+    --locked --offline -- check "$MATERIALIZE_ROOT"
+  WAMN_SCHEMA_INTROSPECTION_PG_URL="$MATERIALIZE_URL" \
+    cargo run -p wamn-schema-generator --example materialize_package \
+    --locked --offline -- check "$MATERIALIZE_ROOT"
+  MATERIALIZE_CHECKED=$((MATERIALIZE_CHECKED + 1))
+done
+# An empty roots array and a fully green run read identically otherwise. Assert
+# the count, the way "Live gates: arming" requires of anything a rename or a
+# moved directory can deselect.
+test "$MATERIALIZE_CHECKED" \
+  -eq "$(find packages -mindepth 2 -maxdepth 2 -name wamn.json | wc -l)"
+# Measured at `2a4cd288` on a fresh postgres:18, one root per database:
+# packages/wms passes; packages/receiving and packages/client_acme_receiving
+# each FAIL, on generated/source-map/purchase_order.json and
+# generated/wamn/purchase_order.rs. `4862faee` (wamn-10yt.54) taught the
+# generator to emit `UPDATE_EXCLUSION_CONSTRAINTS` and regenerated no package,
+# so no shipped artifact under packages/ carries that constant and a fresh
+# derivation emits it. The arm is red on arrival because the class of defect it
+# was written to find was already in the tree, unseen. Filed, not fixed here:
+# regenerating a package's artifacts is not this arm's change.
 
 # Normal builds consume the committed .sqlx evidence without a database.
 SQLX_OFFLINE=true cargo test -p wamn-proof-conformance \
