@@ -1,0 +1,311 @@
+{
+  "baseline_commit": "e7033f72ca32e92b02c3bbe1dc4af420cb23b145",
+  "baseline_refusal": "previous operator log does not establish terminal NATS closure",
+  "captured_startup_result": {
+    "cause": "scheduler-nats-startup-timeout",
+    "current": {
+      "container_id": "containerd://eeb6d62d1c7ac5e7b5f21048c218627c6f47cdb931021585ad73e1f59d3ec1d1",
+      "image_id": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+      "pod_name": "runtime-operator-5bc6494bdb-cqwgb",
+      "pod_uid": "2a01d1f1-ede6-469a-a8e0-ee1be4b07c69",
+      "ready": false,
+      "restart_count": 4,
+      "state": {
+        "running": {
+          "startedAt": "2026-09-09T21:47:09Z"
+        }
+      },
+      "termination": {
+        "containerID": "containerd://d4c723730ffa6d51c6d0606e213623fcc667e64f6ccb21392bfc37f802720660",
+        "exitCode": 1,
+        "finishedAt": "2026-09-09T21:46:20Z",
+        "reason": "Error",
+        "startedAt": "2026-09-09T21:46:15Z"
+      }
+    },
+    "previous": {
+      "container_id": "containerd://d4c723730ffa6d51c6d0606e213623fcc667e64f6ccb21392bfc37f802720660",
+      "image_id": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+      "pod_name": "runtime-operator-5bc6494bdb-cqwgb",
+      "pod_uid": "2a01d1f1-ede6-469a-a8e0-ee1be4b07c69",
+      "ready": false,
+      "restart_count": 3,
+      "state": {
+        "running": {
+          "startedAt": "2026-09-09T21:46:15Z"
+        }
+      },
+      "termination": {
+        "containerID": "containerd://4445ea8bad20f451dc5e8059ddb4b93483c63a46d9a4f8838fa4cc383fbbbf4e",
+        "exitCode": 0,
+        "finishedAt": "2026-09-09T21:46:15Z",
+        "reason": "Completed",
+        "startedAt": "2026-09-09T21:41:26Z"
+      }
+    },
+    "scheduler_address": "10.96.167.147:4222",
+    "setup_errors": [
+      "2026-09-09T21:46:20.932341357Z 2026-09-09T21:46:20Z\tERROR\tsetup\tunable to create runtime operator\t{\"error\": \"transport error: dial tcp 10.96.167.147:4222: i/o timeout\"}"
+    ],
+    "termination": {
+      "containerID": "containerd://d4c723730ffa6d51c6d0606e213623fcc667e64f6ccb21392bfc37f802720660",
+      "exitCode": 1,
+      "finishedAt": "2026-09-09T21:46:20Z",
+      "reason": "Error",
+      "startedAt": "2026-09-09T21:46:15Z"
+    }
+  },
+  "captured_timeout_result": {
+    "cause": "kubelet-liveness-http-timeout",
+    "current": {
+      "container_id": "containerd://b095901f7f0d500a15ea22d5f24eca9932066c212cdea253e0487457c93f3985",
+      "image_id": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+      "pod_name": "runtime-operator-5bc6494bdb-9sft4",
+      "pod_uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508",
+      "ready": false,
+      "restart_count": 3,
+      "state": {
+        "running": {
+          "startedAt": "2026-09-09T16:58:53Z"
+        }
+      },
+      "termination": {
+        "containerID": "containerd://0f7f69b5d6cf6276893dd4a9ea01080270595a966e3495c201ede0731ea62636",
+        "exitCode": 0,
+        "finishedAt": "2026-09-09T16:58:53Z",
+        "reason": "Completed",
+        "startedAt": "2026-09-09T16:52:43Z"
+      }
+    },
+    "events": [
+      {
+        "apiVersion": "v1",
+        "count": 1,
+        "eventTime": null,
+        "firstTimestamp": "2026-09-09T16:58:37Z",
+        "involvedObject": {
+          "apiVersion": "v1",
+          "fieldPath": "spec.containers{runtime-operator}",
+          "kind": "Pod",
+          "name": "runtime-operator-5bc6494bdb-9sft4",
+          "namespace": "wamn-system",
+          "resourceVersion": "993",
+          "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+        },
+        "kind": "Event",
+        "lastTimestamp": "2026-09-09T16:58:37Z",
+        "message": "Container runtime-operator failed liveness probe, will be restarted",
+        "metadata": {
+          "creationTimestamp": "2026-09-09T16:58:37Z",
+          "name": "runtime-operator-5bc6494bdb-9sft4.18d3b59260258f01",
+          "namespace": "wamn-system",
+          "resourceVersion": "2301",
+          "uid": "6291bbb9-b778-4519-b61f-2315c910c279"
+        },
+        "reason": "Killing",
+        "reportingComponent": "kubelet",
+        "reportingInstance": "wamn-receiving-journey-worker",
+        "source": {
+          "component": "kubelet",
+          "host": "wamn-receiving-journey-worker"
+        },
+        "type": "Normal"
+      }
+    ],
+    "previous": {
+      "container_id": "containerd://0f7f69b5d6cf6276893dd4a9ea01080270595a966e3495c201ede0731ea62636",
+      "image_id": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+      "pod_name": "runtime-operator-5bc6494bdb-9sft4",
+      "pod_uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508",
+      "ready": true,
+      "restart_count": 2,
+      "state": {
+        "running": {
+          "startedAt": "2026-09-09T16:52:43Z"
+        }
+      },
+      "termination": {
+        "containerID": "containerd://5ecdb2e612cd66380eeb1f81c6bb0c4b4e8db94006e0ef339266e6a3fe36db30",
+        "exitCode": 1,
+        "finishedAt": "2026-09-09T16:52:30Z",
+        "reason": "Error",
+        "startedAt": "2026-09-09T16:52:25Z"
+      }
+    },
+    "probe_timeout_events": [
+      {
+        "apiVersion": "v1",
+        "count": 4,
+        "eventTime": null,
+        "firstTimestamp": "2026-09-09T16:56:37Z",
+        "involvedObject": {
+          "apiVersion": "v1",
+          "fieldPath": "spec.containers{runtime-operator}",
+          "kind": "Pod",
+          "name": "runtime-operator-5bc6494bdb-9sft4",
+          "namespace": "wamn-system",
+          "resourceVersion": "993",
+          "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+        },
+        "kind": "Event",
+        "lastTimestamp": "2026-09-09T16:58:37Z",
+        "message": "Liveness probe failed: Get \"http://10.244.2.3:8082/healthz\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+        "metadata": {
+          "creationTimestamp": "2026-09-09T16:56:37Z",
+          "name": "runtime-operator-5bc6494bdb-9sft4.18d3b5766f9feec2",
+          "namespace": "wamn-system",
+          "resourceVersion": "2300",
+          "uid": "18443ae4-e271-4d98-af50-4d2df98a6414"
+        },
+        "reason": "Unhealthy",
+        "reportingComponent": "kubelet",
+        "reportingInstance": "wamn-receiving-journey-worker",
+        "source": {
+          "component": "kubelet",
+          "host": "wamn-receiving-journey-worker"
+        },
+        "type": "Warning"
+      }
+    ],
+    "termination": {
+      "containerID": "containerd://0f7f69b5d6cf6276893dd4a9ea01080270595a966e3495c201ede0731ea62636",
+      "exitCode": 0,
+      "finishedAt": "2026-09-09T16:58:53Z",
+      "reason": "Completed",
+      "startedAt": "2026-09-09T16:52:43Z"
+    }
+  },
+  "mutations": [
+    {
+      "error": "operator Pod or image changed during the scheduler fault",
+      "name": "different operator Pod",
+      "result": "refused"
+    },
+    {
+      "error": "operator Pod or image changed during the scheduler fault",
+      "name": "different operator image",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart history is incomplete",
+      "name": "missing restart history",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart does not identify a new container",
+      "name": "unchanged container",
+      "result": "refused"
+    },
+    {
+      "error": "previous operator termination does not identify the observed process",
+      "name": "wrong previous process",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart was not a graceful supervised exit",
+      "name": "failed previous process",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart was not a graceful supervised exit",
+      "name": "non-graceful termination",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart lacks a same-Pod kubelet liveness event from this fault",
+      "name": "missing Killing event",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart lacks a recorded terminal NATS closure or liveness HTTP timeout",
+      "name": "missing timeout event",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart lacks a same-Pod kubelet liveness event from this fault",
+      "name": "wrong event Pod",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart lacks a recorded terminal NATS closure or liveness HTTP timeout",
+      "name": "wrong timeout container",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart lacks a same-Pod kubelet liveness event from this fault",
+      "name": "stale fault evidence",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart lacks a same-Pod kubelet liveness event from this fault",
+      "name": "wrong event reporter",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart lacks a recorded terminal NATS closure or liveness HTTP timeout",
+      "name": "readiness timeout only",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart lacks a recorded terminal NATS closure or liveness HTTP timeout",
+      "name": "wrong health endpoint",
+      "result": "refused"
+    },
+    {
+      "error": "startup refusal requires an unready operator and the recorded scheduler address",
+      "name": "startup after prior readiness",
+      "result": "refused"
+    },
+    {
+      "error": "startup refusal requires an unready operator and the recorded scheduler address",
+      "name": "startup without scheduler identity",
+      "result": "refused"
+    },
+    {
+      "error": "operator startup exit lacks its scheduler TCP timeout evidence",
+      "name": "startup against another scheduler",
+      "result": "refused"
+    },
+    {
+      "error": "operator startup exit lacks its scheduler TCP timeout evidence",
+      "name": "startup on another port",
+      "result": "refused"
+    },
+    {
+      "error": "operator restart was not a graceful supervised exit",
+      "name": "startup killed instead of refused",
+      "result": "refused"
+    },
+    {
+      "error": "operator startup refusal predates the scheduler fault",
+      "name": "startup before the fault",
+      "result": "refused"
+    },
+    {
+      "error": "startup refusal does not identify the observed container start",
+      "name": "startup with another process start",
+      "result": "refused"
+    },
+    {
+      "error": "operator startup exit lacks its scheduler TCP timeout evidence",
+      "name": "startup with another setup failure",
+      "result": "refused"
+    },
+    {
+      "error": "operator startup exit lacks its scheduler TCP timeout evidence",
+      "name": "startup authentication failure",
+      "result": "refused"
+    },
+    {
+      "error": "operator startup exit lacks its scheduler TCP timeout evidence",
+      "name": "startup log outside process lifetime",
+      "result": "refused"
+    }
+  ],
+  "result": "pass",
+  "scope": "recorded restart evidence only; live recovery is still required",
+  "source_sha256": "82289979449b70315792bcbd313377b84976ce2c909621160f76e08152485463",
+  "startup_address_scope": "declared offline fixture address; live Service identity is required by the next journey",
+  "startup_baseline_refusal": "operator restart was not a graceful supervised exit",
+  "synthetic_terminal_closure_control": "pass"
+}

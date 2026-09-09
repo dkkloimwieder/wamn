@@ -1,0 +1,76 @@
+diff --git a/tools/receiving-operator-recovery-run b/tools/receiving-operator-recovery-run
+index 5609a5ff..b413bfbf 100755
+--- a/tools/receiving-operator-recovery-run
++++ b/tools/receiving-operator-recovery-run
+@@ -77,7 +77,7 @@ def operator_state(items):
+                 state=status.get("state", {}))
+ 
+ 
+-def supervised_restart(previous, current, previous_log, events, since):
++def supervised_restart(previous, current, previous_log, events, since, scheduler_address=None):
+     # The cutover permits a kubelet liveness restart during the NATS fault.
+     # Retain the observed trigger without inferring the underlying probe delay.
+     require(current["pod_uid"] == previous["pod_uid"] and current["image_id"] == previous["image_id"],
+@@ -89,6 +89,32 @@ def supervised_restart(previous, current, previous_log, events, since):
+     termination = current["termination"] or {}
+     require(termination.get("containerID") == previous["container_id"],
+             "previous operator termination does not identify the observed process")
++    if termination.get("exitCode") == 1 and termination.get("reason") == "Error":
++        require(not previous["ready"] and scheduler_address,
++                "startup refusal requires an unready operator and the recorded scheduler address")
++        require(termination.get("startedAt") == previous["state"].get("running", {}).get("startedAt"),
++                "startup refusal does not identify the observed container start")
++        started = datetime.fromisoformat(termination["startedAt"].replace("Z", "+00:00")).timestamp()
++        finished = datetime.fromisoformat(termination["finishedAt"].replace("Z", "+00:00")).timestamp()
++        require(started >= since, "operator startup refusal predates the scheduler fault")
++        expected_error = f"transport error: dial tcp {scheduler_address}: i/o timeout"
++        setup_errors = []
++        for line in previous_log.splitlines():
++            fields = line.split("\t", 4)
++            if len(fields) != 5 or fields[1:4] != ["ERROR", "setup", "unable to create runtime operator"]:
++                continue
++            try:
++                stamp = datetime.fromisoformat(fields[0].split()[0].replace("Z", "+00:00")).timestamp()
++                detail = json.loads(fields[4])
++            except (ValueError, IndexError):
++                continue
++            # Kubernetes termination timestamps have whole-second precision.
++            if started <= stamp < finished + 1 and detail.get("error") == expected_error:
++                setup_errors.append(line)
++        require(setup_errors, "operator startup exit lacks its scheduler TCP timeout evidence")
++        return dict(previous=previous, current=current, termination=termination,
++                    cause="scheduler-nats-startup-timeout", scheduler_address=scheduler_address,
++                    setup_errors=setup_errors)
+     require(termination.get("exitCode") == 0 and termination.get("reason") == "Completed",
+             "operator restart was not a graceful supervised exit")
+     witnesses = []
+@@ -229,6 +255,11 @@ def main():
+ 
+     operator = get("operator-deployment", SYSTEM, "deployment/runtime-operator")
+     nats = get("scheduler-deployment", SYSTEM, "deployment/nats")
++    nats_service = get("scheduler-service", SYSTEM, "service/nats")
++    require(nats_service["spec"].get("clusterIP") not in (None, "None") and
++            any(p["port"] == 4222 and p["protocol"] == "TCP" for p in nats_service["spec"]["ports"]),
++            "scheduler Service does not identify the configured NATS endpoint")
++    scheduler_address = f"{nats_service['spec']['clusterIP']}:4222"
+     require(operator["spec"]["replicas"] == nats["spec"]["replicas"] == 1, "expected singleton operator and scheduler")
+     require(any(c["image"] == "ghcr.io/wasmcloud/runtime-operator:2.9.0" and
+                 "-nats-url=nats://nats.wamn-system.svc.cluster.local:4222" in c.get("args", [])
+@@ -287,15 +318,15 @@ def main():
+             except ValueError:
+                 events = {}
+             transition = supervised_restart(operator_seen, current, previous_log.decode(errors="replace"),
+-                                            events, scheduler_fault_started)
++                                            events, scheduler_fault_started, scheduler_address)
+             operator_fresh_after = time.time()
+             transition["observed_at"] = operator_fresh_after
+             operator_transitions.append(transition)
+             write("operator-supervision.json", dict(initial=operator_initial, transitions=operator_transitions))
+-            operator_seen = current
+         else:
+             require(current["container_id"] == operator_seen["container_id"],
+                     "operator container changed without a recorded restart")
++        operator_seen = current
+         return current["ready"]
+ 
+     def continuity(value, same_operator=True):

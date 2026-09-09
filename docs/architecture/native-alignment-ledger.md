@@ -148,8 +148,10 @@ Namespace scopes, the disabled gateway, and row 8's modern Event overlay remain 
 The render and [public operator image metadata](../perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json) prove configuration and distributed artifact identity only.
 The owning Rust render test executes but fails during Kubernetes API discovery because `127.0.0.1:8080` refuses the connection.
 Installed CRD identity, local startup exposure, and the separate WMS startup/cache proof now pass.
-The [seventh run](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-007/exit-code.txt) stops before any NATS fault because the sampler Pod is still `ContainerCreating`.
-Bead `wamn-0h0g.2.7.16` owns bounded sampler creation/readiness waits. Complete operator recovery still requires the corrected proof rerun.
+The [eighth run](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-008/exit-code.txt) passes sampler startup and reaches the scheduler NATS outage.
+After an accepted graceful restart, the never-ready operator replacement exits 1 with an initial NATS dial timeout.
+The [native source/log record](../perf/2026.09/wasmcloud-2-9-cutover/operator-startup-refusal-001/source-map.json) preserves this refusal without claiming its concrete Go error type.
+Host identities persist and cleanup passes. Complete operator recovery still requires the corrected proof rerun.
 The [repeated performance comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) is complete. It does not establish a general improvement.
 The [direct stop/start runbook](../../deploy/README.md#wasmcloud-29-cutover) keeps one active runtime version per environment without a maintenance window or compatibility period.
 
@@ -179,8 +181,11 @@ Runtime, chart, feature, and instrumentation changes remain part of the complete
 Cold/restart startup is 747/231 ms, with three unchanged cache files. The 64-second route recovery clock starts after readiness waits.
 The [candidate map](../perf/2026.09/wasmcloud-2-9-cutover/performance-candidate-evidence-001/evidence-map.json) retains exact image identities and the missing operator Pod imageID receipt.
 
-The accepted `wamn-0h0g.2.7.10` proof permits contiguous graceful restarts in the same operator Pod and image, with recorded kubelet liveness evidence.
-A prior terminal NATS closure or fault-time HTTP timeout must identify the permitted cause for that same container.
+The accepted `wamn-0h0g.2.7.10` proof preserves the operator Pod, image, and contiguous container history through supervised restarts.
+A graceful restart requires kubelet liveness evidence plus terminal NATS closure or a fault-time HTTP timeout for that container.
+A startup refusal requires exit 1 with reason `Error` from a previously observed unready container, with matching start and termination times.
+The exact fault-time native setup log must name the independently captured scheduler Service ClusterIP on port 4222 and a TCP i/o timeout.
+The native retry-gap follow-up belongs to `wamn-10yt.76`. The cutover carries no upstream patch.
 Host identities, fresh Host status, exact HTTP 200, and the original 120-second ceiling remain required. Execution is pending.
 The accepted `wamn-0h0g.2.7.12` scope excludes missing production automation admission and its dependent queued-execution and active-work drain proofs.
 Producer implementation belongs to `wamn-10yt.74`. Dependent active-work shutdown proof belongs to `wamn-10yt.75`.

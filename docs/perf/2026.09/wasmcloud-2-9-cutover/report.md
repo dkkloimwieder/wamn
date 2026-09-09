@@ -26,8 +26,9 @@ The [completed comparison](performance-comparison-001/tables.md) retains the mea
 The later [host proof](probe-listener-lifecycle-001/summary.json) passes all 15 unit tests, including actual native probe termination, and host Clippy exits 0.
 That run tests the recorded patch above `b8e9881d`, with unchanged source-file hashes during execution.
 The owner accepts the documented supervised restart path under `wamn-0h0g.2.7.10`.
-The [seventh run](live-receiving-007/exit-code.txt) stops before any NATS fault because sampler logs are requested before its Pod starts.
-Bead `wamn-0h0g.2.7.16` owns the sampler readiness correction. Complete operator recovery remains unproved.
+The [eighth run](live-receiving-008/exit-code.txt) passes sampler startup, then stops during the NATS outage when the restarted operator refuses its initial connection.
+The [native source and log record](operator-startup-refusal-001/source-map.json) preserves the exact setup refusal and its limits.
+Complete operator recovery remains unproved under `wamn-0h0g.2.7.10`.
 The accepted `wamn-0h0g.2.7.12` scope excludes the missing production automation producer and its dependent queued-execution and active-work drain proofs.
 The unproved producer belongs to `wamn-10yt.74`, and dependent active-work shutdown belongs to `wamn-10yt.75`.
 No retired grant or substitute admission path is introduced.
@@ -727,3 +728,25 @@ The helper captures final logs and Events, and [owned cleanup](live-receiving-00
 Bead `wamn-0h0g.2.7.16` owns bounded waits for sampler Pod creation and readiness before initial sampling.
 The correction still requires a complete run. Receiving007 remains failed, and the next evidence directory is `live-receiving-008`.
 Host continuity, fresh status, exact HTTP 200, and both original 120-second recovery ceilings remain unchanged.
+
+
+## Receiving008 native operator startup refusal (2026-09-09)
+
+The [eighth Receiving run](live-receiving-008/source.txt) uses clean `956c6c21e62f3bdf5105334c1e9babaec36050df` and [exits 1](live-receiving-008/exit-code.txt) at 21:47:17 UTC.
+Sampler startup succeeds, and the helper accepts the recorded graceful liveness restart during the scheduler NATS outage.
+The [replacement container](live-receiving-008/journey/operator-recovery/operator-transition-4-state.json) never becomes ready and exits 1 after a recorded five-second lifetime.
+Its [previous log](live-receiving-008/journey/operator-recovery/0308-operator-transition-4-previous-log.stdout) says `unable to create runtime operator` with `transport error: dial tcp 10.96.167.147:4222: i/o timeout`.
+All Host identities remain unchanged, and [owned cleanup](live-receiving-008/journey/cleanup.receipt) passes after the helper restores NATS.
+The run does not establish complete recovery.
+
+The [pinned source excerpts](operator-startup-refusal-001/source-map.json) record the native constructor, NATS connection helper, and startup `os.Exit(1)` path.
+Native `worthRetrying` handles `nats.ErrTimeout`, while the observed network dial timeout returns after about five seconds.
+The exact Go error type and `errors.Is` result were not captured, so this is source/log correlation rather than error-type causal proof.
+The corrected proof requires exit 1 with reason `Error` from a previously observed unready container, with matching start and termination times.
+Its exact fault-time native setup line must report a TCP i/o timeout at the independently captured scheduler Service ClusterIP on port 4222.
+The same Pod and image, contiguous container history, Host continuity, fresh status, exact HTTP 200, and original recovery ceilings remain required.
+The native retry-gap follow-up is `wamn-10yt.76`, outside this cutover.
+No upstream patch or broad restart allowance follows. `live-receiving-009` must still execute the correction.
+
+The [final offline replay](operator-supervision-004/receipt.json) accepts the recorded liveness and startup cases and refuses all 25 altered-evidence controls.
+The startup address is a declared replay fixture. The live run must obtain it independently from the scheduler Service.

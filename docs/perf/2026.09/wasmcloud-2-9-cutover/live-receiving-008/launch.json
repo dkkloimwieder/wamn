@@ -1,0 +1,14 @@
+{
+  "pid": 4003838,
+  "started_at": "2026-09-09T21:39:08.550567+00:00",
+  "source": "956c6c21e62f3bdf5105334c1e9babaec36050df",
+  "load": [
+    0.376953125,
+    0.63671875,
+    0.9638671875
+  ],
+  "mode": "full correctness journey; no benchmark options",
+  "reused_offline_harness_proof": "live-receiving-007/preparation/summary.json",
+  "harness_and_deploy_source_unchanged": true,
+  "sampler_cli_proof": "sampler-startup-003/receipt.json"
+}

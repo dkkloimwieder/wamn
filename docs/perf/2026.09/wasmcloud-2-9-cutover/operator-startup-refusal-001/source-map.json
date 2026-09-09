@@ -1,0 +1,73 @@
+{
+  "schema": "wamn-operator-startup-refusal-source/v1",
+  "captured_utc": "2026-09-09T21:53:25.945870+00:00",
+  "source_checkout": "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece",
+  "source_pin": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "cargo_lock_source": "git+https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "cargo_lock_sha256": "55faac1a84a11c8feac91948a04f71ba71033f4e6a41172532539ff35ff6a40d",
+  "source_identity_scope": "Read the normal Cargo checkout at the pinned source and record whole-file and exact excerpt hashes. No Git identity query, clone, source mutation or build ran.",
+  "excerpts": [
+    {
+      "source_path": "runtime-operator/cmd/main.go",
+      "source_file_sha256": "df9b59fc9444de9732e81bbf1c136d496be1583f3a23754a7dc36e8d43a4980a",
+      "source_file_bytes": 14539,
+      "start_line": 309,
+      "end_line": 321,
+      "excerpt_path": "main.go.excerpt",
+      "excerpt_sha256": "dc4cae3539f937658fcc1a836ee4c5110c1bcdfbe2871252f329dc6145eb7ff2",
+      "excerpt_bytes": 387
+    },
+    {
+      "source_path": "runtime-operator/operator.go",
+      "source_file_sha256": "faaaaa1351dba527ae91ae21b95b07936eafbb92d3b9e4d524d49f76e33fd0f3",
+      "source_file_bytes": 5638,
+      "start_line": 69,
+      "end_line": 98,
+      "excerpt_path": "operator.go.excerpt",
+      "excerpt_sha256": "fd27414abfdeada8aee2ffe112ee6c48078d24292be63d97f2bd722c04c61da1",
+      "excerpt_bytes": 1030
+    },
+    {
+      "source_path": "runtime-operator/pkg/wasmbus/nats.go",
+      "source_file_sha256": "0ef613fc246c8dd69759797ec16516a9f071b05fccd7a159e3da87a4727c1777",
+      "source_file_bytes": 8316,
+      "start_line": 52,
+      "end_line": 136,
+      "excerpt_path": "nats.go.excerpt",
+      "excerpt_sha256": "c4973640e6a8212fef280b27ecca460df66c02661c025c084abb6b9a06d42dd4",
+      "excerpt_bytes": 3512
+    }
+  ],
+  "observed_run": {
+    "source": "956c6c21e62f3bdf5105334c1e9babaec36050df",
+    "log": "live-receiving-008/journey/operator-recovery/0308-operator-transition-4-previous-log.stdout",
+    "log_sha256": "584863b1f925643833998f8d62ca6b34d8ec586a8b4466a6142f6f444fd057f5",
+    "log_line": 1,
+    "exact_line": "2026-09-09T21:46:20.932341357Z 2026-09-09T21:46:20Z\tERROR\tsetup\tunable to create runtime operator\t{\"error\": \"transport error: dial tcp 10.96.167.147:4222: i/o timeout\"}",
+    "state": "live-receiving-008/journey/operator-recovery/operator-transition-4-state.json",
+    "state_sha256": "c5be38d5ddcb4bcba0ef0070eb81916ab890e5992577225fc18630c40e0bd1da",
+    "same_pod": true,
+    "same_image": true,
+    "observed_failed_container_ready": false,
+    "termination": {
+      "containerID": "containerd://d4c723730ffa6d51c6d0606e213623fcc667e64f6ccb21392bfc37f802720660",
+      "exitCode": 1,
+      "finishedAt": "2026-09-09T21:46:20Z",
+      "reason": "Error",
+      "startedAt": "2026-09-09T21:46:15Z"
+    },
+    "observed_container_lifetime_seconds_at_timestamp_precision": 5
+  },
+  "source_mapping": [
+    "cmd/main.go logs unable to create runtime operator and calls os.Exit(1) when NewEmbeddedOperator returns an error.",
+    "operator.go returns the NatsConnectContext error directly before controller construction.",
+    "NatsConnectContext configures nats.Timeout(5*time.Second) and returns ErrTransport immediately when worthRetrying returns false.",
+    "worthRetrying includes errors.Is(err,nats.ErrTimeout), plus selected connection and temporary DNS errors."
+  ],
+  "limits": [
+    "The live net dial i/o timeout and exit1 occur within a recorded five-second container lifetime. Source and log match the immediate transport-return shape; no concrete Go error type or errors.Is result was captured.",
+    "Do not equate every network timeout with nats.ErrTimeout or claim an error-type causal proof.",
+    "This is source capture and retained-log correlation only. It does not rerun the failure, prove later recovery, change acceptance bounds, or patch upstream.",
+    "The failed Receiving008 run remains failed. Root owns the narrowly correlated proof change and replay evidence."
+  ]
+}

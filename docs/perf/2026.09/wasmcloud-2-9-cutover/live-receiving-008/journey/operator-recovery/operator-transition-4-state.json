@@ -1,0 +1,42 @@
+{
+  "current": {
+    "container_id": "containerd://eeb6d62d1c7ac5e7b5f21048c218627c6f47cdb931021585ad73e1f59d3ec1d1",
+    "image_id": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+    "pod_name": "runtime-operator-5bc6494bdb-cqwgb",
+    "pod_uid": "2a01d1f1-ede6-469a-a8e0-ee1be4b07c69",
+    "ready": false,
+    "restart_count": 4,
+    "state": {
+      "running": {
+        "startedAt": "2026-09-09T21:47:09Z"
+      }
+    },
+    "termination": {
+      "containerID": "containerd://d4c723730ffa6d51c6d0606e213623fcc667e64f6ccb21392bfc37f802720660",
+      "exitCode": 1,
+      "finishedAt": "2026-09-09T21:46:20Z",
+      "reason": "Error",
+      "startedAt": "2026-09-09T21:46:15Z"
+    }
+  },
+  "previous": {
+    "container_id": "containerd://d4c723730ffa6d51c6d0606e213623fcc667e64f6ccb21392bfc37f802720660",
+    "image_id": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+    "pod_name": "runtime-operator-5bc6494bdb-cqwgb",
+    "pod_uid": "2a01d1f1-ede6-469a-a8e0-ee1be4b07c69",
+    "ready": false,
+    "restart_count": 3,
+    "state": {
+      "running": {
+        "startedAt": "2026-09-09T21:46:15Z"
+      }
+    },
+    "termination": {
+      "containerID": "containerd://4445ea8bad20f451dc5e8059ddb4b93483c63a46d9a4f8838fa4cc383fbbbf4e",
+      "exitCode": 0,
+      "finishedAt": "2026-09-09T21:46:15Z",
+      "reason": "Completed",
+      "startedAt": "2026-09-09T21:41:26Z"
+    }
+  }
+}

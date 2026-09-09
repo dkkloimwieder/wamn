@@ -3012,14 +3012,15 @@ execution; the Kubernetes objects independently prove the other arms.
 The [first 2.9.0 full journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/verdict.json) passes at `7798190c`.
 The later idle executor, telemetry, and startup-burst cases have executed evidence.
 Complete operator recovery still requires the corrected proof rerun.
-Receiving007 stops before any NATS fault while its sampler Pod is `ContainerCreating`. `wamn-0h0g.2.7.16` owns the bounded creation/readiness wait.
+Receiving008 passes sampler startup, then the restarted operator refuses its initial NATS connection during the outage.
+The [native refusal record](../perf/2026.09/wasmcloud-2-9-cutover/operator-startup-refusal-001/source-map.json) retains the exact log, container history, and source limits.
 Run the full mode from the next clean source commit, after its build preparation finishes.
 Keep new evidence in the main repository's `docs/perf`, outside the isolated build worktree.
 Select a fresh directory. The runner must not overwrite an earlier receipt.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \
-  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-008/journey
+  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey
 ```
 
 The runner supplies the existing private kubeconfig, authorities, release, and fixture inputs to the helpers.
@@ -3041,8 +3042,11 @@ They run only in full mode. `--measure-startup` exits earlier and keeps its exis
 The [completed comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) records 108 steps per source at `dfa1c318` and `e7033f72`.
 Both runs pass their existing service ratio ceiling of 12. No further benchmark is requested.
 
-The accepted operator proof permits a contiguous graceful restart in the same Pod and image only with recorded kubelet liveness evidence.
-That evidence must identify terminal NATS closure or a fault-time HTTP timeout for the same container.
+The accepted operator proof preserves the same Pod, image, and contiguous container history through supervised restarts.
+A graceful restart requires kubelet liveness evidence plus terminal NATS closure or a fault-time HTTP timeout for that container.
+A startup refusal requires exit 1 with reason `Error` from a previously observed unready container, with matching start and termination times.
+Its exact fault-time native setup line must report a TCP i/o timeout at the independently captured scheduler Service ClusterIP on port 4222.
+Unrelated exit-1 failures remain refused. `wamn-10yt.76` separately owns the native retry gap.
 Host identities, fresh Host status, exact HTTP 200, and both original 120-second recovery ceilings remain required.
 The revised proof must run from a clean committed source. The earlier failed runs remain failed.
 

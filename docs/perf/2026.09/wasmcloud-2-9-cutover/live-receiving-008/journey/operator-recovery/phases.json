@@ -1,0 +1,25 @@
+{
+  "initial": {
+    "exact_200_after_readiness": {
+      "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-09T21:40:21.958907Z\"}}]",
+      "content_type": "application/json",
+      "curl_exit": 0,
+      "result": "serving",
+      "seconds": 0.003616,
+      "status": 200,
+      "timestamp": 1788990223
+    },
+    "readiness_observed": 1788990218.8613315,
+    "ready_and_serving_after_seconds": 16.17470645904541,
+    "started": 1788990208.0270922,
+    "workload_uids": [
+      "bd26299a-1d81-415f-99ee-0aca6dfda609",
+      "dda89bf0-ffb5-4a9c-b279-f1aa05c32c07",
+      "ef877acf-3497-4a70-8c56-d0a76e0bb94f"
+    ]
+  },
+  "scheduler-stopped": {
+    "required_seconds": 150,
+    "started": 1788990305.7532704
+  }
+}

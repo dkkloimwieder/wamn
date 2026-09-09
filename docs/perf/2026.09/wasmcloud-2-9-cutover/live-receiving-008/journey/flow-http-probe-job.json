@@ -1,0 +1,96 @@
+{
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"flow-http-reachability\",\"namespace\":\"wamn-receiving-journey\"},\"spec\":{\"activeDeadlineSeconds\":60,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"headers=/tmp/headers\\nbody=/tmp/body\\n# --retry-connrefused because the Service can be Ready before\\n# kube-proxy has programmed it, and a refused connection returns\\n# INSTANTLY, so --connect-timeout never applies (wamn-0h0g.15.137.14).\\nstatus=$(curl --silent --show-error --connect-timeout 5 --max-time 15 \\\\\\n  --retry 15 --retry-delay 1 --retry-connrefused \\\\\\n  --dump-header \\\"$headers\\\" --output \\\"$body\\\" --write-out '%{http_code}' \\\\\\n  --header 'Host: receiving.localhost' \\\\\\n  'http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route')\\ncontent_type=$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' \\\"$headers\\\" \\\\\\n  | tr -d '\\\\r' | head -n 1)\\ntest \\\"$status\\\" = 404\\ntest \\\"$content_type\\\" = application/json\\nprintf '%s' '{\\\"error\\\":{\\\"code\\\":\\\"route-not-found\\\"}}' \\u003e/tmp/expected\\ncmp -s /tmp/expected \\\"$body\\\"\\nprintf '%s\\\\n' 'RECEIVING_HTTP_PROBE {\\\"status\\\":404,\\\"content_type\\\":\\\"application/json\\\",\\\"host\\\":\\\"receiving.localhost\\\",\\\"body\\\":{\\\"error\\\":{\\\"code\\\":\\\"route-not-found\\\"}}}'\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"image\":\"wamn-host:receiving-956c6c21e62f-4003863-release\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+        },
+        "creationTimestamp": "2026-09-09T21:41:58Z",
+        "generation": 1,
+        "labels": {
+            "batch.kubernetes.io/controller-uid": "c315dd83-bec4-4249-8310-8902205f8eeb",
+            "batch.kubernetes.io/job-name": "flow-http-reachability",
+            "controller-uid": "c315dd83-bec4-4249-8310-8902205f8eeb",
+            "job-name": "flow-http-reachability"
+        },
+        "name": "flow-http-reachability",
+        "namespace": "wamn-receiving-journey",
+        "resourceVersion": "1405",
+        "uid": "c315dd83-bec4-4249-8310-8902205f8eeb"
+    },
+    "spec": {
+        "activeDeadlineSeconds": 60,
+        "backoffLimit": 0,
+        "completionMode": "NonIndexed",
+        "completions": 1,
+        "manualSelector": false,
+        "parallelism": 1,
+        "podReplacementPolicy": "TerminatingOrFailed",
+        "selector": {
+            "matchLabels": {
+                "batch.kubernetes.io/controller-uid": "c315dd83-bec4-4249-8310-8902205f8eeb"
+            }
+        },
+        "suspend": false,
+        "template": {
+            "metadata": {
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "c315dd83-bec4-4249-8310-8902205f8eeb",
+                    "batch.kubernetes.io/job-name": "flow-http-reachability",
+                    "controller-uid": "c315dd83-bec4-4249-8310-8902205f8eeb",
+                    "job-name": "flow-http-reachability"
+                }
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "headers=/tmp/headers\nbody=/tmp/body\n# --retry-connrefused because the Service can be Ready before\n# kube-proxy has programmed it, and a refused connection returns\n# INSTANTLY, so --connect-timeout never applies (wamn-0h0g.15.137.14).\nstatus=$(curl --silent --show-error --connect-timeout 5 --max-time 15 \\\n  --retry 15 --retry-delay 1 --retry-connrefused \\\n  --dump-header \"$headers\" --output \"$body\" --write-out '%{http_code}' \\\n  --header 'Host: receiving.localhost' \\\n  'http://flow-http.wamn-receiving-journey.svc.cluster.local/no-such-route')\ncontent_type=$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' \"$headers\" \\\n  | tr -d '\\r' | head -n 1)\ntest \"$status\" = 404\ntest \"$content_type\" = application/json\nprintf '%s' '{\"error\":{\"code\":\"route-not-found\"}}' \u003e/tmp/expected\ncmp -s /tmp/expected \"$body\"\nprintf '%s\\n' 'RECEIVING_HTTP_PROBE {\"status\":404,\"content_type\":\"application/json\",\"host\":\"receiving.localhost\",\"body\":{\"error\":{\"code\":\"route-not-found\"}}}'\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "image": "wamn-host:receiving-956c6c21e62f-4003863-release",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File"
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "terminationGracePeriodSeconds": 30
+            }
+        }
+    },
+    "status": {
+        "completionTime": "2026-09-09T21:42:01Z",
+        "conditions": [
+            {
+                "lastProbeTime": "2026-09-09T21:42:01Z",
+                "lastTransitionTime": "2026-09-09T21:42:01Z",
+                "message": "Reached expected number of succeeded pods",
+                "reason": "CompletionsReached",
+                "status": "True",
+                "type": "SuccessCriteriaMet"
+            },
+            {
+                "lastProbeTime": "2026-09-09T21:42:01Z",
+                "lastTransitionTime": "2026-09-09T21:42:01Z",
+                "message": "Reached expected number of succeeded pods",
+                "reason": "CompletionsReached",
+                "status": "True",
+                "type": "Complete"
+            }
+        ],
+        "ready": 0,
+        "startTime": "2026-09-09T21:41:58Z",
+        "succeeded": 1,
+        "terminating": 0,
+        "uncountedTerminatedPods": {}
+    }
+}
