@@ -136,7 +136,9 @@ steps.json        the grading fixture, read by the grader only
 bin/              wamn (shim, A4) · wamn-ctl → $TARGET/debug/wamn-ctl
 transcript.jsonl  driver stream, verbatim, line-buffered
 driver.json       A3
-verbs.jsonl       A4
+verbs.jsonl       A4, one row per `wamn` call that ENDED
+verbs-started.jsonl  A4, one row per `wamn` call that STARTED (a held run has no
+                  completion row, wamn-nvbd.17)
 dev-logs/         NNN-<hhmmss>.out/.err per wamn invocation
 baseline.out      pre-agent wamn dev run on the untouched worktree (if the manifest names a baseline package)
 final.diff · final.status · commits.log
@@ -238,6 +240,8 @@ n=$(flock "$dir/verbs.lock" bash -c \
      'c=$(( $(cat "$1/verbs.counter" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$1/verbs.counter"; printf "%03d" "$c"' _ "$dir")
 ts=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ); t0=$(date +%s%3N)
 out="$dir/dev-logs/$n-$$.out"; err="${out%.out}.err"
+flock "$dir/verbs.lock" jq -cn --arg ts "$ts" --arg n "$n" \
+   --args '{ts:$ts,n:$n,argv:$ARGS.positional}' -- "$@" >> "$dir/verbs-started.jsonl"
 "$real" "$@" > >(tee -a "$out") 2> >(tee -a "$err" >&2); rc=$?
 wait                                   # both tee substitutions have flushed
 ms=$(( $(date +%s%3N) - t0 ))
@@ -246,10 +250,18 @@ flock "$dir/verbs.lock" jq -cn --arg ts "$ts" --arg n "$n" --argjson exit "$rc" 
 exit "$rc"
 ```
 
-Rows `{ts, n, argv[], exit, ms}`; `n` is allocated under a lock at start, so a
-backgrounded `--hold` and a concurrent `wamn dev` never share a number or a log
-file; the row is appended under the same lock when the call ends. `wait` closes
-both `tee` substitutions before the row, so `.out` is complete at the join.
+Two append-only ledgers, both written under the one lock. `verbs-started.jsonl`
+takes `{ts, n, argv[]}` before the call runs; `verbs.jsonl` takes
+`{ts, n, argv[], exit, ms}` when it ends. `n` is allocated under the lock at
+start, so a backgrounded `--hold` and a concurrent `wamn dev` never share a
+number or a log file. `wait` closes both `tee` substitutions before the
+completion row, so `.out` is complete at the join.
+
+The start ledger exists because a `wamn dev --hold` never returns: teardown
+kills it, so it writes no completion row and no exit code. Every count of runs
+ATTEMPTED reads the start ledger — `wamn_dev_runs`, `wamn_dev_hold_runs` and
+`first_green_minutes`. Only `wamn_dev_failed` reads the completion ledger,
+because a run that never exited did not fail (`wamn-nvbd.17`).
 
 Exit gate: `wamn --version` through the shim yields one row and identical stdout;
 two concurrent invocations yield two rows, two distinct log pairs, and `.out`
@@ -272,8 +284,10 @@ files that end with the binary's last line.
 ```
 
 `outside_allowed_paths` from `final.diff` + `final.status` against
-`manifest.allowed_paths`. `first_green_minutes` = first `verbs.jsonl` row whose
-`.out` contains `run completed:` with twelve stages, minus `launch.started`.
+`manifest.allowed_paths`. `first_green_minutes` = first `verbs-started.jsonl` row
+whose `.out` contains `run completed:` with twelve stages, minus
+`launch.started`. `wamn_dev_runs` and `wamn_dev_hold_runs` count rows in that
+same ledger; `wamn_dev_failed` counts non-zero exits in `verbs.jsonl`.
 
 ---
 

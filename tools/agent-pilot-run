@@ -527,7 +527,8 @@ verb_up() {
   jq 'del(.grade)' "$task_dir/task.json" > "$DIR/fixture/task.json"
   jq 'del(.grade)' "$task_dir/task.json" > "$DIR/task.json"
   read_manifest
-  : > "$DIR/verbs.jsonl"; : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
+  : > "$DIR/verbs.jsonl"; : > "$DIR/verbs-started.jsonl"
+  : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
   : > "$DIR/env.log"
 
   # A2, the worktree contract: detached at the pinned commit, clean, and unable
@@ -802,12 +803,17 @@ stop_tree() {
   kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
 }
 
+# COUNT A RUN WHEN IT STARTS. A `wamn dev --hold` does not exit -- teardown kills
+# it -- so it never reaches verbs.jsonl, and arm 030 reported wamn_dev_hold_runs 0
+# for the held run that carried its whole verification pass. Every count of runs
+# ATTEMPTED reads the start ledger the shim writes; only `failed` reads the
+# completion ledger, because a run that never exited did not fail.
 summarize_verbs() {
   local started="$1"
   local runs failed hold first_green
-  runs="$(jq -s '[.[] | select(.argv[0] == "dev")] | length' "$DIR/verbs.jsonl")"
+  runs="$(jq -s '[.[] | select(.argv[0] == "dev")] | length' "$DIR/verbs-started.jsonl")"
   failed="$(jq -s '[.[] | select(.argv[0] == "dev" and .exit != 0)] | length' "$DIR/verbs.jsonl")"
-  hold="$(jq -s '[.[] | select(.argv[0] == "dev" and (.argv | index("--hold")))] | length' "$DIR/verbs.jsonl")"
+  hold="$(jq -s '[.[] | select(.argv[0] == "dev" and (.argv | index("--hold")))] | length' "$DIR/verbs-started.jsonl")"
   first_green="$(first_green_minutes "$started")"
   local tmp; tmp="$(mktemp "$DIR/run.json.XXXXXX")"
   jq --argjson runs "$runs" --argjson failed "$failed" --argjson hold "$hold" \
@@ -820,7 +826,11 @@ summarize_verbs() {
 
 # The first green is the first invocation whose own stdout carried a completed
 # receipt with twelve stages. Reading the log rather than the exit code is
-# deliberate: a zero exit from a partial run is not a green loop.
+# deliberate: a zero exit from a partial run is not a green loop -- and a held
+# run has no exit code at all, which is why the walk is over the start ledger.
+# Arm 030's held run printed the twelve-stage receipt and was invisible here.
+# The row's `ts` is already the moment the call started, so the arithmetic is
+# unchanged.
 first_green_minutes() {
   local started="$1" row n log stages
   while read -r row; do
@@ -834,7 +844,7 @@ first_green_minutes() {
         return
       fi
     done
-  done < <(jq -c '.' "$DIR/verbs.jsonl")
+  done < <(jq -c '.' "$DIR/verbs-started.jsonl")
   echo 0
 }
 
