@@ -1858,11 +1858,55 @@ if [[ "$session_host_proof" == true ]]; then
           (((.imageID // "") | endswith($digest)) or .imageID == $config)))' \
       "$evidence_dir/$session_stage-pods.json" >/dev/null
     [[ $(grep -Fxc -- "$session_final" "$evidence_dir/$session_stage.log") == 1 ]] || exit 1
-    sed -n '/^HOST_SESSION/p' "$evidence_dir/$session_stage.log" >"$evidence_dir/$session_stage.receipt"
     while IFS= read -r session_pod; do
       run "${kube[@]}" -n "$namespace" logs "$session_pod" --all-containers \
         >"$evidence_dir/$session_stage-$session_pod.log"
     done < <(jq -r '.[].pod_name' "$evidence_dir/$session_stage-host-endpoints.json")
+    # A cold replacement could also refuse the removed key. Preserve proof
+    # that both warmed production containers survived the entire observation.
+    run "${kube[@]}" --request-timeout=30s -n "$namespace" get pods -l "$host_selector" -o json \
+      >"$evidence_dir/$session_stage-post-host-pods.json"
+    run "${kube[@]}" --request-timeout=30s -n "$system_namespace" get hosts -l hostgroup=default -o json \
+      >"$evidence_dir/$session_stage-post-hosts.json"
+    jq -en --arg ns "$namespace" --arg image "$host_image" --arg digest "$host_runtime_digest" \
+      --slurpfile placements "$evidence_dir/$session_stage-host-endpoints.json" \
+      --slurpfile before_pods "$evidence_dir/$session_stage-host-pods.json" \
+      --slurpfile before_hosts "$evidence_dir/$session_stage-hosts.json" \
+      --slurpfile after_pods "$evidence_dir/$session_stage-post-host-pods.json" \
+      --slurpfile after_hosts "$evidence_dir/$session_stage-post-hosts.json" '
+      def processes($pods; $hosts):
+        [$placements[0][] | . as $placement |
+          $pods.items[] | select(.metadata.uid == $placement.pod_uid and
+            .metadata.name == $placement.pod_name and .metadata.namespace == $ns and
+            .metadata.deletionTimestamp == null and .status.podIP == $placement.pod_ip and
+            .status.phase == "Running" and
+            any(.status.conditions[]?; .type == "Ready" and .status == "True") and
+            any(.spec.containers[]; .name == "host" and .image == $image)) | . as $pod |
+          .status.containerStatuses[]? | select(.name == "host" and .ready == true and
+            ((.imageID // "") | endswith($digest)) and
+            ((.containerID // "") | test("^containerd://[0-9a-f]{64}$")) and
+            (.state.running.startedAt | type == "string" and length > 0) and
+            ((.state.running.startedAt | fromdateiso8601?) != null) and
+            (.restartCount | type == "number" and . >= 0 and floor == .)) | . as $container |
+          $hosts.items[] | select(.hostId == $placement.host_id and .environment == $ns and
+            .httpPort == 80 and .metadata.deletionTimestamp == null and
+            (.hostname == $pod.metadata.name or .hostname == $pod.status.podIP) and
+            any(.status.conditions[]?; .type == "Ready" and .status == "True")) |
+          {pod_uid:$pod.metadata.uid,host_id:.hostId,container_id:$container.containerID,
+           started_at:$container.state.running.startedAt,restart_count:$container.restartCount}]
+        | sort_by(.pod_uid);
+      processes($before_pods[0]; $before_hosts[0]) as $before |
+      processes($after_pods[0]; $after_hosts[0]) as $after |
+      if ($before | length) == 2 and $before == $after and
+        (all($before[]; (.pod_uid | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")) and
+          (.host_id | test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$")))) and
+        ($before | map(.pod_uid) | unique | length) == 2 and
+        ($before | map(.host_id) | unique | length) == 2 and
+        ($before | map(.container_id) | unique | length) == 2
+      then {result:"pass",hosts:2,processes:$after}
+      else error("the two warm production host processes did not remain unchanged") end
+    ' >"$evidence_dir/$session_stage-process-continuity.json"
+    sed -n '/^HOST_SESSION/p' "$evidence_dir/$session_stage.log" >"$evidence_dir/$session_stage.receipt"
   done
   [[ $(git rev-parse HEAD) == "$head" ]] || exit 1
   [[ -z $(git status --porcelain --untracked-files=normal -- . \
