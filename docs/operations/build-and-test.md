@@ -2037,9 +2037,10 @@ interchangeable.
 
 Both files are Kubernetes `Secret` documents, mode 0700 directory, never
 printed. The provisioning log names each as it writes it (`wrote
-…/route-caller-pat.json (route-caller PAT Secret; kubectl apply)`); the
-`environment ready` summary block does not repeat them, so read the path from
-here rather than from the summary.
+…/route-caller-pat.json (route-caller PAT Secret; kubectl apply)`), and
+since `wamn-10yt.56` the `environment ready` summary carries the operator
+path on its `pat:` line. The management-author PAT is not in the summary;
+read that one from `dev.json`.
 
 #### 5. Terminal 2 — one run, held
 
