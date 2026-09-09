@@ -1887,7 +1887,7 @@ a second set. The Gate port is the one that is not negotiable per-process:
 `wamn dev up --gate-bind` names it, the configuration written outlives the
 process that wrote it, and a stray listener there is a hard failure.
 
-The `wamn` binary carries `dev` and `dev up`.
+The `wamn` binary carries `dev`, `dev up`, and `ui scaffold`.
 Bare `--tui` opens the developer console.
 `--tui <package>` opens that package's generated operator terminal and holds
 activation until the operator exits, without `--hold`.

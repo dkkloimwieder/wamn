@@ -43,4 +43,6 @@ pub mod reconcile_run_plane;
 pub mod restore_project_env;
 mod sql_params;
 pub mod terminalize_effect_uncertain;
+#[cfg(target_os = "linux")]
+pub mod ui;
 pub mod verification_policy;
