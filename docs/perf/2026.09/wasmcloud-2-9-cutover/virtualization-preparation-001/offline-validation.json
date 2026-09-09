@@ -1,0 +1,92 @@
+{
+  "schema": "wamn-cutover-virtualization-offline-validation/v1",
+  "controls": [
+    {
+      "name": "success",
+      "passed": true,
+      "invoked_tests": 2,
+      "owned_cleanup_calls": 1,
+      "m1_restore_calls": 1,
+      "exit": 0
+    },
+    {
+      "name": "setup-failure",
+      "passed": true,
+      "invoked_tests": 1,
+      "owned_cleanup_calls": 1,
+      "m1_restore_calls": 1,
+      "exit": 1
+    },
+    {
+      "name": "live-failure",
+      "passed": true,
+      "invoked_tests": 2,
+      "owned_cleanup_calls": 1,
+      "m1_restore_calls": 1,
+      "exit": 1
+    },
+    {
+      "name": "ignored",
+      "passed": true,
+      "invoked_tests": 2,
+      "owned_cleanup_calls": 1,
+      "m1_restore_calls": 1,
+      "exit": 1
+    },
+    {
+      "name": "zero-tests",
+      "passed": true,
+      "invoked_tests": 2,
+      "owned_cleanup_calls": 1,
+      "m1_restore_calls": 1,
+      "exit": 1
+    },
+    {
+      "name": "collision",
+      "passed": true,
+      "invoked_tests": 1,
+      "owned_cleanup_calls": 0,
+      "m1_restore_calls": 1,
+      "exit": 1
+    },
+    {
+      "name": "restore-failure",
+      "passed": true,
+      "invoked_tests": 2,
+      "owned_cleanup_calls": 1,
+      "m1_restore_calls": 1,
+      "exit": 1
+    },
+    {
+      "name": "cleanup-failure",
+      "passed": true,
+      "invoked_tests": 2,
+      "owned_cleanup_calls": 1,
+      "m1_restore_calls": 1,
+      "exit": 1
+    },
+    {
+      "name": "interrupted",
+      "passed": true,
+      "invoked_tests": 2,
+      "owned_cleanup_calls": 1,
+      "m1_restore_calls": 1,
+      "exit": 1
+    },
+    {
+      "name": "dirty",
+      "passed": true,
+      "invoked_tests": 0,
+      "owned_cleanup_calls": 0,
+      "m1_restore_calls": 0,
+      "exit": 1
+    }
+  ],
+  "file_sha256": {
+    "run-virtualization.py": "d2200a849ecb97de0a525a959fa3932ca43130fb5392a8f5e2d234fc8dc3a97d",
+    "proof_support.py": "c5469b16c8cf966530540584ef7aa9c4ade4898a6b43d7c659fde27ddc9457be",
+    "selection.json": "a60e2d682f55ed2468c582cdf8a502c347f7f9760dd0e416a6e618356ccec2c5",
+    "validate-offline.py": "fa1c5651536e58297ddd131b82c7c927ef592eb7bc7cdc600664335222d4f886"
+  },
+  "scope": "Python syntax and local executable stubs only. Socket objects were fake; no ports were bound and no real Git, Cargo, Docker, psql, build-components, or network call ran."
+}

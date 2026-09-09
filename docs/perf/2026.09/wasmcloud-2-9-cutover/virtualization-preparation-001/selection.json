@@ -1,0 +1,67 @@
+{
+  "schema": "wamn-cutover-virtualization-selection/v1",
+  "command_map": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/authority-preparation-001/wamn-cutover-remaining-proof-map.json",
+  "command_map_sha256": "f6816eab105ca8723018883cd794cbc77498a4fc41fd768e89cd79c250df3f7c",
+  "tests": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "-p",
+        "wamn-proof-integration",
+        "--locked",
+        "--offline",
+        "--lib",
+        "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+        "--",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1",
+        "--exact"
+      ],
+      "expected_tests": 1,
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2991"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "-p",
+        "wamn-proof-integration",
+        "--locked",
+        "--offline",
+        "--lib",
+        "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+        "--",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1",
+        "--exact"
+      ],
+      "expected_tests": 1,
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2993"
+    }
+  ],
+  "source_citations": [
+    "docs/operations/build-and-test.md:829",
+    "tests/integration/src/virtualized_std_guest.rs:267",
+    "tests/integration/src/virtualized_std_guest.rs:416",
+    "docs/operations/build-and-test.md:2627",
+    "docs/operations/build-and-test.md:2667",
+    "tools/build-components:342",
+    "tools/build-components:383"
+  ],
+  "inspected_source_sha256": {
+    "docs/operations/build-and-test.md": "06ac833dbc9c21c7f39940b2db48b6083b592c3d0a954536a9bc024e9bbbb6c3",
+    "tests/integration/src/virtualized_std_guest.rs": "58ea438c528eedeb4073e5b199930cb79dbd2db989fbc7d4950629534ad43fef",
+    "test-support/infrastructure/std-virtualization.compose.yaml": "232b31f5e83a5e84f11a4413bfdf4c643c7202607fb96351dc5f547ce18a131f",
+    "tools/build-components": "78d57e4c2ceb364cf25bb2644b373a45e13f243e524339d0fe5da432dadae245",
+    "tools/component-virtualization.json": "904bb30f14a6ef899efdf1d6b5ed2d1ecb1e12fa46f534bb1de58a9b4a283693"
+  },
+  "acceptance": [
+    "The first exact test inspects the virtualized std probe imports and receiving.wasm imports plus eight operation exports. It does not inspect an overlay artifact.",
+    "The second exact test uses the virtualized std probe and production HTTP shell to prove sentinel isolation and panic-to-typed-refusal behavior."
+  ],
+  "profile_risk": "tools/build-components proof changes shared guest artifacts. Always rebuild m1 before a production journey, even if this proof fails. A successful m1 rebuild does not establish cross-profile digest equality or close wamn-10yt.61.",
+  "build_owner_correction": "tools/build-components now builds --release and derives release artifact paths. The older docs/map debug paths can name stale files; this wrapper selects release/std_virtualization_probe.wasm and release/http_route.wasm from the successful proof build."
+}

@@ -1,0 +1,255 @@
+{
+  "schema": "wamn-cutover-virtualization-evidence/v1",
+  "source": "0388e3bc98d231f1e69538e613ec33689c041653",
+  "selection_sha256": "a60e2d682f55ed2468c582cdf8a502c347f7f9760dd0e416a6e618356ccec2c5",
+  "wrapper_sha256": "d2200a849ecb97de0a525a959fa3932ca43130fb5392a8f5e2d234fc8dc3a97d",
+  "support_sha256": "c5469b16c8cf966530540584ef7aa9c4ade4898a6b43d7c659fde27ddc9457be",
+  "started_unix_ns": 1788971820742593664,
+  "verdict": "fail",
+  "stage": "proof-complete",
+  "acceptance": [
+    "The first exact test inspects the virtualized std probe imports and receiving.wasm imports plus eight operation exports. It does not inspect an overlay artifact.",
+    "The second exact test uses the virtualized std probe and production HTTP shell to prove sentinel isolation and panic-to-typed-refusal behavior."
+  ],
+  "profile_risk": "tools/build-components proof changes shared guest artifacts. Always rebuild m1 before a production journey, even if this proof fails. A successful m1 rebuild does not establish cross-profile digest equality or close wamn-10yt.61.",
+  "tests": [
+    {
+      "name": "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+      "invoked": true,
+      "passed": true,
+      "classification": "invoked_passed",
+      "expected_tests": 1,
+      "arming": {
+        "WAMN_STD_VIRTUALIZATION_COMPONENT_WASM": {
+          "set": true,
+          "value": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/components/target/virtualized/std-empty-environment/std_virtualization_probe.wasm"
+        },
+        "WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY": {
+          "set": true,
+          "value": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/components/target/virtualized/std-empty-environment"
+        }
+      },
+      "command": {
+        "label": "test-1",
+        "argv": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-proof-integration",
+          "--locked",
+          "--offline",
+          "--lib",
+          "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+          "--",
+          "--include-ignored",
+          "--nocapture",
+          "--test-threads=1",
+          "--exact"
+        ],
+        "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+        "started_unix_ns": 1788971878001784038,
+        "exit_code": 0,
+        "timeout": false,
+        "interrupted": false,
+        "raw_private_log": "private/003-test-1.log",
+        "redacted_log": "003-test-1.redacted.log",
+        "owned_group_cleanup": false,
+        "finished_unix_ns": 1788971888472318546,
+        "raw_sha256": "486455fcf5ff2c9519f69bdd1f2e787a66c08a9dac87aabb436f3503a5bb074a",
+        "redacted_sha256": "15e5f2089ff7b1304aefe986c8f4db2d5c4147a320d30d0f5c74bc9429027045"
+      },
+      "summaries": [
+        {
+          "result": "ok",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 65
+        }
+      ],
+      "explicit_skip_detected": false
+    },
+    {
+      "name": "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+      "invoked": true,
+      "passed": false,
+      "classification": "invoked_failed",
+      "expected_tests": 1,
+      "arming": {
+        "WAMN_STD_VIRTUALIZATION_COMPONENT_WASM": {
+          "set": true,
+          "value": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/components/target/virtualized/std-empty-environment/std_virtualization_probe.wasm"
+        },
+        "WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY": {
+          "set": true,
+          "value": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/components/target/virtualized/std-empty-environment"
+        },
+        "WAMN_STD_VIRTUALIZATION_SENTINEL": {
+          "set": true,
+          "value": "must-not-cross"
+        },
+        "WAMN_STD_VIRTUALIZATION_PG_URL": {
+          "set": true,
+          "value": "<private>"
+        },
+        "WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE": {
+          "set": true,
+          "value": "127.0.0.1:36913/wamn/std-proof"
+        },
+        "WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM": {
+          "set": true,
+          "value": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/components/target/wasm32-wasip2/release/http_route.wasm"
+        }
+      },
+      "command": {
+        "label": "test-2",
+        "argv": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-proof-integration",
+          "--locked",
+          "--offline",
+          "--lib",
+          "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+          "--",
+          "--include-ignored",
+          "--nocapture",
+          "--test-threads=1",
+          "--exact"
+        ],
+        "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+        "started_unix_ns": 1788971891734751634,
+        "exit_code": 101,
+        "timeout": false,
+        "interrupted": false,
+        "raw_private_log": "private/012-test-2.log",
+        "redacted_log": "012-test-2.redacted.log",
+        "owned_group_cleanup": false,
+        "finished_unix_ns": 1788971896768639222,
+        "raw_sha256": "7f79142163b78efc3bd8e5c99307f5d1ec1d1dc87119902893e7f8a6b86e27c6",
+        "redacted_sha256": "1239a5e8b76138b6eafdc7ca5dd28fd11a16c740bc765723104c927d9d8fc71c"
+      },
+      "summaries": [
+        {
+          "result": "FAILED",
+          "passed": 0,
+          "failed": 1,
+          "ignored": 0,
+          "measured": 0,
+          "filtered": 65
+        }
+      ],
+      "explicit_skip_detected": false
+    }
+  ],
+  "compose": {
+    "project": "wamn-cutover-std-7ec0cc79baf65a1d",
+    "cleanup_attempted": true,
+    "cleanup_passed": true,
+    "ports": {
+      "postgres": 43847,
+      "registry": 36913
+    },
+    "owned_containers": {
+      "postgres": "99b0879f4cd7543ac30fb6703bbbc910f30786bdfd2bd58b2b2015975ea83712",
+      "registry": "e768d5c7534f933f078c7b7daa84d4eb26749927740a5e9c57d0b969dda0fbe1"
+    },
+    "server_version_num": 180006,
+    "cleanup_command": {
+      "label": "compose-down",
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "wamn-cutover-std-7ec0cc79baf65a1d",
+        "-f",
+        "test-support/infrastructure/std-virtualization.compose.yaml",
+        "down",
+        "--volumes"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+      "started_unix_ns": 1788971896770053108,
+      "exit_code": 0,
+      "timeout": false,
+      "interrupted": false,
+      "raw_private_log": "private/013-compose-down.log",
+      "redacted_log": "013-compose-down.redacted.log",
+      "owned_group_cleanup": false,
+      "finished_unix_ns": 1788971897335677222,
+      "raw_sha256": "2b71d1e4365e10dea3c4b8b63658fbe3e9b4a82c721c01a1bfd9eabc06464da1",
+      "redacted_sha256": "5fb4c7702ef8ffa47ad47f18a8351876a8546896e09ebe8bd5647a6000fa7a5e"
+    },
+    "remaining_containers_empty": true,
+    "remaining_networks_empty": true,
+    "remaining_volumes_empty": true
+  },
+  "m1_restore": {
+    "required": false,
+    "attempted": true,
+    "passed": true,
+    "command": {
+      "label": "restore-m1",
+      "argv": [
+        "tools/build-components",
+        "m1"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+      "started_unix_ns": 1788971897414793651,
+      "exit_code": 0,
+      "timeout": false,
+      "interrupted": false,
+      "raw_private_log": "private/017-restore-m1.log",
+      "redacted_log": "017-restore-m1.redacted.log",
+      "owned_group_cleanup": false,
+      "finished_unix_ns": 1788971926743079031,
+      "raw_sha256": "11fec55e1b192ab5ffdfc21aa69a8c421e104804819554ef3c00663a040d4057",
+      "redacted_sha256": "1065b3a7a9c43d94f3d82aa6239b3b53977ee6c6ec41084e320854b985926703"
+    }
+  },
+  "redaction": "Private raw logs and errors have mode 0600. Public copies preserve Rust test protocol lines only; do not publish private/.",
+  "source_preflight": {
+    "commit": "0388e3bc98d231f1e69538e613ec33689c041653",
+    "clean": true
+  },
+  "artifacts_before": {},
+  "proof_artifacts": {
+    "components/target/wasm32-wasip2/release/std_virtualization_probe.wasm": {
+      "bytes": 147557,
+      "sha256": "97624b7b301209bb0a0df3b1abdfbd7c66231dac5560971c987286850acdacd3"
+    },
+    "components/target/virtualized/std-empty-environment/std_virtualization_probe.wasm": {
+      "bytes": 284099,
+      "sha256": "b542f82973aab0d3bc84ed0a2c4ee9cb54cfecb0798e7192726b20e518ad81cc"
+    },
+    "components/target/virtualized/std-empty-environment/receiving.wasm": {
+      "bytes": 671038,
+      "sha256": "aa221f1386639cf99e5d52922dca350563c544afb868cd717fd6b67634d1e160"
+    },
+    "components/target/wasm32-wasip2/release/http_route.wasm": {
+      "bytes": 211555,
+      "sha256": "c8bc2a09bf13f2c1d13da612c505a822ee89d8d4293ce9f883de07d99d720ad6"
+    }
+  },
+  "artifacts_after_m1": {
+    "components/target/wasm32-wasip2/release/std_virtualization_probe.wasm": {
+      "bytes": 147557,
+      "sha256": "97624b7b301209bb0a0df3b1abdfbd7c66231dac5560971c987286850acdacd3"
+    },
+    "components/target/virtualized/std-empty-environment/receiving.wasm": {
+      "bytes": 669281,
+      "sha256": "1f481deceaea9e217fb19819c750ce39fec8e9a1e19686e43dc2ebf65b1d9fef"
+    },
+    "components/target/wasm32-wasip2/release/http_route.wasm": {
+      "bytes": 211416,
+      "sha256": "577bc11d109a1fad0e04a5be3e9804f14003dd44a0765cdcb832fea7877ab436"
+    }
+  },
+  "final_source": {
+    "commit": "0388e3bc98d231f1e69538e613ec33689c041653",
+    "clean": true
+  },
+  "proof_passed": false,
+  "finished_unix_ns": 1788971926766593010
+}

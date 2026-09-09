@@ -436,3 +436,19 @@ The greenfield cutover adds no migration for existing database permissions.
 The [static results](authority-contract-fix-001/static-validation.json) pass formatting, source hashes, patch application, and unchanged denial-surface assertions.
 The two live authority groups still require a new run on the corrected source.
 The protected-write inventory also requires the measured grant removal before `wamn-0h0g.2.7.9` closes.
+
+
+## Virtualized artifact proof and route fixture
+
+The [virtualization run](virtualization-live-001/summary.json) uses clean source `0388e3bc`.
+Its first test passes the exact probe and Receiving import sets and eight Receiving exports.
+Its second test fails before invocation because the trusted route fixture omits required component operations from its serving manifest.
+The run proves neither sentinel isolation nor panic refusal.
+Owned Compose cleanup and the production `m1` rebuild both pass.
+The rebuild does not close the separate cross-profile digest finding, `wamn-10yt.61`.
+
+The correction projects the admitted operation facts through the existing `ServingComponentOperation` type, as production publication does.
+It retains registered operation identity, fresh-credential requirements, dependencies, and exact SQL statements.
+The [scoped Clippy run](fixture-operations-fix-001/exit-code.txt) exits 0 with warnings.
+The updated recipe selects the release artifacts that the current build command produces.
+Bead `wamn-0h0g.2.7.11` remains open until the actual isolation and refusal proof passes.

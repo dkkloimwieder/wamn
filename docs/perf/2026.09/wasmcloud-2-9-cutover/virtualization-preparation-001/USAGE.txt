@@ -1,0 +1,11 @@
+After the active owner releases machine execution, run from the exact clean source chosen by root with a new evidence directory outside that checkout:
+
+python3 /tmp/wamn-cutover-virtualization-prepared/run-virtualization.py --repo /home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909 --source FULL_40_CHARACTER_COMMIT --evidence-dir /tmp/wamn-cutover-virtualization-live-001
+
+The wrapper builds the proof profile, virtualizes the release std probe, and invokes both exact tests from selection.json; each test must execute one case with no ignored or self-skipped result.
+The Compose project is unique, both loopback ports are reserved together and released just before Compose binds them, only postgres and registry start, and cleanup uses that same project with ownership labels and retained container IDs.
+Raw logs stay in private/ with mode 0600 and must not be published; public command, arming, classification, cleanup, and artifact receipts contain no credential URLs.
+After any proof build attempt, the wrapper cleans owned Compose resources and attempts tools/build-components m1 on the same clean source, even after a proof failure; require successful m1_restore before the next production journey, while wamn-10yt.61 and cross-profile digest equality remain unproved.
+
+The older command map names debug artifacts, but the current build owner emits release artifacts at tools/build-components:342 and :383; this wrapper therefore uses components/target/wasm32-wasip2/release/std_virtualization_probe.wasm and release/http_route.wasm.
+The first test inspects the std probe and receiving.wasm, including eight Receiving operation exports; it does not inspect the overlay artifact.
