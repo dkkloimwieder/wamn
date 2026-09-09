@@ -162,6 +162,49 @@ pub const QUALITY_APPROVE_INSPECTION_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
+pub const QUALITY_APPROVE_INSPECTION_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "expected_row_version", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "receipt_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const QUALITY_APPROVE_INSPECTION_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_row_version", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "receipt_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "status", type_name: "text", nullable: false, values: &["approved"] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const QUALITY_APPROVE_INSPECTION_KIND: &str = "command";
+pub const QUALITY_APPROVE_INSPECTION_REQUIRES_COMPOSITION: bool = true;
+pub const QUALITY_APPROVE_INSPECTION_REPLAY: Option<&str> = Some("state");
+pub const QUALITY_APPROVE_INSPECTION_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const QUALITY_APPROVE_INSPECTION_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `client-acme-receiving:quality/approve-inspection@3.0.0`.
 pub const QUALITY_APPROVE_INSPECTION_GRANT: &str = "client-acme-receiving:quality/approve-inspection@3.0.0";
 
@@ -302,6 +345,53 @@ pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
+pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "acme_inspection_required", type_name: "boolean", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "acme_quality_status", type_name: "text", nullable: false, values: &["approved", "not_required", "pending"] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_number", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "status", type_name: "text", nullable: false, values: &["cancelled", "complete", "open"] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "supplier_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_KIND: &str = "projection";
+pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_REQUIRES_COMPOSITION: bool = false;
+pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_REPLAY: Option<&str> = None;
+pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `client-acme-receiving:quality/load-purchase-order-detail@3.0.0`.
 pub const QUALITY_LOAD_PURCHASE_ORDER_DETAIL_GRANT: &str = "client-acme-receiving:quality/load-purchase-order-detail@3.0.0";
 

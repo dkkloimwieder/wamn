@@ -27,15 +27,17 @@
 //! lists are sets; a version of it that reversed every array failed against a
 //! correct IR before that distinction was drawn.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::client_fields::{fields_of, input_fields_of, schema_fields};
+
 /// IR shape version. A consumer that does not recognise it must refuse rather
 /// than guess at a field's meaning.
-pub const CLIENT_IR_FORMAT_VERSION: u32 = 1;
+pub const CLIENT_IR_FORMAT_VERSION: u32 = 2;
 
 /// Why a contract projection could not be read as an IR.
 #[derive(Debug)]
@@ -51,7 +53,7 @@ impl ClientIrError {
         self.kind
     }
 
-    fn new(kind: ClientIrErrorKind, detail: impl Into<String>) -> Self {
+    pub(super) fn new(kind: ClientIrErrorKind, detail: impl Into<String>) -> Self {
         Self {
             kind,
             detail: detail.into(),
@@ -151,6 +153,34 @@ pub struct RouteIr {
     /// Authored path template, parameter names intact, e.g.
     /// `/purchase_order/{id}`.
     pub template: String,
+    /// Declared input schema of the served route.
+    pub input_schema: Option<Value>,
+    /// Operation at the responding terminal, when the wiring declares one.
+    pub terminal_operation: Option<String>,
+    /// Whether the entire wiring is the registered operation alone.
+    pub direct: bool,
+    /// Contract of the responding terminal, never an arbitrary inner node.
+    pub response: ResponseIr,
+    /// Whole-submission replay guarantee. Unknown and composed routes have none.
+    pub replay: Option<ReplayIr>,
+}
+
+/// The declared response of a served route.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ResponseIr {
+    pub schema: Option<Value>,
+    pub result_class: Option<String>,
+    pub fields: Vec<FieldIr>,
+    pub errors: Vec<ErrorCaseIr>,
+}
+
+/// Replay guarantees declared by the served operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayIr {
+    Claim,
+    State,
 }
 
 /// One field descriptor.
@@ -163,6 +193,13 @@ pub struct FieldIr {
     pub type_name: String,
     /// Whether the contract admits null.
     pub nullable: bool,
+    /// Whether the property must be present, independently of its null value.
+    pub required: bool,
+    /// Object members or repeated item members, ordered by path.
+    pub children: Vec<FieldIr>,
+    /// Declared repeated-item bounds.
+    pub minimum: Option<u64>,
+    pub maximum: Option<u64>,
     /// Closed value domain, when the contract declares one. Empty means open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub values: Vec<String>,
@@ -174,6 +211,8 @@ pub struct FieldIr {
 pub struct OperationIr {
     /// Local name within the model, e.g. `query`.
     pub name: String,
+    /// Operation kind carried by the generated manifest contract.
+    pub kind: String,
     /// Canonical operation identity.
     pub operation: String,
     /// The grant a caller needs.
@@ -190,6 +229,17 @@ pub struct OperationIr {
     /// packages is attached over HTTP.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub route: Option<RouteIr>,
+    /// Declared record mapping, absent for commands without a key binding.
+    pub record: Option<RecordIr>,
+    /// Compatible exposed record read and revision binding.
+    pub revision_binding: Option<RevisionBindingIr>,
+    /// A revision input cannot be submitted until Rust composition binds it.
+    pub requires_composition: bool,
+    /// The operation's own declaration; only the route grants safe replay.
+    pub idempotent_by: Option<Value>,
+    /// Declared transaction boundary, retained for submission evidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction: Option<String>,
     /// Result class, e.g. `one`, `page`.
     pub result_class: String,
     /// Input field descriptors, ordered by path.
@@ -207,6 +257,72 @@ pub struct OperationIr {
     pub paging: Option<PagingIr>,
     /// Typed error cases, ordered by literal.
     pub errors: Vec<ErrorCaseIr>,
+}
+
+/// Record coordinates declared by a generated operation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordIr {
+    pub relation: String,
+    pub key_field: String,
+    pub key_input: Option<String>,
+    pub revision_field: Option<String>,
+    pub revision_input: Option<String>,
+}
+
+/// The read that supplies a command's record and expected revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RevisionBindingIr {
+    pub read_operation: String,
+    pub read_key_input: String,
+    pub key_field: String,
+    pub revision_field: String,
+    pub command_key_input: String,
+    pub command_revision_input: String,
+}
+
+/// Leaf descriptors for flat display controls and typed schema hints.
+pub fn leaf_fields(fields: &[FieldIr]) -> Vec<&FieldIr> {
+    fields
+        .iter()
+        .flat_map(|field| {
+            if field.children.is_empty() {
+                vec![field]
+            } else {
+                leaf_fields(&field.children)
+            }
+        })
+        .collect()
+}
+
+/// Exact input paths that carry declared or platform-reserved revisions.
+pub fn revision_inputs(operation: &OperationIr) -> Vec<&str> {
+    let mut paths = BTreeSet::new();
+    if let Some(path) = operation
+        .record
+        .as_ref()
+        .and_then(|record| record.revision_input.as_deref())
+    {
+        paths.insert(path);
+    }
+    if let Some(guards) = operation
+        .idempotent_by
+        .as_ref()
+        .and_then(|declaration| declaration.pointer("/state/guards"))
+        .and_then(Value::as_object)
+    {
+        paths.extend(guards.values().filter_map(Value::as_str));
+    }
+    for field in leaf_fields(&operation.input_fields) {
+        if matches!(
+            field.path.as_str(),
+            "expected_row_version" | "value.expected_row_version"
+        ) {
+            paths.insert(field.path.as_str());
+        }
+    }
+    paths.into_iter().collect()
 }
 
 /// Filters, sort and pagination for one operation.
@@ -273,6 +389,9 @@ pub struct LimitIr {
 pub struct ErrorCaseIr {
     /// The wire literal a client branches on.
     pub literal: String,
+    /// Declared origins of this outcome, including ambiguous infrastructure failures.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
     /// Detail members always present.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub detail_required: Vec<String>,
@@ -437,10 +556,11 @@ impl ClientContractIr {
         cursor: Option<Value>,
         routes: &BTreeMap<String, RouteIr>,
     ) -> Result<Self, ClientIrError> {
-        let models = modules
+        let mut models = modules
             .into_iter()
             .map(|(name, operations)| build_model(&name, operations, routes))
             .collect::<Result<Vec<_>, _>>()?;
+        bind_served_contracts(&mut models);
         Ok(Self {
             format_version: CLIENT_IR_FORMAT_VERSION,
             package: package.to_owned(),
@@ -529,9 +649,23 @@ fn route_index(attachments: &Path) -> Result<BTreeMap<String, RouteIr>, ClientIr
                     )
                 })
         };
+        let evidence = crate::client_route::evidence(attachments, &attachment)?;
         let route = RouteIr {
             method: member("method")?,
             template: member("template").or_else(|_| member("path"))?,
+            input_schema: evidence.input_schema,
+            terminal_operation: evidence.terminal_operation,
+            direct: evidence.direct,
+            response: ResponseIr {
+                fields: evidence
+                    .output_schema
+                    .as_ref()
+                    .map(|schema| schema_fields(schema, &[]))
+                    .unwrap_or_default(),
+                schema: evidence.output_schema,
+                ..ResponseIr::default()
+            },
+            replay: None,
         };
         if route.method != route.method.to_ascii_uppercase()
             || route.template != normalized_template(&route.template)
@@ -666,12 +800,13 @@ fn build_model(
     let mut merged: BTreeMap<String, FieldIr> = BTreeMap::new();
     for field in built
         .iter()
-        .flat_map(|operation| operation.result_fields.iter())
+        .flat_map(|operation| leaf_fields(&operation.result_fields))
     {
         merged
             .entry(field.path.clone())
             .and_modify(|existing| {
                 existing.nullable |= field.nullable;
+                existing.required &= field.required;
                 // A closed domain stated anywhere is the model's domain; two
                 // different closed domains for one path union rather than one
                 // silently winning.
@@ -740,9 +875,49 @@ fn build_operation(
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
     let identity = member("operation")?;
+    let kind = member("kind")?;
+    let record: Option<RecordIr> = operation
+        .get("record")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| {
+            ClientIrError::new(
+                ClientIrErrorKind::MalformedContract,
+                format!("{module}/{name} record: {error}"),
+            )
+        })?;
+    let declared_fields = input_fields_of(&input);
+    let input_fields = routes
+        .get(&identity)
+        .and_then(|route| route.input_schema.as_ref())
+        .map_or_else(
+            || declared_fields.clone(),
+            |schema| schema_fields(schema, &declared_fields),
+        );
+    let idempotent_by = operation.get("idempotent_by").cloned();
+    let requires_composition = matches!(kind.as_str(), "update" | "delete")
+        || idempotent_by
+            .as_ref()
+            .is_some_and(|value| value.get("state").is_some())
+        || leaf_fields(&input_fields).iter().any(|field| {
+            matches!(
+                field.path.as_str(),
+                "expected_row_version" | "value.expected_row_version"
+            )
+        });
     Ok(Some(OperationIr {
         name: name.to_owned(),
+        kind,
         route: routes.get(&identity).cloned(),
+        record,
+        revision_binding: None,
+        requires_composition,
+        idempotent_by,
+        transaction: operation
+            .get("transaction")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         operation: identity,
         grant: member("grant")?,
         permission_token: member("permission_token")?,
@@ -751,7 +926,7 @@ fn build_operation(
             .and_then(Value::as_str)
             .unwrap_or("none")
             .to_owned(),
-        input_fields: input_fields_of(&input),
+        input_fields,
         result_fields: fields_of(&result),
         server_owned_fields: string_list(
             input
@@ -764,91 +939,112 @@ fn build_operation(
     }))
 }
 
-/// Input descriptors from a command contract's `fields` array, else from the
-/// scalar members a generated CRUD contract declares.
-///
-/// TWO SHAPES, both authored by the generator, and reading only one leaves
-/// seven of the twelve shipped operations with no input at all. A COMMAND
-/// contract (`receiving/record_receipt`) carries a `fields` array. A generated
-/// CRUD contract (`purchase_order/get`) instead names each input as a
-/// top-level member carrying `{required, type}` — `id`, `request_id`,
-/// `expected_row_version` — and lists the three-state updatable ones under
-/// `writable_fields`.
-///
-/// A writable field is NULLABLE in the descriptor sense: `omitted: unchanged`
-/// means a caller may leave it out, which is exactly the optionality a control
-/// or a request struct needs to model. Its `explicit_null` disposition is a
-/// refusal rule, not a shape, and stays in the contract where it is enforced.
-fn input_fields_of(contract: &Value) -> Vec<FieldIr> {
-    let declared = fields_of(contract);
-    if !declared.is_empty() {
-        return declared;
-    }
-    let Some(members) = contract.as_object() else {
-        return Vec::new();
-    };
-    let mut fields: Vec<FieldIr> = members
+fn bind_served_contracts(models: &mut [ModelIr]) {
+    let operations: BTreeMap<_, _> = models
         .iter()
-        .filter_map(|(name, member)| {
-            Some(FieldIr {
-                path: name.clone(),
-                type_name: member.get("type")?.as_str()?.to_owned(),
-                // A scalar input member declares `required`; absent reads as
-                // optional, which is the safer direction — a client that sends
-                // an optional field is refused by the contract, one that omits
-                // a required field never builds.
-                nullable: !member
-                    .get("required")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                values: string_list(member.get("values")),
-            })
-        })
+        .flat_map(|model| &model.operations)
+        .map(|operation| (operation.operation.clone(), operation.clone()))
         .collect();
-    fields.extend(
-        contract
-            .get("writable_fields")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|field| {
-                Some(FieldIr {
-                    path: field.get("field")?.as_str()?.to_owned(),
-                    type_name: field.get("type")?.as_str()?.to_owned(),
-                    nullable: true,
-                    values: string_list(field.get("values")),
+    for operation in models.iter_mut().flat_map(|model| &mut model.operations) {
+        if let Some(route) = &mut operation.route {
+            if let Some(terminal) = route
+                .terminal_operation
+                .as_ref()
+                .and_then(|id| operations.get(id))
+            {
+                route.response.result_class = Some(terminal.result_class.clone());
+                route.response.fields = terminal.result_fields.clone();
+                route.response.errors = terminal.errors.clone();
+            }
+            if route.direct {
+                route.replay = match operation.idempotent_by.as_ref() {
+                    Some(value) if value == "claim" => Some(ReplayIr::Claim),
+                    Some(value) if value.get("state").is_some() => Some(ReplayIr::State),
+                    _ => None,
+                };
+            }
+        }
+    }
+    // Read bindings consume the served response after all terminal contracts
+    // are resolved, never an inner operation's unserved result.
+    let operations: Vec<_> = models
+        .iter()
+        .flat_map(|model| &model.operations)
+        .cloned()
+        .collect();
+    for operation in models.iter_mut().flat_map(|model| &mut model.operations) {
+        if !operation.requires_composition {
+            continue;
+        }
+        let Some(record) = &operation.record else {
+            continue;
+        };
+        let (Some(key_input), Some(revision_input), Some(revision_field)) = (
+            &record.key_input,
+            &record.revision_input,
+            &record.revision_field,
+        ) else {
+            continue;
+        };
+        let command_fields = leaf_fields(&operation.input_fields);
+        let Some(key) = command_fields.iter().find(|field| &field.path == key_input) else {
+            continue;
+        };
+        let Some(revision) = command_fields
+            .iter()
+            .find(|field| &field.path == revision_input)
+        else {
+            continue;
+        };
+        let candidates = operations
+            .iter()
+            .filter_map(|read| {
+                if read.kind != "get" {
+                    return None;
+                }
+                let route = read.route.as_ref()?;
+                if route.response.result_class.as_deref() != Some("one") {
+                    return None;
+                }
+                let read_record = read.record.as_ref()?;
+                if read_record.relation != record.relation
+                    || read_record.key_field != record.key_field
+                {
+                    return None;
+                }
+                let read_key_input = read_record.key_input.as_ref()?;
+                let input = leaf_fields(&read.input_fields);
+                let result = leaf_fields(&route.response.fields);
+                let compatible = |field: &&FieldIr, path: &str, ty: &str| {
+                    field.path == path && field.type_name == ty && field.required && !field.nullable
+                };
+                if !input
+                    .iter()
+                    .any(|field| compatible(field, read_key_input, &key.type_name))
+                    || !result
+                        .iter()
+                        .any(|field| compatible(field, &record.key_field, &key.type_name))
+                    || !result
+                        .iter()
+                        .any(|field| compatible(field, revision_field, &revision.type_name))
+                {
+                    return None;
+                }
+                Some(RevisionBindingIr {
+                    read_operation: read.operation.clone(),
+                    read_key_input: read_key_input.clone(),
+                    key_field: record.key_field.clone(),
+                    revision_field: revision_field.clone(),
+                    command_key_input: key_input.clone(),
+                    command_revision_input: revision_input.clone(),
                 })
-            }),
-    );
-    fields.sort();
-    fields.dedup();
-    fields
-}
-
-fn fields_of(contract: &Value) -> Vec<FieldIr> {
-    let mut fields: Vec<FieldIr> = contract
-        .get("fields")
-        .and_then(Value::as_array)
-        .map(|fields| {
-            fields
-                .iter()
-                .filter_map(|field| {
-                    Some(FieldIr {
-                        path: field.get("path")?.as_str()?.to_owned(),
-                        type_name: field.get("type")?.as_str()?.to_owned(),
-                        nullable: field
-                            .get("nullable")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
-                        values: string_list(field.get("values")),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    fields.sort();
-    fields.dedup();
-    fields
+            })
+            .collect::<Vec<_>>();
+        if candidates.len() == 1 {
+            operation.revision_binding = candidates.into_iter().next();
+            operation.requires_composition = false;
+        }
+    }
 }
 
 fn paging_of(input: &Value) -> Option<PagingIr> {
@@ -901,6 +1097,10 @@ fn errors_of(errors: Option<&Value>) -> Vec<ErrorCaseIr> {
                     let detail = case.get("detail");
                     Some(ErrorCaseIr {
                         literal: case.get("literal")?.as_str()?.to_owned(),
+                        sources: case.get("from").and_then(Value::as_str).map_or_else(
+                            || string_list(case.get("from")),
+                            |source| vec![source.to_owned()],
+                        ),
                         detail_required: string_list(detail.and_then(|d| d.get("required"))),
                         detail_optional: string_list(detail.and_then(|d| d.get("optional"))),
                     })
@@ -1037,35 +1237,36 @@ mod tests {
     fn a_generated_crud_contract_yields_its_scalar_inputs() {
         let ir = receiving_ir();
         let update = operation(&ir, "purchase_order", "update");
-        let paths: Vec<&str> = update
-            .input_fields
-            .iter()
-            .map(|field| field.path.as_str())
-            .collect();
+        let leaves = leaf_fields(&update.input_fields);
+        let paths: Vec<&str> = leaves.iter().map(|field| field.path.as_str()).collect();
         assert_eq!(
             paths,
-            ["expected_row_version", "id", "request_id", "supplier_id"],
+            [
+                "change.supplier_id",
+                "expected_row_version",
+                "id",
+                "request_id"
+            ],
             "the three-state update's inputs"
         );
 
         let by_path = |name: &str| {
-            update
-                .input_fields
+            leaves
                 .iter()
                 .find(|field| field.path == name)
+                .copied()
                 .unwrap_or_else(|| panic!("no {name}"))
-                .clone()
         };
-        // Required scalars are not nullable; a writable field is, because
-        // `omitted: unchanged` is exactly the optionality a caller models.
+        // Property omission and null values follow separate contract facts.
         assert_eq!(by_path("id").type_name, "uuid");
         assert!(!by_path("id").nullable);
         assert_eq!(by_path("expected_row_version").type_name, "int64");
         assert!(!by_path("expected_row_version").nullable);
-        assert_eq!(by_path("supplier_id").type_name, "uuid");
+        assert_eq!(by_path("change.supplier_id").type_name, "uuid");
+        assert!(!by_path("change.supplier_id").required);
         assert!(
-            by_path("supplier_id").nullable,
-            "a writable field is optional"
+            !by_path("change.supplier_id").nullable,
+            "explicit null is refused"
         );
     }
 
@@ -1074,12 +1275,12 @@ mod tests {
     fn a_command_contract_still_reads_its_fields_array() {
         let ir = receiving_ir();
         let record = operation(&ir, "receiving", "record_receipt");
-        assert_eq!(record.input_fields.len(), 8, "{:?}", record.input_fields);
+        let leaves = leaf_fields(&record.input_fields);
+        assert_eq!(leaves.len(), 8, "{:?}", record.input_fields);
         // A nested array path is the proof the ARRAY was read: the scalar
         // fallback walks top-level members and could never produce one.
         assert!(
-            record
-                .input_fields
+            leaves
                 .iter()
                 .any(|field| field.path == "value.line[].quantity"),
             "the command contract's own fields array was not read: {:?}",
@@ -1125,13 +1326,9 @@ mod tests {
     fn an_operation_carries_the_route_its_release_publishes() {
         let ir = released("receiving");
         let get = operation(&ir, "purchase_order", "get");
-        assert_eq!(
-            get.route,
-            Some(RouteIr {
-                method: "POST".to_owned(),
-                template: "/purchase_order/get".to_owned(),
-            })
-        );
+        let route = get.route.as_ref().expect("the get is exposed");
+        assert_eq!(route.method, "POST");
+        assert_eq!(route.template, "/purchase_order/get");
     }
 
     /// The SAME module and action sit at different paths in different

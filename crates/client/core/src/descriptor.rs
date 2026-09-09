@@ -48,6 +48,23 @@ impl FieldDescriptor {
     }
 }
 
+/// A generated editor's field tree, with independent presence and null rules.
+///
+/// Flat display controls retain `FieldDescriptor`. Editors consume this schema
+/// so that an omitted property never becomes permission to submit null.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldSchema {
+    /// The field's type and admitted null value.
+    pub field: FieldDescriptor,
+    /// Whether the property must be present.
+    pub required: bool,
+    /// Nested object or repeated item fields.
+    pub children: &'static [FieldSchema],
+    /// Declared bounds for a repeated field.
+    pub minimum: Option<u64>,
+    pub maximum: Option<u64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -14,7 +14,9 @@
 //! search path frozen by
 //! `components/data/postgres-statements/wit/deps/wamn-postgres/package.wit`.
 
+mod client_fields;
 pub mod client_ir;
+mod client_route;
 pub mod client_rust;
 mod cursor;
 mod data_access;

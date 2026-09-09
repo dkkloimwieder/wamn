@@ -36,6 +36,7 @@ pub(crate) const UPDATE_DIGEST: &str = "sha256:df5a9977e52e7386bd4f49fc96f713418
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_CHECK_CONSTRAINTS: &[&str] = &[];
+pub(crate) const UPDATE_EXCLUSION_CONSTRAINTS: &[&str] = &[];
 
 pub(crate) async fn get(
     connection: &mut Connection,

@@ -63,6 +63,29 @@ pub const LOCATION_LIST_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
+pub const LOCATION_LIST_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const LOCATION_LIST_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "location_code", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const LOCATION_LIST_KIND: &str = "projection";
+pub const LOCATION_LIST_REQUIRES_COMPOSITION: bool = false;
+pub const LOCATION_LIST_REPLAY: Option<&str> = None;
+pub const LOCATION_LIST_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const LOCATION_LIST_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `wamn-receiving:location/list@1.0.0`.
 pub const LOCATION_LIST_GRANT: &str = "wamn-receiving:location/list@1.0.0";
 

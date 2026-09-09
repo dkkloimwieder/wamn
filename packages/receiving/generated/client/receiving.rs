@@ -103,15 +103,15 @@ pub struct ReceivingLoadReceiptScreenRequest {
 /// Result of `wamn-receiving:receiving/load-receipt-screen@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceivingLoadReceiptScreenResult {
-    /// `uuid`, optional
+    /// `uuid`
     pub item_id: Option<uuid::Uuid>,
-    /// `text`, optional
+    /// `text`
     pub item_number: Option<String>,
-    /// `uuid`, optional
+    /// `uuid`
     pub line_id: Option<uuid::Uuid>,
-    /// `int32`, optional
+    /// `int32`
     pub line_number: Option<i32>,
-    /// `numeric`, optional
+    /// `numeric`
     pub ordered_quantity: Option<rust_decimal::Decimal>,
     /// `uuid`
     pub purchase_order_id: uuid::Uuid,
@@ -119,9 +119,9 @@ pub struct ReceivingLoadReceiptScreenResult {
     pub purchase_order_number: String,
     /// `text`
     pub purchase_order_status: String,
-    /// `numeric`, optional
+    /// `numeric`
     pub received_quantity: Option<rust_decimal::Decimal>,
-    /// `numeric`, optional
+    /// `numeric`
     pub remaining_quantity: Option<rust_decimal::Decimal>,
     /// `int64`
     pub row_version: i64,
@@ -225,6 +225,73 @@ pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "item_id", type_name: "uuid", nullable: true, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "item_number", type_name: "text", nullable: true, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "line_id", type_name: "uuid", nullable: true, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "line_number", type_name: "int32", nullable: true, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "ordered_quantity", type_name: "numeric", nullable: true, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_number", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_status", type_name: "text", nullable: false, values: &["cancelled", "complete", "open"] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "received_quantity", type_name: "numeric", nullable: true, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "remaining_quantity", type_name: "numeric", nullable: true, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "supplier_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_KIND: &str = "projection";
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_REQUIRES_COMPOSITION: bool = false;
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_REPLAY: Option<&str> = None;
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const RECEIVING_LOAD_RECEIPT_SCREEN_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `wamn-receiving:receiving/load-receipt-screen@1.0.0`.
 pub const RECEIVING_LOAD_RECEIPT_SCREEN_GRANT: &str = "wamn-receiving:receiving/load-receipt-screen@1.0.0";
 
@@ -271,6 +338,32 @@ pub async fn load_receipt_screen(
 pub struct ReceivingRecordReceiptRequest {
     /// `text`
     pub request_id: String,
+    /// `object`
+    pub value: ReceivingRecordReceiptRequestValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceivingRecordReceiptRequestValue {
+    /// `text`
+    pub idempotency_key: String,
+    /// `array`
+    pub line: Vec<ReceivingRecordReceiptRequestValueLine>,
+    /// `timestamptz`
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub purchase_order_id: uuid::Uuid,
+    /// `text`
+    pub receipt_reference: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceivingRecordReceiptRequestValueLine {
+    /// `uuid`
+    pub location_id: uuid::Uuid,
+    /// `uuid`
+    pub purchase_order_line_id: uuid::Uuid,
+    /// `numeric`
+    pub quantity: rust_decimal::Decimal,
 }
 
 /// Result of `wamn-receiving:receiving/record-receipt@1.0.0`.
@@ -369,6 +462,73 @@ pub const RECEIVING_RECORD_RECEIPT_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
+pub const RECEIVING_RECORD_RECEIPT_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value", type_name: "object", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value.idempotency_key", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value.line[]", type_name: "array", nullable: false, values: &[] },
+required: true, minimum: Some(1), maximum: Some(100), children: &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value.line[].location_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value.line[].purchase_order_line_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value.line[].quantity", type_name: "numeric", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value.occurred_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value.purchase_order_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "value.receipt_reference", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+], },
+];
+
+pub const RECEIVING_RECORD_RECEIPT_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_status", type_name: "text", nullable: false, values: &["complete", "open"] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "receipt_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "row_version", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIVING_RECORD_RECEIPT_KIND: &str = "command";
+pub const RECEIVING_RECORD_RECEIPT_REQUIRES_COMPOSITION: bool = false;
+pub const RECEIVING_RECORD_RECEIPT_REPLAY: Option<&str> = Some("claim");
+pub const RECEIVING_RECORD_RECEIPT_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const RECEIVING_RECORD_RECEIPT_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `wamn-receiving:receiving/record-receipt@1.0.0`.
 pub const RECEIVING_RECORD_RECEIPT_GRANT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
 

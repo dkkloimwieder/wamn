@@ -32,13 +32,14 @@ fn release(package: &str) -> ClientContractIr {
 }
 
 /// Emit `package` into a scratch crate and `cargo check` it.
-fn check_compiles(package: &str, scratch_name: &str) -> String {
+fn check_compiles(ir: &ClientContractIr, scratch_name: &str) -> String {
+    let package = &ir.package;
     let root = repository_root();
     let scratch = std::env::temp_dir().join(scratch_name);
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(scratch.join("src")).expect("scratch");
 
-    let files = emit_rust_client(&release(package)).expect("the shipped release emits");
+    let files = emit_rust_client(ir).expect("the release emits");
     let mut lib = String::new();
     let mut combined = String::new();
     for file in &files {
@@ -84,7 +85,7 @@ fn check_compiles(package: &str, scratch_name: &str) -> String {
 /// EXIT GATE: the emitted client compiles against the real `wamn-client`.
 #[test]
 fn the_emitted_receiving_client_compiles() {
-    let source = check_compiles("receiving", "wamn-emitted-client-receiving");
+    let source = check_compiles(&release("receiving"), "wamn-emitted-client-receiving");
     // Guard the guard: an empty emission would compile trivially.
     assert!(
         source.contains("pub struct PurchaseOrderUpdateRequest"),
@@ -97,7 +98,10 @@ fn the_emitted_receiving_client_compiles() {
 /// package does not.
 #[test]
 fn the_emitted_overlay_client_compiles() {
-    let source = check_compiles("client_acme_receiving", "wamn-emitted-client-acme");
+    let source = check_compiles(
+        &release("client_acme_receiving"),
+        "wamn-emitted-client-acme",
+    );
     assert!(
         source.contains("/acme/purchase_order/get"),
         "the overlay's own routes are absent from its client"
@@ -171,12 +175,9 @@ fn a_field_added_to_a_contract_appears_without_a_hand_edit() {
         }));
     std::fs::write(&path, serde_json::to_vec(&document).expect("serialize")).expect("write");
 
-    let ir = ClientContractIr::from_release(
-        "receiving",
-        &contracts,
-        &root.join("packages/receiving/publication/attachments.json"),
-    )
-    .expect("projects");
+    // This fixture changes only the unserved contract. A published input
+    // schema must also change before a served route can accept the new field.
+    let ir = ClientContractIr::from_contract_directory("receiving", &contracts).expect("projects");
     let source: String = emit_rust_client(&ir)
         .expect("emits")
         .iter()
@@ -254,4 +255,51 @@ fn copy_tree(from: &Path, to: &Path) {
             std::fs::copy(&source, &target).expect("copy");
         }
     }
+}
+
+#[test]
+fn valid_operations_cannot_collide_with_route_helpers_or_their_fallbacks() {
+    let mut ir = release("receiving");
+    ir.models.retain(|model| model.name == "purchase_order");
+    let model = &mut ir.models[0];
+    let template = model
+        .operations
+        .iter()
+        .find(|operation| operation.name == "get")
+        .unwrap()
+        .clone();
+    model.operations = [
+        "get",
+        "get_route",
+        "get_route_route",
+        "__wamn_route_get",
+        "__wamn_route_get_1",
+    ]
+    .into_iter()
+    .map(|name| {
+        let mut operation = template.clone();
+        operation.name = name.into();
+        operation.operation = format!("example:purchase-order/{name}@1.0.0");
+        operation.route.as_mut().unwrap().template = format!("/purchase_order/{name}");
+        operation
+    })
+    .collect();
+    let first = emit_rust_client(&ir).unwrap();
+    ir.models[0].operations.reverse();
+    let reversed = emit_rust_client(&ir).unwrap();
+    for files in [&first, &reversed] {
+        let source = std::str::from_utf8(files[0].bytes()).unwrap();
+        for (name, helper) in [
+            ("get", "__wamn_route_get_2"),
+            ("get_route", "__wamn_route_get_route_1"),
+            ("get_route_route", "get_route_route_route"),
+            ("__wamn_route_get", "__wamn_route_get_route"),
+            ("__wamn_route_get_1", "__wamn_route_get_1_route"),
+        ] {
+            assert!(source.contains(&format!("pub async fn {name}(")));
+            assert!(source.contains(&format!("pub fn {helper}() -> RouteMetadata")));
+            assert!(source.contains(&format!(".invoke(&{helper}(),")));
+        }
+    }
+    check_compiles(&ir, "wamn-emitted-client-route-collision");
 }

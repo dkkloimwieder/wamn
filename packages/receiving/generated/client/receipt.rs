@@ -127,6 +127,49 @@ pub const RECEIPT_GET_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
+pub const RECEIPT_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "request_id", type_name: "string", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIPT_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "idempotency_key", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "occurred_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "receipt_reference", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIPT_GET_KIND: &str = "get";
+pub const RECEIPT_GET_REQUIRES_COMPOSITION: bool = false;
+pub const RECEIPT_GET_REPLAY: Option<&str> = None;
+pub const RECEIPT_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const RECEIPT_GET_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `wamn-receiving:receipt/get@1.0.0`.
 pub const RECEIPT_GET_GRANT: &str = "wamn-receiving:receipt/get@1.0.0";
 
@@ -171,6 +214,10 @@ pub async fn get(
 /// Input for `wamn-receiving:receipt/query@1.0.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReceiptQueryRequest {
+    /// `text`, omittable
+    pub cursor: Option<String>,
+    /// `int64`, omittable
+    pub limit: Option<i64>,
     /// `string`
     pub request_id: String,
 }
@@ -194,6 +241,18 @@ pub struct ReceiptQueryResult {
 
 /// Input descriptors for `wamn-receiving:receipt/query@1.0.0`.
 pub const RECEIPT_QUERY_INPUT: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        path: "cursor",
+        type_name: "text",
+        nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "limit",
+        type_name: "int64",
+        nullable: true,
+        values: &[],
+    },
     FieldDescriptor {
         path: "request_id",
         type_name: "string",
@@ -242,6 +301,53 @@ pub const RECEIPT_QUERY_RESULT: &[FieldDescriptor] = &[
     },
 ];
 
+pub const RECEIPT_QUERY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "cursor", type_name: "text", nullable: false, values: &[] },
+required: false, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "limit", type_name: "int64", nullable: false, values: &[] },
+required: false, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "request_id", type_name: "string", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIPT_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "idempotency_key", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "occurred_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "purchase_order_id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "receipt_reference", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIPT_QUERY_KIND: &str = "query";
+pub const RECEIPT_QUERY_REQUIRES_COMPOSITION: bool = false;
+pub const RECEIPT_QUERY_REPLAY: Option<&str> = None;
+pub const RECEIPT_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const RECEIPT_QUERY_RESULT_OPAQUE: bool = false;
 /// The grant a caller presents to invoke `wamn-receiving:receipt/query@1.0.0`.
 pub const RECEIPT_QUERY_GRANT: &str = "wamn-receiving:receipt/query@1.0.0";
 

@@ -24,10 +24,10 @@
 //! regeneration alone — that is the property this module exists to hold, and
 //! the one its tests assert.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::client_ir::{ClientContractIr, FieldIr, ModelIr, OperationIr};
+use crate::client_ir::{ClientContractIr, FieldIr, ModelIr, OperationIr, ReplayIr, leaf_fields};
 use crate::generate::GeneratedFile;
 use crate::manifest::{rust_identifier, rust_type_identifier};
 
@@ -85,10 +85,9 @@ impl std::error::Error for ClientRustError {}
 ///
 /// # Errors
 ///
-/// [`ClientRustError`] naming the contract type or identifier that has no
-/// Rust spelling. Refuses rather than emitting something approximate: a
-/// binding that compiled but described the wrong shape would be found by a
-/// caller at runtime, not by the build.
+/// [`ClientRustError`] names a contract identifier with no Rust spelling.
+/// Unknown field types retain JSON values and opaque descriptors. The editor
+/// refuses unsupported inputs instead of treating them as unrestricted text.
 pub fn emit_rust_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, ClientRustError> {
     let mut files = BTreeMap::new();
     for model in &ir.models {
@@ -101,6 +100,39 @@ pub fn emit_rust_client(ir: &ClientContractIr) -> Result<Vec<GeneratedFile>, Cli
         .into_iter()
         .map(|(path, bytes)| GeneratedFile::new(path.into_boxed_str(), bytes.into_boxed_slice()))
         .collect())
+}
+
+/// Allocate route helpers without taking any declared operation's Rust name.
+///
+/// All preferred helper names are reserved before fallback allocation, so a
+/// collision never renames an otherwise unambiguous helper in the same model.
+pub(crate) fn route_helper_names(model: &ModelIr) -> BTreeMap<&str, String> {
+    let operations: BTreeSet<_> = model
+        .operations
+        .iter()
+        .map(|operation| operation.name.as_str())
+        .collect();
+    let mut reserved: BTreeSet<_> = operations.iter().map(|name| (*name).to_owned()).collect();
+    reserved.extend(operations.iter().map(|name| format!("{name}_route")));
+    let mut names = BTreeMap::new();
+    for name in operations.iter().copied() {
+        let preferred = format!("{name}_route");
+        let helper = if operations.contains(preferred.as_str()) {
+            let fallback = format!("__wamn_route_{name}");
+            let mut helper = fallback.clone();
+            let mut suffix = 0;
+            while reserved.contains(&helper) {
+                suffix += 1;
+                helper = format!("{fallback}_{suffix}");
+            }
+            reserved.insert(helper.clone());
+            helper
+        } else {
+            preferred
+        };
+        names.insert(name, helper);
+    }
+    names
 }
 
 fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientRustError> {
@@ -135,8 +167,14 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientRustError>
         &model.fields,
     );
 
+    let route_names = route_helper_names(model);
     for operation in &model.operations {
-        emit_operation(&mut source, model, operation)?;
+        emit_operation(
+            &mut source,
+            model,
+            operation,
+            &route_names[operation.name.as_str()],
+        )?;
     }
 
     while source.ends_with("\n\n") {
@@ -149,6 +187,7 @@ fn emit_operation(
     source: &mut String,
     model: &ModelIr,
     operation: &OperationIr,
+    route_helper: &str,
 ) -> Result<(), ClientRustError> {
     let type_stem = format!(
         "{}{}",
@@ -160,6 +199,12 @@ fn emit_operation(
         model.name.to_uppercase(),
         operation.name.to_uppercase()
     );
+    let result_fields = operation
+        .route
+        .as_ref()
+        .map_or(operation.result_fields.as_slice(), |route| {
+            route.response.fields.as_slice()
+        });
 
     writeln!(source).expect("writing to a String cannot fail");
     writeln!(source, "/// Input for `{}`.", operation.operation).expect("write");
@@ -169,11 +214,7 @@ fn emit_operation(
         &operation.input_fields,
     )?;
     writeln!(source, "/// Result of `{}`.", operation.operation).expect("write");
-    write_struct(
-        source,
-        &format!("{type_stem}Result"),
-        &operation.result_fields,
-    )?;
+    write_struct(source, &format!("{type_stem}Result"), result_fields)?;
 
     write_descriptors(
         source,
@@ -185,8 +226,73 @@ fn emit_operation(
         source,
         &format!("{constant_stem}_RESULT"),
         &format!("Result descriptors for `{}`.", operation.operation),
-        &operation.result_fields,
+        result_fields,
     );
+    write_schema(
+        source,
+        &format!("{constant_stem}_INPUT_SCHEMA"),
+        &operation.input_fields,
+    );
+    write_schema(
+        source,
+        &format!("{constant_stem}_RESULT_SCHEMA"),
+        result_fields,
+    );
+    writeln!(
+        source,
+        "pub const {constant_stem}_KIND: &str = {:?};",
+        operation.kind
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "pub const {constant_stem}_REQUIRES_COMPOSITION: bool = {};",
+        operation.requires_composition
+    )
+    .expect("write");
+    let replay =
+        operation
+            .route
+            .as_ref()
+            .and_then(|route| route.replay)
+            .map(|replay| match replay {
+                ReplayIr::Claim => "claim",
+                ReplayIr::State => "state",
+            });
+    writeln!(
+        source,
+        "pub const {constant_stem}_REPLAY: Option<&str> = {replay:?};"
+    )
+    .expect("write");
+    let response_schema = operation
+        .route
+        .as_ref()
+        .and_then(|route| route.response.schema.as_ref())
+        .map(|schema| serde_json::to_string(schema).expect("a schema serializes"));
+    writeln!(
+        source,
+        "pub const {constant_stem}_RESPONSE_CONTRACT: Option<&str> = {:?};",
+        response_schema.as_deref()
+    )
+    .expect("write");
+    writeln!(
+        source,
+        "pub const {constant_stem}_RESULT_OPAQUE: bool = {};",
+        result_fields.is_empty()
+            || leaf_fields(result_fields).iter().any(|field| !matches!(
+                field.type_name.as_str(),
+                "text"
+                    | "string"
+                    | "uuid"
+                    | "timestamptz"
+                    | "numeric"
+                    | "int32"
+                    | "int64"
+                    | "float64"
+                    | "boolean"
+            ))
+    )
+    .expect("write");
 
     writeln!(
         source,
@@ -237,12 +343,7 @@ fn emit_operation(
             )
             .expect("write");
             writeln!(source, "#[must_use]").expect("write");
-            writeln!(
-                source,
-                "pub fn {}_route() -> RouteMetadata {{",
-                operation.name
-            )
-            .expect("write");
+            writeln!(source, "pub fn {route_helper}() -> RouteMetadata {{").expect("write");
             writeln!(source, "    RouteMetadata {{").expect("write");
             writeln!(source, "        method: {:?}.to_owned(),", route.method).expect("write");
             writeln!(source, "        template: {:?}.to_owned(),", route.template).expect("write");
@@ -274,8 +375,7 @@ fn emit_operation(
     .expect("write");
     writeln!(
         source,
-        "    client\n        .invoke(&{}_route(), &std::collections::BTreeMap::new(), items)\n        .await\n}}",
-        operation.name
+        "    client\n        .invoke(&{route_helper}(), &std::collections::BTreeMap::new(), items)\n        .await\n}}"
     )
     .expect("write");
     writeln!(source).expect("write");
@@ -289,47 +389,80 @@ fn write_struct(
 ) -> Result<(), ClientRustError> {
     writeln!(source, "#[derive(Debug, Clone, PartialEq)]").expect("write");
     writeln!(source, "pub struct {name} {{").expect("write");
+    let mut nested = Vec::new();
     for field in fields {
-        // A dotted or indexed path is a position inside the envelope body, not
-        // a struct member. Flattening `value.line[].quantity` into a name would
-        // invent a shape the contract never declared, so those stay described
-        // by their descriptors and are addressed through the envelope.
-        if field.path.contains('.') || field.path.contains('[') {
+        let leaf = field
+            .path
+            .rsplit('.')
+            .next()
+            .unwrap_or(&field.path)
+            .trim_end_matches("[]");
+        if leaf.is_empty() {
             continue;
         }
-        let member = rust_identifier(&field.path).ok_or_else(|| {
+        let member = rust_identifier(leaf).ok_or_else(|| {
             ClientRustError::new(
                 ClientRustErrorKind::UnnameableIdentifier,
                 format!("field {:?} is not a Rust identifier", field.path),
             )
         })?;
-        let ty = rust_type(&field.type_name)?;
+        let child_name = format!("{name}{}", rust_type_identifier(leaf));
+        let mut ty = match field.type_name.as_str() {
+            "object" if !field.children.is_empty() => {
+                nested.push((child_name.clone(), field.children.as_slice()));
+                child_name
+            }
+            "array" if !field.children.is_empty() => {
+                let item = if field.children.len() == 1 && field.children[0].path == field.path {
+                    rust_type(&field.children[0].type_name)
+                        .unwrap_or("serde_json::Value")
+                        .to_owned()
+                } else {
+                    nested.push((child_name.clone(), field.children.as_slice()));
+                    child_name
+                };
+                format!("Vec<{item}>")
+            }
+            _ => rust_type(&field.type_name)
+                .unwrap_or("serde_json::Value")
+                .to_owned(),
+        };
+        if field.nullable {
+            ty = format!("Option<{ty}>");
+        }
+        if !field.required {
+            ty = format!("Option<{ty}>");
+        }
         writeln!(
             source,
             "    /// `{}`{}",
             field.type_name,
-            if field.nullable { ", optional" } else { "" }
+            if field.required { "" } else { ", omittable" }
         )
         .expect("write");
-        if field.nullable {
-            writeln!(source, "    pub {member}: Option<{ty}>,").expect("write");
-        } else {
-            writeln!(source, "    pub {member}: {ty},").expect("write");
-        }
+        writeln!(source, "    pub {member}: {ty},").expect("write");
     }
     writeln!(source, "}}").expect("write");
     writeln!(source).expect("write");
+    for (child_name, children) in nested {
+        write_struct(source, &child_name, children)?;
+    }
     Ok(())
 }
 
 fn write_descriptors(source: &mut String, name: &str, doc: &str, fields: &[FieldIr]) {
     writeln!(source, "/// {doc}").expect("write");
     writeln!(source, "pub const {name}: &[FieldDescriptor] = &[").expect("write");
-    for field in fields {
+    for field in leaf_fields(fields) {
         writeln!(source, "    FieldDescriptor {{").expect("write");
         writeln!(source, "        path: {:?},", field.path).expect("write");
         writeln!(source, "        type_name: {:?},", field.type_name).expect("write");
-        writeln!(source, "        nullable: {},", field.nullable).expect("write");
+        writeln!(
+            source,
+            "        nullable: {},",
+            field.nullable || !field.required
+        )
+        .expect("write");
         if field.values.is_empty() {
             writeln!(source, "        values: &[],").expect("write");
         } else {
@@ -343,6 +476,32 @@ fn write_descriptors(source: &mut String, name: &str, doc: &str, fields: &[Field
     }
     writeln!(source, "];").expect("write");
     writeln!(source).expect("write");
+}
+
+fn write_schema(source: &mut String, name: &str, fields: &[FieldIr]) {
+    writeln!(
+        source,
+        "pub const {name}: &[wamn_client::descriptor::FieldSchema] = &["
+    )
+    .expect("write");
+    write_schema_fields(source, fields);
+    writeln!(source, "];\n").expect("write");
+}
+
+fn write_schema_fields(source: &mut String, fields: &[FieldIr]) {
+    for field in fields {
+        writeln!(source, "wamn_client::descriptor::FieldSchema {{").expect("write");
+        writeln!(source, "field: FieldDescriptor {{ path: {:?}, type_name: {:?}, nullable: {}, values: &{:?} }},",
+            field.path, field.type_name, field.nullable, field.values).expect("write");
+        writeln!(
+            source,
+            "required: {}, minimum: {:?}, maximum: {:?}, children: &[",
+            field.required, field.minimum, field.maximum
+        )
+        .expect("write");
+        write_schema_fields(source, &field.children);
+        writeln!(source, "], }},").expect("write");
+    }
 }
 
 /// The Rust spelling of one contract type.
@@ -441,10 +600,9 @@ mod tests {
             .expect("projects");
             for model in &ir.models {
                 for operation in &model.operations {
-                    for field in operation
-                        .input_fields
-                        .iter()
-                        .chain(&operation.result_fields)
+                    for field in leaf_fields(&operation.input_fields)
+                        .into_iter()
+                        .chain(leaf_fields(&operation.result_fields))
                     {
                         rust_type(&field.type_name)
                             .unwrap_or_else(|error| panic!("{package} {}: {error}", field.path));
