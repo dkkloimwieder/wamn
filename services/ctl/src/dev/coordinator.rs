@@ -54,6 +54,8 @@ const BUILD_PROFILE: &str = "m1";
 const BUILD_TOOL: &str = "tools/build-components";
 const AUTHORING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__TENANT_ID__";
+/// Slot a declaration template leaves for the base digest `wamn.json` authors.
+pub const COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER: &str = "__BASE_DIGEST__";
 const PACKAGE_MANIFEST: &str = "wamn.json";
 
 /// Stable code for the notice a run emits when it built past an authored pin.
@@ -698,10 +700,15 @@ impl ProductionDevStageRunner {
                 .root
                 .join(PACKAGE_COMPONENTS)
                 .join(format!("{}.json.in", artifact.component));
+            // ONE authored site (wamn-10yt.50): the manifest pin. A disposable
+            // run then layers the digest it actually BUILT over it, which is
+            // empty for a durable target (wamn-10yt.48).
+            let mut base_digests = authored_base_digests(&package.root)?;
+            base_digests.extend(self.built_base_digests());
             let declaration = render_component_declaration(
                 &template,
                 &self.config.activation_identity().tenant,
-                &self.built_base_digests(),
+                &base_digests,
             )?;
             let admission = admit_component(AdmitComponentArgs {
                 package: package.root,
@@ -1598,23 +1605,82 @@ fn authoring_command_id(
     )
 }
 
-/// Renders one authored component declaration for admission.
+/// The ONE authored site for a package's base component digests.
 ///
-/// `scope.tenant-id` is a placeholder the deployment fills. `built_base_digests`
-/// fills the second rendered value: the digest of a base component this run
-/// actually built (wamn-10yt.48). The authored template pins a digest by hand,
-/// Generate never rewrites it, and once an author edits the base package that
-/// pin names bytes that no longer exist. Every consumer of the admitted fact
-/// then resolves the dependency to zero components, including the serving
-/// manifest's own validation, which is a persisted contract and must stay
-/// strict. So the DOCUMENT is made true rather than the validator made
-/// tolerant. The map is empty for a durable target, which admits the authored
-/// pin unchanged.
-fn render_component_declaration(
+/// # wamn-10yt.50
+///
+/// `publication/components/*.json.in` used to carry a second HAND-WRITTEN copy
+/// of the pin `wamn.json` already carries, and nothing in the tree said the two
+/// had to agree. This reads the only value an author now writes,
+/// `base_dependencies[*].digest`, keyed by the `package@version` coordinate a
+/// declaration names its dependency by. A package that declares no base
+/// dependency yields an empty map, and its template must then declare none.
+pub fn authored_base_digests(
+    package_root: &Path,
+) -> Result<BTreeMap<Box<str>, Box<str>>, ProductionDevStageError> {
+    let manifest = package_root.join(PACKAGE_MANIFEST);
+    let bytes = fs::read(&manifest).map_err(|source| {
+        ProductionDevStageError::owner(
+            "read authored base digests",
+            anyhow!(source).context(format!("read {}", manifest.display())),
+        )
+    })?;
+    let document: Value = serde_json::from_slice(&bytes).map_err(|source| {
+        ProductionDevStageError::owner(
+            "read authored base digests",
+            anyhow!(source).context(format!("parse {}", manifest.display())),
+        )
+    })?;
+    let Some(dependencies) = document
+        .get("base_dependencies")
+        .and_then(Value::as_object)
+    else {
+        return Ok(BTreeMap::new());
+    };
+    let mut digests = BTreeMap::new();
+    for (alias, dependency) in dependencies {
+        let coordinate = dependency
+            .get("package")
+            .and_then(Value::as_str)
+            .zip(dependency.get("version").and_then(Value::as_str))
+            .map(|(package, version)| format!("{package}@{version}"));
+        let (Some(coordinate), Some(digest)) =
+            (coordinate, dependency.get("digest").and_then(Value::as_str))
+        else {
+            return Err(ProductionDevStageError::invalid(
+                "read authored base digests",
+                format!(
+                    "{} base dependency {alias} must carry a package, version and digest",
+                    manifest.display()
+                ),
+            ));
+        };
+        digests.insert(coordinate.into_boxed_str(), Box::<str>::from(digest));
+    }
+    Ok(digests)
+}
+
+/// Renders one authored component declaration into the document admission reads.
+///
+/// Two placeholders, both REQUIRED: `scope.tenant-id`, which the deployment
+/// fills, and every operation dependency's `digest`, which `base_digests`
+/// fills. An unfilled or hand-written value is a refusal naming the file, so a
+/// second authored copy of a digest cannot re-enter the template unnoticed
+/// (wamn-10yt.50).
+///
+/// `base_digests` carries the authored pin, with the digest of a base component
+/// THIS RUN built layered over it for a disposable target (wamn-10yt.48).
+/// Generate never rewrites the template, so once an author edits the base
+/// package the pin names bytes that no longer exist; every consumer of the
+/// admitted fact then resolves the dependency to zero components, including the
+/// serving manifest's own validation, which guards a persisted contract and
+/// must stay strict. So the DOCUMENT is made true rather than the validator
+/// made tolerant.
+pub fn render_declaration_document(
     template: &Path,
     tenant: &str,
-    built_base_digests: &BTreeMap<Box<str>, Box<str>>,
-) -> Result<TemporaryFile, ProductionDevStageError> {
+    base_digests: &BTreeMap<Box<str>, Box<str>>,
+) -> Result<Value, ProductionDevStageError> {
     let bytes = fs::read(template).map_err(|source| {
         ProductionDevStageError::owner(
             "read component declaration template",
@@ -1655,21 +1721,56 @@ fn render_component_declaration(
                 continue;
             };
             for dependency in dependencies {
-                let Some(coordinate) = dependency
+                let coordinate = dependency
                     .get("package")
                     .and_then(Value::as_str)
                     .zip(dependency.get("version").and_then(Value::as_str))
                     .map(|(package, version)| format!("{package}@{version}"))
-                else {
-                    continue;
-                };
-                let Some(built) = built_base_digests.get(coordinate.as_str()) else {
-                    continue;
-                };
-                dependency["digest"] = Value::String(built.to_string());
+                    .ok_or_else(|| {
+                        ProductionDevStageError::invalid(
+                            "render component declaration",
+                            format!(
+                                "{} declares an operation dependency without a package and version",
+                                template.display()
+                            ),
+                        )
+                    })?;
+                if dependency.get("digest").and_then(Value::as_str)
+                    != Some(COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER)
+                {
+                    return Err(ProductionDevStageError::invalid(
+                        "render component declaration",
+                        format!(
+                            "{} must leave the {coordinate} dependency digest as \
+                             {COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER}; the digest is \
+                             authored once, in {PACKAGE_MANIFEST}",
+                            template.display()
+                        ),
+                    ));
+                }
+                let digest = base_digests.get(coordinate.as_str()).ok_or_else(|| {
+                    ProductionDevStageError::invalid(
+                        "render component declaration",
+                        format!(
+                            "{} depends on {coordinate}, which no {PACKAGE_MANIFEST} \
+                             base_dependencies entry pins",
+                            template.display()
+                        ),
+                    )
+                })?;
+                dependency["digest"] = Value::String(digest.to_string());
             }
         }
     }
+    Ok(document)
+}
+
+fn render_component_declaration(
+    template: &Path,
+    tenant: &str,
+    base_digests: &BTreeMap<Box<str>, Box<str>>,
+) -> Result<TemporaryFile, ProductionDevStageError> {
+    let document = render_declaration_document(template, tenant, base_digests)?;
     let rendered = serde_json::to_vec(&document).map_err(|source| {
         ProductionDevStageError::owner("serialize component declaration", source.into())
     })?;
@@ -1838,66 +1939,107 @@ mod tests {
         );
     }
 
+    fn overlay_package_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/client_acme_receiving")
+    }
+
+    fn overlay_declaration_template() -> PathBuf {
+        overlay_package_root()
+            .join("publication/components")
+            .join("client_acme_receiving.json.in")
+    }
+
     /// The rendered declaration names the bytes this run built.
     ///
-    /// The shipped overlay template pins its base dependency by hand, and
-    /// Generate never rewrites that file. Once an author edits the base
-    /// package, the pin names bytes that no longer exist, and every consumer of
-    /// the admitted fact resolves the dependency to zero components. The
-    /// serving manifest's own validation is one of them, and it guards a
-    /// persisted contract, so the document is made true rather than the
-    /// validator made tolerant.
+    /// The shipped overlay template leaves its base dependency digest as a
+    /// placeholder, and Generate never rewrites that file. Once an author edits
+    /// the base package, the authored pin names bytes that no longer exist, and
+    /// every consumer of the admitted fact resolves the dependency to zero
+    /// components. The serving manifest's own validation is one of them, and it
+    /// guards a persisted contract, so the document is made true rather than
+    /// the validator made tolerant.
     #[test]
     fn a_disposable_target_renders_the_base_digest_it_built_into_the_declaration() {
-        let template = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../packages/client_acme_receiving/publication/components")
-            .join("client_acme_receiving.json.in");
-        let authored: Value = serde_json::from_slice(
-            &fs::read(&template).expect("read the shipped declaration template"),
-        )
-        .expect("parse the shipped declaration template");
-        let authored_pin = dependency_digests(&authored);
+        let template = overlay_declaration_template();
+        let authored = authored_base_digests(&overlay_package_root())
+            .expect("read the shipped overlay manifest pin");
         assert_eq!(
-            authored_pin.len(),
+            authored.len(),
             1,
-            "the shipped overlay declares exactly one base dependency"
+            "the shipped overlay authors exactly one base dependency digest"
         );
+        let pin = authored["wamn_receiving@1.0.0"].to_string();
         let built = format!("sha256:{}", "7".repeat(64));
-        assert_ne!(authored_pin[0], built);
+        assert_ne!(pin, built);
 
-        let durable = render_component_declaration(&template, "tenant-a", &BTreeMap::new())
+        let durable = render_declaration_document(&template, "tenant-a", &authored)
             .expect("render for a durable target");
-        let durable_document: Value =
-            serde_json::from_slice(&fs::read(durable.path()).expect("read the durable render"))
-                .expect("parse the durable render");
         assert_eq!(
-            dependency_digests(&durable_document),
-            authored_pin,
-            "a durable target admits the pin exactly as authored"
+            dependency_digests(&durable),
+            vec![pin],
+            "a durable target admits the pin exactly as the manifest authors it"
         );
 
-        let mut built_base_digests = BTreeMap::new();
-        built_base_digests.insert(
+        let mut base_digests = authored.clone();
+        base_digests.insert(
             Box::<str>::from("wamn_receiving@1.0.0"),
             Box::<str>::from(built.as_str()),
         );
-        let disposable = render_component_declaration(&template, "tenant-a", &built_base_digests)
+        let disposable = render_declaration_document(&template, "tenant-a", &base_digests)
             .expect("render for a disposable target");
-        let disposable_document: Value = serde_json::from_slice(
-            &fs::read(disposable.path()).expect("read the disposable render"),
-        )
-        .expect("parse the disposable render");
         assert_eq!(
-            dependency_digests(&disposable_document),
+            dependency_digests(&disposable),
             vec![built.clone()],
             "a disposable target names the base it just built"
         );
         assert_eq!(
-            disposable_document
+            disposable
                 .pointer("/scope/tenant-id")
                 .and_then(Value::as_str),
             Some("tenant-a"),
             "the tenant placeholder is still filled"
+        );
+    }
+
+    /// The digest is authored ONCE, and no second copy can hide in the tree.
+    ///
+    /// wamn-10yt.50: the template used to carry its own hand-written copy of
+    /// the manifest pin. A rendered declaration is now unsatisfiable unless the
+    /// template leaves the slot empty, so a reintroduced literal is refused at
+    /// the render rather than drifting silently.
+    #[test]
+    fn the_shipped_template_carries_no_second_copy_of_the_base_digest() {
+        let template = overlay_declaration_template();
+        let bytes = fs::read(&template).expect("read the shipped declaration template");
+        let authored = authored_base_digests(&overlay_package_root())
+            .expect("read the shipped overlay manifest pin");
+        for digest in authored.values() {
+            assert!(
+                !String::from_utf8_lossy(&bytes).contains(digest.as_ref()),
+                "{} must not restate the authored digest {digest}",
+                template.display()
+            );
+        }
+
+        let document: Value =
+            serde_json::from_slice(&bytes).expect("parse the shipped declaration template");
+        assert_eq!(
+            dependency_digests(&document),
+            vec![COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER.to_owned()],
+            "the template leaves every dependency digest as the placeholder"
+        );
+
+        let restated = String::from_utf8_lossy(&bytes).replace(
+            COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
+            &authored["wamn_receiving@1.0.0"],
+        );
+        let hand_written =
+            TemporaryFile::write(restated.as_bytes()).expect("write the control template");
+        let refusal = render_declaration_document(hand_written.path(), "tenant-a", &authored)
+            .expect_err("a restated digest is refused");
+        assert!(
+            refusal.to_string().contains("authored once"),
+            "the refusal names the single authored site: {refusal}"
         );
     }
 

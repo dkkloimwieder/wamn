@@ -2795,14 +2795,28 @@ mod tests {
         serde_json::from_value(document).expect("the mutated handler manifest parses")
     }
 
+    /// The shipped overlay declaration, rendered from its ONE authored digest.
+    ///
+    /// The template leaves every base dependency digest as a placeholder
+    /// (wamn-10yt.50), so a reader that fills only the tenant would carry the
+    /// placeholder into a dependency and resolve nothing.
+    fn repository_overlay_declaration() -> wamn_catalog::ComponentDeclaration {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../packages/client_acme_receiving");
+        let base_digests = crate::dev::coordinator::authored_base_digests(&root)
+            .expect("the repository overlay manifest authors its base digest");
+        let document = crate::dev::coordinator::render_declaration_document(
+            &root.join("publication/components/client_acme_receiving.json.in"),
+            "tenant-a",
+            &base_digests,
+        )
+        .expect("the repository component declaration renders");
+        serde_json::from_value(document)
+            .expect("the repository component declaration is structurally valid")
+    }
+
     fn resolve_repository_private_handler_entry() -> String {
-        let mut declaration: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../packages/client_acme_receiving/publication/components/client_acme_receiving.json.in"
-        ))
-        .expect("the repository component declaration parses as JSON");
-        declaration["scope"]["tenant-id"] = serde_json::json!("tenant-a");
-        let declaration: wamn_catalog::ComponentDeclaration = serde_json::from_value(declaration)
-            .expect("the repository component declaration is structurally valid");
+        let declaration = repository_overlay_declaration();
         let document_value = serde_json::from_str(include_str!(
             "../../../packages/client_acme_receiving/publication/wirings/quality_create_inspection.json"
         ))
@@ -3194,13 +3208,7 @@ mod tests {
         wamn_catalog::ComponentDeclaration,
         wamn_catalog::ComponentOperationDependency,
     ) {
-        let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../packages/client_acme_receiving/publication/components/client_acme_receiving.json.in"
-        ))
-        .expect("the repository component declaration parses as JSON");
-        document["scope"]["tenant-id"] = serde_json::json!("tenant-a");
-        let declaration: wamn_catalog::ComponentDeclaration = serde_json::from_value(document)
-            .expect("the repository component declaration is structurally valid");
+        let declaration = repository_overlay_declaration();
         let mut declared = declaration
             .operations
             .values()
