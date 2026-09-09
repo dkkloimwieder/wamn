@@ -1,0 +1,18 @@
+{
+  "utc": "2026-09-09T22:23:51.402827+00:00",
+  "main": "c35c7f3ba9de4135994c347185d6d15d97baa18b",
+  "runtime_source": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "branch": "main",
+  "mode": "local fast-forward",
+  "user_document_bytes_preserved": true,
+  "protected_index_verified_by_integrator": true,
+  "remote_push": false,
+  "dolt_remote_sync": false,
+  "proof_source": "38318082c7ea443a0776fce5197386f01f5ea978",
+  "remaining_feature_beads": [
+    "wamn-10yt.74",
+    "wamn-10yt.75",
+    "wamn-10yt.76"
+  ],
+  "readiness_limits": "Known baseline failures and unavailable proofs remain. No release-readiness claim."
+}
