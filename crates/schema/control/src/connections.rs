@@ -141,7 +141,17 @@ pub enum ConnectionBindingValidation {
     Invalid,
 }
 
-/// Insert one immutable component requirement; identical retries converge.
+/// Insert one immutable component requirement into the PROJECT plane; identical
+/// retries converge.
+///
+/// # The two planes no longer share one statement (wamn-10yt.52)
+///
+/// The CONTROL copy of `catalog.connection_requirements` grew an
+/// `environment_instance` key column and the project copy did not: a project
+/// database is dropped and cloned before every development run, so it has no
+/// second creation to tell itself apart from. One statement can no longer serve
+/// both planes, so the control plane gets its own pair below rather than the
+/// project plane carrying a column it has no use for.
 pub fn insert_component_connection_requirement_sql() -> &'static str {
     "INSERT INTO catalog.connection_requirements \
        (tenant_id, component_digest, store_alias, requirement_json, requirement_hash) \
@@ -149,7 +159,8 @@ pub fn insert_component_connection_requirement_sql() -> &'static str {
      ON CONFLICT DO NOTHING"
 }
 
-/// Prove an existing component requirement row is byte-identical to this one.
+/// Prove an existing PROJECT-plane component requirement row is byte-identical
+/// to this one.
 ///
 /// The parameters are exactly [`insert_component_connection_requirement_sql`]'s,
 /// so a writer whose insert converged away can tell whether it converged onto
@@ -159,6 +170,37 @@ pub fn exact_component_connection_requirement_sql() -> &'static str {
        SELECT 1 FROM catalog.connection_requirements \
         WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3 \
           AND requirement_json = $4::text::jsonb AND requirement_hash = $5\
+     )"
+}
+
+/// The CONTROL plane's same append, keyed additionally by the environment
+/// instance at `$2` (wamn-10yt.52).
+///
+/// `$2` is the tenant's current creation of the project database, or the empty
+/// string for an environment nothing recreates. Every other parameter keeps
+/// [`insert_component_connection_requirement_sql`]'s position and meaning, so the
+/// two statements differ by exactly the one part that is new.
+pub fn insert_control_component_connection_requirement_sql() -> &'static str {
+    "INSERT INTO catalog.connection_requirements \
+       (tenant_id, environment_instance, component_digest, store_alias, \
+        requirement_json, requirement_hash) \
+     VALUES ($1, $2, $3, $4, $5::text::jsonb, $6) \
+     ON CONFLICT DO NOTHING"
+}
+
+/// Prove an existing CONTROL-plane component requirement row is byte-identical
+/// to this one, WITHIN this environment instance.
+///
+/// The parameters are exactly
+/// [`insert_control_component_connection_requirement_sql`]'s. Without the
+/// instance in the predicate, a rerun would read the PREVIOUS creation's row and
+/// mistake it for its own record.
+pub fn exact_control_component_connection_requirement_sql() -> &'static str {
+    "SELECT EXISTS (\
+       SELECT 1 FROM catalog.connection_requirements \
+        WHERE tenant_id = $1 AND environment_instance = $2 \
+          AND component_digest = $3 AND store_alias = $4 \
+          AND requirement_json = $5::text::jsonb AND requirement_hash = $6\
      )"
 }
 

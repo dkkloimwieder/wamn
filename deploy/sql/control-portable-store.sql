@@ -257,8 +257,23 @@ CREATE TABLE catalog.effective_release_heads (
             (tenant_id, effective_release_id, environment)
 );
 
+-- `environment_instance` names WHICH CREATION of the project database this fact
+-- belongs to (wamn-10yt.52). The development loop drops and clones the project
+-- database before every run, while this control database is never recreated, so
+-- a fact keyed by the environment's NAME alone outlives the thing it describes.
+--
+-- THE EMPTY STRING MEANS "NEVER RECREATED". A durable environment carries `''`
+-- on every row and its keys are exactly what they were before this column
+-- existed, so its freeze is unchanged and the column is additive. Only an
+-- environment that can be recreated carries a non-empty instance, and each
+-- creation then keys its own facts instead of colliding with the last one's.
+--
+-- There is deliberately no `CHECK (environment_instance <> '')`: the empty
+-- string IS the durable value, and the instance is whatever the recreate minted
+-- (a `pg_database` oid today), not a shape this store gets to constrain.
 CREATE TABLE catalog.component_library (
     tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
+    environment_instance text        NOT NULL,
     package_id           text        NOT NULL CHECK (package_id <> ''),
     package_version      text        NOT NULL CHECK (package_version <> ''),
     component            text        NOT NULL CHECK (component <> ''),
@@ -273,27 +288,33 @@ CREATE TABLE catalog.component_library (
     effects              jsonb       NOT NULL CHECK (jsonb_typeof(effects) = 'array'),
     admitted_at          timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT component_library_pkey
-        PRIMARY KEY (tenant_id, package_id, package_version, component, interface_version),
+        PRIMARY KEY (tenant_id, environment_instance, package_id, package_version,
+                     component, interface_version),
     CONSTRAINT component_library_package_fkey
         FOREIGN KEY (tenant_id, package_id, package_version)
         REFERENCES catalog.packages (tenant_id, package_id, package_version),
     CONSTRAINT component_library_digest_key
-        UNIQUE (tenant_id, component_digest),
+        UNIQUE (tenant_id, environment_instance, component_digest),
     CONSTRAINT component_library_package_digest_key
-        UNIQUE (tenant_id, package_id, package_version, component_digest)
+        UNIQUE (tenant_id, environment_instance, package_id, package_version, component_digest)
 );
 
+-- Keyed by the same instance as the component fact it requires, and its foreign
+-- key travels through `component_library_digest_key`, so a requirement can never
+-- resolve to another creation's component (wamn-10yt.52).
 CREATE TABLE catalog.connection_requirements (
-    tenant_id        text  NOT NULL CHECK (tenant_id <> ''),
-    component_digest text  NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    store_alias      text  NOT NULL CHECK (store_alias <> ''),
-    requirement_json jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
-    requirement_hash text  NOT NULL CHECK (requirement_hash ~ '^sha256:[0-9a-f]{64}$'),
+    tenant_id            text  NOT NULL CHECK (tenant_id <> ''),
+    environment_instance text  NOT NULL,
+    component_digest     text  NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
+    store_alias          text  NOT NULL CHECK (store_alias <> ''),
+    requirement_json     jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
+    requirement_hash     text  NOT NULL CHECK (requirement_hash ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT connection_requirements_pkey
-        PRIMARY KEY (tenant_id, component_digest, store_alias),
+        PRIMARY KEY (tenant_id, environment_instance, component_digest, store_alias),
     CONSTRAINT connection_requirements_component_fkey
-        FOREIGN KEY (tenant_id, component_digest)
-        REFERENCES catalog.component_library (tenant_id, component_digest)
+        FOREIGN KEY (tenant_id, environment_instance, component_digest)
+        REFERENCES catalog.component_library
+            (tenant_id, environment_instance, component_digest)
 );
 
 -- ---------------------------------------------------------------------------
@@ -316,15 +337,27 @@ CREATE TABLE catalog.connection_requirements (
 -- ABSENCE MEANS DURABLE. A tenant with no row here is frozen exactly as before,
 -- so the projection is additive: a control store that never sees a disposable
 -- environment behaves as it always did.
+--
+-- `environment_instance` is the tenant's CURRENT creation of the project
+-- database, and it is what every fact above keys on (wamn-10yt.52). Provisioning
+-- projects it EMPTY, because provisioning does not recreate anything; the
+-- development loop's recreate then claims the instance it just minted through
+-- `catalog.claim_environment_instance`.
+--
+-- `disposable` STAYS, though the three overwrites it used to gate are gone. It
+-- is still read: `publish_release` selects wamn-10yt.48's dependency-digest rule
+-- from it, and the retention mechanism that will bound this store's growth needs
+-- to know whose rows belong to a recreatable environment.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.tenant_environments (
-    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
-    org             text        NOT NULL CHECK (org <> ''),
-    project         text        NOT NULL CHECK (project <> ''),
-    env             text        NOT NULL CHECK (env <> ''),
-    instance_suffix text        NOT NULL CHECK (instance_suffix ~ '^[a-z0-9]{8}$'),
-    disposable      boolean     NOT NULL,
-    projected_at    timestamptz NOT NULL DEFAULT now(),
+    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
+    org                  text        NOT NULL CHECK (org <> ''),
+    project              text        NOT NULL CHECK (project <> ''),
+    env                  text        NOT NULL CHECK (env <> ''),
+    instance_suffix      text        NOT NULL CHECK (instance_suffix ~ '^[a-z0-9]{8}$'),
+    disposable           boolean     NOT NULL,
+    environment_instance text        NOT NULL,
+    projected_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT tenant_environments_pkey PRIMARY KEY (tenant_id)
 );
 
@@ -365,46 +398,64 @@ BEGIN
             );
     END IF;
 
+    -- A re-provisioned triple is a NEW environment: it mints a fresh
+    -- `instance_suffix`, so no run has claimed a database creation under it yet
+    -- and the instance resets to empty rather than carrying the old one forward.
     INSERT INTO catalog.tenant_environments (
-        tenant_id, org, project, env, instance_suffix, disposable
+        tenant_id, org, project, env, instance_suffix, disposable,
+        environment_instance
     ) VALUES (
-        p_tenant_id, p_org, p_project, p_env, p_instance_suffix, p_disposable
+        p_tenant_id, p_org, p_project, p_env, p_instance_suffix, p_disposable, ''
     )
     ON CONFLICT ON CONSTRAINT tenant_environments_pkey DO UPDATE SET
-        instance_suffix = EXCLUDED.instance_suffix,
-        disposable      = EXCLUDED.disposable,
-        projected_at    = now();
+        instance_suffix      = EXCLUDED.instance_suffix,
+        disposable           = EXCLUDED.disposable,
+        environment_instance = EXCLUDED.environment_instance,
+        projected_at         = now();
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.project_tenant_environment(
     text, text, text, text, text, boolean
 ) FROM PUBLIC;
 
--- The admitted component fact and its connection requirements are frozen for a
--- DURABLE environment and replaceable for a disposable one (wamn-10yt.38). The
--- rule lives HERE, in one trigger over the row's own tenant, so an admit path
--- that forgets the condition still cannot mutate a durable tenant's fact.
+-- Claim the creation of the project database that the caller just minted, so
+-- every control fact this run writes keys to THIS creation (wamn-10yt.52).
 --
--- FAIL-CLOSED by construction: a caller that has not claimed `app.tenant` sees
--- no row through the projection's RLS policy and is refused, exactly as a
--- tenant with no projected environment is.
-CREATE OR REPLACE FUNCTION catalog.reject_durable_environment_fact_change()
-RETURNS trigger
+-- Separate from `catalog.project_tenant_environment` on purpose: provisioning
+-- owns the triple and the marker, while a recreate owns only the instance and
+-- must not restate — or accidentally move — the identity beside it.
+--
+-- An unprojected tenant is REFUSED rather than projected here. Absence means
+-- durable, a durable environment is never recreated, and inventing the
+-- surrounding identity from a recreate is exactly the silent overwrite this
+-- bead retires.
+CREATE OR REPLACE FUNCTION catalog.claim_environment_instance(
+    p_tenant_id text,
+    p_environment_instance text
+)
+RETURNS void
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF EXISTS (
-        SELECT 1 FROM catalog.tenant_environments
-         WHERE tenant_id = OLD.tenant_id AND disposable
-    ) THEN
-        RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    UPDATE catalog.tenant_environments
+       SET environment_instance = p_environment_instance,
+           projected_at         = now()
+     WHERE tenant_id = p_tenant_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION USING ERRCODE = '55000',
+            MESSAGE = 'environment-instance-claim-without-projection',
+            DETAIL = format('tenant=%s', p_tenant_id),
+            -- No SQL comment marker inside this literal. Readers of this file
+            -- strip comments line-wise without tracking string state, so a
+            -- literal carrying one truncates the line and unbalances the quote
+            -- for everything after it.
+            HINT = 'name the tenant when provisioning the project-env, so the '
+                   'control store carries its environment identity';
     END IF;
-    RAISE EXCEPTION USING
-        ERRCODE = '55000',
-        MESSAGE = TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME || ' is immutable';
 END
 $$;
-REVOKE ALL ON FUNCTION catalog.reject_durable_environment_fact_change() FROM PUBLIC;
+REVOKE ALL ON FUNCTION catalog.claim_environment_instance(text, text) FROM PUBLIC;
 
 CREATE TABLE catalog.authoring_command_audit (
     tenant_id         text        NOT NULL CHECK (tenant_id <> ''),
@@ -448,8 +499,14 @@ CREATE TABLE wamn_run.gate_reports (
     CONSTRAINT gate_reports_pkey PRIMARY KEY (tenant_id, wiring_hash)
 );
 
+-- The attestation's coordinate carries the environment instance for the same
+-- reason the component fact does (wamn-10yt.52). A disposable environment's
+-- effective release id is fixed, so a second run deploys a different manifest
+-- under the same name; keyed by the instance, that is a different coordinate
+-- rather than a conflict with a row whose database no longer exists.
 CREATE TABLE catalog.deployment_attestations (
     tenant_id              text        NOT NULL CHECK (tenant_id <> ''),
+    environment_instance   text        NOT NULL,
     effective_release_id   int         NOT NULL CHECK (effective_release_id > 0),
     org_id                 text        NOT NULL CHECK (org_id <> ''),
     project_id             text        NOT NULL CHECK (project_id <> ''),
@@ -459,7 +516,8 @@ CREATE TABLE catalog.deployment_attestations (
     source_commit          text        CHECK (source_commit IS NULL OR source_commit <> ''),
     attested_at            timestamptz NOT NULL,
     CONSTRAINT deployment_attestations_coordinate UNIQUE (
-        tenant_id, effective_release_id, org_id, project_id, environment
+        tenant_id, environment_instance, effective_release_id, org_id, project_id,
+        environment
     ),
     CONSTRAINT deployment_attestations_release_fkey
         FOREIGN KEY (tenant_id, effective_release_id, environment)
@@ -512,16 +570,34 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     stored_attested_at timestamptz;
+    -- Deliberately NOT named `environment_instance`: a local that shadows the
+    -- column it writes makes `ON CONFLICT` ambiguous rather than wrong, which
+    -- PostgreSQL refuses outright.
+    resolved_instance text;
 BEGIN
+    -- WHICH CREATION of the project database this attestation is about
+    -- (wamn-10yt.52). Resolved HERE, from provisioning's projection, inside the
+    -- caller's own control transaction — the same local read the disposable
+    -- marker used to get, now answering the key instead of gating an overwrite.
+    -- A tenant with no projected row keys on the empty string, which is exactly
+    -- the coordinate it had before this column existed.
+    resolved_instance := coalesce((
+        SELECT projected.environment_instance
+          FROM catalog.tenant_environments AS projected
+         WHERE projected.tenant_id = p_tenant_id
+    ), '');
+
     INSERT INTO catalog.deployment_attestations (
-        tenant_id, effective_release_id, org_id, project_id, environment,
-        deployed_manifest_hash, source_commit, attested_at
+        tenant_id, environment_instance, effective_release_id, org_id, project_id,
+        environment, deployed_manifest_hash, source_commit, attested_at
     ) VALUES (
-        p_tenant_id, p_effective_release_id, p_org_id, p_project_id,
-        p_environment, p_deployed_manifest_hash, p_source_commit, p_attested_at
+        p_tenant_id, resolved_instance, p_effective_release_id, p_org_id,
+        p_project_id, p_environment, p_deployed_manifest_hash, p_source_commit,
+        p_attested_at
     )
     ON CONFLICT (
-        tenant_id, effective_release_id, org_id, project_id, environment
+        tenant_id, environment_instance, effective_release_id, org_id, project_id,
+        environment
     ) DO NOTHING
     RETURNING attested_at INTO stored_attested_at;
 
@@ -532,38 +608,17 @@ BEGIN
     -- Identical concurrent writers adopt the timestamp of the row that won;
     -- only different deployed content or source provenance conflicts here.
     SELECT attested_at INTO stored_attested_at
-      FROM catalog.deployment_attestations
-     WHERE tenant_id = p_tenant_id
-       AND effective_release_id = p_effective_release_id
-       AND org_id = p_org_id
-       AND project_id = p_project_id
-       AND environment = p_environment
-       AND deployed_manifest_hash = p_deployed_manifest_hash
-       AND source_commit IS NOT DISTINCT FROM p_source_commit;
+      FROM catalog.deployment_attestations AS recorded
+     WHERE recorded.tenant_id = p_tenant_id
+       AND recorded.environment_instance = resolved_instance
+       AND recorded.effective_release_id = p_effective_release_id
+       AND recorded.org_id = p_org_id
+       AND recorded.project_id = p_project_id
+       AND recorded.environment = p_environment
+       AND recorded.deployed_manifest_hash = p_deployed_manifest_hash
+       AND recorded.source_commit IS NOT DISTINCT FROM p_source_commit;
 
     IF stored_attested_at IS NULL THEN
-        -- A disposable environment attests what it deployed THIS run. Its
-        -- effective release id is fixed, so a second run mints a different
-        -- manifest under the same coordinate and the frozen row would refuse
-        -- forever. Same rule as the component fact, at a third site: the
-        -- condition is the TARGET, read from provisioning's projection, and a
-        -- tenant with no projected row stays frozen.
-        IF coalesce((
-            SELECT disposable FROM catalog.tenant_environments
-             WHERE tenant_id = p_tenant_id
-        ), false) THEN
-            UPDATE catalog.deployment_attestations
-               SET deployed_manifest_hash = p_deployed_manifest_hash,
-                   source_commit = p_source_commit,
-                   attested_at = p_attested_at
-             WHERE tenant_id = p_tenant_id
-               AND effective_release_id = p_effective_release_id
-               AND org_id = p_org_id
-               AND project_id = p_project_id
-               AND environment = p_environment
-            RETURNING attested_at INTO stored_attested_at;
-            RETURN stored_attested_at;
-        END IF;
         RAISE EXCEPTION USING ERRCODE = '23505',
             MESSAGE = 'deployment-attestation-content-conflict';
     END IF;
@@ -604,30 +659,22 @@ DECLARE
     relation_name text;
     trigger_name text;
 BEGIN
+    -- ONE freeze for every control fact, unconditionally (wamn-10yt.52). The
+    -- component library, its connection requirements and the deployment
+    -- attestations rejoined this list when they started keying by the
+    -- environment instance: a recreated environment now writes a DIFFERENT row
+    -- rather than editing the one whose database is gone, so there is nothing
+    -- left for a conditional freeze to permit.
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.packages', 'catalog.package_migrations',
         'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.authoring_command_audit',
+        'catalog.authoring_command_audit', 'catalog.component_library',
+        'catalog.connection_requirements', 'catalog.deployment_attestations',
         'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',
-            trigger_name, relation_name
-        );
-    END LOOP;
-
-    -- These carry the SAME freeze, conditioned on the row's own environment
-    -- (wamn-10yt.38, wamn-10yt.51). Same trigger names, so the refusal an author
-    -- already knows keeps its spelling. A durable environment is unchanged: the
-    -- condition reads provisioning's projection, and absence means durable.
-    FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.component_library', 'catalog.connection_requirements',
-        'catalog.deployment_attestations'
-    ] LOOP
-        trigger_name := split_part(relation_name, '.', 2) || '_immutable';
-        EXECUTE format(
-            'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_environment_fact_change()',
             trigger_name, relation_name
         );
     END LOOP;

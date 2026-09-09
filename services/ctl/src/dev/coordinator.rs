@@ -1413,9 +1413,27 @@ impl DevStageRunner for ProductionDevStageRunner {
         // An authoring claim is keyed by it, so a replayed command against a
         // database that no longer exists executes instead of returning a result
         // whose effect was dropped with the old one (wamn-10yt.51).
-        self.target_instance = Some(target_database::recreate(&self.config).await.map_err(
-            |source| ProductionDevStageError::owner("recreate the target database", source.into()),
-        )?);
+        let instance = target_database::recreate(&self.config)
+            .await
+            .map_err(|source| {
+                ProductionDevStageError::owner("recreate the target database", source.into())
+            })?;
+        // The SAME instance now keys the control-plane facts this run is about
+        // to write — the component library, its connection requirements and the
+        // deployment attestation (wamn-10yt.52). Stamped into the control store
+        // HERE, once, immediately after the creation it names, so every writer
+        // downstream reads one answer instead of forming its own.
+        //
+        // Before Admit and after the recreate is the only correct moment: a
+        // claim any earlier would name a database this run did not create, and
+        // any later would let a fact land under the previous run's creation.
+        claim_environment_instance(
+            self.config.system_database_url(),
+            &self.config.activation_identity().tenant,
+            &instance,
+        )
+        .await?;
+        self.target_instance = Some(instance);
         Ok(())
     }
 
@@ -1565,6 +1583,42 @@ fn load_wirings(packages: &[PackageInput]) -> Result<Vec<WiringInput>, Productio
         ));
     }
     Ok(inputs)
+}
+
+/// Stamp the creation the recreate just minted onto the tenant's projected
+/// environment, so every control-plane fact this run writes keys to it
+/// (wamn-10yt.52).
+///
+/// One short-lived connection to the control database, not a member of the
+/// coordinator's state: this happens once per run, before any stage, and holding
+/// a connection open across the whole loop for one UPDATE would outlive its
+/// purpose. The routine refuses a tenant that provisioning never projected —
+/// absence means durable, and a durable environment is never recreated.
+async fn claim_environment_instance(
+    system_database_url: &str,
+    tenant: &str,
+    instance: &str,
+) -> Result<(), ProductionDevStageError> {
+    let (client, connection) = tokio_postgres::connect(system_database_url, NoTls)
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner(
+                "connect to the control database to claim the environment instance",
+                source.into(),
+            )
+        })?;
+    let connection_task = tokio::spawn(connection);
+    let claimed = client
+        .execute(
+            "SELECT catalog.claim_environment_instance($1, $2)",
+            &[&tenant, &instance],
+        )
+        .await;
+    drop(client);
+    connection_task.abort();
+    claimed.map(|_| ()).map_err(|source| {
+        ProductionDevStageError::owner("claim the environment instance", source.into())
+    })
 }
 
 /// `target_instance` names WHICH CREATION of the target database this command

@@ -45,6 +45,15 @@ const REGISTER_PACKAGE_SQL: &str = "SELECT catalog.register_package($1, $2, $3, 
 const SELECT_PACKAGE_SQL: &str = "SELECT manifest_sha256, predecessor_version FROM catalog.packages \
      WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3";
 
+/// Append one admitted component fact to the PROJECT plane.
+///
+/// # The two planes no longer share one statement (wamn-10yt.52)
+///
+/// The control copy of `catalog.component_library` keys by the environment
+/// instance and the project copy does not, because a project database is dropped
+/// and cloned before every development run and has no second creation to tell
+/// itself apart from. The control statements below are the same appends with
+/// that one part added.
 const INSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
          tenant_id, package_id, package_version, component, interface_version, operations, \
          component_digest, projection_hash, imports, imports_fingerprint, effects\
@@ -52,52 +61,36 @@ const INSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
          $1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb\
      ) ON CONFLICT DO NOTHING RETURNING admitted_at";
 
-/// The same append for a DISPOSABLE environment, which REPLACES the coordinate's
-/// admitted fact instead of colliding with it (wamn-10yt.38).
+/// The CONTROL plane's same append, keyed additionally by the environment
+/// instance at `$2`.
 ///
-/// Same eleven parameters as [`INSERT_COMPONENT_SQL`], so the choice between the
-/// two is one statement swap and never a second parameter shape. `RETURNING`
-/// fires on the update as well as the insert, so the conflicting arm below is
-/// simply not reached — a replacement is not an exact retry and must not be
-/// judged as one.
-const UPSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
-         tenant_id, package_id, package_version, component, interface_version, operations, \
-         component_digest, projection_hash, imports, imports_fingerprint, effects\
+/// This REPLACES the disposable-environment upsert wamn-10yt.38 installed here.
+/// A recreated environment no longer edits the fact whose database was dropped;
+/// it writes its own row under its own creation, so the plain
+/// `ON CONFLICT DO NOTHING` append — and the exact-retry proof beneath it — mean
+/// what they say again for every environment.
+const INSERT_CONTROL_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
+         tenant_id, environment_instance, package_id, package_version, component, \
+         interface_version, operations, component_digest, projection_hash, imports, \
+         imports_fingerprint, effects\
      ) VALUES (\
-         $1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb\
-     ) ON CONFLICT ON CONSTRAINT component_library_pkey DO UPDATE SET \
-         operations = EXCLUDED.operations, \
-         component_digest = EXCLUDED.component_digest, \
-         projection_hash = EXCLUDED.projection_hash, \
-         imports = EXCLUDED.imports, \
-         imports_fingerprint = EXCLUDED.imports_fingerprint, \
-         effects = EXCLUDED.effects, \
-         admitted_at = now() \
-     RETURNING admitted_at";
+         $1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9, $10::text::jsonb, $11, \
+         $12::text::jsonb\
+     ) ON CONFLICT DO NOTHING RETURNING admitted_at";
 
-/// Whether the tenant's PROJECTED environment marks its facts replaceable.
+/// WHICH CREATION of the project database this tenant's control facts belong to.
 ///
 /// Read LOCALLY, inside the control transaction that is about to write the fact,
-/// from `catalog.tenant_environments` — provisioning's projection of the
-/// authority row in `registry.project_envs`. No second database on the admit
-/// path for a flag that changes once in an environment's lifetime.
-/// A tenant with no projected environment is DURABLE, which is what makes this
-/// additive: absence reproduces the refusal exactly.
-const SELECT_ENVIRONMENT_DISPOSABLE_SQL: &str = "SELECT coalesce((\
-         SELECT disposable FROM catalog.tenant_environments WHERE tenant_id = $1\
-     ), false)";
-
-/// A replacement moves the coordinate's digest, and any admitted connection
-/// requirement still points at the OLD one. Release that reference first; the
-/// requirements for the new digest are appended immediately after the fact
-/// moves, so the transaction never observes a component without its connections.
-const RELEASE_SUPERSEDED_REQUIREMENTS_SQL: &str = "DELETE FROM catalog.connection_requirements \
-      WHERE tenant_id = $1 \
-        AND component_digest <> $6 \
-        AND component_digest = (\
-            SELECT component_digest FROM catalog.component_library \
-             WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
-               AND component = $4 AND interface_version = $5)";
+/// from `catalog.tenant_environments` — provisioning's projection, which the
+/// development loop's recreate re-stamps through
+/// `catalog.claim_environment_instance`. No second database on the admit path.
+///
+/// A tenant with no projected environment reads the EMPTY STRING, which is the
+/// key every control fact carried before this column existed. That is what makes
+/// the column additive: a durable environment is byte-identical to before.
+const SELECT_ENVIRONMENT_INSTANCE_SQL: &str = "SELECT coalesce((\
+         SELECT environment_instance FROM catalog.tenant_environments WHERE tenant_id = $1\
+     ), '')";
 
 const EXACT_COMPONENT_SQL: &str = "SELECT EXISTS (\
          SELECT 1 FROM catalog.component_library \
@@ -107,13 +100,32 @@ const EXACT_COMPONENT_SQL: &str = "SELECT EXISTS (\
             AND imports = $9::text::jsonb AND imports_fingerprint = $10 \
             AND effects = $11::text::jsonb\
      )";
+/// [`EXACT_COMPONENT_SQL`] within one environment instance. Without `$2` in the
+/// predicate a rerun would read the PREVIOUS creation's fact and mistake it for
+/// its own record.
+const EXACT_CONTROL_COMPONENT_SQL: &str = "SELECT EXISTS (\
+         SELECT 1 FROM catalog.component_library \
+          WHERE tenant_id = $1 AND environment_instance = $2 AND package_id = $3 \
+            AND package_version = $4 AND component = $5 AND interface_version = $6 \
+            AND operations = $7::text::jsonb AND component_digest = $8 \
+            AND projection_hash = $9 AND imports = $10::text::jsonb \
+            AND imports_fingerprint = $11 AND effects = $12::text::jsonb\
+     )";
 const SELECT_COMPONENT_PROJECTION_HASH_SQL: &str = "SELECT projection_hash \
        FROM catalog.component_library \
       WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
         AND component = $4 AND interface_version = $5";
+const SELECT_CONTROL_COMPONENT_PROJECTION_HASH_SQL: &str = "SELECT projection_hash \
+       FROM catalog.component_library \
+      WHERE tenant_id = $1 AND environment_instance = $2 AND package_id = $3 \
+        AND package_version = $4 AND component = $5 AND interface_version = $6";
 const SELECT_REQUIREMENT_INVENTORY_SQL: &str = "SELECT store_alias, requirement_hash \
        FROM catalog.connection_requirements \
       WHERE tenant_id = $1 AND component_digest = $2 \
+      ORDER BY store_alias COLLATE \"C\"";
+const SELECT_CONTROL_REQUIREMENT_INVENTORY_SQL: &str = "SELECT store_alias, requirement_hash \
+       FROM catalog.connection_requirements \
+      WHERE tenant_id = $1 AND environment_instance = $2 AND component_digest = $3 \
       ORDER BY store_alias COLLATE \"C\"";
 
 /// Stable prefix for package/component projection refusals.
@@ -1399,9 +1411,12 @@ async fn require_exact_verification_projection_with_client(
         );
         return Err(ComponentProjectionError::new(kind, detail).into());
     }
+    // The verification database is a PROJECT plane: it IS the creation being
+    // verified, so it keys no environment instance (wamn-10yt.52).
     verify_requirement_inventory(
         &transaction,
         &component.scope.tenant_id,
+        None,
         &component.component_digest,
         requirements,
     )
@@ -1486,20 +1501,22 @@ async fn persist_with_client(
         .query_one(LOCK_PROJECTION_SQL, &[&coordinate])
         .await
         .with_context(|| format!("lock {plane} component projection coordinate"))?;
-    // The disposable marker lives only in the control store, beside the facts it
-    // governs (wamn-10yt.38). The verification project plane is recreated per
-    // run and carries no projection to consult, so it stays frozen.
-    let replaceable = if plane == ProjectionPlane::Control {
-        transaction
+    // The environment instance lives only in the control store, beside the facts
+    // it keys (wamn-10yt.52). The project plane IS the creation this instance
+    // names, so it has nothing to distinguish itself from and carries no such
+    // column; `None` is what says so, at every statement choice below.
+    let environment_instance = if plane == ProjectionPlane::Control {
+        let instance: String = transaction
             .query_one(
-                SELECT_ENVIRONMENT_DISPOSABLE_SQL,
+                SELECT_ENVIRONMENT_INSTANCE_SQL,
                 &[&component.scope.tenant_id],
             )
             .await
-            .context("resolve the projected environment's disposable marker")?
-            .get(0)
+            .context("resolve the projected environment instance")?
+            .get(0);
+        Some(instance)
     } else {
-        false
+        None
     };
     let package_inserted = if plane == ProjectionPlane::Control {
         let existing = transaction
@@ -1571,20 +1588,25 @@ async fn persist_with_client(
         &transaction,
         component,
         projection_hash,
-        replaceable,
+        environment_instance.as_deref(),
     )
     .await?;
     let mut requirements_inserted = 0;
     // One transaction per plane: a library fact without its connection facts,
     // or the reverse, is never visible inside that plane.
     for requirement in requirements {
-        requirements_inserted +=
-            append_or_verify_requirement(&transaction, &component.scope.tenant_id, requirement)
-                .await? as usize;
+        requirements_inserted += append_or_verify_requirement(
+            &transaction,
+            &component.scope.tenant_id,
+            environment_instance.as_deref(),
+            requirement,
+        )
+        .await? as usize;
     }
     verify_requirement_inventory(
         &transaction,
         &component.scope.tenant_id,
+        environment_instance.as_deref(),
         &component.component_digest,
         requirements,
     )
@@ -1730,34 +1752,58 @@ async fn require_exact_package(
 }
 
 /// Append one portable connection requirement, or prove an exact retry.
+///
+/// `environment_instance` is `Some` for the CONTROL plane, whose copy keys by the
+/// creation of the project database the requirement belongs to, and `None` for a
+/// project plane, which IS that creation (wamn-10yt.52). The two planes take
+/// different statements because their relations now differ by that one column.
 async fn append_or_verify_requirement(
     transaction: &tokio_postgres::Transaction<'_>,
     tenant_id: &str,
+    environment_instance: Option<&str>,
     requirement: &ComponentConnectionRequirement,
 ) -> anyhow::Result<bool> {
     let canonical_json = String::from_utf8(requirement.canonical_bytes())
         .context("portable connection requirement is not UTF-8")?;
     let requirement_hash = requirement.requirement_hash();
-    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 5] = [
+    let component_digest = requirement.component_digest();
+    let store_alias = requirement.store_alias();
+    let project_params: [&(dyn tokio_postgres::types::ToSql + Sync); 5] = [
         &tenant_id,
-        &requirement.component_digest(),
-        &requirement.store_alias(),
+        &component_digest,
+        &store_alias,
         &canonical_json,
         &requirement_hash,
     ];
+    let control_params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
+        &tenant_id,
+        &environment_instance,
+        &component_digest,
+        &store_alias,
+        &canonical_json,
+        &requirement_hash,
+    ];
+    let (insert_sql, exact_sql, params): (_, _, &[&(dyn tokio_postgres::types::ToSql + Sync)]) =
+        if environment_instance.is_some() {
+            (
+                wamn_schema_control::connections::insert_control_component_connection_requirement_sql(),
+                wamn_schema_control::connections::exact_control_component_connection_requirement_sql(),
+                &control_params,
+            )
+        } else {
+            (
+                wamn_schema_control::connections::insert_component_connection_requirement_sql(),
+                wamn_schema_control::connections::exact_component_connection_requirement_sql(),
+                &project_params,
+            )
+        };
     let inserted = transaction
-        .execute(
-            wamn_schema_control::connections::insert_component_connection_requirement_sql(),
-            &params,
-        )
+        .execute(insert_sql, params)
         .await
         .context("append portable component connection requirement")?
         == 1;
     let exact: bool = transaction
-        .query_one(
-            wamn_schema_control::connections::exact_component_connection_requirement_sql(),
-            &params,
-        )
+        .query_one(exact_sql, params)
         .await
         .context("verify portable component connection requirement")?
         .get(0);
@@ -1775,9 +1821,13 @@ async fn append_or_verify_requirement(
     Ok(inserted)
 }
 
+/// `environment_instance` scopes the read to the creation this projection is
+/// writing; without it the control plane would compare its inventory against
+/// every creation's rows at once (wamn-10yt.52).
 async fn verify_requirement_inventory(
     transaction: &Transaction<'_>,
     tenant_id: &str,
+    environment_instance: Option<&str>,
     component_digest: &str,
     requirements: &[ComponentConnectionRequirement],
 ) -> anyhow::Result<()> {
@@ -1795,16 +1845,28 @@ async fn verify_requirement_inventory(
             .into());
         }
     }
-    let observed = transaction
-        .query(
-            SELECT_REQUIREMENT_INVENTORY_SQL,
-            &[&tenant_id, &component_digest],
-        )
-        .await
-        .context("read exact component connection requirement inventory")?
-        .into_iter()
-        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
-        .collect::<BTreeMap<_, _>>();
+    let observed = match environment_instance {
+        Some(instance) => {
+            transaction
+                .query(
+                    SELECT_CONTROL_REQUIREMENT_INVENTORY_SQL,
+                    &[&tenant_id, &instance, &component_digest],
+                )
+                .await
+        }
+        None => {
+            transaction
+                .query(
+                    SELECT_REQUIREMENT_INVENTORY_SQL,
+                    &[&tenant_id, &component_digest],
+                )
+                .await
+        }
+    }
+    .context("read exact component connection requirement inventory")?
+    .into_iter()
+    .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+    .collect::<BTreeMap<_, _>>();
     if observed != expected {
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorKind::ConnectionFactConflict,
@@ -1822,27 +1884,33 @@ async fn verify_requirement_inventory(
 /// The caller owns the transaction and tenant claim so release promotion can
 /// combine this write with its target wiring and pointer cutover atomically.
 ///
-/// Always the FROZEN reading: promotion copies an already-admitted fact into a
-/// target and has no environment of its own to consult. Only the control
-/// projection in [`persist_with_client`] resolves the disposable marker.
+/// A PROJECT-plane append: promotion copies an already-admitted fact into a
+/// target database that IS its own creation, so it carries no environment
+/// instance. Only the control projection in [`persist_with_client`] resolves one.
 pub(crate) async fn append_or_verify_admitted_component(
     transaction: &tokio_postgres::Transaction<'_>,
     component: &AdmittedComponent,
     projection_hash: &str,
 ) -> anyhow::Result<()> {
-    append_or_verify_admitted_component_count(transaction, component, projection_hash, false)
+    append_or_verify_admitted_component_count(transaction, component, projection_hash, None)
         .await
         .map(|_| ())
 }
 
-/// `replaceable` is the PROJECTED environment's answer, never a caller's
-/// preference: it is read from `catalog.tenant_environments` inside this same
-/// transaction (wamn-10yt.38).
+/// `environment_instance` is the PROJECTED environment's answer, never a
+/// caller's preference: it is read from `catalog.tenant_environments` inside this
+/// same transaction (wamn-10yt.52). `None` selects the project-plane statements,
+/// whose relation carries no such column.
+///
+/// There is no longer a replacing arm here. A recreated environment writes its
+/// own row under its own instance, so the append is one plain
+/// `ON CONFLICT DO NOTHING` for every environment and the exact-retry proof below
+/// judges only genuine retries.
 async fn append_or_verify_admitted_component_count(
     transaction: &tokio_postgres::Transaction<'_>,
     component: &AdmittedComponent,
     projection_hash: &str,
-    replaceable: bool,
+    environment_instance: Option<&str>,
 ) -> anyhow::Result<(bool, String)> {
     let imports =
         serde_json::to_string(&component.imports).context("serialize admitted imports")?;
@@ -1850,7 +1918,7 @@ async fn append_or_verify_admitted_component_count(
         serde_json::to_string(&component.effects).context("serialize admitted effects")?;
     let operations =
         serde_json::to_string(&component.operations).context("serialize admitted operations")?;
-    let params: [&(dyn tokio_postgres::types::ToSql + Sync); 11] = [
+    let project_params: [&(dyn tokio_postgres::types::ToSql + Sync); 11] = [
         &component.scope.tenant_id,
         &component.scope.package_id,
         &component.scope.package_version,
@@ -1863,36 +1931,38 @@ async fn append_or_verify_admitted_component_count(
         &component.imports_fingerprint,
         &effects,
     ];
-
-    if replaceable {
-        transaction
-            .execute(
-                RELEASE_SUPERSEDED_REQUIREMENTS_SQL,
-                &[
-                    &component.scope.tenant_id,
-                    &component.scope.package_id,
-                    &component.scope.package_version,
-                    &component.component,
-                    &component.interface_version,
-                    &component.component_digest,
-                ],
+    let control_params: [&(dyn tokio_postgres::types::ToSql + Sync); 12] = [
+        &component.scope.tenant_id,
+        &environment_instance,
+        &component.scope.package_id,
+        &component.scope.package_version,
+        &component.component,
+        &component.interface_version,
+        &operations,
+        &component.component_digest,
+        &projection_hash,
+        &imports,
+        &component.imports_fingerprint,
+        &effects,
+    ];
+    let (append_sql, exact_sql, params): (_, _, &[&(dyn tokio_postgres::types::ToSql + Sync)]) =
+        if environment_instance.is_some() {
+            (
+                INSERT_CONTROL_COMPONENT_SQL,
+                EXACT_CONTROL_COMPONENT_SQL,
+                &control_params,
             )
-            .await
-            .context("release the superseded component's connection requirements")?;
-    }
-    let append_sql = if replaceable {
-        UPSERT_COMPONENT_SQL
-    } else {
-        INSERT_COMPONENT_SQL
-    };
+        } else {
+            (INSERT_COMPONENT_SQL, EXACT_COMPONENT_SQL, &project_params)
+        };
     let inserted = transaction
-        .query_opt(append_sql, &params)
+        .query_opt(append_sql, params)
         .await
         .context("append admitted component-library fact")?
         .is_some();
     if !inserted {
         let exact: bool = transaction
-            .query_one(EXACT_COMPONENT_SQL, &params)
+            .query_one(exact_sql, params)
             .await
             .context("verify existing component-library fact")?
             .get(0);
@@ -1910,20 +1980,39 @@ async fn append_or_verify_admitted_component_count(
             .into());
         }
     }
-    let observed_projection_hash: String = transaction
-        .query_one(
-            SELECT_COMPONENT_PROJECTION_HASH_SQL,
-            &[
-                &component.scope.tenant_id,
-                &component.scope.package_id,
-                &component.scope.package_version,
-                &component.component,
-                &component.interface_version,
-            ],
-        )
-        .await
-        .context("read persisted component projection hash")?
-        .get(0);
+    let observed_projection_hash: String = match environment_instance {
+        Some(instance) => {
+            transaction
+                .query_one(
+                    SELECT_CONTROL_COMPONENT_PROJECTION_HASH_SQL,
+                    &[
+                        &component.scope.tenant_id,
+                        &instance,
+                        &component.scope.package_id,
+                        &component.scope.package_version,
+                        &component.component,
+                        &component.interface_version,
+                    ],
+                )
+                .await
+        }
+        None => {
+            transaction
+                .query_one(
+                    SELECT_COMPONENT_PROJECTION_HASH_SQL,
+                    &[
+                        &component.scope.tenant_id,
+                        &component.scope.package_id,
+                        &component.scope.package_version,
+                        &component.component,
+                        &component.interface_version,
+                    ],
+                )
+                .await
+        }
+    }
+    .context("read persisted component projection hash")?
+    .get(0);
     Ok((inserted, observed_projection_hash))
 }
 
@@ -2692,9 +2781,16 @@ mod tests {
             .query_one(CLAIM_TENANT_SQL, &[&component.scope.tenant_id])
             .await
             .expect("claim control tenant for requirement-inventory mutation");
-        append_or_verify_requirement(&transaction, &component.scope.tenant_id, &unexpected)
-            .await
-            .expect("seed an extra control-plane requirement");
+        // This control store carries no projected environment, so its facts key
+        // on the empty instance (wamn-10yt.52).
+        append_or_verify_requirement(
+            &transaction,
+            &component.scope.tenant_id,
+            Some(""),
+            &unexpected,
+        )
+        .await
+        .expect("seed an extra control-plane requirement");
         transaction
             .commit()
             .await
@@ -2735,6 +2831,7 @@ mod tests {
         append_or_verify_requirement(
             &transaction,
             &component.scope.tenant_id,
+            None,
             &unexpected_project,
         )
         .await
@@ -2762,20 +2859,23 @@ mod tests {
         }
     }
 
-    /// Both directions of wamn-10yt.38 against a real control store.
+    /// wamn-10yt.52 against a real control store: the ENVIRONMENT INSTANCE, not
+    /// the disposable marker, is what lets a rerun admit its own bytes.
     ///
     /// The trigger is a no-op edit: the same package version, the same
-    /// coordinate, different component bytes. A durable environment answers with
-    /// `component-fact-conflict`, which is what locked an author out of their own
-    /// version after a reformat. The SAME admission against a target whose
-    /// projected environment says disposable lands, digest and connection
-    /// requirements together.
+    /// coordinate, different component bytes. Every arm that shares one creation
+    /// of the project database answers `component-fact-conflict`, disposable or
+    /// not — that refusal is the fact staying frozen. Only claiming a NEW
+    /// creation lets the same admission land, and it lands BESIDE the previous
+    /// creation's fact rather than over it.
     ///
-    /// The only thing that changes between the two arms is the projected row.
+    /// This replaces the wamn-10yt.38 proof that the disposable marker alone
+    /// unlocked a replacement. That overwrite is retired; the marker now decides
+    /// nothing here.
     #[tokio::test]
-    async fn the_projected_environment_decides_whether_a_component_fact_may_be_replaced() {
+    async fn the_environment_instance_decides_which_run_owns_a_component_fact() {
         let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
-            eprintln!("skipping disposable-projection proof; WAMN_CTL_PG_URL is unset");
+            eprintln!("skipping environment-instance projection proof; WAMN_CTL_PG_URL is unset");
             return;
         };
         let lock = OpenOptions::new()
@@ -2880,23 +2980,26 @@ mod tests {
                 .await
             }
         };
-        let stored_digest = async || -> String {
+        // Read per INSTANCE: after a recreate the store holds one fact per
+        // creation, and a query that ignored the instance could no longer say
+        // which run it was reading.
+        let stored_digest = async |instance: &str| -> String {
             control
                 .query_one(
                     "SELECT component_digest FROM catalog.component_library \
-                      WHERE tenant_id = $1",
-                    &[&projection_component().scope.tenant_id],
+                      WHERE tenant_id = $1 AND environment_instance = $2",
+                    &[&projection_component().scope.tenant_id, &instance],
                 )
                 .await
                 .expect("read the admitted component digest")
                 .get(0)
         };
-        let stored_requirement_digest = async || -> String {
+        let stored_requirement_digest = async |instance: &str| -> String {
             control
                 .query_one(
                     "SELECT component_digest FROM catalog.connection_requirements \
-                      WHERE tenant_id = $1",
-                    &[&projection_component().scope.tenant_id],
+                      WHERE tenant_id = $1 AND environment_instance = $2",
+                    &[&projection_component().scope.tenant_id, &instance],
                 )
                 .await
                 .expect("read the admitted requirement's component digest")
@@ -2927,12 +3030,34 @@ mod tests {
                 .await
                 .expect("restore test administrator");
         };
+        // What `wamn dev`'s recreate does: stamp the creation it just minted onto
+        // the projected environment, so the facts written after it key to that
+        // creation.
+        let claim_instance = async |instance: &str| {
+            control
+                .batch_execute("SET ROLE wamn_system")
+                .await
+                .expect("assume production control owner");
+            control
+                .execute(
+                    "SELECT catalog.claim_environment_instance($1, $2)",
+                    &[&projection_component().scope.tenant_id, &instance],
+                )
+                .await
+                .expect("claim the environment instance");
+            control
+                .batch_execute("RESET ROLE")
+                .await
+                .expect("restore test administrator");
+        };
 
         let (first, first_requirements, first_hash) = admitted(b'a');
         project_control(&first, first_requirements, first_hash)
             .await
             .expect("the first admission projects into a fresh control store");
-        assert_eq!(stored_digest().await, first.component_digest);
+        // No projection yet, so the fact keys on the empty instance — exactly the
+        // key it carried before this column existed.
+        assert_eq!(stored_digest("").await, first.component_digest);
 
         // ARM ONE: no projected environment at all. Absence means durable.
         let (second, second_requirements, second_hash) = admitted(b'b');
@@ -2960,26 +3085,51 @@ mod tests {
                 .kind(),
             ComponentProjectionErrorKind::ComponentFactConflict
         );
-        assert_eq!(stored_digest().await, first.component_digest);
+        assert_eq!(stored_digest("").await, first.component_digest);
 
-        // ARM THREE: the SAME admission, against a disposable environment.
+        // ARM THREE: the SAME admission against a DISPOSABLE environment that has
+        // not been recreated. This is what wamn-10yt.52 retires — the marker used
+        // to unlock a replacement here, and the fact is now frozen for everyone
+        // until a new creation is claimed.
         project_environment(true).await;
+        let same_instance =
+            project_control(&second, second_requirements.clone(), second_hash.clone())
+                .await
+                .expect_err("a disposable environment that was not recreated stays frozen");
+        assert_eq!(
+            same_instance
+                .downcast_ref::<ComponentProjectionError>()
+                .expect("a moved digest is a typed refusal")
+                .kind(),
+            ComponentProjectionErrorKind::ComponentFactConflict
+        );
+        assert_eq!(stored_digest("").await, first.component_digest);
+
+        // ARM FOUR: the recreate claims a new creation, and the same admission
+        // lands — under its own key, BESIDE the first run's fact rather than over
+        // it.
+        claim_instance("16384").await;
         project_control(&second, second_requirements, second_hash)
             .await
-            .expect("a disposable environment replaces its own admitted fact");
-        assert_eq!(stored_digest().await, second.component_digest);
+            .expect("a freshly created environment admits its own bytes");
+        assert_eq!(stored_digest("16384").await, second.component_digest);
         assert_eq!(
-            stored_requirement_digest().await,
+            stored_requirement_digest("16384").await,
             second.component_digest,
-            "the replacement left a connection requirement pointing at the superseded digest"
+            "the new creation's requirement must point at the digest that creation admitted"
+        );
+        assert_eq!(
+            stored_digest("").await,
+            first.component_digest,
+            "the previous creation's fact must still resolve to the run that owns it"
         );
 
-        // And flipping the environment back re-freezes it, with no redeploy.
-        project_environment(false).await;
+        // ARM FIVE: within that same creation the fact is frozen again, so the
+        // instance buys exactly one admission per creation and no more.
         let (third, third_requirements, third_hash) = admitted(b'c');
         let refrozen = project_control(&third, third_requirements, third_hash)
             .await
-            .expect_err("a re-provisioned durable environment freezes again");
+            .expect_err("a second edit inside one creation is refused");
         assert_eq!(
             refrozen
                 .downcast_ref::<ComponentProjectionError>()

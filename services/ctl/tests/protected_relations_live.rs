@@ -397,15 +397,43 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
 
 /// Portable relations the control store installs that the project plane also
 /// installs, so both copies must carry an identical column and constraint shape.
-const SHARED_PORTABLE_RELATIONS: [&str; 7] = [
+const SHARED_PORTABLE_RELATIONS: [&str; 5] = [
     "catalog.packages",
     "catalog.package_migrations",
     "catalog.effective_releases",
     "catalog.effective_release_packages",
     "catalog.effective_release_heads",
+];
+
+/// Portable relations both planes install whose shapes DELIBERATELY diverge by
+/// one column, ruled 2026-09-09 on wamn-10yt.52.
+///
+/// # What the retired arm asserted
+///
+/// These two used to sit in [`SHARED_PORTABLE_RELATIONS`], where
+/// `assert_eq!(control_shared_fingerprints, project_shared_fingerprints,
+/// "control copies drifted from the still-authoritative project column/constraint
+/// shapes")` proved their control and project copies IDENTICAL in every column
+/// (number, name, type, nullability, default) and every non-trigger constraint.
+/// That equality is GONE for these two relations and is not asserted anywhere
+/// else. The control copies key by `environment_instance` and the project copies
+/// do not, because a project database is dropped and cloned before every
+/// development run and has no second creation to distinguish.
+///
+/// # What replaces it
+///
+/// [`assert_diverges_by_environment_instance`] below, which is narrower than the
+/// old arm but not nothing: both copies must still exist, and the control copy's
+/// columns must be the project copy's plus EXACTLY `environment_instance`. Any
+/// other drift between the planes still fails, so the loss is confined to the
+/// constraint shapes the added key column necessarily moves.
+const DIVERGED_PORTABLE_RELATIONS: [&str; 2] = [
     "catalog.component_library",
     "catalog.connection_requirements",
 ];
+
+/// The one column the diverged relations are permitted to differ by.
+const DIVERGENCE_COLUMN: &str = "environment_instance";
 
 /// Portable relations that live only in the control plane.
 /// `install_project_database` DROPs the `catalog` and `wamn_run` schemas
@@ -490,6 +518,71 @@ async fn portable_fingerprints(
             .push(row.get(1));
     }
     fingerprints
+}
+
+/// Column NAMES of one fingerprint, in catalog order.
+///
+/// The raw fingerprint entries lead with `attnum`, which shifts for every column
+/// after an inserted one, so a divergence proof has to compare names rather than
+/// those strings.
+fn column_names(fingerprint: &PortableFingerprint) -> Vec<String> {
+    fingerprint
+        .columns
+        .iter()
+        .map(|column| {
+            column
+                .split(':')
+                .nth(1)
+                .expect("a column fingerprint carries attnum:attname:...")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// Prove the control copy is the project copy plus exactly one key column.
+///
+/// This is the narrowed successor to the cross-plane equality
+/// [`DIVERGED_PORTABLE_RELATIONS`] documents. Both copies must exist, and the
+/// only permitted difference is [`DIVERGENCE_COLUMN`]: a control copy that grew
+/// a SECOND column the project plane lacks, or lost one it has, still fails.
+fn assert_diverges_by_environment_instance(
+    control: &BTreeMap<String, PortableFingerprint>,
+    project: &BTreeMap<String, PortableFingerprint>,
+) {
+    for relation in DIVERGED_PORTABLE_RELATIONS {
+        let control_columns = column_names(
+            control
+                .get(relation)
+                .unwrap_or_else(|| panic!("{relation} has a control fingerprint")),
+        );
+        let project_columns = column_names(
+            project
+                .get(relation)
+                .unwrap_or_else(|| panic!("{relation} has a project fingerprint")),
+        );
+        assert!(
+            !control_columns.is_empty() && !project_columns.is_empty(),
+            "{relation} must be installed in BOTH planes: control={control_columns:?} \
+             project={project_columns:?}"
+        );
+        assert!(
+            control_columns.iter().any(|name| name == DIVERGENCE_COLUMN),
+            "{relation} control copy must carry {DIVERGENCE_COLUMN}: {control_columns:?}"
+        );
+        assert!(
+            !project_columns.iter().any(|name| name == DIVERGENCE_COLUMN),
+            "{relation} project copy must NOT carry {DIVERGENCE_COLUMN}: {project_columns:?}"
+        );
+        let without_instance = control_columns
+            .iter()
+            .filter(|name| name.as_str() != DIVERGENCE_COLUMN)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            without_instance, project_columns,
+            "{relation} may diverge across planes by {DIVERGENCE_COLUMN} and nothing else"
+        );
+    }
 }
 
 fn normalize_catalog_text(relation: &str, value: &str) -> String {
@@ -972,6 +1065,8 @@ async fn protected_relations_match_reconciled_postgres() {
     install_control_database(&client).await;
     let control_shared_fingerprints =
         portable_fingerprints(&client, &SHARED_PORTABLE_RELATIONS).await;
+    let control_diverged_fingerprints =
+        portable_fingerprints(&client, &DIVERGED_PORTABLE_RELATIONS).await;
     let control_only_fingerprints =
         portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
     assert!(
@@ -995,6 +1090,12 @@ async fn protected_relations_match_reconciled_postgres() {
     assert_eq!(
         control_shared_fingerprints, project_shared_fingerprints,
         "control copies drifted from the still-authoritative project column/constraint shapes"
+    );
+    // The two relations this equality no longer covers, and the narrower rule
+    // that replaced it for them (wamn-10yt.52).
+    assert_diverges_by_environment_instance(
+        &control_diverged_fingerprints,
+        &portable_fingerprints(&client, &DIVERGED_PORTABLE_RELATIONS).await,
     );
     let project_side_control_only =
         portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
