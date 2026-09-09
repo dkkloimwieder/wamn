@@ -23,6 +23,17 @@ ts="$(date -u -d "@$(( t0 / 1000000000 ))" +%Y-%m-%dT%H:%M:%S).$(printf '%03d' $
 out="$dir/dev-logs/$n-$$.out"
 err="${out%.out}.err"
 
+# THE START LEDGER, AND WHY IT IS A SECOND FILE. verbs.jsonl carries the row
+# written when the call ENDS, so it cannot see a `wamn dev --hold`: teardown
+# kills a held loop and it never returns here. Arm 030 drove its whole
+# verification pass through one held run and run.json read wamn_dev_hold_runs 0,
+# which is the direction that hides work. So the invocation is recorded when it
+# starts, in its own append-only file, and verbs.jsonl keeps its one-row-per-
+# completed-call contract for every reader that already depends on it.
+flock "$dir/verbs.lock" jq -cn --arg ts "$ts" --arg n "$n" \
+   --args '{ts:$ts,n:$n,argv:$ARGS.positional}' -- "$@" \
+   >> "$dir/verbs-started.jsonl"
+
 "$real" "$@" > >(tee -a "$out") 2> >(tee -a "$err" >&2)
 rc=$?
 wait                                   # both tee substitutions have flushed

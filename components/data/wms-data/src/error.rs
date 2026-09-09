@@ -41,6 +41,24 @@ pub enum AccessErrorKind {
 }
 
 impl AccessErrorKind {
+    /// Every class, so a drift guard can walk the whole vocabulary. A variant
+    /// added without being listed here is invisible to that guard.
+    #[cfg(test)]
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::InvalidInput,
+        Self::NotFound,
+        Self::PalletNotFound,
+        Self::LocationNotFound,
+        Self::QuantityNotFound,
+        Self::InsufficientQuantity,
+        Self::ConcurrencyConflict,
+        Self::IdempotencyConflict,
+        Self::Retry,
+        Self::Timeout,
+        Self::PermissionDenied,
+        Self::InternalError,
+    ];
+
     /// Frozen operation-contract literal.
     #[must_use]
     pub const fn literal(self) -> &'static str {
@@ -191,6 +209,7 @@ mod tests {
             ("pallet/get", crate::pallet::GET_REFUSALS),
             ("pallet/query", crate::pallet::QUERY_REFUSALS),
         ];
+        let mut package_declares = std::collections::BTreeSet::new();
         for (operation, refusals) in contracts {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../../packages/wms/generated/contracts")
@@ -216,6 +235,31 @@ mod tests {
                     kind.literal()
                 );
             }
+            package_declares.extend(declared.iter().map(|literal| (*literal).to_owned()));
+        }
+
+        // The direction the per-operation pass cannot see: the ENUM against the
+        // package. The generator owns one platform vocabulary,
+        // `AccessOperationErrorLiteral`, and writes every case list above from
+        // it; `AccessErrorKind` is a HAND copy of the part this package uses,
+        // and nothing held the copy to the source --- when `exclusion_violation`
+        // joined the platform vocabulary the copy did not grow.
+        let spelled: std::collections::BTreeSet<&str> = AccessErrorKind::ALL
+            .iter()
+            .map(|kind| kind.literal())
+            .collect();
+        for literal in &spelled {
+            assert!(
+                package_declares.contains(*literal),
+                "{literal} is spelled here but declared by no contract this crate implements"
+            );
+        }
+        for literal in &package_declares {
+            assert!(
+                spelled.contains(literal.as_str()),
+                "{literal} is declared by a contract this crate implements, \
+                 but no error kind here spells it"
+            );
         }
     }
 }

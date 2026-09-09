@@ -14,7 +14,7 @@ interface in A6; they live in the protocol (`docs/experiments/agent-authoring/pr
 
 | # | Fact | Evidence |
 |---|---|---|
-| F1 | Product binary `wamn`, one subcommand `dev`; operator CLI `wamn-ctl`. | `services/ctl/src/bin/wamn.rs:1-23`, `services/ctl/Cargo.toml:21-23`, `services/ctl/src/main.rs:14` |
+| F1 | Product binary `wamn`, one subcommand `dev`; operator CLI `wamn-ctl`. The `wamn-ctl` bin is `src/main.rs`, auto-discovered under the package name, so no `[[bin]]` block names it and `--bin wamn` alone does not build it. | `services/ctl/src/bin/wamn.rs:1-23`, `services/ctl/Cargo.toml:21-23` (`wamn`), `:4` (`default-run`), `services/ctl/src/main.rs:15` |
 | F2 | `wamn dev --config FILE --overlay-root DIR [--watch] [--tui]`; `--tui` is a renderer flag on the same command. | `services/ctl/src/dev/command.rs:28-43`, `:285-291` |
 | F3 | Session modes live in `DevSession::run_with_observer(observer, hold_after_one_shot)`: watch · once+hold · once+teardown. Plain path hard-codes teardown; the TUI calls `run_until_shutdown` (hold). | `command.rs:249-283`, `:242-247`, `:293`, `dev/tui.rs:440` |
 | F4 | Migrate…Gate run on saved bytes; Publish…Activate require a committed source; dirtiness is whole-worktree including untracked files. | `services/ctl/src/dev.rs:95-106`, `:400-415`; `dev/watch.rs:146`, `:194-233` |
@@ -48,7 +48,9 @@ dependency. Nothing seeds a database (F20) → grading drives routes.
 
 - `$WAMN_PILOT_HOME` = `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot` (not `/tmp`;
   `build-and-test.md:1134-1139`). `$RUN` = `$WAMN_PILOT_HOME/runs/<nnn>-<agent>-<task>`.
-  `$TARGET` = `$WAMN_PILOT_HOME/target-<short-commit>`, shared per commit.
+  `$TARGET` = `$WAMN_PILOT_HOME/target-<short-commit>`, shared per commit. Both
+  are working state: `down` deletes `$RUN`, and `$TARGET` with it when no other
+  surviving run names it, once A8 has promoted the evidence (`wamn-nvbd.20`).
 - One run per machine at a time; never concurrently with a cluster journey.
   Ports: the documented fixed set (PG 54332, registry 5004, NATS 4224, Tempo 3201,
   OTLP 4319).
@@ -132,11 +134,15 @@ worktree/         git worktree, detached at the pinned commit, no remote
 fixture/          the AGENT's task directory: brief, scenario, and a task.json
                   with `grade` removed. It carries NO grading fixture
                   (wamn-nvbd.9)
-steps.json        the grading fixture, read by the grader only
+                  (the grading fixture is NOT here: it lives under
+                  `${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading/<nnn>`,
+                  off this directory's walk-up path, wamn-nvbd.12 and .21)
 bin/              wamn (shim, A4) · wamn-ctl → $TARGET/debug/wamn-ctl
 transcript.jsonl  driver stream, verbatim, line-buffered
 driver.json       A3
-verbs.jsonl       A4
+verbs.jsonl       A4, one row per `wamn` call that ENDED
+verbs-started.jsonl  A4, one row per `wamn` call that STARTED (a held run has no
+                  completion row, wamn-nvbd.17)
 dev-logs/         NNN-<hhmmss>.out/.err per wamn invocation
 baseline.out      pre-agent wamn dev run on the untouched worktree (if the manifest names a baseline package)
 final.diff · final.status · commits.log
@@ -238,6 +244,8 @@ n=$(flock "$dir/verbs.lock" bash -c \
      'c=$(( $(cat "$1/verbs.counter" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$1/verbs.counter"; printf "%03d" "$c"' _ "$dir")
 ts=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ); t0=$(date +%s%3N)
 out="$dir/dev-logs/$n-$$.out"; err="${out%.out}.err"
+flock "$dir/verbs.lock" jq -cn --arg ts "$ts" --arg n "$n" \
+   --args '{ts:$ts,n:$n,argv:$ARGS.positional}' -- "$@" >> "$dir/verbs-started.jsonl"
 "$real" "$@" > >(tee -a "$out") 2> >(tee -a "$err" >&2); rc=$?
 wait                                   # both tee substitutions have flushed
 ms=$(( $(date +%s%3N) - t0 ))
@@ -246,10 +254,18 @@ flock "$dir/verbs.lock" jq -cn --arg ts "$ts" --arg n "$n" --argjson exit "$rc" 
 exit "$rc"
 ```
 
-Rows `{ts, n, argv[], exit, ms}`; `n` is allocated under a lock at start, so a
-backgrounded `--hold` and a concurrent `wamn dev` never share a number or a log
-file; the row is appended under the same lock when the call ends. `wait` closes
-both `tee` substitutions before the row, so `.out` is complete at the join.
+Two append-only ledgers, both written under the one lock. `verbs-started.jsonl`
+takes `{ts, n, argv[]}` before the call runs; `verbs.jsonl` takes
+`{ts, n, argv[], exit, ms}` when it ends. `n` is allocated under the lock at
+start, so a backgrounded `--hold` and a concurrent `wamn dev` never share a
+number or a log file. `wait` closes both `tee` substitutions before the
+completion row, so `.out` is complete at the join.
+
+The start ledger exists because a `wamn dev --hold` never returns: teardown
+kills it, so it writes no completion row and no exit code. Every count of runs
+ATTEMPTED reads the start ledger — `wamn_dev_runs`, `wamn_dev_hold_runs` and
+`first_green_minutes`. Only `wamn_dev_failed` reads the completion ledger,
+because a run that never exited did not fail (`wamn-nvbd.17`).
 
 Exit gate: `wamn --version` through the shim yields one row and identical stdout;
 two concurrent invocations yield two rows, two distinct log pairs, and `.out`
@@ -272,8 +288,10 @@ files that end with the binary's last line.
 ```
 
 `outside_allowed_paths` from `final.diff` + `final.status` against
-`manifest.allowed_paths`. `first_green_minutes` = first `verbs.jsonl` row whose
-`.out` contains `run completed:` with twelve stages, minus `launch.started`.
+`manifest.allowed_paths`. `first_green_minutes` = first `verbs-started.jsonl` row
+whose `.out` contains `run completed:` with twelve stages, minus
+`launch.started`. `wamn_dev_runs` and `wamn_dev_hold_runs` count rows in that
+same ledger; `wamn_dev_failed` counts non-zero exits in `verbs.jsonl`.
 
 ---
 

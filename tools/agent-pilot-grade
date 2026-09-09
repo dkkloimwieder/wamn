@@ -35,6 +35,9 @@ umask 077
 
 readonly EX_USAGE=2 EX_ENV=10 EX_GRADE=30
 readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
+# wamn-nvbd.21. Outside $PILOT_HOME, so walking up from the run directory the
+# agent holds no longer arrives at a sibling named `grading`.
+readonly GRADING_HOME="${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading"
 
 die() { printf 'agent-pilot-grade: %s\n' "$1" >&2; exit "${2:-$EX_USAGE}"; }
 note() { printf '[grade] %s\n' "$*" >&2; }
@@ -91,13 +94,19 @@ OVERLAY_ROOT="$(jq -r '.overlay_root' "$MANIFEST")"
 
 # wamn-nvbd.12: the grading fixture and the grade block live OUTSIDE the run
 # directory, because the run directory is handed to the agent. Older runs kept
-# them inside it, so resolution falls back through the two places they used.
+# them inside it, so resolution falls back through the places they used.
 #
-#   1. the harness grading directory, which nothing exports  (022 onward)
-#   2. the run directory root                                (013 to 021)
-#   3. the agent's own fixture directory                     (001 to 012)
+#   1. $GRADING_HOME, off the run directory's walk-up path  (wamn-nvbd.21 onward)
+#   2. $PILOT_HOME/grading, a sibling of `runs`             (022 to wamn-nvbd.21)
+#   3. the run directory root                               (013 to 021)
+#   4. the agent's own fixture directory                    (001 to 012)
+#
+# A recorded run keeps grading where it was graded, so the old locations stay in
+# the chain and nothing already on disk needs moving.
 RUN_KEY="$(basename "$DIR")"
-GRADING="$PILOT_HOME/grading/${RUN_KEY%%-*}"
+GRADING="$GRADING_HOME/${RUN_KEY%%-*}"
+jq -e 'has("grade")' "$GRADING/task.json" >/dev/null 2>&1 \
+  || GRADING="$PILOT_HOME/grading/${RUN_KEY%%-*}"
 GRADE_MANIFEST="$GRADING/task.json"
 jq -e 'has("grade")' "$GRADE_MANIFEST" >/dev/null 2>&1 || GRADE_MANIFEST="$MANIFEST"
 jq -e 'has("grade")' "$GRADE_MANIFEST" >/dev/null 2>&1 \

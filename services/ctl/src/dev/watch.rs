@@ -263,17 +263,33 @@ impl DevSourceStateProvider for GitSource {
     }
 }
 
+/// The commit-metadata paths inside this worktree: `HEAD`, its ref, and the
+/// packed refs that ref can be folded into.
+///
+/// Two paths Git will happily name are deliberately absent.
+///
+/// The INDEX is not among them. It carries nothing about the source that the
+/// rest miss: a commit moves `HEAD` or the current ref, a checkout moves both
+/// of those and the working tree, and staging alone changes neither the
+/// commit nor the cleanliness [`GitSource::snapshot`] reports. What it does
+/// carry is a false positive. A plain `git status` typed in the worktree
+/// rewrites the index whenever a cached stat is stale, and that cost the
+/// author a whole rerun. The loop's own status reads pass
+/// `--no-optional-locks` and never wrote it, so watching the refs instead
+/// loses no invalidation the loop was acting on.
+///
+/// Anything OUTSIDE the worktree is dropped as well. In a LINKED worktree
+/// every one of these resolves into the main checkout: `--git-path
+/// packed-refs` and `--git-path refs/<branch>` reach the common directory
+/// that every sibling worktree writes, and even `HEAD` sits under
+/// `.git/worktrees/<name>` out there. Watching them let one checkout's Git
+/// activity invalidate an unrelated session's loop. A linked worktree
+/// therefore holds no commit-metadata watch at all, and reruns on authored
+/// edits alone.
 async fn discover_metadata_paths(
     repository_root: &Path,
     git_dir: &Path,
 ) -> Result<Vec<PathBuf>, GitSourceError> {
-    let index = git_path_output(
-        repository_root,
-        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
-        GitSourceErrorKind::Discover,
-        "discover Git index",
-    )
-    .await?;
     let packed_refs = git_path_output(
         repository_root,
         &[
@@ -286,7 +302,7 @@ async fn discover_metadata_paths(
         "discover packed Git refs",
     )
     .await?;
-    let mut paths = BTreeSet::from([git_dir.join("HEAD"), index, packed_refs]);
+    let mut paths = BTreeSet::from([git_dir.join("HEAD"), packed_refs]);
     let symbolic = git_output_allowing_detached(
         repository_root,
         &["symbolic-ref", "-q", "HEAD"],
@@ -329,6 +345,7 @@ async fn discover_metadata_paths(
             .await?,
         );
     }
+    paths.retain(|path| path.starts_with(repository_root));
     Ok(paths.into_iter().collect())
 }
 
@@ -798,6 +815,14 @@ impl WatchRoots {
             .min_by_key(|stage| stage.position())
     }
 
+    /// An ANCESTOR of a metadata path counts, and that is deliberate.
+    ///
+    /// A metadata path need not exist yet, so the watch is placed on its
+    /// nearest existing ancestor directory instead; the first thing that
+    /// arrives when Git writes a ref under a branch prefix is the CREATE of
+    /// the intermediate directory, named by that ancestor and not by the ref.
+    /// Ancestors above the watched directory are never an event subject, so
+    /// the rule reaches no further than the window it exists for.
     fn is_git_metadata(&self, path: &Path) -> bool {
         self.git_metadata
             .iter()
@@ -1556,5 +1581,142 @@ mod tests {
             DevStage::Migrate,
             DevSourceState::Clean
         ));
+    }
+
+    /// Every watch a loop registers sits inside the worktree it runs in.
+    ///
+    /// In a LINKED worktree `--git-path` answers with the MAIN checkout:
+    /// `packed-refs` and the branch ref land in the common directory every
+    /// sibling worktree writes, `HEAD` and the index under
+    /// `.git/worktrees/<name>` beside it. Watching out there let an unrelated
+    /// checkout's Git activity invalidate this session's loop, so a linked
+    /// worktree now carries no commit-metadata watch at all.
+    #[tokio::test]
+    async fn a_linked_worktree_registers_no_watch_outside_itself() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let linked = repository.root.with_extension("linked");
+        let linked_argument = linked.to_str().expect("linked worktree path is UTF-8");
+        git(
+            &repository.root,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "linked",
+                linked_argument,
+            ],
+        );
+
+        let git_source = GitSource::discover(&linked)
+            .await
+            .expect("discover the linked worktree");
+        let worktree_root = git_source.repository_root().to_owned();
+        let mut source = FilesystemInvalidationSource::new(
+            [linked.join("package")],
+            [linked.join("component")],
+            git_source,
+        )
+        .await
+        .expect("construct filesystem invalidation source");
+        let outside = source
+            .watched_directories
+            .values()
+            .filter(|directory| !directory.starts_with(&worktree_root))
+            .cloned()
+            .collect::<Vec<_>>();
+        let metadata = source.git.metadata_paths().to_vec();
+
+        // The exact shape that killed a session: a rebase in the OTHER
+        // checkout writing `.git/sequencer`, beside a status refreshing that
+        // checkout's own index. Neither is this worktree's source.
+        fs::create_dir(repository.root.join(".git/sequencer"))
+            .expect("stage a rebase in the main checkout");
+        fs::write(
+            repository.root.join(".git/sequencer/todo"),
+            "pick deadbeef\n",
+        )
+        .expect("write the rebase plan");
+        fs::write(repository.root.join(".gitignore"), "ignored\n")
+            .expect("restale the main checkout index stat cache");
+        git(&repository.root, &["status", "--porcelain"]);
+        let quiet = tokio::time::timeout(Duration::from_millis(500), source.next())
+            .await
+            .is_err();
+
+        drop(source);
+        git(
+            &repository.root,
+            &["worktree", "remove", "--force", linked_argument],
+        );
+
+        assert!(
+            outside.is_empty(),
+            "a linked worktree watched {outside:?}, outside {}",
+            worktree_root.display()
+        );
+        assert!(
+            metadata.is_empty(),
+            "a linked worktree's commit metadata is all in the main checkout, \
+             so none of it is watchable from here: {metadata:?}"
+        );
+        assert!(
+            quiet,
+            "an unrelated checkout's Git activity must not reach this loop"
+        );
+    }
+
+    /// The index is not commit metadata, because a plain `git status` typed
+    /// in the worktree rewrites it and a commit is already seen through the
+    /// ref that status does not touch.
+    #[tokio::test]
+    async fn a_refreshed_index_is_not_commit_metadata() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let git_source = GitSource::discover(&repository.root)
+            .await
+            .expect("discover source repository");
+        let mut source = FilesystemInvalidationSource::new(
+            [repository.package()],
+            [repository.component()],
+            git_source,
+        )
+        .await
+        .expect("construct filesystem invalidation source");
+
+        let index = repository.root.join(".git/index");
+        assert!(index.is_file(), "the fixture committed through an index");
+        assert!(
+            !source.roots.is_git_metadata(&index),
+            "the index is not a watched metadata path"
+        );
+        assert!(
+            source
+                .git
+                .metadata_paths()
+                .iter()
+                .any(|path| path.starts_with(repository.root.join(".git/refs/heads"))),
+            "the current branch ref still is: {:?}",
+            source.git.metadata_paths()
+        );
+
+        // Rewriting a tracked file outside every watched root with its own
+        // bytes leaves the source unchanged but the cached stat stale, which
+        // is what makes the next status write the index.
+        fs::write(repository.root.join(".gitignore"), "ignored\n")
+            .expect("restale the index stat cache");
+        git(&repository.root, &["status", "--porcelain"]);
+        if let Ok(event) = tokio::time::timeout(Duration::from_millis(500), source.next()).await {
+            let event = event
+                .expect("read status event")
+                .expect("source remains open");
+            assert!(
+                collect_batch(event, &mut source)
+                    .iter()
+                    .all(|event| *event == DevInvalidation::Ignore),
+                "typing `git status` must not rerun the loop"
+            );
+        }
     }
 }

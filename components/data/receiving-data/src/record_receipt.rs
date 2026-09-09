@@ -115,6 +115,25 @@ pub enum RecordReceiptErrorKind {
 }
 
 impl RecordReceiptErrorKind {
+    /// Every class, so a drift guard can walk the whole vocabulary. A variant
+    /// added without being listed here is invisible to that guard.
+    #[cfg(test)]
+    pub(crate) const ALL: &'static [Self] = &[
+        Self::InvalidInput,
+        Self::PurchaseOrderNotFound,
+        Self::PurchaseOrderNotOpen,
+        Self::PurchaseOrderLineNotFound,
+        Self::PurchaseOrderLineMismatch,
+        Self::LocationNotFound,
+        Self::QuantityExceedsRemaining,
+        Self::ReceiptReferenceConflict,
+        Self::IdempotencyConflict,
+        Self::Retry,
+        Self::Timeout,
+        Self::PermissionDenied,
+        Self::InternalError,
+    ];
+
     /// Frozen manifest-owned error literal.
     pub const fn literal(self) -> &'static str {
         match self {
@@ -432,8 +451,8 @@ fn prepare(command: &RecordReceiptInput) -> Result<PreparedCommand, RecordReceip
             ));
         }
         let location_id = canonical_uuid(&line.location_id, "value.line[].location_id")?;
-        validate_positive_numeric(&line.quantity)?;
-        lines.push((purchase_order_line_id, line.quantity.as_ref(), location_id));
+        let quantity = canonical_positive_numeric(&line.quantity)?;
+        lines.push((purchase_order_line_id, quantity, location_id));
     }
     lines.sort_by_key(|line| line.0);
     let line = lines
@@ -749,29 +768,48 @@ fn canonical_timestamp(value: &str) -> Result<String, RecordReceiptError> {
         })
 }
 
-fn validate_positive_numeric(value: &str) -> Result<(), RecordReceiptError> {
+/// Respell a positive quantity as PostgreSQL's own text for the same datum,
+/// so two spellings of one quantity make one command.
+///
+/// The respellings are TEXTUAL, and only textual, because a numeric's scale is
+/// part of its value: measured on PostgreSQL 18.6, `12.3400` is scale 4 and
+/// `12.34` is scale 2, so collapsing one to the other would change what the
+/// caller wrote. These three move digits and leave scale alone --- `01.0` ->
+/// `1.0`, `1.` -> `1`, `.1` -> `0.1` --- each matching `(value::numeric)::text`.
+///
+/// An exponent is REFUSED by decision, not by oversight. PostgreSQL DERIVES
+/// scale from an exponent rather than reading it: `1e2` is 100 at scale 0,
+/// `1e-2` is 0.01 at scale 2, `1.5e2` is 150 at scale 0. A branch for it could
+/// not be normalization; it would have to reimplement that derivation by hand,
+/// and this crate carries no decimal dependency to do it with. `wms-data`'s
+/// `scalar::numeric` refuses exponents for the same reason.
+fn canonical_positive_numeric(value: &str) -> Result<String, RecordReceiptError> {
     let (integer, fraction) = match value.split_once('.') {
         Some((integer, fraction)) => (integer, Some(fraction)),
         None => (value, None),
     };
-    let integer_is_canonical = !integer.is_empty()
-        && integer.bytes().all(|byte| byte.is_ascii_digit())
-        && (integer.len() == 1 || !integer.starts_with('0'));
-    let fraction_is_canonical = fraction.is_none_or(|fraction| {
-        !fraction.is_empty() && fraction.bytes().all(|byte| byte.is_ascii_digit())
-    });
+    let is_digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
+    // Requiring a non-zero digit also refuses the two spellings PostgreSQL
+    // itself rejects, `""` and `"."`, which carry no digit at all.
     let positive = integer
         .bytes()
         .chain(fraction.unwrap_or_default().bytes())
         .any(|byte| byte != b'0');
-    if integer_is_canonical && fraction_is_canonical && positive {
-        Ok(())
-    } else {
-        Err(RecordReceiptError::invalid(
-            "value.line[].quantity must be a positive canonical PostgreSQL numeric string",
+    if !is_digits(integer) || !fraction.is_none_or(is_digits) || !positive {
+        return Err(RecordReceiptError::invalid(
+            "value.line[].quantity must be a positive PostgreSQL numeric string \
+             written without an exponent",
             "value.line[].quantity",
-        ))
+        ));
     }
+    let integer = match integer.trim_start_matches('0') {
+        "" => "0",
+        trimmed => trimmed,
+    };
+    Ok(match fraction.filter(|fraction| !fraction.is_empty()) {
+        Some(fraction) => format!("{integer}.{fraction}"),
+        None => integer.to_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -826,6 +864,26 @@ mod tests {
         let scaled = prepare(&command(vec![line(FIRST_LINE_ID, "12.3400")])).unwrap();
         let respelled = prepare(&command(vec![line(FIRST_LINE_ID, "12.34")])).unwrap();
         assert_ne!(scaled.canonical_command, respelled.canonical_command);
+    }
+
+    /// The spellings PostgreSQL 18.6 respells without touching scale, each
+    /// checked here against the `(value::numeric)::text` it was measured to
+    /// give. An exponent is deliberately not among them --- see
+    /// `canonical_positive_numeric` for the reason it stays refused.
+    #[test]
+    fn a_respelled_quantity_makes_the_same_command() {
+        for (written, respelled) in [("01.0", "1.0"), ("1.", "1"), (".1", "0.1"), ("010", "10")] {
+            assert_eq!(canonical_positive_numeric(written).unwrap(), respelled);
+            assert_eq!(
+                prepare(&command(vec![line(FIRST_LINE_ID, written)]))
+                    .unwrap()
+                    .canonical_command,
+                prepare(&command(vec![line(FIRST_LINE_ID, respelled)]))
+                    .unwrap()
+                    .canonical_command
+            );
+        }
+        assert_eq!(canonical_positive_numeric("12.3400").unwrap(), "12.3400");
     }
 
     #[test]
@@ -941,7 +999,7 @@ mod tests {
             prepare(&duplicate).unwrap_err().kind(),
             RecordReceiptErrorKind::InvalidInput
         );
-        for quantity in ["0", "0.0000", "01.0", "-1", "1.", ".1", "1e2"] {
+        for quantity in ["", ".", "0", "0.0000", "-1", "1e2", "1,5"] {
             assert_eq!(
                 prepare(&command(vec![line(FIRST_LINE_ID, quantity)]))
                     .unwrap_err()
@@ -957,21 +1015,7 @@ mod tests {
 
     #[test]
     fn all_closed_literals_are_distinct() {
-        let kinds = [
-            RecordReceiptErrorKind::InvalidInput,
-            RecordReceiptErrorKind::PurchaseOrderNotFound,
-            RecordReceiptErrorKind::PurchaseOrderNotOpen,
-            RecordReceiptErrorKind::PurchaseOrderLineNotFound,
-            RecordReceiptErrorKind::PurchaseOrderLineMismatch,
-            RecordReceiptErrorKind::LocationNotFound,
-            RecordReceiptErrorKind::QuantityExceedsRemaining,
-            RecordReceiptErrorKind::ReceiptReferenceConflict,
-            RecordReceiptErrorKind::IdempotencyConflict,
-            RecordReceiptErrorKind::Retry,
-            RecordReceiptErrorKind::Timeout,
-            RecordReceiptErrorKind::PermissionDenied,
-            RecordReceiptErrorKind::InternalError,
-        ];
+        let kinds = RecordReceiptErrorKind::ALL;
         assert_eq!(
             kinds
                 .iter()
