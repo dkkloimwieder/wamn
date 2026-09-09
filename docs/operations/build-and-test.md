@@ -196,6 +196,13 @@ length-typed array asserting RAW BYTES (`cp` the file, never reformat):
 `wamn-node`, so both pairs move together. App-interface WIT copies
 (`wamn-<app>-<iface>`) are package-owned and guarded by nothing.
 
+Generated operator crates in `packages/*/generated/*-tui/` are native root members.
+Register them in sites (1) through (7).
+They add no WIT copies, so sites (8) through (10) stay unchanged.
+The root has 40 members, and its default selects 19.
+The `deploy` selector has 33 members, while `m1` and `m2` retain 20 and 22.
+The `full` and `ops` selectors each have 40 members.
+
 **A component that a package declares moves none of the sites (2) to (7)**
 (`wamn-10yt.10.39`). `packages/<package>/wamn.json` names its components. The
 package half of every inventory above is derived from that file. This covers the

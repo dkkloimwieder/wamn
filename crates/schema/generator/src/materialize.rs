@@ -12,6 +12,7 @@ use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 use crate::StatementTransactionality;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_rust::emit_rust_client;
+use crate::client_tui::emit_tui;
 use crate::generate::GeneratedFile;
 use crate::{
     AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
@@ -230,7 +231,13 @@ fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Ve
         .context("read the release's published routes")?;
     let ir = ClientContractIr::from_release_contracts(&manifest.package.id, &contracts, &routes)
         .context("project the client-contract IR")?;
-    emit_rust_client(&ir).context("emit the Rust client bindings")
+    let mut files = emit_rust_client(&ir).context("emit the Rust client bindings")?;
+    let directory = package_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("package root must have a UTF-8 directory name")?;
+    files.extend(emit_tui(&ir, directory).context("emit the operator TUI crate")?);
+    Ok(files)
 }
 
 fn generate_package(

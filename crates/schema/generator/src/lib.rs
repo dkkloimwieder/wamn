@@ -18,6 +18,7 @@ mod client_fields;
 pub mod client_ir;
 mod client_route;
 pub mod client_rust;
+pub mod client_tui;
 mod cursor;
 mod data_access;
 mod error;

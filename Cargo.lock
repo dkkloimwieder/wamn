@@ -5450,8 +5450,17 @@ dependencies = [
 name = "wamn-client-terminal"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "chrono",
  "crossterm",
+ "futures-util",
  "ratatui",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wamn-client",
+ "wamn-client-tui",
 ]
 
 [[package]]
@@ -5670,6 +5679,48 @@ dependencies = [
  "wamn-proof-system",
  "wamn-runtime",
  "wash-runtime",
+]
+
+[[package]]
+name = "wamn-generated-client-acme-receiving-tui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wamn-client",
+ "wamn-client-terminal",
+ "wamn-client-tui",
+]
+
+[[package]]
+name = "wamn-generated-receiving-tui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wamn-client",
+ "wamn-client-terminal",
+ "wamn-client-tui",
+]
+
+[[package]]
+name = "wamn-generated-wms-tui"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rust_decimal",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wamn-client",
+ "wamn-client-terminal",
+ "wamn-client-tui",
 ]
 
 [[package]]

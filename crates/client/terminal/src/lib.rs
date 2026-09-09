@@ -11,7 +11,9 @@
 //! them in the reverse order, and leaving them even when the process panics —
 //! happens here and nowhere else.
 
-use std::io::{self, Stdout, Write as _};
+pub mod operator;
+
+use std::io::{self, Stdout};
 use std::panic;
 use std::sync::Once;
 
@@ -57,12 +59,18 @@ impl TerminalSession {
             }));
         });
         enable_raw_mode()?;
-        let mut output = io::stdout();
-        output.execute(EnterAlternateScreen)?;
-        output.execute(Hide)?;
-        Ok(Self {
-            terminal: Terminal::new(CrosstermBackend::new(output))?,
-        })
+        let entered = (|| {
+            let mut output = io::stdout();
+            output.execute(EnterAlternateScreen)?;
+            output.execute(Hide)?;
+            Ok(Self {
+                terminal: Terminal::new(CrosstermBackend::new(output))?,
+            })
+        })();
+        if entered.is_err() {
+            drop(restore());
+        }
+        entered
     }
 
     /// Paint one widget over the whole terminal.
@@ -85,9 +93,56 @@ impl Drop for TerminalSession {
 
 /// Leave the alternate screen and raw mode, in the reverse of entry order.
 fn restore() -> io::Result<()> {
-    let mut output = io::stdout();
-    output.execute(Show)?;
-    output.execute(LeaveAlternateScreen)?;
-    disable_raw_mode()?;
-    output.flush()
+    restore_with(&mut io::stdout(), disable_raw_mode)
+}
+
+fn restore_with(
+    output: &mut impl io::Write,
+    disable_raw: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
+    // Run every cleanup step before returning the first error.
+    let show = output.execute(Show).map(|_| ());
+    let leave = output.execute(LeaveAlternateScreen).map(|_| ());
+    let raw = disable_raw();
+    let flush = output.flush();
+    show.and(leave).and(raw).and(flush)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn broken_output_still_disables_raw_mode_and_preserves_the_first_error() {
+        #[derive(Default)]
+        struct BrokenOutput {
+            writes: usize,
+            flushed: bool,
+        }
+        impl io::Write for BrokenOutput {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                self.writes += 1;
+                Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "screen write failed",
+                ))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.flushed = true;
+                Err(io::Error::other("flush failed"))
+            }
+        }
+        let mut output = BrokenOutput::default();
+        let mut disabled = false;
+        let error = restore_with(&mut output, || {
+            disabled = true;
+            Err(io::Error::other("raw mode failed"))
+        })
+        .unwrap_err();
+        assert!(disabled);
+        assert!(output.writes >= 2);
+        assert!(output.flushed);
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+        assert_eq!(error.to_string(), "screen write failed");
+    }
 }

@@ -78,6 +78,33 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-generated-receiving-tui",
+      "manifest_path": "packages/receiving/generated/receiving-tui/Cargo.toml",
+      "role": "core",
+      "target_class": "native",
+      "bounded_context": "client",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-generated-wms-tui",
+      "manifest_path": "packages/wms/generated/wms-tui/Cargo.toml",
+      "role": "core",
+      "target_class": "native",
+      "bounded_context": "client",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
+      "name": "wamn-generated-client-acme-receiving-tui",
+      "manifest_path": "packages/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml",
+      "role": "core",
+      "target_class": "native",
+      "bounded_context": "client",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-component-policy",
       "manifest_path": "crates/platform/component-policy/Cargo.toml",
       "role": "core",
