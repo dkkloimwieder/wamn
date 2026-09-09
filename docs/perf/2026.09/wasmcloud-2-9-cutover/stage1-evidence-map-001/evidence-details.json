@@ -1,0 +1,1235 @@
+{
+  "schema": "wamn-cutover-stage1-evidence-map/v1",
+  "bead": "wamn-0h0g.2.7.1",
+  "generated_utc": "2026-09-09T17:35:29.952087+00:00",
+  "scope": "Read-only reduction of existing receipts and git/file bytes; no Cargo, compiler, tests, builds, network, source edits or Beads writes performed. This is source/build evidence, not cutover readiness.",
+  "source_attribution": {
+    "baseline_commit": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "first_cutover_commit": "15f2d4da26df0bdb46022cfd5276c9550d415d86",
+    "observed_current_commit": "d45a0fe93e6f8ca4f6fd142a743190e2d18f0b93",
+    "current_status_porcelain": [],
+    "early_validation_source": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/source-inputs.json",
+      "sha256": "77c6ad2949ff0b0324775430ef1b19b2c72f190cf65f108f6b2ef25935beaadd"
+    },
+    "early_validation_was_uncommitted": true,
+    "first_commit_receipt": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/commit-001/result.json",
+      "sha256": "de186ddc9d95d76078b86a21768a0530ef2ada6b8d6032b87054bbb778ee5d2c"
+    },
+    "later_source_capture": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-004/source-inputs.json",
+      "sha256": "561d06e6034ae939f7c39dc20232b77a43ccbf4d7d1f330d6efbd02729026f58"
+    },
+    "binding_note": "Early builds/tests remain attributed to their recorded input hashes; matching files in a later commit do not make the earlier run a test of that whole clean commit.",
+    "governing_file_hash_binding": [
+      {
+        "path": "Cargo.toml",
+        "validation_001_sha256": "60ed3fa20c4b104ab03be599a97946df16187974c1d4ef490e31022ad04edb69",
+        "first_commit_sha256": "60ed3fa20c4b104ab03be599a97946df16187974c1d4ef490e31022ad04edb69",
+        "current_sha256": "60ed3fa20c4b104ab03be599a97946df16187974c1d4ef490e31022ad04edb69",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "Cargo.lock",
+        "validation_001_sha256": "55faac1a84a11c8feac91948a04f71ba71033f4e6a41172532539ff35ff6a40d",
+        "first_commit_sha256": "55faac1a84a11c8feac91948a04f71ba71033f4e6a41172532539ff35ff6a40d",
+        "current_sha256": "55faac1a84a11c8feac91948a04f71ba71033f4e6a41172532539ff35ff6a40d",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "services/host/Cargo.toml",
+        "validation_001_sha256": "2e192c6f6107fc5882a1e685518b17f6242e06bb5d0ed0c3b8c4976853f1bd6e",
+        "first_commit_sha256": "2e192c6f6107fc5882a1e685518b17f6242e06bb5d0ed0c3b8c4976853f1bd6e",
+        "current_sha256": "355d192fa1b1e6d51db3acb2d9e6e3cf2d500acff27d5da7d104bfa5b62086d8",
+        "current_matches_first_commit": false,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "services/executor/Cargo.toml",
+        "validation_001_sha256": "ad20be81693985397afec7cd5ca6d35b7435fa4cd241b1634a13d07765efd5f7",
+        "first_commit_sha256": "ad20be81693985397afec7cd5ca6d35b7435fa4cd241b1634a13d07765efd5f7",
+        "current_sha256": "ad20be81693985397afec7cd5ca6d35b7435fa4cd241b1634a13d07765efd5f7",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tools/probes/ctc8-13-native-http/Cargo.toml",
+        "validation_001_sha256": "4a00b45cd4790772fec367b7e157dea98867245ca94cbf67f937a4fb7fd96f7e",
+        "first_commit_sha256": "4a00b45cd4790772fec367b7e157dea98867245ca94cbf67f937a4fb7fd96f7e",
+        "current_sha256": "4a00b45cd4790772fec367b7e157dea98867245ca94cbf67f937a4fb7fd96f7e",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tools/probes/ctc8-13-native-http/Cargo.lock",
+        "validation_001_sha256": "f1a941372e97a6c4b359f6fcce07fd8d8ab0ad7b0e3247d937f660b323ebd469",
+        "first_commit_sha256": "f1a941372e97a6c4b359f6fcce07fd8d8ab0ad7b0e3247d937f660b323ebd469",
+        "current_sha256": "f1a941372e97a6c4b359f6fcce07fd8d8ab0ad7b0e3247d937f660b323ebd469",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tools/probes/ctc8-14-wasi-http/host/Cargo.toml",
+        "validation_001_sha256": "f6932071d6f7da20a0eadfe8e7cad39105fdd330219245acff039957ebb2a26d",
+        "first_commit_sha256": "f6932071d6f7da20a0eadfe8e7cad39105fdd330219245acff039957ebb2a26d",
+        "current_sha256": "f6932071d6f7da20a0eadfe8e7cad39105fdd330219245acff039957ebb2a26d",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tools/probes/ctc8-14-wasi-http/Cargo.lock",
+        "validation_001_sha256": "9782cfd0540f7b0b1656d004a4ce2a6c8c00162fbb3eace9dba13acbc4bb7713",
+        "first_commit_sha256": "9782cfd0540f7b0b1656d004a4ce2a6c8c00162fbb3eace9dba13acbc4bb7713",
+        "current_sha256": "9782cfd0540f7b0b1656d004a4ce2a6c8c00162fbb3eace9dba13acbc4bb7713",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tests/conformance/src/ip_name_lookup.rs",
+        "validation_001_sha256": "be3e3159f044eb42bcd4ddc983a484f208aa34c26612e87fd13633bfe0d12c3c",
+        "first_commit_sha256": "be3e3159f044eb42bcd4ddc983a484f208aa34c26612e87fd13633bfe0d12c3c",
+        "current_sha256": "be3e3159f044eb42bcd4ddc983a484f208aa34c26612e87fd13633bfe0d12c3c",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tests/conformance/src/runtime_inventory.rs",
+        "validation_001_sha256": "ca09b45f31e650aad0b8136b4436b23a8d7af55876750d771672f76c77bc2550",
+        "first_commit_sha256": "ca09b45f31e650aad0b8136b4436b23a8d7af55876750d771672f76c77bc2550",
+        "current_sha256": "ca09b45f31e650aad0b8136b4436b23a8d7af55876750d771672f76c77bc2550",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tests/conformance/runtime-inventory.json",
+        "validation_001_sha256": "2d979c56c869f91bb3f926e86d4ec583c0efe50dd79b729753110b342742e281",
+        "first_commit_sha256": "2d979c56c869f91bb3f926e86d4ec583c0efe50dd79b729753110b342742e281",
+        "current_sha256": "2d979c56c869f91bb3f926e86d4ec583c0efe50dd79b729753110b342742e281",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tests/conformance/tests/wasmtime_source_identity.rs",
+        "validation_001_sha256": "40994943310345ec7b53c04e4d6a5a26fda2046f317abedf004373324b6289cd",
+        "first_commit_sha256": "40994943310345ec7b53c04e4d6a5a26fda2046f317abedf004373324b6289cd",
+        "current_sha256": "40994943310345ec7b53c04e4d6a5a26fda2046f317abedf004373324b6289cd",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tests/conformance/tests/wasmcloud_release_check.rs",
+        "validation_001_sha256": "2c4693f56fac5da10dfeed857ab44e124ed4bd1329747871f635c6f487c13772",
+        "first_commit_sha256": "2c4693f56fac5da10dfeed857ab44e124ed4bd1329747871f635c6f487c13772",
+        "current_sha256": "2c4693f56fac5da10dfeed857ab44e124ed4bd1329747871f635c6f487c13772",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      },
+      {
+        "path": "tests/conformance/tests/chart_seam_governance.rs",
+        "validation_001_sha256": "ba85ec1ef14de247d7781f0958cf71d9b744d5528e6c6b2515ac06e039e82250",
+        "first_commit_sha256": "ba85ec1ef14de247d7781f0958cf71d9b744d5528e6c6b2515ac06e039e82250",
+        "current_sha256": "ba85ec1ef14de247d7781f0958cf71d9b744d5528e6c6b2515ac06e039e82250",
+        "current_matches_first_commit": true,
+        "recorded_validation_matches_first_commit": true
+      }
+    ]
+  },
+  "upstream_identity_and_required_test_features": {
+    "receipt": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/results.json",
+      "sha256": "e7b2932e6637179aca5b1801619b7c7d283fbfa56347f53b8ffb34922f13b1fe"
+    },
+    "source": {
+      "checkout": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909",
+      "repository": "https://github.com/wasmCloud/wasmCloud",
+      "expected_tag": "v2.9.0",
+      "expected_revision": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+      "observed_head": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+      "observed_peeled_tag": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+      "clean_after_gate": true,
+      "clean_definition": "git status --porcelain=v1 --untracked-files=all is empty; ignored generated fixtures and target files are outside this claim.",
+      "observation_scope": "Post-gate read during this analysis; gate header separately declares its expected identity at log lines 1-4.",
+      "read_only_commands": [
+        {
+          "argv": [
+            "git",
+            "rev-parse",
+            "HEAD",
+            "v2.9.0^{}"
+          ],
+          "cwd": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909",
+          "environment_overrides": {
+            "GIT_OPTIONAL_LOCKS": "0"
+          },
+          "exit_code": 0,
+          "stdout": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9\n68ebece9c537f8bb4b5c9999f274ec68d60f35a9\n",
+          "stderr": ""
+        },
+        {
+          "argv": [
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all"
+          ],
+          "cwd": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909",
+          "environment_overrides": {
+            "GIT_OPTIONAL_LOCKS": "0"
+          },
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "argv": [
+            "git",
+            "remote",
+            "get-url",
+            "origin"
+          ],
+          "cwd": "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909",
+          "environment_overrides": {
+            "GIT_OPTIONAL_LOCKS": "0"
+          },
+          "exit_code": 0,
+          "stdout": "https://github.com/wasmCloud/wasmCloud\n",
+          "stderr": ""
+        }
+      ]
+    },
+    "selected_features": {
+      "log_line": 5,
+      "runtime_command_features": [
+        "default"
+      ],
+      "default_features": [
+        "wasi-config",
+        "wasi-logging",
+        "wasi-blobstore",
+        "wasi-keyvalue",
+        "wasmcloud-postgres",
+        "washlet",
+        "wasi-otel",
+        "wasi-webgpu",
+        "wasm_component_model_implements",
+        "wasmcloud-nats"
+      ],
+      "source": "crates/wash-runtime/Cargo.toml",
+      "source_line": 35,
+      "scope": "Upstream defaults; separate from WAMN production feature selection.",
+      "empty_target_inactive_features": [
+        "host-component-plugins",
+        "wasi-tls"
+      ]
+    },
+    "legs": [
+      {
+        "name": "format",
+        "command": "cargo fmt --manifest-path /home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/Cargo.toml --all -- --check",
+        "command_log_line": 14,
+        "wall_seconds": null,
+        "exit_code": 0,
+        "exit_log_line": 15
+      },
+      {
+        "name": "wash-runtime-fixtures",
+        "command": "cargo run --manifest-path /home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/Cargo.toml --locked --package xtask -- build-fixtures",
+        "command_log_line": 16,
+        "wall_seconds": null,
+        "exit_code": 0,
+        "exit_log_line": 383
+      },
+      {
+        "name": "wash-runtime-features",
+        "command": "cargo tree --manifest-path /home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/Cargo.toml --locked -p wash-runtime --features default -e features",
+        "command_log_line": 384,
+        "wall_seconds": null,
+        "exit_code": 0,
+        "exit_log_line": 5216
+      },
+      {
+        "name": "wash-runtime",
+        "command": "cargo test --manifest-path /home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/Cargo.toml --locked -p wash-runtime --features default --no-fail-fast -- --include-ignored --nocapture",
+        "command_log_line": 5217,
+        "wall_seconds": null,
+        "exit_code": 0,
+        "exit_log_line": 6853,
+        "test_compile_reported_seconds": 384,
+        "test_compile_log_line": 5219,
+        "sum_harness_reported_test_duration_seconds": 522.03,
+        "doctest_wall_reported_seconds": 18.87,
+        "doctest_compilation_reported_seconds": 18.85,
+        "doctest_timing_log_line": 6852,
+        "timing_note": "These timings describe compilation and harness work; they are not a complete runtime-leg wall duration."
+      },
+      {
+        "name": "git-template-features",
+        "command": "cargo tree --manifest-path /home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/Cargo.toml --locked -p wash --features default -e features",
+        "command_log_line": 6854,
+        "wall_seconds": null,
+        "exit_code": 0,
+        "exit_log_line": 11967
+      },
+      {
+        "name": "git-template-fixture",
+        "command": "cargo test --manifest-path /home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909/Cargo.toml --locked -p wash --features default --lib clone_template_ -- --include-ignored --nocapture --test-threads=1",
+        "command_log_line": 11968,
+        "wall_seconds": null,
+        "exit_code": 0,
+        "exit_log_line": 11980,
+        "test_compile_reported_seconds": 0.58,
+        "test_compile_log_line": 11969,
+        "harness_reported_test_duration_seconds": 0.13
+      }
+    ],
+    "runtime_summary": null,
+    "git_template": {
+      "names": [
+        "new::tests::clone_template_supports_branch_refs",
+        "new::tests::clone_template_supports_commit_refs",
+        "new::tests::clone_template_supports_tag_refs",
+        "new::tests::clone_template_without_ref_clones_default_branch_tip"
+      ],
+      "summary": {
+        "target_count": 1,
+        "nonempty_target_count": 1,
+        "empty_target_count": 0,
+        "reported_passed": 4,
+        "failed": 0,
+        "ignored": 0,
+        "measured": 0,
+        "filtered_out": 185,
+        "explicit_self_skip_count": 0,
+        "executed_pass_results_excluding_explicit_self_skips": 4,
+        "sum_reported_test_duration_seconds": 0.13
+      },
+      "isolation": {
+        "git_config_global": "/dev/null",
+        "git_config_nosystem": "1"
+      }
+    },
+    "scope": "Native upstream runtime defaults are explicit and separate from WAMN production selections. Six actual gate legs exit 0. Runtime reports 1050 passes, with one explicit unarmed 2-GiB NATS self-skip, leaving 1049 executed pass results; Git clone fixture has four actual passes.",
+    "limitations": [
+      "One explicit self-skip is included in the 1,050 reported runtime passes; 1,049 pass results remain after excluding it.",
+      "The eight empty integration targets contribute zero executed tests, despite successful harness exits.",
+      "The log and checked source establish the named self-skip; these counts do not claim every optional feature, environment, or live deployment was exercised.",
+      "The four Git fixture passes are separate from the wash-runtime result totals.",
+      "Whole-gate wall time is recorded by the wrapper; individual leg wall durations are not recorded.",
+      "This upstream gate is not the current WAMN production-feature build, release publication, deployed guest journey, or performance proof."
+    ],
+    "raw_log": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/release-check.log",
+      "sha256": "a92a40cbd86ddcf0bc85cea68ecea913b73c8fa1a14c2725b907b11a9bedc522"
+    }
+  },
+  "root_and_probe_resolution": {
+    "current_wash_source": "git+https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+    "wasmtime_requirement": "47.0.4",
+    "wasmtime_defaults_enabled": false,
+    "lockfiles": [
+      {
+        "path": "Cargo.lock",
+        "sha256": "55faac1a84a11c8feac91948a04f71ba71033f4e6a41172532539ff35ff6a40d",
+        "wash_runtime": [
+          {
+            "name": "wash-runtime",
+            "version": "2.9.0",
+            "source": "git+https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9c537f8bb4b5c9999f274ec68d60f35a9"
+          }
+        ],
+        "wasmtime_versions": [
+          "47.0.4"
+        ],
+        "wasmtime_sources": [
+          "registry+https://github.com/rust-lang/crates.io-index"
+        ],
+        "wasmtime_packages": [
+          "wasmtime",
+          "wasmtime-environ",
+          "wasmtime-internal-cache",
+          "wasmtime-internal-component-macro",
+          "wasmtime-internal-component-util",
+          "wasmtime-internal-core",
+          "wasmtime-internal-cranelift",
+          "wasmtime-internal-fiber",
+          "wasmtime-internal-jit-debug",
+          "wasmtime-internal-jit-icache-coherence",
+          "wasmtime-internal-unwinder",
+          "wasmtime-internal-versioned-export-macros",
+          "wasmtime-internal-wit-bindgen",
+          "wasmtime-wasi",
+          "wasmtime-wasi-http",
+          "wasmtime-wasi-io"
+        ]
+      },
+      {
+        "path": "tools/probes/ctc8-13-native-http/Cargo.lock",
+        "sha256": "f1a941372e97a6c4b359f6fcce07fd8d8ab0ad7b0e3247d937f660b323ebd469",
+        "wash_runtime": [
+          {
+            "name": "wash-runtime",
+            "version": "2.9.0",
+            "source": "git+https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9c537f8bb4b5c9999f274ec68d60f35a9"
+          }
+        ],
+        "wasmtime_versions": [
+          "47.0.4"
+        ],
+        "wasmtime_sources": [
+          "registry+https://github.com/rust-lang/crates.io-index"
+        ],
+        "wasmtime_packages": [
+          "wasmtime",
+          "wasmtime-environ",
+          "wasmtime-internal-cache",
+          "wasmtime-internal-component-macro",
+          "wasmtime-internal-component-util",
+          "wasmtime-internal-core",
+          "wasmtime-internal-cranelift",
+          "wasmtime-internal-fiber",
+          "wasmtime-internal-jit-debug",
+          "wasmtime-internal-jit-icache-coherence",
+          "wasmtime-internal-unwinder",
+          "wasmtime-internal-versioned-export-macros",
+          "wasmtime-internal-wit-bindgen",
+          "wasmtime-wasi",
+          "wasmtime-wasi-http",
+          "wasmtime-wasi-io"
+        ]
+      },
+      {
+        "path": "tools/probes/ctc8-14-wasi-http/Cargo.lock",
+        "sha256": "9782cfd0540f7b0b1656d004a4ce2a6c8c00162fbb3eace9dba13acbc4bb7713",
+        "wash_runtime": [
+          {
+            "name": "wash-runtime",
+            "version": "2.9.0",
+            "source": "git+https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9c537f8bb4b5c9999f274ec68d60f35a9"
+          }
+        ],
+        "wasmtime_versions": [
+          "47.0.4"
+        ],
+        "wasmtime_sources": [
+          "registry+https://github.com/rust-lang/crates.io-index"
+        ],
+        "wasmtime_packages": [
+          "wasmtime",
+          "wasmtime-environ",
+          "wasmtime-internal-component-macro",
+          "wasmtime-internal-component-util",
+          "wasmtime-internal-core",
+          "wasmtime-internal-cranelift",
+          "wasmtime-internal-fiber",
+          "wasmtime-internal-jit-debug",
+          "wasmtime-internal-jit-icache-coherence",
+          "wasmtime-internal-unwinder",
+          "wasmtime-internal-versioned-export-macros",
+          "wasmtime-internal-wit-bindgen",
+          "wasmtime-wasi",
+          "wasmtime-wasi-http",
+          "wasmtime-wasi-io"
+        ]
+      },
+      {
+        "path": "components/Cargo.lock",
+        "sha256": "caab5b1a614decce625f58c9234602b4cb29e74ecd60be5a51224a45bd481946",
+        "wash_runtime": [],
+        "wasmtime_versions": [],
+        "wasmtime_sources": [],
+        "wasmtime_packages": []
+      },
+      {
+        "path": "components/no-std/Cargo.lock",
+        "sha256": "43b63a298427ab10d65e738eced2426d8d3a12c77e9594ef4bd41051dce2ac8d",
+        "wash_runtime": [],
+        "wasmtime_versions": [],
+        "wasmtime_sources": [],
+        "wasmtime_packages": []
+      }
+    ],
+    "feature_selections": [
+      {
+        "selection": "host-normal",
+        "receipt": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/source-001/host-normal-wash-runtime.txt",
+        "root_line": "wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)",
+        "wash_runtime_features": [
+          "oci",
+          "washlet",
+          "wasi-config",
+          "wasi-otel",
+          "wasm_component_model_implements"
+        ],
+        "production_defaults_enabled": false
+      },
+      {
+        "selection": "executor-normal",
+        "receipt": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/source-001/executor-normal-wash-runtime.txt",
+        "root_line": "wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)",
+        "wash_runtime_features": [
+          "oci",
+          "washlet",
+          "wasm_component_model_implements"
+        ],
+        "production_defaults_enabled": false
+      },
+      {
+        "selection": "conformance-tests",
+        "receipt": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/source-001/conformance-tests-wash-runtime.txt",
+        "root_line": "wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)",
+        "wash_runtime_features": [
+          "oci",
+          "wasm_component_model_implements"
+        ],
+        "production_defaults_enabled": null
+      },
+      {
+        "selection": "integration-tests",
+        "receipt": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/source-001/integration-tests-wash-runtime.txt",
+        "root_line": "wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)",
+        "wash_runtime_features": [
+          "oci",
+          "washlet",
+          "wasm_component_model_implements"
+        ],
+        "production_defaults_enabled": null
+      },
+      {
+        "selection": "ctc8-13-probe",
+        "receipt": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-13-probe-wash-runtime.txt",
+        "root_line": "wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)",
+        "wash_runtime_features": [
+          "oci"
+        ],
+        "production_defaults_enabled": null
+      },
+      {
+        "selection": "ctc8-14-probe",
+        "receipt": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wash-runtime-aligned.txt",
+        "root_line": "wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)",
+        "wash_runtime_features": [
+          "oci"
+        ],
+        "production_defaults_enabled": null
+      }
+    ],
+    "tree_command_receipt": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/source-001/commands.json",
+      "sha256": "dd0440e046e2e20c3f620115a6347ad3519339d846d21de77d94ceaf204a3c8c"
+    },
+    "tree_commands": [
+      {
+        "name": "host-normal-wash-runtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "-p",
+          "wamn-host",
+          "-e",
+          "normal,build,features",
+          "-i",
+          "wash-runtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "host-normal-wasmtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "-p",
+          "wamn-host",
+          "-e",
+          "normal,build,features",
+          "-i",
+          "wasmtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "executor-normal-wash-runtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "-p",
+          "wamn-executor",
+          "-e",
+          "normal,build,features",
+          "-i",
+          "wash-runtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "executor-normal-wasmtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "-p",
+          "wamn-executor",
+          "-e",
+          "normal,build,features",
+          "-i",
+          "wasmtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "conformance-tests-wash-runtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "-p",
+          "wamn-proof-conformance",
+          "-e",
+          "features",
+          "-i",
+          "wash-runtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "conformance-tests-wasmtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "-p",
+          "wamn-proof-conformance",
+          "-e",
+          "features",
+          "-i",
+          "wasmtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "integration-tests-wash-runtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "-p",
+          "wamn-proof-integration",
+          "-e",
+          "features",
+          "-i",
+          "wash-runtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "integration-tests-wasmtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "-p",
+          "wamn-proof-integration",
+          "-e",
+          "features",
+          "-i",
+          "wasmtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "ctc8-13-probe-wash-runtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "--manifest-path",
+          "tools/probes/ctc8-13-native-http/Cargo.toml",
+          "-e",
+          "features",
+          "-i",
+          "wash-runtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "ctc8-13-probe-wasmtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "--manifest-path",
+          "tools/probes/ctc8-13-native-http/Cargo.toml",
+          "-e",
+          "features",
+          "-i",
+          "wasmtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "ctc8-14-probe-wash-runtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "--manifest-path",
+          "tools/probes/ctc8-14-wasi-http/Cargo.toml",
+          "-p",
+          "ctc8-14-wasi-http-probe",
+          "-e",
+          "features",
+          "-i",
+          "wash-runtime"
+        ],
+        "exit_code": 101
+      },
+      {
+        "name": "ctc8-14-probe-wasmtime",
+        "command": [
+          "cargo",
+          "tree",
+          "--locked",
+          "--offline",
+          "--manifest-path",
+          "tools/probes/ctc8-14-wasi-http/Cargo.toml",
+          "-p",
+          "ctc8-14-wasi-http-probe",
+          "-e",
+          "features",
+          "-i",
+          "wasmtime"
+        ],
+        "exit_code": 101
+      },
+      {
+        "name": "components",
+        "command": [
+          "cargo",
+          "tree",
+          "--manifest-path",
+          "components/Cargo.toml",
+          "--locked",
+          "--offline",
+          "--target",
+          "wasm32-wasip2",
+          "-e",
+          "features"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "components-no-std",
+        "command": [
+          "cargo",
+          "tree",
+          "--manifest-path",
+          "components/no-std/Cargo.toml",
+          "--locked",
+          "--offline",
+          "--target",
+          "wasm32-wasip2",
+          "-e",
+          "features"
+        ],
+        "exit_code": 0
+      }
+    ],
+    "aligned_probe_receipt": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/source-001/aligned-probe-commands.json",
+      "sha256": "08cb15c7060c811896b81d05b41153f778dc32e1b74f98e4690817a9b96cd8de"
+    },
+    "aligned_probe_commands": [
+      {
+        "command": [
+          "cargo",
+          "tree",
+          "--manifest-path",
+          "tools/probes/ctc8-14-wasi-http/Cargo.toml",
+          "--locked",
+          "--offline",
+          "-p",
+          "ctc8-14-wasi-http-probe",
+          "-e",
+          "features",
+          "-i",
+          "wash-runtime"
+        ],
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "cargo",
+          "tree",
+          "--manifest-path",
+          "tools/probes/ctc8-14-wasi-http/Cargo.toml",
+          "--locked",
+          "--offline",
+          "-p",
+          "ctc8-14-wasi-http-probe",
+          "-e",
+          "features",
+          "-i",
+          "wasmtime"
+        ],
+        "exit_code": 0
+      }
+    ],
+    "probe_initial_failure": "The initial ctc8-14 offline trees exited 101 for unavailable crossbeam-deque 0.8.8; retained aligned-lock tree commands both exit 0. Do not erase the failed attempts.",
+    "metadata_receipt": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/build-003/metadata.json",
+      "sha256": "353309a1f0ff586f8225e7cace9cfe711a816baf388b7e07f549c74e3cf30706"
+    },
+    "metadata_capture_limit": "Standalone build-003 command was cargo metadata --format-version 1, without --locked; locked root metadata was actually exercised by passing identity/inventory governance tests below. Probe locked resolution is directly evidenced by successful locked trees and all-target compilation. No separate retained full locked probe metadata JSON was found.",
+    "tree_attribution_limit": "source-001 has exact commands/exits but no complete simultaneous source hash capture. Current/root/probe lock bytes are bound separately above."
+  },
+  "normal_and_required_test_compilation": {
+    "combined_check": {
+      "command": "cargo check --workspace --all-targets --locked",
+      "exit_code": 0,
+      "wrapper": {
+        "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/build-003/run.sh",
+        "sha256": "d26076da78e7da8c2c8c7d230892cc18b8f90abcb1bfc61a7ea799a13d0ee1f2"
+      },
+      "log": {
+        "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/build-003/cargo-check.log",
+        "sha256": "b3db0a22ffdfb357bc66c79da1252576dead9c40eae4806cf82593a9981834f0"
+      },
+      "attribution": "Prepared 2.9 source before first cutover commit; build-003 itself did not capture a full source inventory."
+    },
+    "normal_binary_and_probe_builds": [
+      {
+        "name": "host-build",
+        "command": "cargo build -p wamn-host --bin wamn-host --locked",
+        "exit_code": 0,
+        "log": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-build.log",
+        "source_attribution": "validation-001/source-inputs.json: recorded uncommitted source on dfa1c3187fe8cd671688a442b23106046e502cb6"
+      },
+      {
+        "name": "executor-build",
+        "command": "cargo build -p wamn-executor --bin wamn-run-worker --locked",
+        "exit_code": 0,
+        "log": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/executor-build.log",
+        "source_attribution": "validation-001/source-inputs.json: recorded uncommitted source on dfa1c3187fe8cd671688a442b23106046e502cb6"
+      },
+      {
+        "name": "native-http-probe",
+        "command": "cargo check --manifest-path tools/probes/ctc8-13-native-http/Cargo.toml --all-targets --locked",
+        "exit_code": 0,
+        "log": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/native-http-probe.log",
+        "source_attribution": "validation-001/source-inputs.json: recorded uncommitted source on dfa1c3187fe8cd671688a442b23106046e502cb6"
+      },
+      {
+        "name": "wasi-http-probe",
+        "command": "cargo check --manifest-path tools/probes/ctc8-14-wasi-http/Cargo.toml -p ctc8-14-wasi-http-probe --all-targets --locked",
+        "exit_code": 0,
+        "log": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/wasi-http-probe.log",
+        "source_attribution": "validation-001/source-inputs.json: recorded uncommitted source on dfa1c3187fe8cd671688a442b23106046e502cb6"
+      }
+    ],
+    "workspace_test_compilation": {
+      "receipt": {
+        "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-results.json",
+        "sha256": "2780595bfa13630e4deabb501271b4ff739ad2199b1cc9bf378c4c973554bf0a"
+      },
+      "command": "cargo test --workspace --locked --offline --no-fail-fast -- --include-ignored --nocapture --test-threads=1 --skip regenerate_checked_in_journey_schema --skip regenerate_checked_in_dev_config_schema",
+      "exit_code": 101,
+      "compile_scope": "Workspace test targets compiled and executed; exit 101 is retained test failures, not a successful full-suite verdict.",
+      "failure_classification": {
+        "missing_live_or_artifact_input": 65,
+        "known_baseline_infrastructure_failure": 1,
+        "known_baseline_code_failure": 1,
+        "new_potential_cutover_failure": 0,
+        "unresolved": 0
+      },
+      "reported_counts": {
+        "passed_including_doctests": 2120,
+        "failed_including_doctests": 67,
+        "passed_after_excluding_explicit_self_skips": 2035,
+        "executed_pass_count_is_exact": false
+      },
+      "self_skip_lower_bound": 85,
+      "attribution": "Recorded uncommitted source inventory on dfa1c3187fe8cd671688a442b23106046e502cb6"
+    },
+    "latest_scoped_validation": {
+      "receipt": {
+        "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/scoped-validation-002/summary.json",
+        "sha256": "dc03a43fda7d6c58998f4b32d9f69e5f636cd7911918709c2602f47eb2fb1650"
+      },
+      "tested_source": {
+        "commit": "ab0467f415dfd6b31e70323ec6ca049d5d2a5298",
+        "dirty_paths": [
+          " M crates/platform/runtime/src/engine.rs",
+          " M crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs",
+          " M tests/integration/src/virtualized_std_guest.rs",
+          " M tools/wms-cluster-journey-run"
+        ],
+        "sha256": {
+          "crates/platform/runtime/src/engine.rs": "4f7f94b278646d1efbf0d0d784ad16872f0cc35b21f9125f0dc2fbc1d4342d13",
+          "tests/integration/src/virtualized_std_guest.rs": "7bfb57688edad9b105d19204ff5d741abc61ad4becfe060377507e5b9224e29e",
+          "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs": "73f5c1c1b90509065b913b651a47f4212cf44f81e0c07fb74439ac38b94c7dfb",
+          "tools/wms-cluster-journey-run": "cecc05dd4d424201f08cc5fdae25e2e2beaf02fa0718b693870bd6d289b1d6dc"
+        }
+      },
+      "commands": [
+        {
+          "name": "deadline-memory",
+          "argv": [
+            "cargo",
+            "test",
+            "-p",
+            "wamn-runtime",
+            "--lib",
+            "--locked",
+            "--offline",
+            "engine::tests::dropping_a_store_after_epoch_interruption_releases_its_memory",
+            "--",
+            "--exact",
+            "--include-ignored",
+            "--nocapture",
+            "--test-threads=1"
+          ],
+          "started_unix_ns": 1788974826913458379,
+          "exit_code": 0,
+          "finished_unix_ns": 1788974832898510832
+        },
+        {
+          "name": "clippy",
+          "argv": [
+            "cargo",
+            "clippy",
+            "-p",
+            "wamn-runtime",
+            "-p",
+            "wamn-proof-integration",
+            "--all-targets",
+            "--locked",
+            "--offline"
+          ],
+          "started_unix_ns": 1788974832898544394,
+          "exit_code": 0,
+          "finished_unix_ns": 1788974914194377773
+        }
+      ],
+      "source_unchanged": true,
+      "verdict": "pass",
+      "matching_files_in_current_commit": [
+        {
+          "path": "crates/platform/runtime/src/engine.rs",
+          "recorded_tested_sha256": "4f7f94b278646d1efbf0d0d784ad16872f0cc35b21f9125f0dc2fbc1d4342d13",
+          "current_commit_sha256": "4f7f94b278646d1efbf0d0d784ad16872f0cc35b21f9125f0dc2fbc1d4342d13",
+          "matches": true
+        },
+        {
+          "path": "tests/integration/src/virtualized_std_guest.rs",
+          "recorded_tested_sha256": "7bfb57688edad9b105d19204ff5d741abc61ad4becfe060377507e5b9224e29e",
+          "current_commit_sha256": "7bfb57688edad9b105d19204ff5d741abc61ad4becfe060377507e5b9224e29e",
+          "matches": true
+        },
+        {
+          "path": "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs",
+          "recorded_tested_sha256": "73f5c1c1b90509065b913b651a47f4212cf44f81e0c07fb74439ac38b94c7dfb",
+          "current_commit_sha256": "73f5c1c1b90509065b913b651a47f4212cf44f81e0c07fb74439ac38b94c7dfb",
+          "matches": true
+        },
+        {
+          "path": "tools/wms-cluster-journey-run",
+          "recorded_tested_sha256": "cecc05dd4d424201f08cc5fdae25e2e2beaf02fa0718b693870bd6d289b1d6dc",
+          "current_commit_sha256": "cecc05dd4d424201f08cc5fdae25e2e2beaf02fa0718b693870bd6d289b1d6dc",
+          "matches": true
+        }
+      ],
+      "scope": "One exact memory-release unit test and all-target runtime/integration Clippy passed. This is not a later normal-service build, full workspace sweep, probe rebuild, or live virtualization pass."
+    }
+  },
+  "governance": {
+    "source_inventory": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/source-inputs.json",
+      "sha256": "77c6ad2949ff0b0324775430ef1b19b2c72f190cf65f108f6b2ef25935beaadd"
+    },
+    "log": {
+      "path": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log",
+      "sha256": "43c7fd647c85f2248ac401d410c5cd9e94312368a282a930fad7c3da80157e42"
+    },
+    "selected_actual_results": [
+      {
+        "name": "ip_name_lookup::pinned_runtime_is_direct_upstream_v2_9_0",
+        "observed_test_results": [
+          {
+            "line": 2514,
+            "text": "test ip_name_lookup::pinned_runtime_is_direct_upstream_v2_9_0 ... ok"
+          }
+        ]
+      },
+      {
+        "name": "manifest_dependencies::governed_dependency_identities_are_workspace_owned",
+        "observed_test_results": [
+          {
+            "line": 2521,
+            "text": "test manifest_dependencies::governed_dependency_identities_are_workspace_owned ... ok"
+          }
+        ]
+      },
+      {
+        "name": "runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current",
+        "observed_test_results": [
+          {
+            "line": 2542,
+            "text": "test runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current ... ok"
+          }
+        ]
+      },
+      {
+        "name": "direct_wasmtime_consumers_inherit_workspace_source_contract",
+        "observed_test_results": [
+          {
+            "line": 2882,
+            "text": "test direct_wasmtime_consumers_inherit_workspace_source_contract ... ok"
+          }
+        ]
+      },
+      {
+        "name": "resolved_async_nats_universe_is_single_and_canonical",
+        "observed_test_results": [
+          {
+            "line": 2883,
+            "text": "test resolved_async_nats_universe_is_single_and_canonical ... ok"
+          }
+        ]
+      },
+      {
+        "name": "resolved_wasmtime_type_universe_is_single_and_canonical",
+        "observed_test_results": [
+          {
+            "line": 2884,
+            "text": "test resolved_wasmtime_type_universe_is_single_and_canonical ... ok"
+          }
+        ]
+      },
+      {
+        "name": "profile_contract_matches_locked_metadata",
+        "observed_test_results": [
+          {
+            "line": 2779,
+            "text": "test profile_contract_matches_locked_metadata ... ok"
+          }
+        ]
+      },
+      {
+        "name": "virtualization_allowlist_matches_component_metadata",
+        "observed_test_results": [
+          {
+            "line": 2783,
+            "text": "test virtualization_allowlist_matches_component_metadata ... ok"
+          }
+        ]
+      },
+      {
+        "name": "a_gate_leg_cannot_change_upstream_source_and_continue",
+        "observed_test_results": [
+          {
+            "line": 2869,
+            "text": "test a_gate_leg_cannot_change_upstream_source_and_continue ... ok"
+          }
+        ]
+      },
+      {
+        "name": "changed_release_identity_or_source_refuses_before_cargo",
+        "observed_test_results": [
+          {
+            "line": 2870,
+            "text": "test changed_release_identity_or_source_refuses_before_cargo ... ok"
+          }
+        ]
+      },
+      {
+        "name": "clean_upstream_runs_all_legs_without_a_fork_branch",
+        "observed_test_results": [
+          {
+            "line": 2871,
+            "text": "test clean_upstream_runs_all_legs_without_a_fork_branch ... ok"
+          }
+        ]
+      },
+      {
+        "name": "dry_run_names_the_upstream_release_and_every_gate_leg",
+        "observed_test_results": [
+          {
+            "line": 2872,
+            "text": "test dry_run_names_the_upstream_release_and_every_gate_leg ... ok"
+          }
+        ]
+      },
+      {
+        "name": "failed_gate_legs_keep_their_exit_codes_and_do_not_hide_later_legs",
+        "observed_test_results": [
+          {
+            "line": 2873,
+            "text": "test failed_gate_legs_keep_their_exit_codes_and_do_not_hide_later_legs ... ok"
+          }
+        ]
+      },
+      {
+        "name": "fixture_build_cannot_change_its_tracked_lockfile_and_continue",
+        "observed_test_results": [
+          {
+            "line": 2874,
+            "text": "test fixture_build_cannot_change_its_tracked_lockfile_and_continue ... ok"
+          }
+        ]
+      },
+      {
+        "name": "fixture_build_failure_keeps_its_exit_code_while_later_legs_run",
+        "observed_test_results": [
+          {
+            "line": 2875,
+            "text": "test fixture_build_failure_keeps_its_exit_code_while_later_legs_run ... ok"
+          }
+        ]
+      },
+      {
+        "name": "receiving_pat_overlay_renders_a_complete_scoped_host",
+        "observed_test_results": [
+          {
+            "line": 2601,
+            "text": "test receiving_pat_overlay_renders_a_complete_scoped_host ... "
+          }
+        ]
+      }
+    ],
+    "locked_metadata_source_anchors": [
+      "tests/conformance/src/ip_name_lookup.rs:51",
+      "tests/conformance/src/runtime_inventory.rs:229",
+      "tests/conformance/tests/wasmtime_source_identity.rs:165",
+      "tests/conformance/tests/profile_selectors.rs:58"
+    ],
+    "locked_tree_source_anchor": "tests/conformance/src/runtime_inventory.rs:213",
+    "limits": [
+      "The release-check integration tests use fake Git/Cargo fixtures to prove wrapper refusal and exit propagation; actual upstream execution is upstream-gate-003.",
+      "The runtime inventory test checks source, manifests and feature resolution; it does not inspect a deployed cluster.",
+      "receiving_pat_overlay_renders_a_complete_scoped_host failed on Kubernetes discovery at localhost:8080. Other chart structural checks passed; this test has no passing retained cutover receipt in the inspected evidence."
+    ]
+  },
+  "virtualizer_unchanged": {
+    "files": [
+      {
+        "path": "crates/platform/component-virtualizer/src/main.rs",
+        "sha256_by_source": {
+          "dfa1c3187fe8cd671688a442b23106046e502cb6": "3f3a478a73024dfa151ca7a8005453704ced854c5edff9ecc11650310444e16a",
+          "15f2d4da26df0bdb46022cfd5276c9550d415d86": "3f3a478a73024dfa151ca7a8005453704ced854c5edff9ecc11650310444e16a",
+          "d45a0fe93e6f8ca4f6fd142a743190e2d18f0b93": "3f3a478a73024dfa151ca7a8005453704ced854c5edff9ecc11650310444e16a",
+          "working_file": "3f3a478a73024dfa151ca7a8005453704ced854c5edff9ecc11650310444e16a"
+        },
+        "unchanged": true
+      },
+      {
+        "path": "crates/platform/component-virtualizer/Cargo.toml",
+        "sha256_by_source": {
+          "dfa1c3187fe8cd671688a442b23106046e502cb6": "e87021e727bad49ed278de5db257baee30b02e617fd352a7659698e127780109",
+          "15f2d4da26df0bdb46022cfd5276c9550d415d86": "e87021e727bad49ed278de5db257baee30b02e617fd352a7659698e127780109",
+          "d45a0fe93e6f8ca4f6fd142a743190e2d18f0b93": "e87021e727bad49ed278de5db257baee30b02e617fd352a7659698e127780109",
+          "working_file": "e87021e727bad49ed278de5db257baee30b02e617fd352a7659698e127780109"
+        },
+        "unchanged": true
+      },
+      {
+        "path": "tools/component-virtualization.json",
+        "sha256_by_source": {
+          "dfa1c3187fe8cd671688a442b23106046e502cb6": "904bb30f14a6ef899efdf1d6b5ed2d1ecb1e12fa46f534bb1de58a9b4a283693",
+          "15f2d4da26df0bdb46022cfd5276c9550d415d86": "904bb30f14a6ef899efdf1d6b5ed2d1ecb1e12fa46f534bb1de58a9b4a283693",
+          "d45a0fe93e6f8ca4f6fd142a743190e2d18f0b93": "904bb30f14a6ef899efdf1d6b5ed2d1ecb1e12fa46f534bb1de58a9b4a283693",
+          "working_file": "904bb30f14a6ef899efdf1d6b5ed2d1ecb1e12fa46f534bb1de58a9b4a283693"
+        },
+        "unchanged": true
+      }
+    ],
+    "dependency": {
+      "name": "wasi-virt",
+      "version": "=0.2.0",
+      "git": "https://github.com/bytecodealliance/WASI-Virt.git",
+      "rev": "448f6df8f688cee5d6995e96b1ffc31f9bf00742",
+      "default_features": false,
+      "adapter_sha256": "28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632"
+    },
+    "live_receipt": {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/virtualization-live-002/summary.json",
+      "sha256": "aded2f94ebc341c02f30b3d6b592f8fc5fcbd67b791b67bab5bc9c9af7f71d45"
+    },
+    "live_source": "ab0467f415dfd6b31e70323ec6ca049d5d2a5298",
+    "live_results": [
+      {
+        "name": "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+        "passed": true,
+        "invoked": true,
+        "explicit_skip_detected": false,
+        "command": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-proof-integration",
+          "--locked",
+          "--offline",
+          "--lib",
+          "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+          "--",
+          "--include-ignored",
+          "--nocapture",
+          "--test-threads=1",
+          "--exact"
+        ],
+        "exit_code": 0,
+        "public_log": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/virtualization-live-002/003-test-1.redacted.log"
+      },
+      {
+        "name": "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+        "passed": false,
+        "invoked": true,
+        "explicit_skip_detected": false,
+        "command": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-proof-integration",
+          "--locked",
+          "--offline",
+          "--lib",
+          "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+          "--",
+          "--include-ignored",
+          "--nocapture",
+          "--test-threads=1",
+          "--exact"
+        ],
+        "exit_code": 101,
+        "public_log": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/virtualization-live-002/012-test-2.redacted.log"
+      }
+    ],
+    "boundary": "Clean ab0467f4 passed probe/Receiving import and eight-export inspection. Its live sentinel/panic test failed during release-closure decoding (invalid column 6) before guest execution. The current correction compiled in scoped validation; a later passing live rerun is outside these receipts. Compilation of component-virtualizer and zero unit tests alone is not an artifact proof. Cross-profile digest equality remains outside this claim (wamn-10yt.61)."
+  },
+  "remaining_evidence_limits": [
+    "Do not report the early workspace sweep as wholly green: 67 retained failures match the recorded baseline classification; at least 85 explicit self-skips make aggregate passed counts non-exact execution counts.",
+    "No successful full workspace sweep of the current clean commit is included in the inspected receipts. Later scoped validation is narrow and bound by file hashes.",
+    "Full live std virtualization behavior is still failed/pending in the inspected receipts; artifact shape passed and virtualizer implementation/pin remain unchanged.",
+    "The selected native defaults intentionally leave host-component-plugins and wasi-tls feature-empty targets unexecuted; the 2-GiB NATS large-payload test explicitly self-skipped."
+  ],
+  "reuse_guidance": "Reuse upstream-gate-003, source-001 trees, validation-001 service/probe builds and named locked-metadata/governance results for their stated source scopes. Do not repeat those gates solely to recover evidence already retained. Root owns any later changed-source or live acceptance runs."
+}

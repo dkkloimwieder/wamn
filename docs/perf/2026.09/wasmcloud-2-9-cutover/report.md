@@ -542,3 +542,35 @@ The correction adds the exact HTTP scheme to each expected object and changes no
 The [offline replay](wms-probe-scheme-fix-001/offline-replay.json) accepts the captured deployment and rejects ten altered or missing probe controls.
 Cleanup passes, but this run records no startup latency or trace result.
 Bead `wamn-0h0g.2.7.14` remains open until the corrected live startup proof passes.
+
+
+## Completed guest isolation and source evidence
+
+The [third virtualization run](virtualization-live-003/summary.json) passes both exact tests at clean source `d45a0fe9`.
+The artifact test retains the exact probe and Receiving imports and eight Receiving exports.
+The live test executes both active-release refusals, hides the host environment sentinel, exercises the real connection, and maps a guest panic to a typed refusal.
+Neither test skips a case.
+Owned Postgres and registry cleanup succeeds, and the production guest rebuild succeeds.
+This evidence resolves the fixture projection in `wamn-0h0g.2.7.11` and active query mismatch in `wamn-0h0g.2.7.13`.
+The cross-profile digest finding remains open under `wamn-10yt.61`.
+
+The [stage-one map](stage1-evidence-map-001/evidence-map.json) links exact source identities, feature selections, service builds, probe builds, and source-governance results.
+Upstream remains clean at `68ebece9`, with one Wasmtime family and unchanged virtualizer lineage.
+Early results retain their recorded source hashes and explicit failures or skips.
+The map precedes the third virtualization run and does not claim a final workspace sweep.
+
+## Observed operator restart cause
+
+The [sixth Receiving run](live-receiving-006/exit-code.txt) exits 1 at clean source `379faef6`.
+Its previous operator log and Kubernetes Events establish a liveness HTTP timeout that triggers a graceful container restart.
+Shutdown starts before NATS restoration, and the prior log contains no terminal NATS closure.
+The [diagnosis](operator-timeout-diagnosis-001/diagnosis.json) records the timing and limits of this evidence.
+The underlying HTTP delay remains unknown.
+All three host processes survive, but the cause-specific guard stops before complete recovery.
+The run records 27 valid responses and 22 transport failures, then passes owned cleanup.
+Bead `wamn-0h0g.2.7.10` awaits the owner decision on this restart cause with the original recovery limit retained.
+
+The [automation feasibility record](executor-admission-feasibility-001/feasibility.json) identifies a separate missing production admission caller.
+Its retained SQL expects permissions that an earlier change deliberately removed.
+Bead `wamn-0h0g.2.7.12` owns the scope decision for automation delivery and shutdown during active work.
+Existing evidence proves idle executor signals and Receiving stream delivery.

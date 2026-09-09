@@ -1,0 +1,436 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:15Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "989",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:52:15Z",
+            "message": "Successfully assigned wamn-system/runtime-operator-5bc6494bdb-9sft4 to wamn-receiving-journey-worker",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:15Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53994264d0f",
+                "namespace": "wamn-system",
+                "resourceVersion": "998",
+                "uid": "ed9ba74c-75f4-41c0-9387-17e0604fc092"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 4,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:16Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:58:53Z",
+            "message": "Pulling image \"ghcr.io/wasmcloud/runtime-operator:2.9.0\"",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:16Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b539b4bcbae5",
+                "namespace": "wamn-system",
+                "resourceVersion": "2339",
+                "uid": "795f6505-073e-4930-9d0b-5a227d759a7d"
+            },
+            "reason": "Pulling",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:18Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:52:18Z",
+            "message": "Successfully pulled image \"ghcr.io/wasmcloud/runtime-operator:2.9.0\" in 2.521s (2.521s including waiting). Image size: 35628580 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:18Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53a4b0b1a30",
+                "namespace": "wamn-system",
+                "resourceVersion": "1018",
+                "uid": "2f40f7fb-4251-42c6-8ac5-dea80454abbf"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 4,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:58:53Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:19Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53a4fd4ac9b",
+                "namespace": "wamn-system",
+                "resourceVersion": "2342",
+                "uid": "b08c6f11-5ead-4a0f-b54f-40798484b315"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 4,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:19Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:58:53Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:19Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53a53f3848c",
+                "namespace": "wamn-system",
+                "resourceVersion": "2343",
+                "uid": "14aaab4b-d855-4212-9158-547a7e77d606"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 2,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:22Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:52:27Z",
+            "message": "Startup probe failed: Get \"http://10.244.2.3:8082/healthz\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:22Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53b1071422f",
+                "namespace": "wamn-system",
+                "resourceVersion": "1051",
+                "uid": "1de043a7-30d5-4ab2-8934-4a9d9a019f0b"
+            },
+            "reason": "Unhealthy",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:25Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:52:25Z",
+            "message": "Successfully pulled image \"ghcr.io/wasmcloud/runtime-operator:2.9.0\" in 342ms (342ms including waiting). Image size: 35628580 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:25Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53bd647b826",
+                "namespace": "wamn-system",
+                "resourceVersion": "1046",
+                "uid": "cd135dcb-b227-41a2-8d92-e156135146d9"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:31Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:52:31Z",
+            "message": "Startup probe failed: Get \"http://10.244.2.3:8082/healthz\": dial tcp 10.244.2.3:8082: connect: connection refused",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:31Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53d2664ddaf",
+                "namespace": "wamn-system",
+                "resourceVersion": "1061",
+                "uid": "45b6fd23-9ffe-4d80-bcc6-56c68cb58455"
+            },
+            "reason": "Unhealthy",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 2,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:31Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:52:36Z",
+            "message": "Back-off restarting failed container runtime-operator in pod runtime-operator-5bc6494bdb-9sft4_wamn-system(fd5f48cc-cbbf-4661-9caf-46e881b9c508)",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:31Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53d2829ae82",
+                "namespace": "wamn-system",
+                "resourceVersion": "1077",
+                "uid": "8518bc86-bb70-4768-8866-c2be224ac1b9"
+            },
+            "reason": "BackOff",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:52:43Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:52:43Z",
+            "message": "Successfully pulled image \"ghcr.io/wasmcloud/runtime-operator:2.9.0\" in 332ms (332ms including waiting). Image size: 35628580 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:52:43Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b53ff23e92cd",
+                "namespace": "wamn-system",
+                "resourceVersion": "1095",
+                "uid": "47170244-bd1d-4ce3-9306-e2745f6b05b5"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 4,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:56:37Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:58:37Z",
+            "message": "Liveness probe failed: Get \"http://10.244.2.3:8082/healthz\": context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:56:37Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b5766f9feec2",
+                "namespace": "wamn-system",
+                "resourceVersion": "2300",
+                "uid": "18443ae4-e271-4d98-af50-4d2df98a6414"
+            },
+            "reason": "Unhealthy",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:58:37Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:58:37Z",
+            "message": "Container runtime-operator failed liveness probe, will be restarted",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:58:37Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b59260258f01",
+                "namespace": "wamn-system",
+                "resourceVersion": "2301",
+                "uid": "6291bbb9-b778-4519-b61f-2315c910c279"
+            },
+            "reason": "Killing",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T16:58:53Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{runtime-operator}",
+                "kind": "Pod",
+                "name": "runtime-operator-5bc6494bdb-9sft4",
+                "namespace": "wamn-system",
+                "resourceVersion": "993",
+                "uid": "fd5f48cc-cbbf-4661-9caf-46e881b9c508"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T16:58:53Z",
+            "message": "Successfully pulled image \"ghcr.io/wasmcloud/runtime-operator:2.9.0\" in 320ms (320ms including waiting). Image size: 35628580 bytes.",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T16:58:53Z",
+                "name": "runtime-operator-5bc6494bdb-9sft4.18d3b596370100df",
+                "namespace": "wamn-system",
+                "resourceVersion": "2341",
+                "uid": "e018a18e-2a1e-4e8e-ab2e-4d9c2d21d584"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

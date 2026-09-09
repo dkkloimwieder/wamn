@@ -1,0 +1,123 @@
+{
+  "schema": "wamn-executor-active-drain-feasibility/v1",
+  "source_repo": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+  "source_head": "379faef6351f053927ae392245cdad72d28255e4",
+  "file_sha256": {
+    "services/executor/src/lib.rs": "3ac2fa332c2e5a670abb9edc5d22a4eaeffae43e8357277170a0f6ebbcad2099",
+    "tools/receiving-cluster-journey-run": "36606959419857d0760aa9eba86503e859e3614b2d69438c9309efee07ebd170",
+    "crates/execution/run-state/src/admission.rs": "b751889278e7e0d886eda4a9f68b9d54b54b62d3b460a49ed2d97d00b6bacd4d",
+    "services/scenario-worker/src/store/admission.rs": "d543b0f0089c978dd40ea188f379edd6447b9d45566edf70cbb56493ae4795be",
+    "crates/control/provision/src/sql.rs": "c19b278bbd264a637628af9ae51bb64ed5bfa7caa45a28f5722b16fc5215e7f7",
+    "crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs": "32b3651dd2c3e0cbea1a39d2c866c768d8e67258b447b1854d6b6367b9e4f134",
+    "components/data/receiving-data/src/operation.rs": "0e586cd0d077fdd6622377514cc73f7439f556e55e221da3d8e4914916384a84"
+  },
+  "verdict": "No small extension can currently arm real queued delivery through an existing production admission path with the accepted management credential.",
+  "patch_prepared": false,
+  "blocking_contract_input": {
+    "needed": "A current legitimate producer command/API that admits a standard run targeting one released Receiving operation under current least-authority credentials.",
+    "missing": "No service or component calls management_admission_transaction; its only outside references are admission_live and version-identity hashing. It is the only non-test INSERT producer of wamn_run.runs and run_queue found in services, components, execution and runtime source.",
+    "not_a_usable_fallback": "The retained draft-run/test-case recipe still reads catalog.effective_release_packages, connection_requirements, connection_bindings, connection_instances and connection_generations. Current management-admitter grants include only wirings and component_library among catalog tables. PostgreSQL requires privilege on referenced tables even for empty requirement sets.",
+    "source_citations": [
+      "crates/execution/run-state/src/admission.rs:160",
+      "crates/execution/run-state/src/admission.rs:251",
+      "crates/execution/run-state/src/admission.rs:288",
+      "crates/execution/run-state/src/admission.rs:445",
+      "crates/control/provision/src/sql.rs:297"
+    ],
+    "governing_change": "46514ab9421223434418812f615cab892d60bded / wamn-10yt.10.14 intentionally removes the six orphaned management catalog reads. Do not restore them to arm a proof.",
+    "management_gate": "services/scenario-worker/src/store/admission.rs:901 says Gate judges a document, writes nothing, and executes no cases. Accepted reports summarize case count, not execution verdicts (873 onward). Publish materializes wiring; neither queues execution.",
+    "design_gap": "docs/exe-model.md:102 describes automation admission, but this source has no surviving production caller of the run/queue insert recipe. Charter docs/wamn_wasmcloud_2_9_cutover.md:125 still requires queued delivery.",
+    "owner_question": "Which current production command owns automation admission with the narrowed management grant set? If none exists, this needs a separately owned producer implementation/contract decision before an end-to-end queue proof can be armed.",
+    "scope_boundary": "Direct superuser INSERTs or copied admission SQL would be test seeding, not evidence of an existing production admission path. Re-expanding authority, restoring removed draft execution, or adding a new queue API is outside this bounded cutover proof."
+  },
+  "executor_path_is_separate_from_effect_writer_red": {
+    "evidence": [
+      "services/executor/src/lib.rs:349 constructs only WamnPostgres plus the shared RouterDriver",
+      "services/executor/src/lib.rs:582 drain_one calls reap and claim_next_production",
+      "services/executor/src/lib.rs:701 drive_claim calls RouterDriver::execute or execute_candidate",
+      "services/executor/src/lib.rs:866 commit_completion calls WamnPostgres::complete_production",
+      "crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs:493 claims under AuthorityClass::ExecutorPlatform",
+      "crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs:763 completes under production queue APIs"
+    ],
+    "claim": "No EffectWriterClient call occurs in services/executor or the shared execution-host driver. Choosing an existing SQL read operation does not require that accepted red suite.",
+    "limitation": "Static call-path review only; standard claim/completion has not been run by this preparer. Main_handoff separately owns the current standard-claim fixture corrections."
+  },
+  "already_available_evidence": [
+    {
+      "owner": "tools/receiving-cluster-journey-run:1118",
+      "scope": "Real process binary, scoped guest/executor/http-admitter credentials, exact OCI release, native readiness/liveness, idle SIGTERM and SIGINT exits inside 15-second deployment grace. It intentionally admits no runs."
+    },
+    {
+      "owner": "services/executor/src/lib.rs:897",
+      "test": "tests::shutdown_finishes_the_current_queue_turn_without_claiming_again",
+      "scope": "Generic serve_queue turn held by Notify; proves stop finishes one injected turn and starts no next turn. No PostgreSQL, RouterDriver or real guest execution."
+    },
+    {
+      "owner": "services/executor/src/lib.rs:931",
+      "test": "tests::shutdown_before_the_first_turn_never_claims_or_beats",
+      "scope": "Stopped queue does not start a turn or liveness. Not active-work evidence."
+    }
+  ],
+  "conditional_smallest_proof_after_producer_exists": {
+    "integration_point": "Extend the existing idle executor block at tools/receiving-cluster-journey-run:1118 before materializer traffic, reusing the exact released closure, scoped credentials, owned child, probe port and cleanup. Do not create another cluster or executor harness.",
+    "existing_operation": {
+      "name": "purchase_order.get",
+      "component": "components/application/receiving/src/lib.rs:55",
+      "guest_operation": "components/data/receiving-data/src/operation.rs:838",
+      "generated_sql": "packages/receiving/generated/sql/purchase_order/get.sql:1",
+      "target_table": "receiving.purchase_order",
+      "known_row": "00000000-0000-0000-0000-000000000301",
+      "existing_route_probe": "tools/receiving-cluster-journey-run:144",
+      "input_shape": "Use the released route/operation input envelope already used by the journey, with a unique request_id and id equal to the known row. Do not assume the route wiring takes a bare operation envelope; resolve its actual released graph."
+    },
+    "bounded_hold": "An owned fixture-controller transaction may hold ACCESS EXCLUSIVE on receiving.purchase_order while the real guest SELECT waits. This changes no schema or grants. The serving executor keeps its existing least-authority guest and executor-platform credentials; only the fresh fixture controller owns the temporary test lock.",
+    "measurement_sequence": [
+      "Admit exactly two uniquely identified standard runs through the current production producer (presently missing); both target the same immutable released operation.",
+      "Start the existing real executor and observe the first queue run leased to its unique owner/generation plus an actual guest SELECT waiting on the owned purchase_order lock. Readiness alone or a leased row alone is insufficient active-guest evidence.",
+      "Send SIGTERM (then repeat independently for SIGINT), observe native readiness report draining/503, and confirm the process stays alive while the owned guest SELECT is still blocked.",
+      "Release the lock promptly within the 5-second native command drain budget. Require the first run result to contain the exact purchase-order success and its queue row to be deleted; require the second run to remain unclaimed.",
+      "Require zero process exit within the 15-second deployment grace, exact owned-child cleanup, and no admission of a subsequent queue turn. Preserve times, owner/generation, run identities, result and queue observations with private credentials excluded."
+    ],
+    "timing_source": "services/executor/src/lib.rs:528 uses wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT; pinned /home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece/crates/wash-runtime/src/washlet/mod.rs:38 is 5 seconds.",
+    "active_timeout_variant": "A hold beyond the 5-second drain could measure bounded refusal with its durable lease left fenced, but that is a different acceptance claim from successful active drain and must not replace it."
+  },
+  "exact_existing_commands": [
+    {
+      "scope": "Existing deterministic lifecycle unit only; not queued-delivery proof. Already covered by normal validation; no rerun requested here.",
+      "argv": [
+        "cargo",
+        "test",
+        "-p",
+        "wamn-executor",
+        "--locked",
+        "--offline",
+        "--lib",
+        "tests::shutdown_finishes_the_current_queue_turn_without_claiming_again",
+        "--",
+        "--exact",
+        "--nocapture"
+      ]
+    },
+    {
+      "scope": "Existing stale admission owner can diagnose its own permissions on a fresh fixture; not an authorized shortcut for cutover proof. Do not run inside Receiving database.",
+      "argv": [
+        "cargo",
+        "test",
+        "-p",
+        "wamn-run-state",
+        "--locked",
+        "--offline",
+        "--test",
+        "admission_live",
+        "surviving_authority_matrix_live",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "required_private_environment": "WAMN_RUN_STORE_PG_URL to a fresh owned PG18 fixture; existing test internally uses psql URL arguments."
+    }
+  ],
+  "execution": "No Cargo, build, Docker, live database, network, source edit, or Beads mutation performed. No implementation patch prepared because admission is a contract/input gap."
+}

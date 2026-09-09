@@ -1,0 +1,430 @@
+{
+  "cache_precondition": "Both private OCI and Wasmtime cache directories were created empty. Release preload may compile release callables before readiness; the HTTP shell is not one of those callables.",
+  "cache_scope": "Fresh host/empty private caches; native HTTP digest is first loaded by cold herd; replicas share native compile deduplication.",
+  "cleanup_errors": 0,
+  "cold": {
+    "all_running_seconds": 0.323857246,
+    "final_application": {
+      "body_hex": "5b7b22726571756573745f6964223a22737461727475702d3337396661656636333531662d333439363037322d636f6c642d66696e616c222c2276616c7565223a7b22637265617465645f6174223a22323032362d30382d33315431323a30303a30302e3030303030305a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c2270757263686173655f6f726465725f6e756d626572223a22504f2d333031222c22726f775f76657273696f6e223a2233222c22737461747573223a22636f6d706c657465222c22737570706c6965725f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030343032222c22757064617465645f6174223a22323032362d30392d30395431363a35313a30392e3530383136335a227d7d5d",
+      "elapsed_seconds": 0.005942767,
+      "status": 200
+    },
+    "final_success_seconds": 0.329813047,
+    "first_success_seconds": 0.305859488,
+    "observations": [
+      {
+        "application": {
+          "body_hex": "",
+          "elapsed_seconds": 0.000992715,
+          "status": 503
+        },
+        "finished_seconds": 0.071290098,
+        "heartbeat_workload_count": 8,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 8,
+        "started_seconds": 0.001846095
+      },
+      {
+        "application": {
+          "body_hex": "",
+          "elapsed_seconds": 0.000592098,
+          "status": 503
+        },
+        "finished_seconds": 0.074902631,
+        "heartbeat_workload_count": 8,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 8,
+        "started_seconds": 0.07132804
+      },
+      {
+        "application": {
+          "body_hex": "",
+          "elapsed_seconds": 0.00125581,
+          "status": 503
+        },
+        "finished_seconds": 0.11101055,
+        "heartbeat_workload_count": 8,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 8,
+        "started_seconds": 0.102135619
+      },
+      {
+        "application": {
+          "body_hex": "",
+          "elapsed_seconds": 0.003978163,
+          "status": 503
+        },
+        "finished_seconds": 0.162760354,
+        "heartbeat_workload_count": 8,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 8,
+        "started_seconds": 0.151677839
+      },
+      {
+        "application": {
+          "body_hex": "",
+          "elapsed_seconds": 0.003385198,
+          "status": 503
+        },
+        "finished_seconds": 0.211404776,
+        "heartbeat_workload_count": 8,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 8,
+        "started_seconds": 0.202071649
+      },
+      {
+        "application": {
+          "body_hex": "5b7b22726571756573745f6964223a22737461727475702d3337396661656636333531662d333439363037322d636f6c642d35222c2276616c7565223a7b22637265617465645f6174223a22323032362d30382d33315431323a30303a30302e3030303030305a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c2270757263686173655f6f726465725f6e756d626572223a22504f2d333031222c22726f775f76657273696f6e223a2233222c22737461747573223a22636f6d706c657465222c22737570706c6965725f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030343032222c22757064617465645f6174223a22323032362d30392d30395431363a35313a30392e3530383136335a227d7d5d",
+          "elapsed_seconds": 0.044121295,
+          "status": 200
+        },
+        "finished_seconds": 0.305862299,
+        "heartbeat_workload_count": 8,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 4,
+        "started_seconds": 0.254113079
+      },
+      {
+        "application": {
+          "body_hex": "5b7b22726571756573745f6964223a22737461727475702d3337396661656636333531662d333439363037322d636f6c642d36222c2276616c7565223a7b22637265617465645f6174223a22323032362d30382d33315431323a30303a30302e3030303030305a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c2270757263686173655f6f726465725f6e756d626572223a22504f2d333031222c22726f775f76657273696f6e223a2233222c22737461747573223a22636f6d706c657465222c22737570706c6965725f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030343032222c22757064617465645f6174223a22323032362d30392d30395431363a35313a30392e3530383136335a227d7d5d",
+          "elapsed_seconds": 0.006447439,
+          "status": 200
+        },
+        "finished_seconds": 0.320104334,
+        "heartbeat_workload_count": 8,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 3,
+        "started_seconds": 0.305919975
+      }
+    ],
+    "started_unix_ns": "1788972853467204316",
+    "starts": [
+      {
+        "id": "startup-379faef6351f-3496072-cold-5",
+        "request_started_seconds": 0.001516563,
+        "response_seconds": 0.237900702,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-cold-2",
+        "request_started_seconds": 0.001314343,
+        "response_seconds": 0.238373756,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-cold-0",
+        "request_started_seconds": 0.001132125,
+        "response_seconds": 0.238428473,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-cold-1",
+        "request_started_seconds": 0.00125248,
+        "response_seconds": 0.239027856,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-cold-6",
+        "request_started_seconds": 0.001582724,
+        "response_seconds": 0.305579995,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-cold-3",
+        "request_started_seconds": 0.001395631,
+        "response_seconds": 0.317154774,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-cold-7",
+        "request_started_seconds": 0.001636322,
+        "response_seconds": 0.321735814,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-cold-4",
+        "request_started_seconds": 0.001462005,
+        "response_seconds": 0.323776421,
+        "state": "Running"
+      }
+    ]
+  },
+  "control_scope": "Native washlet RPC on the fixture-provided disposable NATS, independent of the chart operator proof.",
+  "fixture_cgroup": "0::/user.slice/user-1000.slice/user@1000.service/app.slice/tmux-spawn-8f479b76-541e-4bb7-92a7-a451403dfb21.scope\n",
+  "fixture_load_average": "5.42 6.60 4.36 1/4159 3515090\n",
+  "heartbeat_seconds": 0.662732284,
+  "host": {
+    "environment": "wamn-receiving-journey",
+    "friendlyName": "extra-large-boats-2035",
+    "hostname": "startup-379faef6351f-3496072",
+    "httpPort": 46405,
+    "id": "730ba20c-42e1-49b2-b020-ad9abbb27c3e",
+    "imports": [
+      {
+        "interfaces": [
+          "types"
+        ],
+        "namespace": "wamn",
+        "package": "jetstream",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "consumer"
+        ],
+        "namespace": "wamn",
+        "package": "jetstream",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "producer"
+        ],
+        "namespace": "wamn",
+        "package": "jetstream",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "doorbell"
+        ],
+        "namespace": "wamn",
+        "package": "jetstream",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "delivery"
+        ],
+        "namespace": "wamn",
+        "package": "router-delivery",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "types"
+        ],
+        "namespace": "wamn",
+        "package": "postgres",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "client"
+        ],
+        "namespace": "wamn",
+        "package": "postgres",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "statements"
+        ],
+        "namespace": "wamn",
+        "package": "postgres",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "routing"
+        ],
+        "namespace": "wamn",
+        "package": "flow-http-routing",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "metrics",
+          "tracing",
+          "types",
+          "logs"
+        ],
+        "namespace": "wasi",
+        "package": "otel",
+        "version": "0.2.0-rc.2"
+      },
+      {
+        "interfaces": [
+          "store"
+        ],
+        "namespace": "wasi",
+        "package": "config",
+        "version": "0.2.0-rc.1"
+      },
+      {
+        "interfaces": [
+          "logging"
+        ],
+        "namespace": "wasi",
+        "package": "logging"
+      }
+    ],
+    "labels": {
+      "hostgroup": "startup-379faef6351f-3496072"
+    },
+    "osArch": "x86_64",
+    "osKernel": "unix",
+    "osName": "linux",
+    "startedAt": "2026-09-09T16:54:13.423746111+00:00",
+    "systemCpuUsage": 22.683979034423828,
+    "systemMemoryFree": "2305843200",
+    "systemMemoryTotal": "65437421568",
+    "version": "2.9.0"
+  },
+  "host_ready_seconds": 0.703375264,
+  "host_shutdown": {
+    "exit_code": 0,
+    "forced": false,
+    "pid": 3514929,
+    "seconds": 0.268746285
+  },
+  "manifest_digest": "sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+  "native_start_limit": 4,
+  "owned_workloads": [
+    "startup-379faef6351f-3496072-cold-0",
+    "startup-379faef6351f-3496072-cold-1",
+    "startup-379faef6351f-3496072-cold-2",
+    "startup-379faef6351f-3496072-cold-3",
+    "startup-379faef6351f-3496072-cold-4",
+    "startup-379faef6351f-3496072-cold-5",
+    "startup-379faef6351f-3496072-cold-6",
+    "startup-379faef6351f-3496072-cold-7",
+    "startup-379faef6351f-3496072-warm-0",
+    "startup-379faef6351f-3496072-warm-1",
+    "startup-379faef6351f-3496072-warm-2",
+    "startup-379faef6351f-3496072-warm-3",
+    "startup-379faef6351f-3496072-warm-4",
+    "startup-379faef6351f-3496072-warm-5",
+    "startup-379faef6351f-3496072-warm-6",
+    "startup-379faef6351f-3496072-warm-7"
+  ],
+  "phase_attribution": "Whole native starts and observed progress only. Retired private Wasm/non-Wasm phase attribution unavailable.",
+  "pid": 3514929,
+  "process_started_unix_ns": "1788972852763773071",
+  "profile": "release",
+  "proof_id": "startup-379faef6351f-3496072",
+  "source": "379faef6351f053927ae392245cdad72d28255e4",
+  "verdict": "protocol-pass-awaiting-trace-exposure",
+  "warm": {
+    "all_running_seconds": 0.161048101,
+    "final_application": {
+      "body_hex": "5b7b22726571756573745f6964223a22737461727475702d3337396661656636333531662d333439363037322d7761726d2d66696e616c222c2276616c7565223a7b22637265617465645f6174223a22323032362d30382d33315431323a30303a30302e3030303030305a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c2270757263686173655f6f726465725f6e756d626572223a22504f2d333031222c22726f775f76657273696f6e223a2233222c22737461747573223a22636f6d706c657465222c22737570706c6965725f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030343032222c22757064617465645f6174223a22323032362d30392d30395431363a35313a30392e3530383136335a227d7d5d",
+      "elapsed_seconds": 0.004169597,
+      "status": 200
+    },
+    "final_success_seconds": 0.165227121,
+    "first_success_seconds": 0.020918758,
+    "observations": [
+      {
+        "application": {
+          "body_hex": "5b7b22726571756573745f6964223a22737461727475702d3337396661656636333531662d333439363037322d7761726d2d30222c2276616c7565223a7b22637265617465645f6174223a22323032362d30382d33315431323a30303a30302e3030303030305a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c2270757263686173655f6f726465725f6e756d626572223a22504f2d333031222c22726f775f76657273696f6e223a2233222c22737461747573223a22636f6d706c657465222c22737570706c6965725f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030343032222c22757064617465645f6174223a22323032362d30392d30395431363a35313a30392e3530383136335a227d7d5d",
+          "elapsed_seconds": 0.009662374,
+          "status": 200
+        },
+        "finished_seconds": 0.020921609,
+        "heartbeat_workload_count": 16,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 8,
+        "started_seconds": 0.003488474
+      },
+      {
+        "application": {
+          "body_hex": "5b7b22726571756573745f6964223a22737461727475702d3337396661656636333531662d333439363037322d7761726d2d31222c2276616c7565223a7b22637265617465645f6174223a22323032362d30382d33315431323a30303a30302e3030303030305a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c2270757263686173655f6f726465725f6e756d626572223a22504f2d333031222c22726f775f76657273696f6e223a2233222c22737461747573223a22636f6d706c657465222c22737570706c6965725f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030343032222c22757064617465645f6174223a22323032362d30392d30395431363a35313a30392e3530383136335a227d7d5d",
+          "elapsed_seconds": 0.005899712,
+          "status": 200
+        },
+        "finished_seconds": 0.062904556,
+        "heartbeat_workload_count": 16,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 8,
+        "started_seconds": 0.053150214
+      },
+      {
+        "application": {
+          "body_hex": "5b7b22726571756573745f6964223a22737461727475702d3337396661656636333531662d333439363037322d7761726d2d32222c2276616c7565223a7b22637265617465645f6174223a22323032362d30382d33315431323a30303a30302e3030303030305a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c2270757263686173655f6f726465725f6e756d626572223a22504f2d333031222c22726f775f76657273696f6e223a2233222c22737461747573223a22636f6d706c657465222c22737570706c6965725f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030343032222c22757064617465645f6174223a22323032362d30392d30395431363a35313a30392e3530383136335a227d7d5d",
+          "elapsed_seconds": 0.008395007,
+          "status": 200
+        },
+        "finished_seconds": 0.123219589,
+        "heartbeat_workload_count": 16,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 5,
+        "started_seconds": 0.103658883
+      },
+      {
+        "application": {
+          "body_hex": "5b7b22726571756573745f6964223a22737461727475702d3337396661656636333531662d333439363037322d7761726d2d33222c2276616c7565223a7b22637265617465645f6174223a22323032362d30382d33315431323a30303a30302e3030303030305a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c2270757263686173655f6f726465725f6e756d626572223a22504f2d333031222c22726f775f76657273696f6e223a2233222c22737461747573223a22636f6d706c657465222c22737570706c6965725f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030343032222c22757064617465645f6174223a22323032362d30392d30395431363a35313a30392e3530383136335a227d7d5d",
+          "elapsed_seconds": 0.00405381,
+          "status": 200
+        },
+        "finished_seconds": 0.160777502,
+        "heartbeat_workload_count": 16,
+        "native_live_status": 200,
+        "native_ready_status": 200,
+        "pending_client_starts": 2,
+        "started_seconds": 0.153345392
+      }
+    ],
+    "started_unix_ns": "1788972853797034179",
+    "starts": [
+      {
+        "id": "startup-379faef6351f-3496072-warm-3",
+        "request_started_seconds": 0.002377122,
+        "response_seconds": 0.073943044,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-warm-1",
+        "request_started_seconds": 0.002183041,
+        "response_seconds": 0.081440468,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-warm-5",
+        "request_started_seconds": 0.002688507,
+        "response_seconds": 0.092297663,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-warm-7",
+        "request_started_seconds": 0.002916151,
+        "response_seconds": 0.111403181,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-warm-6",
+        "request_started_seconds": 0.002788802,
+        "response_seconds": 0.137798691,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-warm-2",
+        "request_started_seconds": 0.002281719,
+        "response_seconds": 0.145177799,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-warm-4",
+        "request_started_seconds": 0.002477703,
+        "response_seconds": 0.157108625,
+        "state": "Running"
+      },
+      {
+        "id": "startup-379faef6351f-3496072-warm-0",
+        "request_started_seconds": 0.001989148,
+        "response_seconds": 0.16100124,
+        "state": "Running"
+      }
+    ]
+  }
+}
