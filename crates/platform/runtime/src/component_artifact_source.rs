@@ -499,6 +499,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "run".to_owned(),
                     ComponentOperationDeclaration {
+                        fresh_only: false,
                         registered_operation: None,
                         dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {

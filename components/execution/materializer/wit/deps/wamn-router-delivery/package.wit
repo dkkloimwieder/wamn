@@ -71,7 +71,7 @@ interface delivery {
     cancelled,
   }
 
-  /// One exact registered operation the originating caller lacks.
+  /// One exact registered operation the originating caller cannot invoke.
   record permission-denial {
     operation: string,
   }
@@ -83,6 +83,8 @@ interface delivery {
     invalid-payload,
     execution-failed,
     permission-denied(permission-denial),
+    /// A session caller reached an operation that requires a fresh credential.
+    fresh-credential-required(permission-denial),
   }
 
   deliver: func(request: delivery-request) -> result<delivery-outcome, delivery-error>;

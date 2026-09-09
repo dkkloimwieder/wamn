@@ -211,6 +211,8 @@ impl std::error::Error for ComponentProjectionError {}
 #[derive(Debug, Deserialize)]
 struct GeneratedOperationContract {
     operation: String,
+    #[serde(default)]
+    fresh_only: bool,
     statements: Vec<GeneratedStatementContract>,
     #[serde(
         rename = "sql_files",
@@ -663,6 +665,7 @@ struct ExpectedOperationContract {
     relative_path: String,
     component: String,
     public: bool,
+    fresh_only: bool,
 }
 
 fn load_component_statement_facts(
@@ -709,13 +712,15 @@ fn load_component_statement_facts(
                     ),
                 )
             })?;
-        if contract.operation != *operation {
+        if contract.operation != *operation || contract.fresh_only != expected_contract.fresh_only {
             return Err(ComponentProjectionError::new(
                 ComponentProjectionErrorKind::StatementOperationMismatch,
                 format!(
-                    "generated operation contract {} names {:?}, expected {operation:?}",
+                    "generated operation contract {} names {:?} with fresh_only={}, expected {operation:?} with fresh_only={}",
                     package_root.join(contract_path).display(),
-                    contract.operation
+                    contract.operation,
+                    contract.fresh_only,
+                    expected_contract.fresh_only,
                 ),
             ));
         }
@@ -875,12 +880,17 @@ fn validate_component_operation_assignment(
     for operation in &expected_component_operations {
         let declared = &component.operations[operation];
         let expected_registration = expected[operation].public.then_some(operation.as_str());
-        if declared.registered_operation.as_deref() != expected_registration {
+        if declared.registered_operation.as_deref() != expected_registration
+            || declared.fresh_only != expected[operation].fresh_only
+        {
             return Err(ComponentProjectionError::new(
                 ComponentProjectionErrorKind::StatementOperationMismatch,
                 format!(
-                    "component {:?} export {operation:?} registered-operation is {:?}, expected {expected_registration:?}",
-                    component.component, declared.registered_operation
+                    "component {:?} export {operation:?} registered-operation is {:?} with fresh-only={}, expected {expected_registration:?} with fresh-only={}",
+                    component.component,
+                    declared.registered_operation,
+                    declared.fresh_only,
+                    expected[operation].fresh_only,
                 ),
             ));
         }
@@ -909,6 +919,7 @@ fn expected_operation_contracts(
                 &local_operation,
                 operation.component.as_deref().or(default_component),
                 true,
+                operation.fresh_only,
             )?;
         }
     }
@@ -919,6 +930,7 @@ fn expected_operation_contracts(
             local_operation,
             operation.component.as_deref().or(default_component),
             operation.visibility() == wamn_schema_generator::OperationVisibility::Public,
+            operation.fresh_only,
         )?;
     }
     Ok(expected)
@@ -930,6 +942,7 @@ fn insert_expected_operation(
     local_operation: &str,
     component: Option<&str>,
     public: bool,
+    fresh_only: bool,
 ) -> Result<(), ComponentProjectionError> {
     let component = component.ok_or_else(|| {
         ComponentProjectionError::new(
@@ -959,6 +972,7 @@ fn insert_expected_operation(
                 relative_path,
                 component: component.to_owned(),
                 public,
+                fresh_only,
             },
         )
         .is_some()
@@ -2038,6 +2052,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
                 AdmittedComponentOperation {
+                    fresh_only: false,
                     registered_operation: Some(
                         "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
                     ),
@@ -2075,6 +2090,7 @@ mod tests {
                         export,
                         AdmittedComponentOperation {
                             registered_operation: operation.registered_operation,
+                            fresh_only: operation.fresh_only,
                             dependencies: operation.dependencies,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),
@@ -2144,6 +2160,68 @@ mod tests {
                 .statement(&component_sql_digest(statement.sql.as_bytes())),
             Some(statement)
         );
+    }
+
+    #[test]
+    fn fresh_only_requires_authored_component_and_generated_contract_agreement() {
+        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let operation = "wamn-receiving:purchase-order/get@1.0.0";
+        let baseline = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
+            "../../../packages/receiving/wamn.json"
+        ))
+        .unwrap();
+        for (authored, declared) in [(true, false), (false, true), (true, true)] {
+            let mut manifest = baseline.clone();
+            manifest
+                .models
+                .get_mut("purchase_order")
+                .unwrap()
+                .operations
+                .get_mut(&wamn_schema_generator::CrudAction::Get)
+                .unwrap()
+                .fresh_only = authored;
+            let mut component = repository_receiving_component();
+            component.operations.get_mut(operation).unwrap().fresh_only = declared;
+            let expected = expected_operation_contracts(&manifest).unwrap();
+            let assignment =
+                validate_component_operation_assignment(&manifest, &component, &expected);
+            if authored == declared {
+                assert!(assignment.unwrap().contains(operation));
+            } else {
+                let error = assignment.expect_err("authored and component flags differ");
+                assert_eq!(
+                    error.kind(),
+                    ComponentProjectionErrorKind::StatementOperationMismatch
+                );
+                assert!(error.to_string().contains("fresh-only="));
+            }
+            let error = load_component_statement_facts(&package_root, &manifest, &component)
+                .expect_err("at least one of the three freshness declarations differs");
+            assert_eq!(
+                error.kind(),
+                ComponentProjectionErrorKind::StatementOperationMismatch
+            );
+            if authored == declared {
+                assert!(error.to_string().contains("fresh_only=false"));
+                assert!(error.to_string().contains("fresh_only=true"));
+            }
+        }
+    }
+
+    #[test]
+    fn fresh_only_generated_contract_requires_a_boolean() {
+        for value in [
+            serde_json::json!(null),
+            serde_json::json!("true"),
+            serde_json::json!(1),
+        ] {
+            let contract = serde_json::json!({
+                "operation": "wamn-receiving:purchase-order/get@1.0.0",
+                "fresh_only": value,
+                "statements": []
+            });
+            assert!(serde_json::from_value::<GeneratedOperationContract>(contract).is_err());
+        }
     }
 
     #[test]
@@ -2245,6 +2323,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation,
                 AdmittedComponentOperation {
+                    fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),
@@ -2295,6 +2374,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn:node/handler@0.1.0".to_owned(),
                 AdmittedComponentOperation {
+                    fresh_only: false,
                     registered_operation: registered.map(str::to_owned),
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),
@@ -2385,6 +2465,13 @@ mod tests {
         )
         .expect("reordered projection hashes");
         assert_eq!(forward, reversed);
+
+        let mut fresh = component.clone();
+        fresh.operations.values_mut().next().unwrap().fresh_only = true;
+        assert_ne!(
+            forward,
+            admitted_projection_hash(&fresh, &requirements).expect("fresh-only projection hashes")
+        );
 
         let mut changed = component.clone();
         let operation = changed
@@ -3269,6 +3356,7 @@ mod tests {
                     operations: BTreeMap::from([(
                         operation.to_owned(),
                         ComponentOperationDeclaration {
+                            fresh_only: false,
                             registered_operation: None,
                             dependencies: Vec::new(),
                             input_ports: Vec::new(),

@@ -50,6 +50,7 @@ fn components() -> BTreeSet<ServingComponent> {
             operations: BTreeMap::from([(
                 "map".into(),
                 ServingComponentOperation {
+                    fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
                     statements: BTreeMap::new(),
@@ -64,6 +65,7 @@ fn components() -> BTreeSet<ServingComponent> {
             operations: BTreeMap::from([(
                 "client-acme-receiving:purchase-order/get@3.0.0".into(),
                 ServingComponentOperation {
+                    fresh_only: false,
                     registered_operation: Some(
                         "client-acme-receiving:purchase-order/get@3.0.0".into(),
                     ),
@@ -155,6 +157,69 @@ fn the_format_one_preimage_and_digest_are_pinned() {
     let raw = <sha2::Sha256 as sha2::Digest>::digest(mint_vector::CANONICAL_BYTES);
     let hex: String = raw.iter().map(|byte| format!("{byte:02x}")).collect();
     assert_eq!(digest.as_str(), format!("sha256:{hex}"));
+}
+
+#[test]
+fn fresh_only_is_digest_bound_without_changing_format_one_default_bytes() {
+    let baseline = manifest();
+    let mut fresh = baseline.clone();
+    fresh.components = fresh
+        .components
+        .into_iter()
+        .map(|mut component| {
+            for operation in component.operations.values_mut() {
+                if operation.registered_operation.is_some() {
+                    operation.fresh_only = true;
+                }
+            }
+            component
+        })
+        .collect();
+    let (admitted, digest) = ServingManifest::from_canonical_bytes(&fresh.canonical_bytes())
+        .expect("format-one reader admits registered fresh-only operations");
+    assert_eq!(admitted, fresh);
+    assert_eq!(admitted.format_version, 1);
+    assert_ne!(digest, baseline.digest());
+    assert_eq!(baseline.canonical_bytes(), mint_vector::CANONICAL_BYTES);
+}
+
+#[test]
+fn fresh_only_release_reader_refuses_unregistered_exports_and_non_boolean_flags() {
+    let mut unregistered = manifest();
+    unregistered.components = unregistered
+        .components
+        .into_iter()
+        .map(|mut component| {
+            for operation in component.operations.values_mut() {
+                if operation.registered_operation.is_none() {
+                    operation.fresh_only = true;
+                }
+            }
+            component
+        })
+        .collect();
+    let error = ServingManifest::from_canonical_bytes(&unregistered.canonical_bytes())
+        .expect_err("unregistered palette export cannot require fresh authentication");
+    assert!(error.to_string().contains("unregistered export"));
+
+    for value in [json!(null), json!("true"), json!(1)] {
+        let mut document = serde_json::to_value(manifest()).unwrap();
+        let operation = document["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .flat_map(|component| {
+                component["operations"]
+                    .as_object_mut()
+                    .unwrap()
+                    .values_mut()
+            })
+            .find(|operation| operation.get("registered-operation").is_some())
+            .unwrap();
+        operation["fresh-only"] = value;
+        let bytes = wamn_execution_contract::canonical_json_bytes(&document);
+        assert!(ServingManifest::from_canonical_bytes(&bytes).is_err());
+    }
 }
 
 #[test]

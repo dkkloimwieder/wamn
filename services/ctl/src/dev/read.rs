@@ -760,6 +760,7 @@ mod tests {
     fn manifest() -> ServingManifest {
         let package = PackageCoordinate::new("receiving", "1.0.0").expect("valid package");
         let operation = ServingComponentOperation {
+            fresh_only: false,
             registered_operation: Some("receiving@1.0.0::purchase-order/get".to_owned()),
             dependencies: Vec::new(),
             statements: BTreeMap::new(),

@@ -1030,6 +1030,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     operation.to_owned(),
                     ComponentOperationDeclaration {
+                        fresh_only: false,
                         registered_operation: None,
                         dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
@@ -1202,6 +1203,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_owned(),
                 AdmittedComponentOperation {
+                    fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),

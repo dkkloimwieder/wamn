@@ -916,6 +916,7 @@ mod tests {
     fn manifest() -> ServingManifest {
         let package = PackageCoordinate::new("receiving", "1.0.0").expect("valid package");
         let operation = ServingComponentOperation {
+            fresh_only: false,
             registered_operation: Some("receiving:purchase-order/get@1.0.0".to_owned()),
             dependencies: vec![ComponentOperationDependency {
                 package: "inventory".to_owned(),

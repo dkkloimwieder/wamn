@@ -1856,6 +1856,9 @@ fn emit_custom_operation_contracts(
         ("grant".to_owned(), json!(grant)),
         ("statements".to_owned(), json!(statements)),
     ]);
+    if operation.fresh_only {
+        operation_contract.insert("fresh_only".to_owned(), json!(true));
+    }
     if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
         operation_contract.insert(
             "dependency".to_owned(),
@@ -2870,6 +2873,9 @@ fn emit_operation_contracts(
         ("transaction".to_owned(), json!("implicit")),
         ("automatic_retry".to_owned(), json!(false)),
     ]);
+    if operation.fresh_only {
+        operation_contract.insert("fresh_only".to_owned(), json!(true));
+    }
     if let Some(claim) = claim.filter(|_| action == CrudAction::Create) {
         operation_contract.insert("idempotency".to_owned(), idempotency_contract(claim));
     }

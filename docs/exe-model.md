@@ -207,6 +207,12 @@ Hosts read tenant operation permissions fresh for every new request.
 They accept public signing keys only within the configured issuer's 300-second evidence window.
 Private signing keys stay with the separate `wamn-identity` authority and its system database.
 The fresh-only restriction belongs to each registered operation and survives nested calls.
+An authored `fresh_only: true` becomes `fresh-only: true` in admitted component facts and the released manifest.
+Omission means false, and the manifest format remains 1.
+Admission refuses a mismatch between the authored operation, its generated contract, and its component declaration.
+Each operation boundary checks the original caller's exact permission before its credential kind.
+A permitted session caller receives HTTP 403 with `fresh-credential-required` and the exact operation identity.
+The host does not retry that refusal or repeat earlier committed work under a PAT.
 Production session routes remain disabled until the two-host and fresh-only proofs pass.
 The owner permits session routes in disposable deployments for those proofs.
 `wamn-ctc8.15.3` owns host session admission, and `wamn-ctc8.15.4` owns fresh-only enforcement.

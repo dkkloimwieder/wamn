@@ -1032,6 +1032,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     snapshot.operation.expect("operation"),
                     ServingComponentOperation {
+                        fresh_only: false,
                         registered_operation: snapshot.registered_operation,
                         dependencies: Vec::new(),
                         statements: BTreeMap::new(),

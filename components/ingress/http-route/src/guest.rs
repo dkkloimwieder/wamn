@@ -164,6 +164,9 @@ fn convert_delivery_error(error: wamn::router_delivery::delivery::DeliveryError)
         WireError::PermissionDenied(denial) => DeliveryError::PermissionDenied {
             operation: denial.operation,
         },
+        WireError::FreshCredentialRequired(denial) => DeliveryError::FreshCredentialRequired {
+            operation: denial.operation,
+        },
     }
 }
 

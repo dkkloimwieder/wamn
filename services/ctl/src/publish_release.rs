@@ -2101,6 +2101,7 @@ fn project_serving_component(
                     name.clone(),
                     ServingComponentOperation {
                         registered_operation: operation.registered_operation.clone(),
+                        fresh_only: operation.fresh_only,
                         dependencies: operation.dependencies.clone(),
                         statements: operation.statements.clone(),
                     },
@@ -2635,6 +2636,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.to_owned(),
                 AdmittedComponentOperation {
+                    fresh_only: false,
                     registered_operation: registered_operation.map(str::to_owned),
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),
@@ -2648,6 +2650,27 @@ mod tests {
             imports_fingerprint: DIGEST.to_owned(),
             effects: Vec::new(),
         }
+    }
+
+    #[test]
+    fn fresh_only_component_policy_survives_release_projection() {
+        let operation = "base:purchase-order/get@1.0.0";
+        let mut component = closure_component("registered-component", Some(operation));
+        let baseline = project_serving_component(&component).unwrap();
+        assert!(!baseline.operations[operation].fresh_only);
+        component.operations.get_mut(operation).unwrap().fresh_only = true;
+        let projected = project_serving_component(&component).unwrap();
+        assert!(projected.operations[operation].fresh_only);
+        assert_eq!(
+            serde_json::to_value(&projected).unwrap()["operations"][operation]["fresh-only"],
+            true
+        );
+        assert_eq!(
+            projected.operations[operation]
+                .registered_operation
+                .as_deref(),
+            Some(operation)
+        );
     }
 
     fn closure_document(with_registered_edge: bool) -> WiringDocument {
@@ -2833,6 +2856,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.clone(),
                 AdmittedComponentOperation {
+                    fresh_only: declared.fresh_only,
                     registered_operation: declared.registered_operation,
                     dependencies: declared.dependencies,
                     input_ports: Vec::new(),

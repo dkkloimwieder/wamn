@@ -180,6 +180,9 @@ pub struct OperationIr {
     pub grant: String,
     /// Permission token this operation is authorized by.
     pub permission_token: String,
+    /// Whether the registered operation requires a fresh originating credential.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh_only: bool,
     /// Where this operation is published, when the release exposes it over
     /// HTTP.
     ///
@@ -716,7 +719,23 @@ fn build_operation(
     // Excluded by DECLARATION, never by a missing member: a public operation
     // whose grant is absent is a malformed contract and must still refuse
     // below, not vanish from the client because a member failed to parse.
+    let fresh_only = match operation.get("fresh_only") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => {
+            return Err(ClientIrError::new(
+                ClientIrErrorKind::MalformedContract,
+                format!("{module}/{name} fresh_only must be a boolean"),
+            ));
+        }
+    };
     if operation.get("visibility").and_then(Value::as_str) == Some("private") {
+        if fresh_only {
+            return Err(ClientIrError::new(
+                ClientIrErrorKind::MalformedContract,
+                format!("private operation {module}/{name} must not require a fresh credential"),
+            ));
+        }
         return Ok(None);
     }
     let member = |key: &str| -> Result<String, ClientIrError> {
@@ -746,6 +765,7 @@ fn build_operation(
         operation: identity,
         grant: member("grant")?,
         permission_token: member("permission_token")?,
+        fresh_only,
         result_class: operation
             .get("result")
             .and_then(Value::as_str)
@@ -931,6 +951,59 @@ fn string_list(value: Option<&Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fresh_only_contract_policy_is_preserved_in_the_client_ir() {
+        for policy in [None, Some(false), Some(true)] {
+            let mut contract = serde_json::json!({
+                "operation": "orders:purchase-order/get@1.0.0",
+                "grant": "orders:purchase-order/get@1.0.0",
+                "permission_token": "purchase_order.get"
+            });
+            if let Some(value) = policy {
+                contract["fresh_only"] = serde_json::json!(value);
+            }
+            let operation = build_operation(
+                "purchase_order",
+                "get",
+                OperationParts {
+                    operation: Some(contract),
+                    ..Default::default()
+                },
+                &BTreeMap::new(),
+            )
+            .expect("public operation contract projects")
+            .expect("public operation remains visible");
+            assert_eq!(operation.fresh_only, policy.unwrap_or(false));
+            let serialized = serde_json::to_value(&operation).unwrap();
+            assert_eq!(
+                serialized.get("fresh-only").cloned(),
+                policy.filter(|value| *value).map(Value::Bool)
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_only_client_ir_refuses_private_and_malformed_contracts() {
+        for contract in [
+            serde_json::json!({"fresh_only": true, "visibility": "private"}),
+            serde_json::json!({"fresh_only": null}),
+            serde_json::json!({"fresh_only": "true"}),
+            serde_json::json!({"fresh_only": 1}),
+        ] {
+            let error = build_operation(
+                "purchase_order",
+                "get",
+                OperationParts {
+                    operation: Some(contract),
+                    ..Default::default()
+                },
+                &BTreeMap::new(),
+            )
+            .expect_err("private or malformed freshness policy is refused");
+            assert_eq!(error.kind(), ClientIrErrorKind::MalformedContract);
+        }
+    }
 
     fn repository_root() -> std::path::PathBuf {
         std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))

@@ -1105,6 +1105,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "request".into(),
                 ServingComponentOperation {
+                    fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
                     statements: BTreeMap::new(),

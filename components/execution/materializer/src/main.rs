@@ -509,7 +509,8 @@ fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> Deli
         Err(
             DeliveryError::SourceNotFound
             | DeliveryError::InvalidRequest
-            | DeliveryError::InvalidPayload,
+            | DeliveryError::InvalidPayload
+            | DeliveryError::FreshCredentialRequired(_),
         ) => DeliveryDisposition::DeadLetter("router-deterministic-refusal"),
         Err(DeliveryError::PermissionDenied(_)) => {
             DeliveryDisposition::DeadLetter("router-permission-denied")
@@ -1053,6 +1054,15 @@ mod tests {
         assert_eq!(
             delivery_disposition(&permission_denied),
             DeliveryDisposition::DeadLetter("router-permission-denied")
+        );
+        let fresh_required = Err(DeliveryError::FreshCredentialRequired(
+            delivery::PermissionDenial {
+                operation: "wamn-receiving:receipt/get@1.0.0".into(),
+            },
+        ));
+        assert_eq!(
+            delivery_disposition(&fresh_required),
+            DeliveryDisposition::DeadLetter("router-deterministic-refusal")
         );
         for result in [
             Ok(DeliveryOutcome::Discard),

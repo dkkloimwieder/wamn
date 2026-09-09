@@ -166,17 +166,30 @@ pub enum WiringResolution {
     Frozen,
 }
 
+/// Why an originating caller cannot invoke a registered operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperationRefusalKind {
+    PermissionDenied,
+    FreshCredentialRequired,
+}
+
 /// Exact operation authority missing from the originating caller.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PermissionDenied {
+pub(crate) struct OperationRefusal {
+    kind: OperationRefusalKind,
     operation: Box<str>,
 }
 
-impl PermissionDenied {
-    pub(crate) fn new(operation: impl Into<Box<str>>) -> Self {
+impl OperationRefusal {
+    pub(crate) fn new(kind: OperationRefusalKind, operation: impl Into<Box<str>>) -> Self {
         Self {
+            kind,
             operation: operation.into(),
         }
+    }
+
+    pub(crate) fn kind(&self) -> OperationRefusalKind {
+        self.kind
     }
 
     pub(crate) fn operation(&self) -> &str {
@@ -184,30 +197,36 @@ impl PermissionDenied {
     }
 }
 
-impl fmt::Display for PermissionDenied {
+impl fmt::Display for OperationRefusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "permission denied for operation {}",
-            self.operation
-        )
+        let reason = match self.kind {
+            OperationRefusalKind::PermissionDenied => "permission denied",
+            OperationRefusalKind::FreshCredentialRequired => "fresh-credential-required",
+        };
+        write!(formatter, "{reason} for operation {}", self.operation)
     }
 }
 
-impl std::error::Error for PermissionDenied {}
+impl std::error::Error for OperationRefusal {}
 
 pub(crate) fn authorize_registered_operation(
     caller: Option<&AuthenticatedCaller>,
     operation: Option<&str>,
-) -> Result<(), PermissionDenied> {
+    fresh_only: bool,
+) -> Result<(), OperationRefusal> {
     let Some(operation) = operation else {
         return Ok(());
     };
-    if caller.is_some_and(|caller| caller.permits(operation)) {
-        Ok(())
-    } else {
-        Err(PermissionDenied::new(operation))
+    let caller = caller
+        .filter(|caller| caller.permits(operation))
+        .ok_or_else(|| OperationRefusal::new(OperationRefusalKind::PermissionDenied, operation))?;
+    if fresh_only && caller.credential_kind() == CredentialKind::Session {
+        return Err(OperationRefusal::new(
+            OperationRefusalKind::FreshCredentialRequired,
+            operation,
+        ));
     }
+    Ok(())
 }
 
 /// Stable host classification for a candidate fact that cannot be retried
@@ -945,6 +964,7 @@ impl RouterDriver {
                     authorize_registered_operation(
                         request.caller.as_ref(),
                         operation.registered_operation.as_deref(),
+                        operation.fresh_only,
                     )?;
                     let span = component_invocation_span(
                         &request,
@@ -1561,6 +1581,7 @@ fn validate_component_in_release(
                     name.clone(),
                     ServingComponentOperation {
                         registered_operation: operation.registered_operation.clone(),
+                        fresh_only: operation.fresh_only,
                         dependencies: operation.dependencies.clone(),
                         statements: operation.statements.clone(),
                     },
@@ -1711,7 +1732,7 @@ impl fmt::Display for NestedOperationRefusal {
 impl std::error::Error for NestedOperationRefusal {}
 
 fn nested_host_error(error: anyhow::Error) -> wash_runtime::wasmtime::Error {
-    if let Some(denial) = error.downcast_ref::<PermissionDenied>() {
+    if let Some(denial) = error.downcast_ref::<OperationRefusal>() {
         return wash_runtime::wasmtime::Error::new(denial.clone());
     }
     if let Some(refusal) = error.downcast_ref::<NestedOperationRefusal>() {
@@ -1835,6 +1856,7 @@ impl NestedOperationHost {
         authorize_registered_operation(
             bound.caller.as_ref(),
             target_operation.registered_operation.as_deref(),
+            target_operation.fresh_only,
         )?;
         validate_component_in_release(&self.release, &target)?;
 
@@ -2791,6 +2813,14 @@ fn lower_detail(detail: node_types::ErrorDetail) -> ErrorDetail {
 pub(crate) async fn real_nested_permission_denial(
     operation: &'static str,
 ) -> anyhow::Result<anyhow::Error> {
+    real_nested_operation_refusal(OperationRefusalKind::PermissionDenied, operation).await
+}
+
+#[cfg(test)]
+pub(crate) async fn real_nested_operation_refusal(
+    kind: OperationRefusalKind,
+    operation: &'static str,
+) -> anyhow::Result<anyhow::Error> {
     const CALLER_OPERATION: &str = "client-acme-receiving:receiving/record-receipt@3.0.0";
     let bytes = wat::parse_str(format!(
         r#"(component
@@ -2825,9 +2855,9 @@ pub(crate) async fn real_nested_permission_denial(
         .instance(operation)?
         .func_wrap_async::<(), (), _>("run", move |_store, ()| {
             Box::new(async move {
-                Err(wash_runtime::wasmtime::Error::new(PermissionDenied::new(
-                    operation,
-                )))
+                Err(nested_host_error(
+                    OperationRefusal::new(kind, operation).into(),
+                ))
             })
         })?;
     let mut store = wash_runtime::wasmtime::Store::new(&engine, ());
@@ -2897,6 +2927,7 @@ mod tests {
     ) -> AdmittedComponentOperation {
         AdmittedComponentOperation {
             registered_operation: None,
+            fresh_only: false,
             dependencies: Vec::new(),
             input_ports: Vec::new(),
             output_ports: Vec::new(),
@@ -3147,8 +3178,8 @@ mod tests {
     fn every_registered_invocation_requires_the_exact_operation_grant() {
         let operation = "orders:purchase-order/get@7.0.0";
 
-        assert!(authorize_registered_operation(None, None).is_ok());
-        let denial = authorize_registered_operation(None, Some(operation))
+        assert!(authorize_registered_operation(None, None, false).is_ok());
+        let denial = authorize_registered_operation(None, Some(operation), false)
             .expect_err("a registered invocation without an originating caller is denied");
         assert_eq!(denial.operation(), operation);
     }
@@ -3212,7 +3243,7 @@ mod tests {
             .expect("the component fixture must execute");
 
         let denial = error
-            .downcast_ref::<PermissionDenied>()
+            .downcast_ref::<OperationRefusal>()
             .expect("the router-delivery boundary must see the original denial type");
         assert_eq!(denial.operation(), operation);
     }
@@ -3239,6 +3270,7 @@ mod tests {
                 operation.to_owned(),
                 AdmittedComponentOperation {
                     registered_operation: Some(operation.to_owned()),
+                    fresh_only: false,
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
@@ -3274,6 +3306,7 @@ mod tests {
             leaf_operation.to_owned(),
             AdmittedComponentOperation {
                 registered_operation: Some(leaf_operation.to_owned()),
+                fresh_only: false,
                 dependencies: Vec::new(),
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
@@ -3303,6 +3336,7 @@ mod tests {
             root_operation.to_owned(),
             AdmittedComponentOperation {
                 registered_operation: Some(root_operation.to_owned()),
+                fresh_only: false,
                 dependencies: vec![dependency.clone()],
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
@@ -3329,6 +3363,7 @@ mod tests {
 
         let declaration = AdmittedComponentOperation {
             registered_operation: None,
+            fresh_only: false,
             dependencies: vec![dependency],
             input_ports: Vec::new(),
             output_ports: Vec::new(),

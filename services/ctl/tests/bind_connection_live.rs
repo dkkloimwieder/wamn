@@ -107,6 +107,7 @@ async fn admit_component(
             // A palette node registers no package operation: its handler
             // is the platform's wamn:node contract, not a wamn_wms one.
             AdmittedComponentOperation {
+                fresh_only: false,
                 registered_operation: None,
                 dependencies: Vec::new(),
                 input_ports: Vec::new(),

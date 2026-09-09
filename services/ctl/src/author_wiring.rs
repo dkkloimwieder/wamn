@@ -532,6 +532,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "call".to_owned(),
                 wamn_catalog::AdmittedComponentOperation {
+                    fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),

@@ -593,7 +593,7 @@ fn every_bridge_refusal_has_a_bounded_http_answer() {
 }
 
 #[test]
-fn missing_exact_operation_is_the_only_discoverable_forbidden_refusal() {
+fn missing_exact_operation_is_a_discoverable_forbidden_refusal() {
     const OPERATION: &str = "wamn-receiving:receipt/get@1.0.0";
     let mut backend = FakeBackend::new(route());
     backend.delivery = Err(DeliveryError::PermissionDenied {
@@ -604,6 +604,22 @@ fn missing_exact_operation_is_the_only_discoverable_forbidden_refusal() {
 
     assert_eq!(output.status, 403);
     assert_eq!(error_code(&output.body), "permission-denied");
+    assert_eq!(error_operation(&output.body).as_deref(), Some(OPERATION));
+    assert_eq!(backend.deliveries.len(), 1);
+}
+
+#[test]
+fn fresh_only_refusal_names_the_operation_without_repeating_delivery() {
+    const OPERATION: &str = "wamn-receiving:receipt/get@1.0.0";
+    let mut backend = FakeBackend::new(route());
+    backend.delivery = Err(DeliveryError::FreshCredentialRequired {
+        operation: OPERATION.to_string(),
+    });
+
+    let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+
+    assert_eq!(output.status, 403);
+    assert_eq!(error_code(&output.body), "fresh-credential-required");
     assert_eq!(error_operation(&output.body).as_deref(), Some(OPERATION));
     assert_eq!(backend.deliveries.len(), 1);
 }

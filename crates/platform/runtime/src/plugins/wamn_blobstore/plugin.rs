@@ -661,6 +661,7 @@ mod tests {
                     .clone()
                     .expect("the fixture snapshot names an operation"),
                 ServingComponentOperation {
+                    fresh_only: false,
                     registered_operation: snapshot.registered_operation.clone(),
                     dependencies: Vec::new(),
                     statements: BTreeMap::new(),

@@ -2356,6 +2356,77 @@ fn generic_custom_operation_path_preserves_shipped_receiving_bytes() {
 }
 
 #[test]
+fn fresh_only_public_operations_emit_policy_and_false_preserves_contract_bytes() {
+    let baseline = generic_custom_operation_manifest();
+    let paths = [
+        "generated/contracts/purchase_order/get.operation.json",
+        "generated/contracts/quality/load_purchase_order_detail.operation.json",
+    ];
+    let initial = run(
+        &receiving_catalog(),
+        &baseline,
+        &generic_operation_sources(),
+    )
+    .unwrap();
+    for enabled in [false, true] {
+        let mut manifest = baseline.clone();
+        manifest["models"]["purchase_order"]["operations"]["get"]["fresh_only"] = json!(enabled);
+        manifest["custom_operations"]["quality.load_purchase_order_detail"]["fresh_only"] =
+            json!(enabled);
+        let generated = run(
+            &receiving_catalog(),
+            &manifest,
+            &generic_operation_sources(),
+        )
+        .unwrap();
+        for path in paths {
+            let contract = artifact_json(&generated, path);
+            if enabled {
+                assert_eq!(contract["fresh_only"], true, "{path}");
+            } else {
+                assert!(contract.get("fresh_only").is_none(), "{path}");
+                assert_eq!(
+                    generated.file(path).unwrap().bytes(),
+                    initial.file(path).unwrap().bytes(),
+                    "{path}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn fresh_only_refuses_private_operations_and_non_boolean_flags() {
+    let mut private = generic_custom_operation_manifest();
+    private["custom_operations"]["quality.create_inspection"]["fresh_only"] = json!(true);
+    let error = run(&receiving_catalog(), &private, &generic_operation_sources())
+        .expect_err("private operation cannot require a fresh caller");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert!(
+        error
+            .to_string()
+            .contains("private operation quality.create_inspection")
+    );
+
+    for value in [json!(null), json!("true"), json!(1)] {
+        for pointer in [
+            "/models/purchase_order/operations/get",
+            "/custom_operations/quality.load_purchase_order_detail",
+        ] {
+            let mut malformed = generic_custom_operation_manifest();
+            malformed.pointer_mut(pointer).unwrap()["fresh_only"] = value.clone();
+            let error = run(
+                &receiving_catalog(),
+                &malformed,
+                &generic_operation_sources(),
+            )
+            .expect_err("fresh_only must be a boolean");
+            assert_eq!(error.kind(), GenerateErrorKind::InvalidManifest);
+        }
+    }
+}
+
+#[test]
 fn generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings() {
     let manifest = generic_custom_operation_manifest();
     let package = run(

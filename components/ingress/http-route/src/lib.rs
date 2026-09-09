@@ -131,6 +131,7 @@ pub enum DeliveryError {
     InvalidPayload,
     ExecutionFailed,
     PermissionDenied { operation: String },
+    FreshCredentialRequired { operation: String },
 }
 
 /// A bounded HTTP response produced by the adapter.
@@ -656,20 +657,24 @@ fn delivery_error_response(error: DeliveryError) -> HttpResponse {
         DeliveryError::InvalidPayload => (400, "delivery-invalid-payload"),
         DeliveryError::ExecutionFailed => (503, "execution-failed"),
         DeliveryError::PermissionDenied { operation } => {
-            return HttpResponse {
-                status: 403,
-                content_type: "application/json",
-                body: serde_json::to_vec(&json!({
-                    "error": {
-                        "code": "permission-denied",
-                        "operation": operation,
-                    }
-                }))
-                .unwrap_or_default(),
-            };
+            return operation_refusal_response("permission-denied", &operation);
+        }
+        DeliveryError::FreshCredentialRequired { operation } => {
+            return operation_refusal_response("fresh-credential-required", &operation);
         }
     };
     error_response(status, code)
+}
+
+fn operation_refusal_response(code: &str, operation: &str) -> HttpResponse {
+    HttpResponse {
+        status: 403,
+        content_type: "application/json",
+        body: serde_json::to_vec(&json!({
+            "error": { "code": code, "operation": operation }
+        }))
+        .unwrap_or_default(),
+    }
 }
 
 fn failure_kind_code(kind: DeliveryFailureKind) -> &'static str {

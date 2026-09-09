@@ -20,7 +20,9 @@ use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::router_driver::{PermissionDenied, authorize_registered_operation};
+use crate::router_driver::{
+    OperationRefusal, OperationRefusalKind, authorize_registered_operation,
+};
 use crate::{RouterDriver, RouterDriverRequest, WiringResolution};
 
 mod bindings {
@@ -65,6 +67,7 @@ const DELIVERY_ERROR: &str = "wamn.delivery.error";
 // what happened to the same delivery — pinned by
 // `a_refusal_reads_the_same_to_a_dashboard_and_to_a_live_view`.
 const PERMISSION_DENIED: &str = "permission-denied";
+const FRESH_CREDENTIAL_REQUIRED: &str = "fresh-credential-required";
 const EXECUTION_FAILED: &str = "execution-failed";
 
 /// The one bridge shared by attachment and registration ingress.
@@ -204,22 +207,31 @@ impl RouterDeliveryBridge {
                     .await?;
                 lower_outcome(delivery.outcome)
             }
-            Err(error) if error.downcast_ref::<PermissionDenied>().is_some() => {
+            Err(error) if error.downcast_ref::<OperationRefusal>().is_some() => {
                 let denial = error
-                    .downcast_ref::<PermissionDenied>()
-                    .expect("the guarded branch carries a permission denial")
+                    .downcast_ref::<OperationRefusal>()
+                    .expect("the guarded branch carries an operation refusal")
                     .clone();
-                self.record(&attributes, DeliveryClass::PermissionDenied);
+                let (class, literal) = match denial.kind() {
+                    OperationRefusalKind::PermissionDenied => {
+                        (DeliveryClass::PermissionDenied, PERMISSION_DENIED)
+                    }
+                    OperationRefusalKind::FreshCredentialRequired => (
+                        DeliveryClass::FreshCredentialRequired,
+                        FRESH_CREDENTIAL_REQUIRED,
+                    ),
+                };
+                self.record(&attributes, class);
                 self.tap(
                     source,
                     &delivery_id,
                     &target.wiring_id,
                     target.wiring_version,
-                    RouterTapPhase::Settled(PERMISSION_DENIED),
+                    RouterTapPhase::Settled(literal),
                     &serde_json::Value::Null,
                 )
                 .await;
-                Err(lower_permission_denied(denial))
+                Err(lower_operation_refusal(denial))
             }
             Err(error) => {
                 self.record(&attributes, DeliveryClass::ExecutionFailed);
@@ -491,8 +503,9 @@ fn resolve_authorized_target(
 ) -> Result<ResolvedTarget, DeliveryError> {
     let target = resolve_target(manifest, source).ok_or(DeliveryError::SourceNotFound)?;
     validate_caller(source, &target, caller)?;
-    authorize_registered_operation(caller, target.registered_operation.as_deref())
-        .map_err(lower_permission_denied)?;
+    // Attachments do not own freshness. The driver reads each released operation.
+    authorize_registered_operation(caller, target.registered_operation.as_deref(), false)
+        .map_err(lower_operation_refusal)?;
     Ok(target)
 }
 
@@ -511,6 +524,7 @@ pub(crate) fn authorize_attachment_for_test(
     .map(|_| ())
     .map_err(|error| match error {
         DeliveryError::PermissionDenied(PermissionDenial { operation }) => operation.into(),
+        DeliveryError::FreshCredentialRequired(_) => FRESH_CREDENTIAL_REQUIRED.into(),
         DeliveryError::SourceNotFound => "source-not-found".into(),
         DeliveryError::InvalidRequest => "invalid-request".into(),
         DeliveryError::InvalidPayload => "invalid-payload".into(),
@@ -534,10 +548,16 @@ fn caller_matches_source(
     }
 }
 
-fn lower_permission_denied(denial: PermissionDenied) -> DeliveryError {
-    DeliveryError::PermissionDenied(PermissionDenial {
+fn lower_operation_refusal(denial: OperationRefusal) -> DeliveryError {
+    let detail = PermissionDenial {
         operation: denial.operation().to_owned(),
-    })
+    };
+    match denial.kind() {
+        OperationRefusalKind::PermissionDenied => DeliveryError::PermissionDenied(detail),
+        OperationRefusalKind::FreshCredentialRequired => {
+            DeliveryError::FreshCredentialRequired(detail)
+        }
+    }
 }
 
 /// How the router driver answered one delivery. The variants are the arms of
@@ -547,6 +567,7 @@ fn lower_permission_denied(denial: PermissionDenied) -> DeliveryError {
 enum DeliveryClass {
     Delivered,
     PermissionDenied,
+    FreshCredentialRequired,
     ExecutionFailed,
 }
 
@@ -556,6 +577,7 @@ impl DeliveryClass {
         match self {
             DeliveryClass::Delivered => None,
             DeliveryClass::PermissionDenied => Some(PERMISSION_DENIED),
+            DeliveryClass::FreshCredentialRequired => Some(FRESH_CREDENTIAL_REQUIRED),
             DeliveryClass::ExecutionFailed => Some(EXECUTION_FAILED),
         }
     }
@@ -835,12 +857,13 @@ mod tests {
             .registered_operation = Some(operation.to_owned());
         let target = resolve_target(&registered, SourceRef::Attachment("orders-http"))
             .expect("the registered attachment resolves from the weld");
-        let denial = authorize_registered_operation(None, target.registered_operation.as_deref())
-            .expect_err("a callerless registered invocation is denied");
+        let denial =
+            authorize_registered_operation(None, target.registered_operation.as_deref(), false)
+                .expect_err("a callerless registered invocation is denied");
 
         assert_eq!(denial.operation(), operation);
         assert!(matches!(
-            lower_permission_denied(denial),
+            lower_operation_refusal(denial),
             DeliveryError::PermissionDenied(PermissionDenial { operation: denied })
                 if denied == operation
         ));
@@ -853,15 +876,43 @@ mod tests {
             .await
             .expect("the component fixture must execute");
         let denial = error
-            .downcast_ref::<PermissionDenied>()
+            .downcast_ref::<OperationRefusal>()
             .expect("context must retain the nested permission denial")
             .clone();
 
         assert!(matches!(
-            lower_permission_denied(denial),
+            lower_operation_refusal(denial),
             DeliveryError::PermissionDenied(PermissionDenial { operation: denied })
                 if denied == operation
         ));
+    }
+
+    #[tokio::test]
+    async fn nested_fresh_only_refusal_retains_its_exact_wire_contract() {
+        let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
+        let error = crate::router_driver::real_nested_operation_refusal(
+            OperationRefusalKind::FreshCredentialRequired,
+            operation,
+        )
+        .await
+        .expect("the component fixture must execute");
+        let refusal = error
+            .downcast_ref::<OperationRefusal>()
+            .expect("the nested host boundary must retain the operation refusal")
+            .clone();
+        assert_eq!(
+            refusal.kind(),
+            OperationRefusalKind::FreshCredentialRequired
+        );
+        assert!(matches!(
+            lower_operation_refusal(refusal),
+            DeliveryError::FreshCredentialRequired(PermissionDenial { operation: refused })
+                if refused == operation
+        ));
+        assert_eq!(
+            DeliveryClass::FreshCredentialRequired.error(),
+            Some("fresh-credential-required")
+        );
     }
 
     #[test]
@@ -1095,6 +1146,7 @@ mod tests {
         );
 
         metrics.record(&attributes, DeliveryClass::PermissionDenied);
+        metrics.record(&attributes, DeliveryClass::FreshCredentialRequired);
         metrics.record(&attributes, DeliveryClass::ExecutionFailed);
 
         let base = [
@@ -1112,10 +1164,15 @@ mod tests {
         assert_eq!(
             harness.series(),
             vec![
-                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 2,),
+                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 3,),
                 (
                     "wamn.router.delivery.errors".to_owned(),
                     with_error("execution-failed"),
+                    1,
+                ),
+                (
+                    "wamn.router.delivery.errors".to_owned(),
+                    with_error("fresh-credential-required"),
                     1,
                 ),
                 (

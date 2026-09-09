@@ -30,6 +30,9 @@ pub struct PackageManifest {
 pub struct CustomOperationDeclaration {
     pub kind: CustomOperationKind,
     pub visibility: OperationVisibility,
+    /// Whether this public operation requires the original caller's fresh PAT.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh_only: bool,
     #[serde(default)]
     pub permission: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -683,6 +686,12 @@ fn validate_custom_operation(
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
+    if operation.fresh_only && operation.visibility != OperationVisibility::Public {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!("private operation {operation_name} must not require a fresh credential"),
+        ));
+    }
     match (operation.visibility(), operation.permission()) {
         (OperationVisibility::Public, Some(permission)) if permission == operation_name => {}
         (OperationVisibility::Public, _) => {
@@ -1952,6 +1961,9 @@ impl CrudAction {
 #[serde(deny_unknown_fields)]
 pub struct OperationDeclaration {
     pub permission: String,
+    /// Whether this registered operation requires the original caller's fresh PAT.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub component: Option<String>,
     pub error_details: BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,

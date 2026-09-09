@@ -137,6 +137,9 @@ pub struct ServingComponentOperation {
     /// Explicit application permission identity. Palette exports carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
+    /// Require a fresh originating credential at this operation boundary.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fresh_only: bool,
     /// Exact typed imports this operation may invoke through the host.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<ComponentOperationDependency>,
@@ -337,6 +340,11 @@ impl ServingManifest {
             }
             for (export, operation) in &component.operations {
                 validate_text(export, "component-operation")?;
+                if operation.fresh_only && operation.registered_operation.is_none() {
+                    return invalid(format!(
+                        "unregistered export {export:?} must not require a fresh credential"
+                    ));
+                }
                 validate_registered_operation(
                     &package_versions,
                     &component.package_id,
@@ -702,6 +710,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "overlay:transform/map@3.0.0".into(),
                     ServingComponentOperation {
+                        fresh_only: false,
                         registered_operation: Some("overlay:transform/map@3.0.0".into()),
                         dependencies: vec![ComponentOperationDependency {
                             package: "base".into(),
@@ -721,6 +730,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "base:purchase-order/get@1.0.0".into(),
                     ServingComponentOperation {
+                        fresh_only: false,
                         registered_operation: Some("base:purchase-order/get@1.0.0".into()),
                         dependencies: Vec::new(),
                         statements: BTreeMap::new(),
