@@ -134,7 +134,9 @@ worktree/         git worktree, detached at the pinned commit, no remote
 fixture/          the AGENT's task directory: brief, scenario, and a task.json
                   with `grade` removed. It carries NO grading fixture
                   (wamn-nvbd.9)
-steps.json        the grading fixture, read by the grader only
+                  (the grading fixture is NOT here: it lives under
+                  `${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading/<nnn>`,
+                  off this directory's walk-up path, wamn-nvbd.12 and .21)
 bin/              wamn (shim, A4) · wamn-ctl → $TARGET/debug/wamn-ctl
 transcript.jsonl  driver stream, verbatim, line-buffered
 driver.json       A3

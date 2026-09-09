@@ -2426,6 +2426,12 @@ Rules the harness enforces rather than asks for:
 - The grading fixture is harness state and lives outside the run directory,
   because the run directory is exported to the agent. `up` refuses the run when
   the fixture or a `grade` block is reachable from any path the agent is handed.
+  It also refuses when the grading root sits on the run directory's walk-up
+  path, which is why that root is
+  `${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading` and not a sibling of
+  `runs`. The walk stops at `$HOME`: one user on one filesystem cannot hide a
+  directory from itself, and the bar this sets is deliberately leaving the
+  sandbox rather than reading a path the layout hands over.
 - **The pilot builds its binaries from the main checkout, not from the run
   worktree.** An edit that lands in the main checkout while `up` is building
   goes into the binaries the measurement uses. `up` now hashes the tree before

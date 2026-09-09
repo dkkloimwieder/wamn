@@ -27,6 +27,13 @@ umask 077
 readonly EX_USAGE=2 EX_ENV=10 EX_DRIVER=20 EX_GRADE=30 EX_RESIDUE=40
 
 readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
+# wamn-nvbd.21. NOT UNDER $PILOT_HOME. The agent holds WAMN_PILOT_RUN_DIR, which
+# is $PILOT_HOME/runs/<run>, so a grading directory beside `runs` sat two `cd ..`
+# away and chmod 700 bought nothing -- the agent runs as the same user. A
+# different root is not isolation: one user on one filesystem, and the run
+# worktree's .git file names the main checkout anyway. It raises the bar from one
+# `cat` of a path the walk-up hands you to deliberately leaving the sandbox.
+readonly GRADING_HOME="${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading"
 readonly PG_PORT=54332
 readonly REGISTRY_PORT=5004
 readonly NATS_PORT=4224
@@ -491,6 +498,17 @@ assert_rubric_unreachable() {
   while IFS= read -r tool; do
     [[ -n "$tool" ]] && found="$found $tool"
   done < <(find "$DIR/worktree/tools" -maxdepth 1 -name 'agent-pilot-*' 2>/dev/null)
+  # wamn-nvbd.21. Not reachable by walking up, either: `cd ..` from the run
+  # directory is free, and it used to arrive at a sibling named `grading`. The
+  # walk stops at $HOME, which is conceded -- one user on one filesystem cannot
+  # hide a directory from itself, and the bar this sets is leaving the sandbox
+  # rather than reading a path the layout hands over.
+  local up="$DIR"
+  while :; do
+    up="$(dirname "$up")"
+    [[ "$up" == "$HOME" || "$up" == "/" ]] && break
+    [[ "$GRADING_HOME" == "$up"/* ]] && found="$found $GRADING_HOME(walk-up from $up)"
+  done
   if [[ -n "$found" ]]; then
     die "the grading rubric is reachable from a path the agent is handed:$found" "$EX_ENV"
   fi
@@ -522,8 +540,10 @@ verb_up() {
   # run directory is exported to the agent as WAMN_PILOT_RUN_DIR. Run 020 read
   # the whole rubric with one cat. The fixture is harness state now: nothing the
   # agent is handed names the directory it sits in, and only the grader reads it.
-  local grading="$PILOT_HOME/grading/$RUN"
-  rm -rf "$grading"; mkdir -p "$grading"; chmod 700 "$grading"
+  # It sits under $GRADING_HOME rather than $PILOT_HOME because a sibling of
+  # `runs` is still two `cd ..` from the path the agent holds (wamn-nvbd.21).
+  local grading="$GRADING_HOME/$RUN"
+  rm -rf "$grading"; mkdir -p "$grading"; chmod 700 "$GRADING_HOME" "$grading"
   cp -a "$task_dir/." "$DIR/fixture/"
   local steps_name; steps_name="$(jq -r '.grade.steps // "steps.json"' "$task_dir/task.json")"
   cp "$task_dir/$steps_name" "$grading/$steps_name"
