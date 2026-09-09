@@ -2,7 +2,7 @@
 
 `wamn-ctc8.15.3` passed its deployed proof at source `581016ee975d65ebaecd470619f8fae750a769ba` on 2026-09-09 UTC.
 This source includes main `2a4cd288`.
-The final integration sweep is not yet recorded here.
+The final integrated sweep at `6e29e1b2` records 1,928 passed, one known failure, and 76 ignored, with no compile errors.
 
 ## Scope
 
@@ -45,7 +45,7 @@ The run's `evidence.sha256` passed its integrity comparison.
 
 ## Local results
 
-The following current-source runs passed 143 tests, with no failed or ignored tests in their selected scopes.
+At the deployed source, the following runs passed 143 tests, with no failed or ignored tests in their selected scopes.
 Each log records the exact command, source hash, and exit status.
 
 | Scope | Passed | Log |
@@ -103,6 +103,32 @@ Run 006 timing supports a race between the two five-second request limits, but i
 Commit `581016ee` adjusts only the observer budget and failure diagnostics.
 The built-digest correction closes `wamn-8o40` at `1d691c9c`, with the successful run 004 PAT journey as evidence.
 
+## Integration
+
+Main `6900edac` merged into the lane at `1bd1e6b5`.
+The session implementation and deployed runner remained byte-identical to the tested source.
+The merge also retains the other agent's component, development tool, and documentation changes.
+Commit `7b456f81` records the proof artifacts and was fast-forwarded into main.
+
+The [first workspace sweep](integration-sweep-001.log) ran at `7b456f81` and exited 101.
+It reports 206 test summaries, 1,927 passed, two failed, and 76 ignored, with no compile errors.
+One failure is the known Secret inventory issue, `wamn-362o.58`.
+The other is this change's missed test, `a_format_one_manifest_refuses_with_the_frozen_literal`.
+That test still expected the now-valid v1 document to fail.
+The correction uses unsupported format 0 and preserves the typed refusal assertion.
+The [focused rerun](local-weld-v1-restored.log) passes all seven manifest tests.
+This correction changes test code only.
+
+Main advanced to `9f1647da` during the first sweep.
+The intervening commit changes only the two Beads export files, not source code.
+Commit `6e29e1b2` carries the test correction and was fast-forwarded into main.
+The [second workspace sweep](integration-sweep-002.log) ran there with the same command and an unchanged source hash through completion.
+It reports 206 test summaries, 1,928 passed, one failed, and 76 ignored, with no compile errors.
+The corrected manifest test passes.
+Only `every_mounted_secret_is_declared_here_or_named_a_prerequisite` fails, under the existing `wamn-362o.58` baseline.
+The command exits 101 because of that known failure.
+No new failing test remains from this change.
+
 ## Boundaries
 
 Unknown or empty session roles produce no permitted operations in the scoped database proof.
@@ -120,3 +146,4 @@ The final bounded credential scan covered the complete evidence directory, inclu
 It counted 368 files, 3,268,082 bytes, and 71,799 lines, with no credential-material candidates.
 The scans cover recognizable token strings, credential fields, private keys, Secret payloads, and decoded base64 material.
 They do not guarantee detection of arbitrarily encoded secrets.
+Separate scans of both sweep logs and the restored manifest log also found no credential-material candidates.
