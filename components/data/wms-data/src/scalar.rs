@@ -27,21 +27,48 @@ pub(crate) fn timestamp(field: &str, value: &str) -> Result<TimestampTz, AccessE
         .map_err(|_| AccessError::field(AccessErrorKind::InvalidInput, field))
 }
 
-/// A positive quantity in the contract's lexical form, `[0-9]+(.[0-9]+)?`,
-/// passed to PostgreSQL scale-preserved. Zero is refused here rather than by
-/// the `quantity > 0` check constraints, whose violation the contract can only
-/// report as `internal_error`.
+/// A positive quantity, RE-SPELLED as PostgreSQL's own text for the same
+/// datum. Zero is refused here rather than by the `quantity > 0` check
+/// constraints, whose violation the contract can only report as
+/// `internal_error`.
+///
+/// The respellings are TEXTUAL, and only textual, because a numeric's scale is
+/// part of its value: measured on PostgreSQL 18.6, `12.3400` is scale 4 and
+/// `12.34` is scale 2, so collapsing one to the other would change what the
+/// caller wrote. These three move digits and leave scale alone --- `01.0` ->
+/// `1.0`, `1.` -> `1`, `.1` -> `0.1` --- each matching `(value::numeric)::text`.
+///
+/// An exponent is REFUSED by decision, not by oversight. PostgreSQL DERIVES
+/// scale from an exponent rather than reading it: `1e2` is 100 at scale 0,
+/// `1e-2` is 0.01 at scale 2, `1.5e2` is 150 at scale 0. A branch for it could
+/// not be normalization; it would have to reimplement that derivation by hand,
+/// and this crate carries no decimal dependency to do it with.
+/// `receiving-data`'s `canonical_positive_numeric` refuses exponents, and
+/// respells these same three spellings, for the same reasons.
 pub(crate) fn numeric(field: &str, value: &str) -> Result<Numeric, AccessError> {
-    let refuse = || AccessError::field(AccessErrorKind::InvalidInput, field);
-    let (whole, fraction) = value.split_once('.').map_or((value, ""), |(w, f)| (w, f));
-    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
-    if !digits(whole) || (value.contains('.') && !digits(fraction)) {
-        return Err(refuse());
+    let (whole, fraction) = match value.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (value, None),
+    };
+    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
+    // Requiring a non-zero digit also refuses the two spellings PostgreSQL
+    // itself rejects, `""` and `"."`, which carry no digit at all.
+    let positive = whole
+        .bytes()
+        .chain(fraction.unwrap_or_default().bytes())
+        .any(|byte| byte != b'0');
+    if !digits(whole) || !fraction.is_none_or(digits) || !positive {
+        return Err(AccessError::field(AccessErrorKind::InvalidInput, field));
     }
-    if value.bytes().all(|byte| byte == b'0' || byte == b'.') {
-        return Err(refuse());
-    }
-    Ok(Numeric(value.to_owned()))
+    let whole = match whole.trim_start_matches('0') {
+        "" => "0",
+        trimmed => trimmed,
+    };
+    let respelled = match fraction.filter(|fraction| !fraction.is_empty()) {
+        Some(fraction) => format!("{whole}.{fraction}"),
+        None => whole.to_owned(),
+    };
+    Ok(Numeric(respelled))
 }
 
 /// The status of a QUANTITY row, which is never `consumed`: consumption is a
@@ -75,9 +102,13 @@ mod tests {
     fn a_quantity_is_lexical_positive_and_scale_preserved() {
         assert_eq!(numeric("f", "10").unwrap().0, "10");
         assert_eq!(numeric("f", "0.250").unwrap().0, "0.250");
-        for refused in [
-            "", "0", "0.0", "00.000", ".5", "5.", "-1", "1e3", " 1", "1,5",
-        ] {
+        assert_eq!(numeric("f", "12.3400").unwrap().0, "12.3400");
+        // Respelled, not refused: PostgreSQL 18.6 reads each of these as the
+        // value on the right, at the same scale.
+        for (written, respelled) in [(".5", "0.5"), ("5.", "5"), ("01.0", "1.0"), ("010", "10")] {
+            assert_eq!(numeric("f", written).unwrap().0, respelled);
+        }
+        for refused in ["", ".", "0", "0.0", "00.000", "-1", "1e3", " 1", "1,5"] {
             assert!(numeric("f", refused).is_err(), "{refused:?} must refuse");
         }
     }
