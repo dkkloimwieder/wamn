@@ -1,0 +1,2146 @@
+{
+  "schema_version": "1",
+  "source": "a0f90cdacabff32900c239ec31376eed73bd4214",
+  "command": [
+    "cargo",
+    "test",
+    "--workspace",
+    "--locked",
+    "--offline",
+    "--no-fail-fast",
+    "--",
+    "--include-ignored",
+    "--nocapture",
+    "--test-threads=1",
+    "--skip",
+    "regenerate_checked_in_journey_schema",
+    "--skip",
+    "regenerate_checked_in_dev_config_schema"
+  ],
+  "exit_code": 101,
+  "status": "test_failure",
+  "log": "workspace.log",
+  "log_sha256": "1371260f1c987eef91dfbc182adc0e952f1d9f6650fb7d58a1d1048b2bd69e1b",
+  "counts": {
+    "test_targets": 185,
+    "test_passed": 2074,
+    "test_failed": 68,
+    "test_ignored": 0,
+    "test_filtered_out": 2,
+    "test_failed_targets": 33,
+    "doctest_targets": 37,
+    "doctest_passed": 6,
+    "doctest_failed": 0,
+    "doctest_ignored": 0,
+    "doctest_filtered_out": 0
+  },
+  "failure_classification_counts": {
+    "unarmed_live_or_artifact": 65,
+    "unavailable_kubernetes_discovery": 1,
+    "known_code_failure": 1,
+    "new_test_fixture_failure": 1
+  },
+  "compiler_error_lines": [],
+  "excluded_nested_summary_lines": [
+    3380
+  ],
+  "parser_issues": [],
+  "baselines": {
+    "latest_include_ignored": {
+      "source": "956b6a3bf6e45813143db9d6a703755b85fe478e",
+      "log": "docs/perf/2026.09/ctc8-15-2-session/integration-003/workspace.log",
+      "classification": "docs/perf/2026.09/ctc8-15-2-session/integration-003/workspace-comparison.json",
+      "command": "cargo test --locked --offline --workspace --no-fail-fast -- --include-ignored --test-threads=1",
+      "exit_code": 101,
+      "counts": {
+        "test_targets": 169,
+        "failed_test_targets": 31,
+        "passed_tests": 1911,
+        "failed_tests": 63,
+        "ignored_tests": 0,
+        "doctest_targets": 34,
+        "failed_doctest_targets": 0,
+        "passed_doctests": 6,
+        "failed_doctests": 0,
+        "ignored_doctests": 0
+      },
+      "comparison": {
+        "repeated_failure_count": 63,
+        "new_failures": [
+          {
+            "package": "wamn-proof-conformance",
+            "target": "--test guest_workspace_closure",
+            "name": "one_commit_built_under_two_profiles_yields_identical_guest_digests"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "route_authentication_live::production_nested_session_call_preserves_original_caller"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "route_authentication_live::production_receiving_session_host_fixture"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--test session_route_authentication",
+            "name": "sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity"
+          },
+          {
+            "package": "wamn-schema-generator",
+            "target": "--lib",
+            "name": "materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection"
+          }
+        ],
+        "resolved_failures": []
+      }
+    },
+    "latest_recorded_main_ordinary": {
+      "source": "6e29e1b2508bc313619c4a95718616a4d0de00b2",
+      "log": "docs/perf/2026.09/ctc8-15-3-host-sessions/integration-sweep-002.log",
+      "report": "docs/perf/2026.09/ctc8-15-3-host-sessions/report.md",
+      "command": "env -u CARGO_TARGET_DIR RUSTC_WRAPPER= cargo test --locked --offline --workspace --no-fail-fast",
+      "exit_code": 101,
+      "parsed_counts": {
+        "test_targets": 171,
+        "test_passed": 1923,
+        "test_failed": 1,
+        "test_ignored": 74,
+        "test_filtered_out": 0,
+        "test_failed_targets": 1,
+        "doctest_targets": 34,
+        "doctest_passed": 4,
+        "doctest_failed": 0,
+        "doctest_ignored": 2,
+        "doctest_filtered_out": 0
+      },
+      "excluded_nested_summary_lines": [
+        2817
+      ],
+      "reported_raw_totals": {
+        "summaries": 206,
+        "passed": 1928,
+        "failed": 1,
+        "ignored": 76
+      },
+      "comparison": {
+        "repeated_failure_count": 1,
+        "new_failures": [
+          {
+            "package": "wamn-catalog",
+            "target": "--test wiring_activation_live",
+            "name": "the_terminal_document_reaches_a_converged_database_and_survives_the_column"
+          },
+          {
+            "package": "wamn-catalog",
+            "target": "--test wiring_activation_live",
+            "name": "wiring_activation_live"
+          },
+          {
+            "package": "wamn-control-provision",
+            "target": "--test control_portable_store",
+            "name": "current_database_connect_posture_is_exactly_scoped"
+          },
+          {
+            "package": "wamn-control-provision",
+            "target": "--test identity_issuer_live",
+            "name": "scoped_issuer_grants_and_generation_retirement_execute_on_postgres"
+          },
+          {
+            "package": "wamn-control-provision",
+            "target": "--test session_role_reader_live",
+            "name": "dedicated_session_reader_columns_and_generations_execute_on_postgres"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--lib",
+            "name": "dev::verification_database::tests::disposable_postgres_proves_freshness_cleanup_and_confinement"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--lib",
+            "name": "dev::verification_world::tests::lifecycle_bootstraps_then_accepts_packages_and_one_exact_admission"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--lib",
+            "name": "publish_release::effective_release_live::fresh_base_and_overlay_mint_byte_identically_and_refuse_drift"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--lib",
+            "name": "push_component::tests::production_publisher_and_puller_round_trip_exact_bytes"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--lib",
+            "name": "push_release_manifest::tests::production_publisher_exact_retry_is_a_no_push"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test author_wiring_gate_report_live",
+            "name": "a_wiring_is_authored_only_under_a_green_report_for_its_own_hash"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test bind_connection_live",
+            "name": "bind_connection_round_trips_through_the_plugins_own_resolution"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test effect_writer_generation_live",
+            "name": "effect_writer_generation_lifecycle_is_exact_and_fail_closed"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test identity_issuer_live",
+            "name": "compiled_cli_publishes_rolls_back_and_retires_identity_generations"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test management_admitter_generation_live",
+            "name": "management_admitter_generation_lifecycle_converges_and_rotates"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test run_plane_live",
+            "name": "effect_writer_cutover_live"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test run_plane_live",
+            "name": "failure_detail_cutover_live"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test run_plane_live",
+            "name": "frame_identity_cutover_live"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test run_plane_live",
+            "name": "partition_plane_active_lease_refusal_live"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test run_plane_live",
+            "name": "partition_plane_cutover_live"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test run_plane_live",
+            "name": "provisioner_minted_generation_live"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test run_plane_live",
+            "name": "two_plane_residency_live"
+          },
+          {
+            "package": "wamn-ctl",
+            "target": "--test session_audience_live",
+            "name": "compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations"
+          },
+          {
+            "package": "wamn-identity",
+            "target": "--test https_surface",
+            "name": "identity_https_has_only_public_jwks_and_health"
+          },
+          {
+            "package": "wamn-identity",
+            "target": "--test session_exchange",
+            "name": "session_exchange_uses_fresh_scoped_authority_without_session_state"
+          },
+          {
+            "package": "wamn-platform-identity",
+            "target": "--test session_keys_live",
+            "name": "session_key_lifecycle_on_postgres"
+          },
+          {
+            "package": "wamn-platform-identity",
+            "target": "--test session_keys_live",
+            "name": "signer_backend_loss_before_commit_does_not_issue_token"
+          },
+          {
+            "package": "wamn-proof-conformance",
+            "target": "--test chart_seam_governance",
+            "name": "receiving_pat_overlay_renders_a_complete_scoped_host"
+          },
+          {
+            "package": "wamn-proof-conformance",
+            "target": "--test guest_workspace_closure",
+            "name": "one_commit_built_in_two_checkouts_yields_identical_guest_digests"
+          },
+          {
+            "package": "wamn-proof-conformance",
+            "target": "--test guest_workspace_closure",
+            "name": "one_commit_built_under_two_profiles_yields_identical_guest_digests"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "claim_law_live::a_changed_request_under_a_live_key_refuses_with_idempotency_conflict"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "claim_law_live::a_claim_that_updates_on_conflict_fails_both_emitted_cases"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "claim_law_live::a_replay_returns_the_immutable_original_result_and_writes_nothing"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "hot_route_trace::tests::an_incoming_traceparent_reaches_the_outbound_socket_under_the_same_trace"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "provisionbench::tests::legacy_converges_database_authority_on_postgres"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "provisionbench::tests::project_env_replay_uses_the_stored_instance_suffix"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "route_authentication_live::production_nested_session_call_preserves_original_caller"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "route_authentication_live::production_receiving_session_host_fixture"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "route_authentication_live::production_route_caller_authentication_and_operation_authorization"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "router_tap_live::tests::the_released_router_bridge_emits_accepted_and_settled_previews"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "throughput_bench_live::tests::every_layer_ran_the_whole_sweep_and_its_knee_is_recorded"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "wms_runtime_live::contention_and_replay_through_the_composed_route"
+          },
+          {
+            "package": "wamn-proof-integration",
+            "target": "--lib",
+            "name": "wms_runtime_live::the_remaining_operations_serve_their_released_routes"
+          },
+          {
+            "package": "wamn-run-state",
+            "target": "--test admission_live",
+            "name": "surviving_authority_matrix_live"
+          },
+          {
+            "package": "wamn-run-state",
+            "target": "--test effect_writer_live",
+            "name": "native_effect_writer_live"
+          },
+          {
+            "package": "wamn-run-state",
+            "target": "--test run_state_live",
+            "name": "run_state_live"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--lib",
+            "name": "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--lib",
+            "name": "plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--lib",
+            "name": "plugins::wamn_postgres::types::tests::live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--lib",
+            "name": "plugins::wamn_postgres::types::tests::live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--test executor_platform_surface_live",
+            "name": "executor_platform_surface_live"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--test production_claim_durable_live",
+            "name": "production_claim_durable_live"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--test production_claim_live",
+            "name": "production_claim_live"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--test release_manifest_source",
+            "name": "a_published_release_pulls_back_byte_exact_and_welds_the_release_it_names"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--test session_route_authentication",
+            "name": "sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--test sqlx_transaction_live",
+            "name": "sqlx_command_commits_rolls_back_and_obeys_current_user_rls"
+          },
+          {
+            "package": "wamn-runtime",
+            "target": "--test wiring_doorbell_live",
+            "name": "a_pointer_flip_makes_the_cache_serve_the_new_active_version"
+          },
+          {
+            "package": "wamn-scenario-worker",
+            "target": "--test management_live",
+            "name": "management_surface_authenticates_and_attributes_authoring_commands"
+          },
+          {
+            "package": "wamn-schema-generator",
+            "target": "--lib",
+            "name": "materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection"
+          },
+          {
+            "package": "wamn-schema-introspection",
+            "target": "--test postgres_live",
+            "name": "an_exclusion_constraint_is_modelled_rather_than_refused"
+          },
+          {
+            "package": "wamn-schema-introspection",
+            "target": "--test postgres_live",
+            "name": "receiving_migration_round_trips_and_refuses_unsupported_server_objects"
+          }
+        ],
+        "resolved_failures": []
+      },
+      "limitation": "Ignored tests were not included in this baseline; new failure names alone do not establish regressions."
+    }
+  },
+  "failed_targets": [
+    {
+      "package": "wamn-catalog",
+      "target": "--test wiring_activation_live",
+      "running_line": 581,
+      "summary_line": 600,
+      "tests": [
+        {
+          "name": "the_terminal_document_reaches_a_converged_database_and_survives_the_column",
+          "failure_list_line": 597,
+          "diagnostic_start_line": 584,
+          "referenced_arming_inputs": [
+            "WAMN_CATALOG_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "wiring_activation_live",
+          "failure_list_line": 598,
+          "diagnostic_start_line": 589,
+          "referenced_arming_inputs": [
+            "WAMN_CATALOG_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-control-provision",
+      "target": "--test control_portable_store",
+      "running_line": 1038,
+      "summary_line": 1058,
+      "tests": [
+        {
+          "name": "current_database_connect_posture_is_exactly_scoped",
+          "failure_list_line": 1056,
+          "diagnostic_start_line": 1045,
+          "referenced_arming_inputs": [
+            "WAMN_CONTROL_PORTABLE_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-control-provision",
+      "target": "--test identity_issuer_live",
+      "running_line": 1165,
+      "summary_line": 1179,
+      "tests": [
+        {
+          "name": "scoped_issuer_grants_and_generation_retirement_execute_on_postgres",
+          "failure_list_line": 1177,
+          "diagnostic_start_line": 1168,
+          "referenced_arming_inputs": [
+            "WAMN_IDENTITY_ISSUER_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-control-provision",
+      "target": "--test session_role_reader_live",
+      "running_line": 1220,
+      "summary_line": 1234,
+      "tests": [
+        {
+          "name": "dedicated_session_reader_columns_and_generations_execute_on_postgres",
+          "failure_list_line": 1232,
+          "diagnostic_start_line": 1223,
+          "referenced_arming_inputs": [
+            "WAMN_SESSION_ROLE_READER_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--lib",
+      "running_line": 1342,
+      "summary_line": 1632,
+      "tests": [
+        {
+          "name": "dev::verification_database::tests::disposable_postgres_proves_freshness_cleanup_and_confinement",
+          "failure_list_line": 1626,
+          "diagnostic_start_line": 1450,
+          "referenced_arming_inputs": [
+            "WAMN_DEV_VERIFICATION_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "dev::verification_world::tests::lifecycle_bootstraps_then_accepts_packages_and_one_exact_admission",
+          "failure_list_line": 1627,
+          "diagnostic_start_line": 1461,
+          "referenced_arming_inputs": [
+            "WAMN_DEV_VERIFICATION_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "publish_release::effective_release_live::fresh_base_and_overlay_mint_byte_identically_and_refuse_drift",
+          "failure_list_line": 1628,
+          "diagnostic_start_line": 1545,
+          "referenced_arming_inputs": [
+            "WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "push_component::tests::production_publisher_and_puller_round_trip_exact_bytes",
+          "failure_list_line": 1629,
+          "diagnostic_start_line": 1572,
+          "referenced_arming_inputs": [
+            "WAMN_COMPONENT_ARTIFACT_BASE"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "push_release_manifest::tests::production_publisher_exact_retry_is_a_no_push",
+          "failure_list_line": 1630,
+          "diagnostic_start_line": 1590,
+          "referenced_arming_inputs": [
+            "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test author_wiring_gate_report_live",
+      "running_line": 1657,
+      "summary_line": 1671,
+      "tests": [
+        {
+          "name": "a_wiring_is_authored_only_under_a_green_report_for_its_own_hash",
+          "failure_list_line": 1669,
+          "diagnostic_start_line": 1660,
+          "referenced_arming_inputs": [
+            "WAMN_AUTHOR_WIRING_PROJECT_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test bind_connection_live",
+      "running_line": 1674,
+      "summary_line": 1688,
+      "tests": [
+        {
+          "name": "bind_connection_round_trips_through_the_plugins_own_resolution",
+          "failure_list_line": 1686,
+          "diagnostic_start_line": 1677,
+          "referenced_arming_inputs": [
+            "WAMN_BIND_CONNECTION_PROJECT_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test effect_writer_generation_live",
+      "running_line": 1712,
+      "summary_line": 1726,
+      "tests": [
+        {
+          "name": "effect_writer_generation_lifecycle_is_exact_and_fail_closed",
+          "failure_list_line": 1724,
+          "diagnostic_start_line": 1715,
+          "referenced_arming_inputs": [
+            "WAMN_EFFECT_WRITER_PG18_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test identity_issuer_live",
+      "running_line": 1737,
+      "summary_line": 1752,
+      "tests": [
+        {
+          "name": "compiled_cli_publishes_rolls_back_and_retires_identity_generations",
+          "failure_list_line": 1750,
+          "diagnostic_start_line": 1740,
+          "referenced_arming_inputs": [
+            "WAMN_IDENTITY_ISSUER_CLI_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test management_admitter_generation_live",
+      "running_line": 1755,
+      "summary_line": 1769,
+      "tests": [
+        {
+          "name": "management_admitter_generation_lifecycle_converges_and_rotates",
+          "failure_list_line": 1767,
+          "diagnostic_start_line": 1758,
+          "referenced_arming_inputs": [
+            "WAMN_MANAGEMENT_ADMITTER_PG18_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test run_plane_live",
+      "running_line": 1810,
+      "summary_line": 1874,
+      "tests": [
+        {
+          "name": "effect_writer_cutover_live",
+          "failure_list_line": 1866,
+          "diagnostic_start_line": 1819,
+          "referenced_arming_inputs": [
+            "WAMN_CTL_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "failure_detail_cutover_live",
+          "failure_list_line": 1867,
+          "diagnostic_start_line": 1826,
+          "referenced_arming_inputs": [
+            "WAMN_CTL_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "frame_identity_cutover_live",
+          "failure_list_line": 1868,
+          "diagnostic_start_line": 1830,
+          "referenced_arming_inputs": [
+            "WAMN_CTL_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "partition_plane_active_lease_refusal_live",
+          "failure_list_line": 1869,
+          "diagnostic_start_line": 1834,
+          "referenced_arming_inputs": [
+            "WAMN_CTL_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "partition_plane_cutover_live",
+          "failure_list_line": 1870,
+          "diagnostic_start_line": 1838,
+          "referenced_arming_inputs": [
+            "WAMN_CTL_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "provisioner_minted_generation_live",
+          "failure_list_line": 1871,
+          "diagnostic_start_line": 1842,
+          "referenced_arming_inputs": [
+            "WAMN_CTL_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "two_plane_residency_live",
+          "failure_list_line": 1872,
+          "diagnostic_start_line": 1858,
+          "referenced_arming_inputs": [
+            "WAMN_CTL_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "target": "--test session_audience_live",
+      "running_line": 1877,
+      "summary_line": 1892,
+      "tests": [
+        {
+          "name": "compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations",
+          "failure_list_line": 1890,
+          "diagnostic_start_line": 1880,
+          "referenced_arming_inputs": [
+            "WAMN_SESSION_AUDIENCE_CLI_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-identity",
+      "target": "--test https_surface",
+      "running_line": 2097,
+      "summary_line": 2114,
+      "tests": [
+        {
+          "name": "identity_https_has_only_public_jwks_and_health",
+          "failure_list_line": 2112,
+          "diagnostic_start_line": 2101,
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-identity",
+      "target": "--test session_exchange",
+      "running_line": 2117,
+      "summary_line": 2131,
+      "tests": [
+        {
+          "name": "session_exchange_uses_fresh_scoped_authority_without_session_state",
+          "failure_list_line": 2129,
+          "diagnostic_start_line": 2120,
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-platform-identity",
+      "target": "--test session_keys_live",
+      "running_line": 2185,
+      "summary_line": 2208,
+      "tests": [
+        {
+          "name": "session_key_lifecycle_on_postgres",
+          "failure_list_line": 2205,
+          "diagnostic_start_line": 2188,
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "signer_backend_loss_before_commit_does_not_issue_token",
+          "failure_list_line": 2206,
+          "diagnostic_start_line": 2195,
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-conformance",
+      "target": "--test chart_seam_governance",
+      "running_line": 2352,
+      "summary_line": 2379,
+      "tests": [
+        {
+          "name": "receiving_pat_overlay_renders_a_complete_scoped_host",
+          "failure_list_line": 2377,
+          "diagnostic_start_line": 2359,
+          "cause": "Client dry-run attempted API discovery at localhost:8080 and received connection refused; no frozen cluster was used.",
+          "classification": "unavailable_kubernetes_discovery"
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-conformance",
+      "target": "--test guest_workspace_closure",
+      "running_line": 2454,
+      "summary_line": 2475,
+      "tests": [
+        {
+          "name": "one_commit_built_in_two_checkouts_yields_identical_guest_digests",
+          "failure_list_line": 2472,
+          "diagnostic_start_line": 2458,
+          "referenced_arming_inputs": [
+            "WAMN_DIGEST_REPRO_A"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "one_commit_built_under_two_profiles_yields_identical_guest_digests",
+          "failure_list_line": 2473,
+          "diagnostic_start_line": 2463,
+          "referenced_arming_inputs": [
+            "WAMN_DIGEST_PROFILE_M1_PLAN"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "target": "--lib",
+      "running_line": 2655,
+      "summary_line": 2789,
+      "tests": [
+        {
+          "name": "claim_law_live::a_changed_request_under_a_live_key_refuses_with_idempotency_conflict",
+          "failure_list_line": 2769,
+          "diagnostic_start_line": 2664,
+          "referenced_arming_inputs": [
+            "WAMN_CLAIM_LAW_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "claim_law_live::a_claim_that_updates_on_conflict_fails_both_emitted_cases",
+          "failure_list_line": 2770,
+          "diagnostic_start_line": 2669,
+          "referenced_arming_inputs": [
+            "WAMN_CLAIM_LAW_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "claim_law_live::a_replay_returns_the_immutable_original_result_and_writes_nothing",
+          "failure_list_line": 2771,
+          "diagnostic_start_line": 2674,
+          "referenced_arming_inputs": [
+            "WAMN_CLAIM_LAW_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "hot_route_trace::tests::an_incoming_traceparent_reaches_the_outbound_socket_under_the_same_trace",
+          "failure_list_line": 2772,
+          "diagnostic_start_line": 2684,
+          "referenced_arming_inputs": [
+            "WAMN_HOTROUTE_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "provisionbench::tests::legacy_converges_database_authority_on_postgres",
+          "failure_list_line": 2773,
+          "diagnostic_start_line": 2696,
+          "referenced_arming_inputs": [
+            "WAMN_PG_ADMIN_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "provisionbench::tests::project_env_replay_uses_the_stored_instance_suffix",
+          "failure_list_line": 2774,
+          "diagnostic_start_line": 2700,
+          "referenced_arming_inputs": [
+            "WAMN_PG_ADMIN_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18",
+          "failure_list_line": 2775,
+          "diagnostic_start_line": 2704,
+          "referenced_arming_inputs": [
+            "WAMN_RECEIVING_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup",
+          "failure_list_line": 2776,
+          "diagnostic_start_line": 2713,
+          "referenced_arming_inputs": [
+            "WAMN_ROUTE_PG18_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once",
+          "failure_list_line": 2777,
+          "diagnostic_start_line": 2715,
+          "referenced_arming_inputs": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "route_authentication_live::production_nested_session_call_preserves_original_caller",
+          "failure_list_line": 2778,
+          "diagnostic_start_line": 2717,
+          "referenced_arming_inputs": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "route_authentication_live::production_receiving_session_host_fixture",
+          "failure_list_line": 2779,
+          "diagnostic_start_line": 2719,
+          "referenced_arming_inputs": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "route_authentication_live::production_route_caller_authentication_and_operation_authorization",
+          "failure_list_line": 2780,
+          "diagnostic_start_line": 2721,
+          "referenced_arming_inputs": [
+            "WAMN_ROUTE_AUTH_PG18_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes",
+          "failure_list_line": 2781,
+          "diagnostic_start_line": 2725,
+          "referenced_arming_inputs": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "router_tap_live::tests::the_released_router_bridge_emits_accepted_and_settled_previews",
+          "failure_list_line": 2782,
+          "diagnostic_start_line": 2728,
+          "referenced_arming_inputs": [
+            "WAMN_ROUTER_TAP_NATS_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "throughput_bench_live::tests::every_layer_ran_the_whole_sweep_and_its_knee_is_recorded",
+          "failure_list_line": 2783,
+          "diagnostic_start_line": 2739,
+          "referenced_arming_inputs": [
+            "WAMN_THROUGHPUT_EVIDENCE_DIR"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+          "failure_list_line": 2784,
+          "diagnostic_start_line": 2743,
+          "referenced_arming_inputs": [
+            "WAMN_STD_VIRTUALIZATION_COMPONENT_WASM"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+          "failure_list_line": 2785,
+          "diagnostic_start_line": 2745,
+          "referenced_arming_inputs": [
+            "WAMN_STD_VIRTUALIZATION_SENTINEL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "wms_runtime_live::contention_and_replay_through_the_composed_route",
+          "failure_list_line": 2786,
+          "diagnostic_start_line": 2751,
+          "referenced_arming_inputs": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "wms_runtime_live::the_remaining_operations_serve_their_released_routes",
+          "failure_list_line": 2787,
+          "diagnostic_start_line": 2756,
+          "referenced_arming_inputs": [
+            "WAMN_JOURNEY_DOCUMENT"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-system",
+      "target": "--test deploy_platform_inventory",
+      "running_line": 2821,
+      "summary_line": 2842,
+      "tests": [
+        {
+          "name": "every_mounted_secret_is_declared_here_or_named_a_prerequisite",
+          "failure_list_line": 2840,
+          "diagnostic_start_line": 2824,
+          "bead": "wamn-362o.58",
+          "cause": "WMS values-host-wms-pat.yaml mounts undeclared wamn-object-store-credentials-acme--wms--dev.",
+          "classification": "known_code_failure"
+        }
+      ]
+    },
+    {
+      "package": "wamn-run-state",
+      "target": "--test admission_live",
+      "running_line": 3038,
+      "summary_line": 3052,
+      "tests": [
+        {
+          "name": "surviving_authority_matrix_live",
+          "failure_list_line": 3050,
+          "diagnostic_start_line": 3041,
+          "referenced_arming_inputs": [
+            "WAMN_RUN_STORE_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-run-state",
+      "target": "--test effect_writer_live",
+      "running_line": 3055,
+      "summary_line": 3069,
+      "tests": [
+        {
+          "name": "native_effect_writer_live",
+          "failure_list_line": 3067,
+          "diagnostic_start_line": 3058,
+          "referenced_arming_inputs": [
+            "WAMN_RUN_STORE_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-run-state",
+      "target": "--test run_state_live",
+      "running_line": 3095,
+      "summary_line": 3109,
+      "tests": [
+        {
+          "name": "run_state_live",
+          "failure_list_line": 3107,
+          "diagnostic_start_line": 3098,
+          "referenced_arming_inputs": [
+            "WAMN_RUN_STORE_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--lib",
+      "running_line": 3133,
+      "summary_line": 3468,
+      "tests": [
+        {
+          "name": "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream",
+          "failure_list_line": 3463,
+          "diagnostic_start_line": 3298,
+          "referenced_arming_inputs": [
+            "WAMN_ROUTER_TAP_NATS_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving",
+          "failure_list_line": 3464,
+          "diagnostic_start_line": 3351,
+          "referenced_arming_inputs": [
+            "WAMN_POOL_LIFECYCLE_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "plugins::wamn_postgres::types::tests::live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells",
+          "failure_list_line": 3465,
+          "diagnostic_start_line": 3420,
+          "referenced_arming_inputs": [
+            "WAMN_CARRIER_SPELLING_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "plugins::wamn_postgres::types::tests::live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer",
+          "failure_list_line": 3466,
+          "diagnostic_start_line": 3424,
+          "referenced_arming_inputs": [
+            "WAMN_CARRIER_SPELLING_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test executor_platform_surface_live",
+      "running_line": 3505,
+      "summary_line": 3519,
+      "tests": [
+        {
+          "name": "executor_platform_surface_live",
+          "failure_list_line": 3517,
+          "diagnostic_start_line": 3508,
+          "referenced_arming_inputs": [
+            "WAMN_EXEC_PLATFORM_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test production_claim_durable_live",
+      "running_line": 3579,
+      "summary_line": 3593,
+      "tests": [
+        {
+          "name": "production_claim_durable_live",
+          "failure_list_line": 3591,
+          "diagnostic_start_line": 3582,
+          "referenced_arming_inputs": [
+            "WAMN_DURABLE_TIER_PG_URL",
+            "WAMN_PRODUCTION_CLAIM_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test production_claim_live",
+      "running_line": 3596,
+      "summary_line": 3611,
+      "tests": [
+        {
+          "name": "production_claim_live",
+          "failure_list_line": 3609,
+          "diagnostic_start_line": 3599,
+          "referenced_arming_inputs": [
+            "WAMN_PRODUCTION_CLAIM_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test release_manifest_source",
+      "running_line": 3623,
+      "summary_line": 3645,
+      "tests": [
+        {
+          "name": "a_published_release_pulls_back_byte_exact_and_welds_the_release_it_names",
+          "failure_list_line": 3643,
+          "diagnostic_start_line": 3630,
+          "referenced_arming_inputs": [
+            "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test session_route_authentication",
+      "running_line": 3667,
+      "summary_line": 3681,
+      "tests": [
+        {
+          "name": "sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity",
+          "failure_list_line": 3679,
+          "diagnostic_start_line": 3670,
+          "referenced_arming_inputs": [
+            "WAMN_SESSION_ROUTE_PG18_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test sqlx_transaction_live",
+      "running_line": 3697,
+      "summary_line": 3711,
+      "tests": [
+        {
+          "name": "sqlx_command_commits_rolls_back_and_obeys_current_user_rls",
+          "failure_list_line": 3709,
+          "diagnostic_start_line": 3700,
+          "referenced_arming_inputs": [
+            "WAMN_SQLX_TRANSACTION_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "target": "--test wiring_doorbell_live",
+      "running_line": 3714,
+      "summary_line": 3728,
+      "tests": [
+        {
+          "name": "a_pointer_flip_makes_the_cache_serve_the_new_active_version",
+          "failure_list_line": 3726,
+          "diagnostic_start_line": 3717,
+          "referenced_arming_inputs": [
+            "WAMN_CATALOG_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-scenario-worker",
+      "target": "--test management_live",
+      "running_line": 3794,
+      "summary_line": 3814,
+      "tests": [
+        {
+          "name": "management_surface_authenticates_and_attributes_authoring_commands",
+          "failure_list_line": 3812,
+          "diagnostic_start_line": 3799,
+          "referenced_arming_inputs": [
+            "WAMN_PLATFORM_IDENTITY_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    },
+    {
+      "package": "wamn-schema-generator",
+      "target": "--lib",
+      "running_line": 3973,
+      "summary_line": 4035,
+      "tests": [
+        {
+          "name": "materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection",
+          "failure_list_line": 4033,
+          "diagnostic_start_line": 4013,
+          "cause": "Wrapper and split fixtures use different package directory basenames. Five generated TUI paths consequently differ; every common generated path has identical bytes. The package basename is an intentional generator input.",
+          "classification": "new_test_fixture_failure"
+        }
+      ]
+    },
+    {
+      "package": "wamn-schema-introspection",
+      "target": "--test postgres_live",
+      "running_line": 4218,
+      "summary_line": 4237,
+      "tests": [
+        {
+          "name": "an_exclusion_constraint_is_modelled_rather_than_refused",
+          "failure_list_line": 4234,
+          "diagnostic_start_line": 4221,
+          "referenced_arming_inputs": [
+            "WAMN_SCHEMA_INTROSPECTION_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        },
+        {
+          "name": "receiving_migration_round_trips_and_refuses_unsupported_server_objects",
+          "failure_list_line": 4235,
+          "diagnostic_start_line": 4226,
+          "referenced_arming_inputs": [
+            "WAMN_SCHEMA_INTROSPECTION_PG_URL"
+          ],
+          "classification": "unarmed_live_or_artifact"
+        }
+      ]
+    }
+  ],
+  "self_skip_evidence": {
+    "explicit_named_count": 85,
+    "count_is_lower_bound": true,
+    "included_in_reported_test_passes": true,
+    "groups": [
+      {
+        "running_line": 603,
+        "target_description": "unittests src/lib.rs",
+        "tests": [
+          {
+            "name": "tests::pipelined_publish_lands_in_order_and_dedupes_live",
+            "log_line": 617,
+            "arming_inputs": [
+              "WAMN_E1_NATS_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 641,
+        "target_description": "tests/event_reader_live.rs",
+        "tests": [
+          {
+            "name": "reader_streams_one_project_env_to_the_evt_stream",
+            "log_line": 644,
+            "arming_inputs": [
+              "WAMN_READER_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1028,
+        "target_description": "tests/cdc.rs",
+        "tests": [
+          {
+            "name": "cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables",
+            "log_line": 1031,
+            "arming_inputs": [
+              "WAMN_CDC_PG_URL"
+            ]
+          },
+          {
+            "name": "cdc_substrate_applies_and_is_idempotent_on_postgres",
+            "log_line": 1033,
+            "arming_inputs": [
+              "WAMN_CDC_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1038,
+        "target_description": "tests/control_portable_store.rs",
+        "tests": [
+          {
+            "name": "control_author_is_tenant_bound_and_exactly_scoped_on_postgres",
+            "log_line": 1041,
+            "arming_inputs": [
+              "WAMN_CONTROL_PORTABLE_PG_URL"
+            ]
+          },
+          {
+            "name": "control_portable_store_enforces_the_current_record_on_postgres",
+            "log_line": 1043,
+            "arming_inputs": [
+              "WAMN_CONTROL_PORTABLE_PG_URL"
+            ]
+          },
+          {
+            "name": "deployment_attestation_rust_binding_holds_on_postgres",
+            "log_line": 1050,
+            "arming_inputs": [
+              "WAMN_CONTROL_PORTABLE_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1061,
+        "target_description": "tests/control_storage.rs",
+        "tests": [
+          {
+            "name": "system_schema_applies_and_enforces_invariants_on_postgres",
+            "log_line": 1071,
+            "arming_inputs": [
+              "WAMN_REGISTRY_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1079,
+        "target_description": "tests/database_owner.rs",
+        "tests": [
+          {
+            "name": "project_env_database_ownership_and_connect_are_scoped",
+            "log_line": 1082,
+            "arming_inputs": [
+              "WAMN_PROVISION_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1087,
+        "target_description": "tests/deploy_sql_authority.rs",
+        "tests": [
+          {
+            "name": "the_platform_arm_admits_every_platform_family_from_the_server",
+            "log_line": 1090,
+            "arming_inputs": [
+              "WAMN_TENANT_FLOOR_PG_URL"
+            ]
+          },
+          {
+            "name": "the_swept_floor_admits_only_the_connected_guest_on_postgres",
+            "log_line": 1093,
+            "arming_inputs": [
+              "WAMN_TENANT_FLOOR_PG_URL"
+            ]
+          },
+          {
+            "name": "the_two_scenario_author_emitters_agree_at_zero_memberships",
+            "log_line": 1095,
+            "arming_inputs": [
+              "WAMN_TENANT_FLOOR_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1100,
+        "target_description": "tests/dump.rs",
+        "tests": [
+          {
+            "name": "dump_round_trips_a_seeded_database",
+            "log_line": 1103,
+            "arming_inputs": [
+              "WAMN_DUMP_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1108,
+        "target_description": "tests/family_denial_matrix.rs",
+        "tests": [
+          {
+            "name": "a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say",
+            "log_line": 1111,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "every_governed_relation_carries_the_tenant_key_expression_index",
+            "log_line": 1113,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_authority_derivations_match_their_pinned_definition_digest",
+            "log_line": 1116,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_dispatch_reader_family_is_refused_the_other_families_operations",
+            "log_line": 1118,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers",
+            "log_line": 1120,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_effect_writer_family_is_refused_the_other_families_operations",
+            "log_line": 1122,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_event_materializer_family_is_refused_the_other_families_operations",
+            "log_line": 1124,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_executor_platform_family_is_refused_the_other_families_operations",
+            "log_line": 1126,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_guest_family_reads_its_own_tenant_and_only_its_own",
+            "log_line": 1128,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_guest_sql_family_is_refused_the_other_families_operations",
+            "log_line": 1130,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_http_admitter_family_is_refused_the_other_families_operations",
+            "log_line": 1132,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_management_admitter_family_is_refused_the_other_families_operations",
+            "log_line": 1134,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_platform_group_members_are_exactly_the_derived_families",
+            "log_line": 1136,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_retention_family_is_refused_the_other_families_operations",
+            "log_line": 1138,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_run_plane_guards_are_still_public_execute",
+            "log_line": 1140,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_scenario_author_has_no_platform_membership_or_project_reads",
+            "log_line": 1142,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_service_reader_family_is_refused_the_other_families_operations",
+            "log_line": 1144,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_session_role_reader_is_refused_the_other_families_operations",
+            "log_line": 1146,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          },
+          {
+            "name": "the_tenant_scoped_platform_member_reads_nothing_outside_its_grants",
+            "log_line": 1148,
+            "arming_inputs": [
+              "WAMN_DENIAL_MATRIX_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1153,
+        "target_description": "tests/family_surface_grants.rs",
+        "tests": [
+          {
+            "name": "the_event_materializer_role_holds_exactly_its_two_catalog_reads",
+            "log_line": 1156,
+            "arming_inputs": [
+              "WAMN_FAMILY_SURFACE_PG_URL"
+            ]
+          },
+          {
+            "name": "the_executor_platform_role_holds_exactly_its_measured_claim_surface",
+            "log_line": 1158,
+            "arming_inputs": [
+              "WAMN_FAMILY_SURFACE_PG_URL"
+            ]
+          },
+          {
+            "name": "the_http_admitter_role_adds_exactly_the_fresh_permission_reads",
+            "log_line": 1160,
+            "arming_inputs": [
+              "WAMN_FAMILY_SURFACE_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1182,
+        "target_description": "tests/operation_grants.rs",
+        "tests": [
+          {
+            "name": "route_caller_grants_are_exact_residue_free_and_convergent_live",
+            "log_line": 1185,
+            "arming_inputs": [
+              "WAMN_OPERATION_GRANTS_PG18_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1190,
+        "target_description": "tests/ops_storage.rs",
+        "tests": [
+          {
+            "name": "ops_schema_applies_idempotently_after_core_on_postgres",
+            "log_line": 1195,
+            "arming_inputs": [
+              "WAMN_REGISTRY_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1202,
+        "target_description": "tests/provision.rs",
+        "tests": [
+          {
+            "name": "provisioning_builders_apply_on_postgres",
+            "log_line": 1205,
+            "arming_inputs": [
+              "WAMN_PROVISION_PG_URL"
+            ]
+          },
+          {
+            "name": "the_platform_extensions_make_an_exclusion_constraint_reachable",
+            "log_line": 1207,
+            "arming_inputs": [
+              "WAMN_PROVISION_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1212,
+        "target_description": "tests/restore.rs",
+        "tests": [
+          {
+            "name": "restore_round_trips_and_clean_replaces_in_place",
+            "log_line": 1215,
+            "arming_inputs": [
+              "WAMN_RESTORE_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1251,
+        "target_description": "tests/system_reader_grants.rs",
+        "tests": [
+          {
+            "name": "the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_other",
+            "log_line": 1254,
+            "arming_inputs": [
+              "WAMN_REGISTRY_PG_URL"
+            ]
+          },
+          {
+            "name": "the_registry_reader_holds_one_select_and_is_refused_everywhere_else",
+            "log_line": 1256,
+            "arming_inputs": [
+              "WAMN_REGISTRY_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1261,
+        "target_description": "tests/tenant_key_live.rs",
+        "tests": [
+          {
+            "name": "a_second_apply_leaves_the_definition_identical",
+            "log_line": 1264,
+            "arming_inputs": [
+              "WAMN_TENANT_KEY_PG_URL"
+            ]
+          },
+          {
+            "name": "the_bootstrap_and_literal_renderings_install_the_same_object",
+            "log_line": 1266,
+            "arming_inputs": [
+              "WAMN_TENANT_KEY_PG_URL"
+            ]
+          },
+          {
+            "name": "the_function_carries_the_flags_the_expression_index_requires",
+            "log_line": 1268,
+            "arming_inputs": [
+              "WAMN_TENANT_KEY_PG_URL"
+            ]
+          },
+          {
+            "name": "the_guest_may_execute_the_derivation_and_may_not_replace_it",
+            "log_line": 1270,
+            "arming_inputs": [
+              "WAMN_TENANT_KEY_PG_URL"
+            ]
+          },
+          {
+            "name": "the_session_derivation_returns_the_key_of_the_connected_guest_login",
+            "log_line": 1272,
+            "arming_inputs": [
+              "WAMN_TENANT_KEY_PG_URL"
+            ]
+          },
+          {
+            "name": "the_sql_tenant_key_equals_the_rust_tenant_key",
+            "log_line": 1274,
+            "arming_inputs": [
+              "WAMN_TENANT_KEY_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1342,
+        "target_description": "unittests src/lib.rs",
+        "tests": [
+          {
+            "name": "push_component::tests::the_environment_instance_decides_which_run_owns_a_component_fact",
+            "log_line": 1580,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "push_component::tests::verification_projection_replays_refuses_drift_and_leaves_publish_project_noop",
+            "log_line": 1584,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1649,
+        "target_description": "tests/apply_package_live.rs",
+        "tests": [
+          {
+            "name": "exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix",
+            "log_line": 1652,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1704,
+        "target_description": "tests/dispatch_reader_provisioning_live.rs",
+        "tests": [
+          {
+            "name": "dispatch_reader_provisioning_live",
+            "log_line": 1707,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1729,
+        "target_description": "tests/guest_generation_live.rs",
+        "tests": [
+          {
+            "name": "guest_generations_are_per_tenant_and_carry_the_predicate_key",
+            "log_line": 1732,
+            "arming_inputs": [
+              "WAMN_GUEST_GENERATION_PG18_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1772,
+        "target_description": "tests/package_data_access_live.rs",
+        "tests": [
+          {
+            "name": "an_author_recovers_from_a_failed_version_bump_in_either_direction",
+            "log_line": 1775,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "installed_package_set_unions_a_real_app_generation_and_replays_noop",
+            "log_line": 1777,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing",
+            "log_line": 1779,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1784,
+        "target_description": "tests/provisioning_order_live.rs",
+        "tests": [
+          {
+            "name": "a_refused_prepare_leaves_the_state_its_documentation_promises",
+            "log_line": 1787,
+            "arming_inputs": [
+              "WAMN_PROVISIONING_ORDER_PG18_URL"
+            ]
+          },
+          {
+            "name": "the_documented_provisioning_order_completes_end_to_end",
+            "log_line": 1789,
+            "arming_inputs": [
+              "WAMN_PROVISIONING_ORDER_PG18_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1794,
+        "target_description": "tests/publish_release_live.rs",
+        "tests": [
+          {
+            "name": "package_seal_and_attestation_winner_are_server_enforced",
+            "log_line": 1797,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1802,
+        "target_description": "tests/replica_identity_live.rs",
+        "tests": [
+          {
+            "name": "package_registration_union_flips_exact_tables_and_unreadable_state_refuses",
+            "log_line": 1805,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1810,
+        "target_description": "tests/run_plane_live.rs",
+        "tests": [
+          {
+            "name": "authoring_privileges_at_record_plan_no_repair_live",
+            "log_line": 1813,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "child_run_cutover_live",
+            "log_line": 1815,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "dispatch_reader_read_surface_live",
+            "log_line": 1817,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "environment_policy_row_security_live",
+            "log_line": 1824,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "reconcile_target_identity_guard_live",
+            "log_line": 1846,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "registry_durability_schema_ensure_live",
+            "log_line": 1848,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "rerun_lineage_cutover_live",
+            "log_line": 1850,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "retired_effect_disposition_cutover_live",
+            "log_line": 1852,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "run_plane_reconcile_live",
+            "log_line": 1854,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          },
+          {
+            "name": "stored_suite_cutover_live",
+            "log_line": 1856,
+            "arming_inputs": [
+              "WAMN_CTL_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1895,
+        "target_description": "tests/terminalize_effect_uncertain_live.rs",
+        "tests": [
+          {
+            "name": "terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live",
+            "log_line": 1898,
+            "arming_inputs": [
+              "WAMN_OPERATOR_TERMINALIZE_PG18_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 1938,
+        "target_description": "tests/read_authority.rs",
+        "tests": [
+          {
+            "name": "dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it",
+            "log_line": 1941,
+            "arming_inputs": [
+              "WAMN_PROVISION_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 2160,
+        "target_description": "tests/identity_live.rs",
+        "tests": [
+          {
+            "name": "platform_identity_round_trip_on_postgres",
+            "log_line": 2163,
+            "arming_inputs": [
+              "WAMN_PLATFORM_IDENTITY_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 2168,
+        "target_description": "tests/pat_live.rs",
+        "tests": [
+          {
+            "name": "platform_pat_round_trip_on_postgres",
+            "log_line": 2171,
+            "arming_inputs": [
+              "WAMN_PLATFORM_IDENTITY_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 2233,
+        "target_description": "tests/authority.rs",
+        "tests": [
+          {
+            "name": "a_project_still_owns_its_own_configuration",
+            "log_line": 2236,
+            "arming_inputs": [
+              "WAMN_SYSSCHEMA_PG_URL"
+            ]
+          },
+          {
+            "name": "author_sql_cannot_write_the_relations_that_authorize_it",
+            "log_line": 2238,
+            "arming_inputs": [
+              "WAMN_SYSSCHEMA_PG_URL"
+            ]
+          },
+          {
+            "name": "the_audited_party_may_append_to_its_trail_but_not_rewrite_it",
+            "log_line": 2240,
+            "arming_inputs": [
+              "WAMN_SYSSCHEMA_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 2245,
+        "target_description": "tests/schema.rs",
+        "tests": [
+          {
+            "name": "app_schema_applies_and_enforces_isolation_on_postgres",
+            "log_line": 2248,
+            "arming_inputs": [
+              "WAMN_SYSSCHEMA_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 3119,
+        "target_description": "tests/store.rs",
+        "tests": [
+          {
+            "name": "run_state_schema_applies_and_isolates_on_postgres",
+            "log_line": 3126,
+            "arming_inputs": [
+              "WAMN_RUN_STORE_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 3133,
+        "target_description": "unittests src/lib.rs",
+        "tests": [
+          {
+            "name": "plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup",
+            "log_line": 3296,
+            "arming_inputs": [
+              "WAMN_EVT_NATS_URL"
+            ]
+          },
+          {
+            "name": "plugins::wamn_jetstream::tests::live_publish_dedupe_bind_fetch_ack",
+            "log_line": 3303,
+            "arming_inputs": [
+              "WAMN_EVT_NATS_URL"
+            ]
+          },
+          {
+            "name": "plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed",
+            "log_line": 3349,
+            "arming_inputs": [
+              "WAMN_SCS_OFF_PG_URL"
+            ]
+          }
+        ]
+      },
+      {
+        "running_line": 3794,
+        "target_description": "tests/management_live.rs",
+        "tests": [
+          {
+            "name": "empty_case_connection_component_without_release_or_binding_reports_zero_cases",
+            "log_line": 3797,
+            "arming_inputs": [
+              "WAMN_PLATFORM_IDENTITY_PG_URL"
+            ]
+          },
+          {
+            "name": "management_surface_reconnects_after_the_verification_database_is_recreated",
+            "log_line": 3804,
+            "arming_inputs": [
+              "WAMN_PLATFORM_IDENTITY_PG_URL"
+            ]
+          },
+          {
+            "name": "nonempty_case_connection_component_without_release_or_binding_refuses_effect_posture",
+            "log_line": 3806,
+            "arming_inputs": [
+              "WAMN_PLATFORM_IDENTITY_PG_URL"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "limitations": [
+    "Counts use the last libtest summary in each Cargo Running or Doc-tests section. The nested subprocess summary is excluded.",
+    "Reported passes include at least 85 explicitly diagnosed unarmed self-skips. Silent early returns may add more; no exact executed-pass count is claimed.",
+    "Unarmed live or artifact failures do not establish live behavior. Separately armed operator and materialization proofs retain their own source and receipts.",
+    "Both resolved_failures arrays are empty. A missing failure would require checking pass, rename, absence, filtering, and self-skip before claiming a fix.",
+    "This comparison describes source a0f90cdacabff32900c239ec31376eed73bd4214 only. Later source changes and focused reruns are separate evidence."
+  ]
+}

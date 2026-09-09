@@ -4,7 +4,7 @@
 //! into engine stage identities. It deliberately does not coalesce events or
 //! execute stages; [`super::run_watch`] remains the sole orchestration owner.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -686,13 +686,13 @@ impl PackageRoot {
             return Some(DevStage::Generate);
         }
         if relative.starts_with("publication/components") {
-            return Some(DevStage::Admit);
+            return Some(DevStage::Generate);
         }
         if relative.starts_with("publication/wirings") {
-            return Some(DevStage::Gate);
+            return Some(DevStage::Generate);
         }
         if relative == Path::new("publication/attachments.json") {
-            return Some(DevStage::Release);
+            return Some(DevStage::Generate);
         }
         None
     }
@@ -740,10 +740,135 @@ fn is_authored_input(path: impl AsRef<Path>) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
+/// Exact native output bytes acknowledged at the package's emission boundary.
+///
+/// The source also remembers an observed external change after requesting Build,
+/// so duplicate notifications for the same bytes do not request another run.
+#[derive(Clone, Default)]
+pub(super) struct GeneratedNativeOutputs {
+    packages: std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, NativeOutputFiles>>>,
+}
+
+type NativeOutputFiles = BTreeMap<PathBuf, Vec<u8>>;
+
+impl fmt::Debug for GeneratedNativeOutputs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GeneratedNativeOutputs")
+            .finish_non_exhaustive()
+    }
+}
+
+impl GeneratedNativeOutputs {
+    /// Call immediately after this package's own generation succeeds.
+    pub(super) fn acknowledge(&self, package: &Path) -> Result<(), FilesystemInvalidationError> {
+        let files = native_output_files(package)?;
+        self.packages
+            .lock()
+            .expect("native output snapshot mutex is not poisoned")
+            .insert(package.to_owned(), files);
+        Ok(())
+    }
+
+    fn observe_changes(
+        &self,
+        changes: &[RawChange],
+    ) -> Result<BTreeSet<PathBuf>, FilesystemInvalidationError> {
+        let mut packages = self
+            .packages
+            .lock()
+            .expect("native output snapshot mutex is not poisoned");
+        let mut invalidated = BTreeSet::new();
+        for (package, previous) in packages.iter_mut() {
+            if !changes.iter().any(|change| {
+                change
+                    .path
+                    .as_deref()
+                    .is_some_and(|path| affects_native_output(package, path))
+            }) {
+                continue;
+            }
+            let current = native_output_files(package)?;
+            if current != *previous {
+                invalidated.insert(package.clone());
+                *previous = current;
+            }
+        }
+        Ok(invalidated)
+    }
+}
+
+fn native_output_paths(package: &Path) -> [PathBuf; 3] {
+    let mut directory = package
+        .file_name()
+        .expect("a declared package root has a directory name")
+        .to_owned();
+    directory.push("-tui");
+    let tui = package.join("generated").join(directory);
+    [
+        tui.join("Cargo.toml"),
+        tui.join("src"),
+        package.join("generated/client"),
+    ]
+}
+
+fn affects_native_output(package: &Path, path: &Path) -> bool {
+    native_output_paths(package)
+        .iter()
+        .any(|root| path.starts_with(root) || root.starts_with(path))
+}
+
+fn native_output_files(package: &Path) -> Result<NativeOutputFiles, FilesystemInvalidationError> {
+    let mut files = BTreeMap::new();
+    let mut pending = native_output_paths(package).to_vec();
+    while let Some(path) = pending.pop() {
+        let read_error = |source| {
+            FilesystemInvalidationError::with_source(
+                FilesystemInvalidationErrorKind::Read,
+                &path,
+                "cannot snapshot generated native input",
+                source,
+            )
+        };
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+            Err(source) => return Err(read_error(source)),
+        };
+        if metadata.is_dir() {
+            let entries = match fs::read_dir(&path) {
+                Ok(entries) => entries,
+                Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+                Err(source) => return Err(read_error(source)),
+            };
+            for entry in entries {
+                pending.push(entry.map_err(read_error)?.path());
+            }
+        } else if metadata.is_file() {
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(source) if source.kind() == io::ErrorKind::NotFound => continue,
+                Err(source) => return Err(read_error(source)),
+            };
+            files.insert(path, bytes);
+        } else {
+            return Err(FilesystemInvalidationError::new(
+                FilesystemInvalidationErrorKind::Read,
+                &path,
+                "generated native input must be a regular file or directory",
+            ));
+        }
+    }
+    Ok(files)
+}
+
 #[derive(Debug)]
 struct WatchRoots {
     packages: Vec<PackageRoot>,
     component_build_roots: Box<[PathBuf]>,
+    native_build_roots: Box<[PathBuf]>,
+    native_build_files: BTreeSet<PathBuf>,
+    watch_generated_native: bool,
     git_metadata: BTreeSet<PathBuf>,
     excluded: BTreeSet<PathBuf>,
 }
@@ -792,9 +917,84 @@ impl WatchRoots {
         Ok(Self {
             packages,
             component_build_roots: component_build_roots.into_boxed_slice(),
+            native_build_roots: Box::new([]),
+            native_build_files: BTreeSet::new(),
+            watch_generated_native: false,
             git_metadata: git.metadata_paths().iter().cloned().collect(),
             excluded: BTreeSet::new(),
         })
+    }
+
+    fn replace_native_inputs(
+        &mut self,
+        directories: impl IntoIterator<Item = PathBuf>,
+        files: impl IntoIterator<Item = PathBuf>,
+        repository: &Path,
+    ) -> Result<(), FilesystemInvalidationError> {
+        let directories = directories
+            .into_iter()
+            .map(|path| {
+                let directory = path.canonicalize().map_err(|source| {
+                    FilesystemInvalidationError::with_source(
+                        FilesystemInvalidationErrorKind::ComponentRoot,
+                        &path,
+                        "cannot resolve native build root",
+                        source,
+                    )
+                })?;
+                if !directory.starts_with(repository) || !directory.is_dir() {
+                    return Err(FilesystemInvalidationError::new(
+                        FilesystemInvalidationErrorKind::ComponentRoot,
+                        &path,
+                        "native build root is not a directory inside the originating Git worktree",
+                    ));
+                }
+                Ok(directory)
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let files = files.into_iter().map(|path| {
+            if !path.starts_with(repository)
+                || path.components().any(|part| part == Component::ParentDir)
+                || path.is_dir()
+            {
+                return Err(FilesystemInvalidationError::new(
+                    FilesystemInvalidationErrorKind::ComponentRoot,
+                    &path,
+                    "native build file is not an exact file inside the originating Git worktree",
+                ));
+            }
+            let existing = path.ancestors().find(|ancestor| ancestor.exists())
+                .expect("the originating repository exists");
+            let resolved = existing.canonicalize().map_err(|source| {
+                FilesystemInvalidationError::with_source(
+                    FilesystemInvalidationErrorKind::ComponentRoot,
+                    &path,
+                    "cannot resolve native build file parent",
+                    source,
+                )
+            })?;
+            if !resolved.starts_with(repository) {
+                return Err(FilesystemInvalidationError::new(
+                    FilesystemInvalidationErrorKind::ComponentRoot,
+                    &path,
+                    "native build file resolves outside the originating Git worktree",
+                ));
+            }
+            Ok(path)
+        }).collect::<Result<BTreeSet<_>, _>>()?;
+        self.native_build_roots = directories.into_iter().collect();
+        self.native_build_files = files;
+        Ok(())
+    }
+
+    fn native_file_or_parent(&self, path: &Path) -> bool {
+        self.native_build_files
+            .iter()
+            .any(|file| file == path || file.starts_with(path))
+    }
+
+    fn owns_recursive_path(&self, path: &Path) -> bool {
+        self.watched_roots().any(|root| path.starts_with(root))
     }
 
     /// Record one directory the ignore rules put outside the watch.
@@ -820,7 +1020,12 @@ impl WatchRoots {
             .iter()
             .any(|package| package.owns_generated(path))
         {
-            return None;
+            return (self.watch_generated_native
+                && self
+                    .packages
+                    .iter()
+                    .any(|package| affects_native_output(&package.root, path)))
+            .then_some(DevStage::Build);
         }
         let package_stage = self
             .packages
@@ -832,10 +1037,28 @@ impl WatchRoots {
             .iter()
             .any(|root| path == root || path.starts_with(root))
             .then_some(DevStage::Build);
+        let native_stage = (self.native_file_or_parent(path)
+            || self
+                .native_build_roots
+                .iter()
+                .any(|root| path.starts_with(root)))
+        .then_some(DevStage::Build);
         package_stage
             .into_iter()
             .chain(component_stage)
+            .chain(native_stage)
             .min_by_key(|stage| stage.position())
+    }
+
+    fn is_changed_input(&self, path: &Path, changed_native: &BTreeSet<PathBuf>) -> bool {
+        self.stage(path).is_some()
+            && (!self
+                .packages
+                .iter()
+                .any(|package| package.owns_generated(path))
+                || changed_native
+                    .iter()
+                    .any(|package| affects_native_output(package, path)))
     }
 
     /// An ANCESTOR of a metadata path counts, and that is deliberate.
@@ -869,6 +1092,7 @@ impl WatchRoots {
             .iter()
             .map(|package| package.root.as_path())
             .chain(self.component_build_roots.iter().map(PathBuf::as_path))
+            .chain(self.native_build_roots.iter().map(PathBuf::as_path))
     }
 }
 
@@ -878,6 +1102,25 @@ struct RawChange {
     events: ReadFlags,
 }
 
+/// Cargo can create a staging directory and rename it into ignored output
+/// before the watcher drains events. Its absent, never-watched origin cannot
+/// remove existing source; a surviving destination has its own notification.
+fn vanished_unwatched_directory(
+    change: &RawChange,
+    watched_directories: &HashMap<i32, PathBuf>,
+) -> bool {
+    change.events.contains(ReadFlags::ISDIR)
+        && change
+            .events
+            .intersects(ReadFlags::CREATE | ReadFlags::MOVED_FROM | ReadFlags::DELETE)
+        && change.path.as_deref().is_some_and(|path| {
+            !path.exists()
+                && !watched_directories
+                    .values()
+                    .any(|directory| directory.starts_with(path))
+        })
+}
+
 /// Linux filesystem invalidation source over explicit package and build roots.
 pub struct FilesystemInvalidationSource {
     inotify: AsyncFd<OwnedFd>,
@@ -885,6 +1128,7 @@ pub struct FilesystemInvalidationSource {
     roots: WatchRoots,
     git: GitSource,
     pending: VecDeque<DevInvalidation>,
+    generated_native_outputs: Option<GeneratedNativeOutputs>,
 }
 
 impl fmt::Debug for FilesystemInvalidationSource {
@@ -895,6 +1139,7 @@ impl fmt::Debug for FilesystemInvalidationSource {
             .field("roots", &self.roots)
             .field("git", &self.git)
             .field("pending", &self.pending.len())
+            .field("generated_native_outputs", &self.generated_native_outputs)
             .finish()
     }
 }
@@ -902,17 +1147,35 @@ impl fmt::Debug for FilesystemInvalidationSource {
 impl FilesystemInvalidationSource {
     /// Register recursive event watches for exact roots supplied by the caller.
     ///
-    /// This constructor is watch mode's startup, and the only one: `wamn dev`
-    /// builds it in its watch branch alone, so the reflog refusal below stops
-    /// watch mode without touching a one-shot run, which needs no reflog
-    /// because it never waits for a second commit.
+    /// This constructor delegates to [`Self::with_native_inputs`], which checks
+    /// the reflog for both watcher entry points. A one-shot run does not build
+    /// a watcher, so the refusal does not affect it.
     pub async fn new(
         package_roots: impl IntoIterator<Item = PathBuf>,
         component_build_roots: impl IntoIterator<Item = PathBuf>,
         git: GitSource,
     ) -> Result<Self, FilesystemInvalidationError> {
+        Self::with_native_inputs(
+            package_roots,
+            component_build_roots,
+            std::iter::empty(),
+            std::iter::empty(),
+            git,
+        )
+        .await
+    }
+
+    /// Watch native source trees and exact files without traversing their parents.
+    pub async fn with_native_inputs(
+        package_roots: impl IntoIterator<Item = PathBuf>,
+        component_build_roots: impl IntoIterator<Item = PathBuf>,
+        native_directories: impl IntoIterator<Item = PathBuf>,
+        native_files: impl IntoIterator<Item = PathBuf>,
+        git: GitSource,
+    ) -> Result<Self, FilesystemInvalidationError> {
         require_head_reflog(git.repository_root()).await?;
-        let roots = WatchRoots::new(package_roots, component_build_roots, &git)?;
+        let mut roots = WatchRoots::new(package_roots, component_build_roots, &git)?;
+        roots.replace_native_inputs(native_directories, native_files, git.repository_root())?;
         let descriptor =
             inotify::init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK).map_err(|source| {
                 FilesystemInvalidationError::with_source(
@@ -936,6 +1199,7 @@ impl FilesystemInvalidationSource {
             roots,
             git,
             pending: VecDeque::new(),
+            generated_native_outputs: None,
         };
         let watched_roots = source
             .roots
@@ -949,7 +1213,49 @@ impl FilesystemInvalidationSource {
         for parent in metadata_parents {
             source.add_directory(&parent)?;
         }
+        source.add_native_file_parents()?;
         Ok(source)
+    }
+
+    /// Share emission acknowledgments with the runner before the first run.
+    pub(super) fn watch_generated_native_outputs(
+        &mut self,
+    ) -> Result<GeneratedNativeOutputs, FilesystemInvalidationError> {
+        let outputs = GeneratedNativeOutputs::default();
+        for package in &self.roots.packages {
+            outputs.acknowledge(&package.root)?;
+        }
+        self.roots.watch_generated_native = true;
+        self.generated_native_outputs = Some(outputs.clone());
+        Ok(outputs)
+    }
+
+    /// Refresh native dependency ownership after a completed generation and build.
+    pub async fn replace_native_inputs(
+        &mut self,
+        directories: impl IntoIterator<Item = PathBuf>,
+        files: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<(), FilesystemInvalidationError> {
+        self.roots
+            .replace_native_inputs(directories, files, self.git.repository_root())?;
+        let directories = self.roots.native_build_roots.to_vec();
+        for directory in directories {
+            self.add_tree(&directory).await?;
+        }
+        self.add_native_file_parents()
+    }
+
+    fn add_native_file_parents(&mut self) -> Result<(), FilesystemInvalidationError> {
+        let files = self
+            .roots
+            .native_build_files
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        for parent in metadata_watch_directories(&files) {
+            self.add_directory(&parent)?;
+        }
+        Ok(())
     }
 
     /// Register `root` and every directory beneath it that Git does not ignore.
@@ -1060,6 +1366,16 @@ impl FilesystemInvalidationSource {
             }
         };
 
+        // Preserve membership before a moved inode is registered at its new
+        // path: inotify reuses its descriptor and replaces the old path entry.
+        let vanished_directories = changes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, change)| {
+                vanished_unwatched_directory(change, &self.watched_directories).then_some(index)
+            })
+            .collect::<BTreeSet<_>>();
+
         let mut head_changed = false;
         for change in &changes {
             if change.events.contains(ReadFlags::QUEUE_OVERFLOW) {
@@ -1074,7 +1390,12 @@ impl FilesystemInvalidationSource {
                     .intersects(ReadFlags::CREATE | ReadFlags::MOVED_TO)
                 && path.is_dir()
             {
-                self.add_tree(path).await?;
+                if self.roots.owns_recursive_path(path) || self.roots.is_git_metadata(path) {
+                    self.add_tree(path).await?;
+                }
+                if self.roots.native_file_or_parent(path) {
+                    self.add_native_file_parents()?;
+                }
             }
             self.roots.refresh_manifest(path);
             head_changed |= path == &self.git.head_path();
@@ -1095,11 +1416,19 @@ impl FilesystemInvalidationSource {
             }
         }
 
-        let needs_source_state = changes.iter().any(|change| {
+        let changed_native = self
+            .generated_native_outputs
+            .as_ref()
+            .map(|outputs| outputs.observe_changes(&changes))
+            .transpose()?
+            .unwrap_or_default();
+        let needs_source_state = changes.iter().enumerate().any(|(index, change)| {
             change.events.contains(ReadFlags::QUEUE_OVERFLOW)
-                || change.path.as_deref().is_some_and(|path| {
-                    self.roots.stage(path).is_some() || self.roots.is_git_metadata(path)
-                })
+                || (!vanished_directories.contains(&index)
+                    && change.path.as_deref().is_some_and(|path| {
+                        self.roots.is_changed_input(path, &changed_native)
+                            || self.roots.is_git_metadata(path)
+                    }))
         });
         let source_state = if needs_source_state {
             self.git
@@ -1118,12 +1447,18 @@ impl FilesystemInvalidationSource {
             DevSourceState::Clean
         };
 
-        for change in changes {
+        for (index, change) in changes.into_iter().enumerate() {
             let invalidation = if change.events.contains(ReadFlags::QUEUE_OVERFLOW) {
+                tracing::debug!(
+                    event_mask = change.events.bits(),
+                    "development filesystem queue overflow requires rerun"
+                );
                 DevInvalidation::Rerun {
                     from: DevStage::Migrate,
                     source_state,
                 }
+            } else if vanished_directories.contains(&index) {
+                DevInvalidation::Ignore
             } else if let Some(path) = change.path {
                 // Path classification decides RELEVANCE, not the starting
                 // stage. Every relevant change reruns the whole pipeline,
@@ -1131,7 +1466,19 @@ impl FilesystemInvalidationSource {
                 // suffix that started after Apply would run against an empty
                 // one. What a run does not have to redo is decided by each
                 // stage's input digest, not by which file was touched.
-                if self.roots.is_git_metadata(&path) || self.roots.stage(&path).is_some() {
+                if self.roots.is_git_metadata(&path)
+                    || self.roots.is_changed_input(&path, &changed_native)
+                {
+                    tracing::debug!(
+                        path = %path.display(),
+                        event_mask = change.events.bits(),
+                        stage_owner = ?self.roots.stage(&path),
+                        git_metadata = self.roots.is_git_metadata(&path),
+                        generated_native_output = changed_native
+                            .iter()
+                            .any(|package| affects_native_output(package, &path)),
+                        "development filesystem input requires rerun"
+                    );
                     DevInvalidation::Rerun {
                         from: DevStage::Migrate,
                         source_state,
@@ -1416,17 +1763,360 @@ mod tests {
         assert_eq!(package.stage(&root.join("generated/wamn.rs")), None);
         assert_eq!(
             package.stage(&root.join("publication/components/receiving.json.in")),
-            Some(DevStage::Admit)
+            Some(DevStage::Generate)
         );
         assert_eq!(
             package.stage(&root.join("publication/wirings/receiving.json")),
-            Some(DevStage::Gate)
+            Some(DevStage::Generate)
         );
         assert_eq!(
             package.stage(&root.join("publication/attachments.json")),
-            Some(DevStage::Release)
+            Some(DevStage::Generate)
         );
         assert_eq!(package.stage(&root.join("README.md")), None);
+    }
+
+    #[tokio::test]
+    async fn exact_native_files_do_not_recursively_watch_the_repository() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let native = repository.root.join("native");
+        fs::create_dir_all(native.join("src")).expect("create native source root");
+        let unrelated = repository.root.join("unrelated");
+        fs::create_dir_all(unrelated.join("nested")).expect("create unrelated source root");
+        let manifest = repository.root.join("Cargo.toml");
+        fs::write(&manifest, "[workspace]\n").expect("write root manifest");
+        let git = GitSource::discover(&repository.root)
+            .await
+            .expect("discover source repository");
+        let mut source = FilesystemInvalidationSource::with_native_inputs(
+            [repository.package()],
+            [repository.component()],
+            [native.clone()],
+            [manifest.clone()],
+            git,
+        )
+        .await
+        .expect("construct exact native file watch");
+        assert!(
+            source
+                .watched_directories
+                .values()
+                .any(|path| path == &repository.root)
+        );
+        assert!(
+            !source
+                .watched_directories
+                .values()
+                .any(|path| path.starts_with(&unrelated))
+        );
+        assert_eq!(source.roots.stage(&manifest), Some(DevStage::Build));
+        assert_eq!(
+            source.roots.stage(&native.join("src/lib.rs")),
+            Some(DevStage::Build)
+        );
+        assert_eq!(source.roots.stage(&repository.root.join("README.md")), None);
+        assert_eq!(
+            source.roots.stage(
+                &repository
+                    .package()
+                    .join("generated/receiving-tui/src/main.rs")
+            ),
+            None
+        );
+
+        let added = repository.root.join("new-unrelated");
+        fs::create_dir_all(added.join("nested"))
+            .expect("create unrelated directories after startup");
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("directory event arrived")
+            .expect("read directory event")
+            .expect("watch remains open");
+        assert!(
+            collect_batch(first, &mut source)
+                .iter()
+                .all(|event| *event == DevInvalidation::Ignore)
+        );
+        assert!(
+            !source
+                .watched_directories
+                .values()
+                .any(|path| path.starts_with(&added))
+        );
+
+        fs::write(&manifest, "[workspace]\nresolver = \"2\"\n").expect("edit root manifest");
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("manifest event arrived")
+            .expect("read manifest event")
+            .expect("watch remains open");
+        assert!(has_rerun(
+            &collect_batch(first, &mut source),
+            DevStage::Migrate,
+            DevSourceState::Dirty
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_absent_cargo_configuration_parent_is_watched_when_created() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let config = repository.root.join(".cargo/config.toml");
+        let git = GitSource::discover(&repository.root)
+            .await
+            .expect("discover source repository");
+        let mut source = FilesystemInvalidationSource::with_native_inputs(
+            [repository.package()],
+            [repository.component()],
+            [],
+            [config.clone()],
+            git,
+        )
+        .await
+        .expect("watch an absent exact configuration file");
+        fs::create_dir(config.parent().expect("configuration parent"))
+            .expect("create Cargo directory");
+        fs::write(&config, "[build]\njobs = 1\n")
+            .expect("create Cargo configuration before reading events");
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("Cargo directory event arrived")
+            .expect("read directory event")
+            .expect("watch remains open");
+        assert!(has_rerun(
+            &collect_batch(first, &mut source),
+            DevStage::Migrate,
+            DevSourceState::Dirty
+        ));
+        assert!(
+            source
+                .watched_directories
+                .values()
+                .any(|path| Some(path.as_path()) == config.parent())
+        );
+        fs::write(&config, "[build]\njobs = 2\n").expect("edit Cargo configuration");
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("configuration event arrived")
+            .expect("read configuration event")
+            .expect("watch remains open");
+        assert!(has_rerun(
+            &collect_batch(first, &mut source),
+            DevStage::Migrate,
+            DevSourceState::Dirty
+        ));
+        assert_eq!(
+            source
+                .roots
+                .stage(&repository.root.join(".cargo/unrelated")),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn refreshed_native_dependencies_replace_ownership_and_retain_component_roots() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let first = repository.root.join("first-native");
+        let second = repository.root.join("second-native");
+        fs::create_dir(&first).expect("create first native root");
+        fs::create_dir(&second).expect("create second native root");
+        let git = GitSource::discover(&repository.root)
+            .await
+            .expect("discover source repository");
+        let mut source = FilesystemInvalidationSource::with_native_inputs(
+            [repository.package()],
+            [repository.component()],
+            [first.clone()],
+            [repository.root.join("Cargo.toml")],
+            git,
+        )
+        .await
+        .expect("construct initial native dependency watch");
+        source
+            .replace_native_inputs([second.clone()], [repository.root.join("Cargo.lock")])
+            .await
+            .expect("refresh the native dependency graph");
+        assert_eq!(source.roots.stage(&first.join("lib.rs")), None);
+        assert_eq!(
+            source.roots.stage(&second.join("lib.rs")),
+            Some(DevStage::Build)
+        );
+        assert_eq!(
+            source
+                .roots
+                .stage(&repository.component().join("src/lib.rs")),
+            Some(DevStage::Build)
+        );
+        assert_eq!(
+            source.roots.stage(&repository.root.join("Cargo.toml")),
+            None
+        );
+        assert_eq!(
+            source.roots.stage(&repository.root.join("Cargo.lock")),
+            Some(DevStage::Build)
+        );
+        assert!(
+            source
+                .replace_native_inputs([], [repository.root.join("../outside.toml")])
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            source.roots.stage(&second.join("lib.rs")),
+            Some(DevStage::Build),
+            "a refused refresh retains the prior ownership"
+        );
+    }
+
+    async fn native_output_source(
+        repository: &TempRepository,
+    ) -> (
+        FilesystemInvalidationSource,
+        GeneratedNativeOutputs,
+        [PathBuf; 3],
+    ) {
+        let paths = [
+            repository
+                .package()
+                .join("generated/package-tui/Cargo.toml"),
+            repository
+                .package()
+                .join("generated/package-tui/src/lib.rs"),
+            repository.package().join("generated/client/location.rs"),
+        ];
+        for path in &paths {
+            fs::create_dir_all(path.parent().expect("native output parent"))
+                .expect("create native output directory");
+            fs::write(path, "initial output").expect("write initial native output");
+        }
+        // Generated native sources are tracked in real packages. Keep their
+        // deletion dirty too, including the last file removed by the test.
+        git(&repository.root, &["add", "package/generated"]);
+        git(
+            &repository.root,
+            &["commit", "--quiet", "-m", "generated native fixture"],
+        );
+        let git = GitSource::discover(&repository.root)
+            .await
+            .expect("discover native output fixture");
+        let mut source = FilesystemInvalidationSource::new(
+            [repository.package()],
+            [repository.component()],
+            git,
+        )
+        .await
+        .expect("watch native output fixture");
+        let outputs = source
+            .watch_generated_native_outputs()
+            .expect("acknowledge initial native outputs");
+        (source, outputs, paths)
+    }
+
+    async fn native_output_batch(
+        source: &mut FilesystemInvalidationSource,
+    ) -> Vec<DevInvalidation> {
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("native output event arrives")
+            .expect("read native output event")
+            .expect("native output source stays open");
+        collect_batch(first, source)
+    }
+
+    #[tokio::test]
+    async fn external_native_emission_edits_and_deletions_require_build() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let (mut source, _outputs, paths) = native_output_source(&repository).await;
+        for path in &paths {
+            assert_eq!(source.roots.stage(path), Some(DevStage::Build));
+            fs::write(path, "external output").expect("edit native output externally");
+            assert!(has_rerun(
+                &native_output_batch(&mut source).await,
+                DevStage::Migrate,
+                DevSourceState::Dirty,
+            ));
+            fs::remove_file(path).expect("delete native output externally");
+            assert!(has_rerun(
+                &native_output_batch(&mut source).await,
+                DevStage::Migrate,
+                DevSourceState::Dirty,
+            ));
+        }
+        let application = repository.package().join("generated/wamn.rs");
+        fs::write(&application, "application generation stays ignored")
+            .expect("write unrelated generated application output");
+        assert_eq!(source.roots.stage(&application), None);
+        assert!(
+            native_output_batch(&mut source)
+                .await
+                .iter()
+                .all(|event| *event == DevInvalidation::Ignore)
+        );
+    }
+
+    #[tokio::test]
+    async fn acknowledged_own_emission_and_identical_external_bytes_do_not_rerun() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let (mut source, outputs, paths) = native_output_source(&repository).await;
+        for path in &paths {
+            fs::write(path, "own emission").expect("write the loop's own output");
+        }
+        outputs
+            .acknowledge(&repository.package())
+            .expect("acknowledge immediately after emission");
+        // The own CLOSE_WRITE events are still in the kernel queue here.
+        assert!(
+            native_output_batch(&mut source)
+                .await
+                .iter()
+                .all(|event| *event == DevInvalidation::Ignore)
+        );
+        fs::write(&paths[1], "own emission").expect("rewrite identical source bytes");
+        assert!(
+            native_output_batch(&mut source)
+                .await
+                .iter()
+                .all(|event| *event == DevInvalidation::Ignore)
+        );
+    }
+
+    #[tokio::test]
+    async fn external_changes_after_emission_survive_queued_events_and_metadata_refresh() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let (mut source, outputs, paths) = native_output_source(&repository).await;
+        for delete in [false, true] {
+            for path in &paths {
+                fs::write(path, "own emission").expect("write the loop's next emission");
+            }
+            outputs
+                .acknowledge(&repository.package())
+                .expect("acknowledge before later stages run");
+            if delete {
+                fs::remove_file(&paths[1]).expect("delete source during a later stage");
+            } else {
+                fs::write(&paths[2], "external edit during Build")
+                    .expect("edit bindings during a later stage");
+            }
+            // NativeInvalidations refreshes these after a run. That refresh
+            // must not accept external bytes as if Generate had emitted them.
+            source
+                .replace_native_inputs(
+                    [repository.component()],
+                    [repository.root.join("Cargo.toml")],
+                )
+                .await
+                .expect("refresh native dependency ownership");
+            assert!(has_rerun(
+                &native_output_batch(&mut source).await,
+                DevStage::Migrate,
+                DevSourceState::Dirty,
+            ));
+        }
     }
 
     #[tokio::test]
@@ -1514,6 +2204,177 @@ mod tests {
                 .await
                 .is_err(),
             "the recreated output root must be pruned again, not rewatched"
+        );
+    }
+
+    #[tokio::test]
+    async fn first_build_outputs_in_overlapping_component_roots_do_not_rerun() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let components = repository.root.join("components");
+        let no_std = components.join("no-std");
+        fs::create_dir_all(no_std.join("guest/src")).expect("create nested component workspace");
+        fs::write(
+            repository.root.join(".gitignore"),
+            "ignored\n/components/target\n/components/no-std/target\n",
+        )
+        .expect("ignore both declared component output directories");
+        let outputs = [components.join("target"), no_std.join("target")];
+        let native_files = [
+            repository.root.join("Cargo.toml"),
+            repository.root.join("Cargo.lock"),
+        ];
+        let git = GitSource::discover(&repository.root)
+            .await
+            .expect("discover first-build fixture");
+        let mut source = FilesystemInvalidationSource::with_native_inputs(
+            [repository.package()],
+            [components, no_std],
+            [repository.component()],
+            native_files.clone(),
+            git,
+        )
+        .await
+        .expect("watch overlapping component and native roots");
+        let generated = source
+            .watch_generated_native_outputs()
+            .expect("enable native emission acknowledgments");
+        for output in &outputs {
+            assert!(!output.exists());
+            assert!(
+                !source.roots.is_excluded(output),
+                "first-ever output has no prior exclusion"
+            );
+        }
+
+        let emitted = repository
+            .package()
+            .join("generated/package-tui/src/lib.rs");
+        fs::create_dir_all(emitted.parent().expect("generated source parent"))
+            .expect("create first generated native source directory");
+        fs::write(emitted, "own first emission").expect("emit native source before Build");
+        generated
+            .acknowledge(&repository.package())
+            .expect("acknowledge this package immediately after Generate");
+        for output in &outputs {
+            // Cargo first creates a temporary sibling, then renames it into
+            // target. The origin no longer exists when its events are read.
+            let staging = output.with_file_name("targetbpz54B");
+            fs::create_dir_all(staging.join("wasm32-wasip2/release"))
+                .expect("the first Build creates its staging tree");
+            fs::write(
+                staging.join("wasm32-wasip2/release/guest.wasm"),
+                "built artifact",
+            )
+            .expect("write the first component artifact");
+            fs::write(staging.join(".cargo-lock"), "").expect("write build lock");
+            fs::rename(staging, output).expect("publish the first ignored target directory");
+        }
+        // As in NativeInvalidations, refresh after the run while Generate and
+        // first-build CREATE events are still queued in the kernel.
+        source
+            .replace_native_inputs([repository.component()], native_files)
+            .await
+            .expect("refresh native dependencies before reading first-build events");
+        assert!(
+            native_output_batch(&mut source)
+                .await
+                .iter()
+                .all(|event| *event == DevInvalidation::Ignore),
+            "own emission and first-ever ignored outputs must leave the activation alive"
+        );
+        for output in &outputs {
+            assert!(source.roots.is_excluded(output));
+            assert!(
+                !source
+                    .watched_directories
+                    .values()
+                    .any(|directory| directory.starts_with(output)),
+                "new ignored output trees must not acquire recursive watches"
+            );
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), source.next())
+                .await
+                .is_err(),
+            "registration must not create a later feedback event"
+        );
+    }
+
+    #[tokio::test]
+    async fn source_removal_still_reruns_when_the_destination_is_ignored_output() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let authored = repository.component().join("target-authored");
+        fs::create_dir(&authored).expect("create authored source directory");
+        fs::write(authored.join("lib.rs"), "pub fn authored() {}")
+            .expect("write authored source before watching");
+        let archived_source = repository.component().join("source-to-archive");
+        fs::create_dir(&archived_source).expect("create source later moved into generated output");
+        fs::write(archived_source.join("lib.rs"), "pub fn archived() {}")
+            .expect("write archived source before watching");
+        git(&repository.root, &["add", "."]);
+        git(
+            &repository.root,
+            &["commit", "--quiet", "-m", "authored source"],
+        );
+        let git = GitSource::discover(&repository.root)
+            .await
+            .expect("discover source-removal fixture");
+        let mut source = FilesystemInvalidationSource::new(
+            [repository.package()],
+            [repository.component()],
+            git,
+        )
+        .await
+        .expect("watch authored source before its move");
+        fs::rename(&authored, repository.component().join("ignored"))
+            .expect("move watched source into ignored output");
+        assert!(
+            has_rerun(
+                &native_output_batch(&mut source).await,
+                DevStage::Migrate,
+                DevSourceState::Dirty
+            ),
+            "a watched source moved into output still disappeared from the build"
+        );
+
+        fs::rename(
+            &archived_source,
+            repository.package().join("generated/archive"),
+        )
+        .expect("move watched source into watched but ignored generated output");
+        assert!(
+            has_rerun(
+                &native_output_batch(&mut source).await,
+                DevStage::Migrate,
+                DevSourceState::Dirty
+            ),
+            "registering the moved inode must not erase its previous source ownership"
+        );
+
+        fs::remove_file(repository.component().join("src/lib.rs"))
+            .expect("delete another tracked source");
+        assert!(
+            has_rerun(
+                &native_output_batch(&mut source).await,
+                DevStage::Migrate,
+                DevSourceState::Dirty
+            ),
+            "ordinary source deletion must still invalidate"
+        );
+
+        let new_source = repository.component().join("target-new-source");
+        fs::create_dir(&new_source).expect("create a real target-prefixed source directory");
+        fs::write(new_source.join("lib.rs"), "pub fn new_source() {}")
+            .expect("write new source with no move into ignored output");
+        assert!(
+            has_rerun(
+                &native_output_batch(&mut source).await,
+                DevStage::Migrate,
+                DevSourceState::Dirty
+            ),
+            "a target prefix alone must never hide authored source"
         );
     }
 

@@ -18,7 +18,9 @@ struct Cli {
 enum Command {
     /// Run the package development loop, or stand up the environment it needs.
     #[command(args_conflicts_with_subcommands = true)]
-    Dev(DevArgs),
+    Dev(Box<DevArgs>),
+    /// Copy generated operator screens into developer-owned Rust.
+    Ui(wamn_ctl::ui::UiArgs),
 }
 
 /// `wamn dev` either runs the loop from its own flags or takes `up` and stands
@@ -53,19 +55,47 @@ enum DevEnvironmentCommand {
 #[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let Command::Dev(dev) = Cli::parse().command;
-    match dev.environment {
-        Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(args).await,
-        None => {
-            let run = dev
-                .run
-                .context("wamn dev needs --config and --overlay-root, or the up subcommand")?;
-            wamn_ctl::dev::command::run(run).await
-        }
+    if std::env::var_os("RUST_LOG").is_some() {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .context("read the development diagnostics filter")?;
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .init();
+    }
+    match Cli::parse().command {
+        Command::Ui(args) => wamn_ctl::ui::run(args).await,
+        Command::Dev(dev) => match dev.environment {
+            Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(args).await,
+            None => {
+                let run = dev
+                    .run
+                    .context("wamn dev needs --config and --overlay-root, or the up subcommand")?;
+                wamn_ctl::dev::command::run(run).await
+            }
+        },
     }
 }
 
 #[cfg(not(target_os = "linux"))]
 fn main() -> anyhow::Result<()> {
     anyhow::bail!("wamn dev requires Linux filesystem notifications")
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scaffold_parses_without_development_loop_flags() {
+        let cli =
+            Cli::try_parse_from(["wamn", "ui", "scaffold", "receiving", "purchase_order.get"])
+                .expect("parse a standalone scaffold command");
+        let Command::Ui(args) = cli.command else {
+            panic!("expected the ui command");
+        };
+        let wamn_ctl::ui::UiCommand::Scaffold(args) = args.command;
+        assert_eq!(args.package, "receiving");
+        assert_eq!(args.screen.as_deref(), Some("purchase_order.get"));
+    }
 }

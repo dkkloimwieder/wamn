@@ -1886,6 +1886,15 @@ fn emit_custom_operation_contracts(
     if let Some(registration) = &operation.registration {
         operation_contract.insert("registration".to_owned(), json!(registration));
     }
+    if let Some(idempotent_by) = &operation.idempotent_by {
+        operation_contract.insert("idempotent_by".to_owned(), json!(idempotent_by));
+    }
+    if let Some(claim) = &operation.claim {
+        operation_contract.insert("claim".to_owned(), json!(claim));
+    }
+    if !operation.relations.is_empty() {
+        operation_contract.insert("relations".to_owned(), json!(operation.relations));
+    }
     insert_json_line(
         files,
         &format!("{root}.operation.json"),
@@ -2834,9 +2843,9 @@ fn emit_operation_contracts(
             statement_value_contract(column.name(), column.column_type(), column.nullable())
         })
         .collect::<Vec<_>>();
-    // The operation's RESULT is the row it hands back, which for a create is
-    // the created or replayed model row and not the claim its statements read.
-    let columns = if matches!(action, CrudAction::Update | CrudAction::Delete) {
+    // A public create or update succeeds with the model row. The update
+    // statement's outcome and observed revision remain SQL accessor columns.
+    let columns = if action == CrudAction::Delete {
         accessors.first().map_or_else(Vec::new, |accessor| {
             operation_row_columns(wamn_api, &accessor.row)
         })
@@ -2864,8 +2873,34 @@ fn emit_operation_contracts(
             )
         })
         .collect::<Vec<_>>();
+    let mut record = serde_json::Map::from_iter([
+        (
+            "relation".to_owned(),
+            json!(format!("{}.{}", model.schema, model.table)),
+        ),
+        ("key_field".to_owned(), json!("id")),
+    ]);
+    if matches!(
+        action,
+        CrudAction::Get | CrudAction::Update | CrudAction::Delete
+    ) {
+        record.insert("key_input".to_owned(), json!("id"));
+    }
+    if matches!(action, CrudAction::Update | CrudAction::Delete) {
+        let revision = operation
+            .revision_field
+            .as_deref()
+            .expect("mutation validation requires a revision field");
+        record.insert("revision_field".to_owned(), json!(revision));
+        record.insert(
+            "revision_input".to_owned(),
+            json!(format!("expected_{revision}")),
+        );
+    }
     let mut operation_contract = serde_json::Map::from_iter([
         ("operation".to_owned(), json!(operation_id)),
+        ("kind".to_owned(), json!(action.as_str())),
+        ("record".to_owned(), Value::Object(record)),
         ("permission_token".to_owned(), json!(operation.permission)),
         ("grant".to_owned(), json!(operation_id)),
         ("result".to_owned(), json!(operation.result)),
@@ -2877,6 +2912,7 @@ fn emit_operation_contracts(
         operation_contract.insert("fresh_only".to_owned(), json!(true));
     }
     if let Some(claim) = claim.filter(|_| action == CrudAction::Create) {
+        operation_contract.insert("idempotent_by".to_owned(), json!("claim"));
         operation_contract.insert("idempotency".to_owned(), idempotency_contract(claim));
     }
     insert_json_line(
@@ -2962,6 +2998,7 @@ fn input_contract(
             let column = column(table, field).expect("validation resolved writable fields");
             json!({
                 "field": field,
+                "path": if action == CrudAction::Update { format!("change.{field}") } else { field.clone() },
                 "type": column.column_type().as_str(),
                 "omitted": if action == CrudAction::Update { "unchanged" } else { "postgres_default" },
                 "explicit_null": if column.nullable() { "accepted" } else { "invalid_input" },
@@ -2981,7 +3018,14 @@ fn input_contract(
         CrudAction::Query => merge_json(
             common,
             &json!({
-                "filters": operation.filters,
+                "filters": operation.filters.iter().map(|filter| {
+                    let column = column(table, &filter.field).expect("validated filter column");
+                    json!({
+                        "field": filter.field,
+                        "binding": filter.binding,
+                        "type": column.column_type().as_str(),
+                    })
+                }).collect::<Vec<_>>(),
                 "sort": operation.sort,
                 "pagination": operation.pagination,
                 "limit": operation.limit,

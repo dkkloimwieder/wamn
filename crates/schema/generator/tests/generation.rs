@@ -1710,15 +1710,29 @@ fn generated_operations_ship_a_result_contract_with_closed_domains() {
         })
     );
 
-    // A mutation's outcome discriminator is not a model field, so it carries
-    // no domain rather than an invented one.
     let update = artifact_json(
         &package,
         "generated/contracts/purchase_order/update.result.json",
     );
-    let outcome = &update["fields"][0];
-    assert_eq!(outcome["path"], "outcome");
-    assert_eq!(outcome["values"], json!([]));
+    assert_eq!(
+        update,
+        artifact_json(
+            &package,
+            "generated/contracts/purchase_order/get.result.json"
+        ),
+        "a successful update returns the public model row"
+    );
+    let operation = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/update.operation.json",
+    );
+    let columns = operation["statements"][0]["columns"].as_array().unwrap();
+    for name in ["outcome", "observed_row_version"] {
+        assert!(
+            columns.iter().any(|column| column["name"] == name),
+            "the SQL accessor still needs {name} to resolve success or refusal"
+        );
+    }
 }
 
 #[test]
@@ -2073,8 +2087,8 @@ fn ordered_filters_and_query_variants_remain_structural_and_finite() {
     assert_eq!(
         input["filters"],
         json!([
-            {"field": "supplier_id", "binding": "json_array"},
-            {"field": "status", "binding": "json_array"}
+            {"field": "supplier_id", "binding": "json_array", "type": "uuid"},
+            {"field": "status", "binding": "json_array", "type": "text"}
         ])
     );
 

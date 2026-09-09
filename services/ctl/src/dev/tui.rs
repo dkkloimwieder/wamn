@@ -790,6 +790,7 @@ mod tests {
         publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
             "http://127.0.0.1:38080".to_owned(),
             "receiving.dev.localhost",
+            "target-one",
         ));
         let held = rendered_text(
             &handle.snapshot(),
@@ -815,6 +816,7 @@ mod tests {
         publisher.set_runtime_endpoint(DevRuntimeEndpoint::new(
             "http://127.0.0.1:38080".to_owned(),
             "receiving.dev.localhost",
+            "target-one",
         ));
         let snapshot = handle.snapshot();
         let state = DevTuiState::default();

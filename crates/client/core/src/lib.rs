@@ -21,6 +21,7 @@ pub mod credentials;
 pub mod cursor;
 pub mod descriptor;
 pub mod error;
+pub mod request;
 pub mod route;
 
 use std::collections::BTreeMap;
@@ -120,6 +121,48 @@ impl WamnClient {
         parameters: &BTreeMap<String, String>,
         items: &[serde_json::Value],
     ) -> Result<Vec<ItemOutcome>, ClientError> {
+        let body = wamn_execution_contract::canonical_json_bytes(&serde_json::Value::Array(
+            items.to_vec(),
+        ));
+        let response = self.send_body(route, parameters, body).await?;
+
+        if response.status != 200 {
+            return Err(ClientError::from_status(response.status, &response.body));
+        }
+        let outcomes: Vec<ItemOutcome> = serde_json::from_str(&response.body).map_err(|error| {
+            ClientError::MalformedResponse {
+                detail: format!("response is not an outcome array: {error}"),
+            }
+        })?;
+        if outcomes.len() != items.len() {
+            return Err(ClientError::MalformedResponse {
+                detail: format!(
+                    "sent {} items and received {} outcomes",
+                    items.len(),
+                    outcomes.len()
+                ),
+            });
+        }
+        Ok(outcomes)
+    }
+    /// Submit the captured body and preserve the original response evidence.
+    /// Credentials are obtained again for each attempt.
+    pub async fn submit(
+        &self,
+        route: &RouteMetadata,
+        parameters: &BTreeMap<String, String>,
+        request: &request::BuiltRequest,
+    ) -> Result<HttpResponse, ClientError> {
+        self.send_body(route, parameters, request.body().to_vec())
+            .await
+    }
+
+    async fn send_body(
+        &self,
+        route: &RouteMetadata,
+        parameters: &BTreeMap<String, String>,
+        body: Vec<u8>,
+    ) -> Result<HttpResponse, ClientError> {
         let path = route
             .path(parameters)
             .map_err(|error| ClientError::Operation {
@@ -141,36 +184,13 @@ impl WamnClient {
             headers.insert("host".to_owned(), host.clone());
         }
 
-        let body = wamn_execution_contract::canonical_json_bytes(&serde_json::Value::Array(
-            items.to_vec(),
-        ));
-        let response = self
-            .transport
+        self.transport
             .send(HttpRequest {
                 url: format!("{}{path}", self.base_url),
                 method: route.method.clone(),
                 headers,
                 body,
             })
-            .await?;
-
-        if response.status != 200 {
-            return Err(ClientError::from_status(response.status, &response.body));
-        }
-        let outcomes: Vec<ItemOutcome> = serde_json::from_str(&response.body).map_err(|error| {
-            ClientError::MalformedResponse {
-                detail: format!("response is not an outcome array: {error}"),
-            }
-        })?;
-        if outcomes.len() != items.len() {
-            return Err(ClientError::MalformedResponse {
-                detail: format!(
-                    "sent {} items and received {} outcomes",
-                    items.len(),
-                    outcomes.len()
-                ),
-            });
-        }
-        Ok(outcomes)
+            .await
     }
 }

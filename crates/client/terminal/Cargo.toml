@@ -10,6 +10,15 @@ license.workspace = true
 # widget half lives in wamn-client-tui and never enters a terminal.
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+wamn-client = { workspace = true }
+wamn-client-tui = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true, features = ["rustls"] }
+futures-util = { workspace = true }
+tokio = { workspace = true, features = ["macros", "signal"] }
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true, features = ["clock", "std"] }
 
 [lints]
 workspace = true

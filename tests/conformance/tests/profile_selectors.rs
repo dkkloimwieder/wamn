@@ -318,7 +318,7 @@ fn profile_contract_matches_locked_metadata() {
     // than written down, and adding a package moves none of these
     // (wamn-10yt.10.39).
     let derived = package_components(&root);
-    assert_eq!(root_members.len(), 37);
+    assert_eq!(root_members.len(), 40);
     assert_eq!(component_members.len(), 21 + derived.len());
     assert_unique("root workspace metadata", &root_members);
     assert_unique("component workspace metadata", &component_members);
@@ -345,6 +345,9 @@ fn profile_contract_matches_locked_metadata() {
             "wamn-schema-control",
             "wamn-schema-generator",
             "wamn-schema-introspection",
+            "wamn-generated-client-acme-receiving-tui",
+            "wamn-generated-receiving-tui",
+            "wamn-generated-wms-tui",
         ],
     );
     assert_eq!(
@@ -365,9 +368,9 @@ fn profile_contract_matches_locked_metadata() {
     let profile_counts = [
         ("m1", 20),
         ("m2", 22),
-        ("deploy", 30),
-        ("full", 37),
-        ("ops", 37),
+        ("deploy", 33),
+        ("full", 40),
+        ("ops", 40),
     ];
     let mut profiles = BTreeMap::new();
     for (profile, expected_count) in profile_counts {

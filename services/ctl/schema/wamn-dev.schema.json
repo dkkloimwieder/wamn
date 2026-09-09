@@ -56,6 +56,10 @@
     "insecure_registry": {
       "type": "boolean"
     },
+    "operator_bearer_token": {
+      "default": null,
+      "type": "string"
+    },
     "org": {
       "type": "string"
     },

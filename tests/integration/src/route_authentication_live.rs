@@ -2007,6 +2007,9 @@ fn verify_dev_command_receipt(output: &std::process::Output) -> anyhow::Result<(
     let (base_url, route_host) = served
         .split_once(" host=")
         .with_context(|| format!("the served line names a host: {served:?}"))?;
+    let (route_host, target_instance) = route_host.split_once(" target_instance=")
+        .context("the served line names the exact target instance")?;
+    anyhow::ensure!(!target_instance.is_empty(), "the served target instance is empty");
     anyhow::ensure!(
         base_url.starts_with("http://127.0.0.1:")
             && base_url

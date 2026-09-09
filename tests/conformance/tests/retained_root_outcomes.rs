@@ -20,6 +20,18 @@ const RETAINED_ROOTS: &[(&str, &str)] = &[
     ("wamn-client-terminal", "crates/client/terminal/src/lib.rs"),
     ("wamn-client-tui", "crates/client/tui/src/lib.rs"),
     ("wamn-receiving-tui", "crates/client/receiving/src/lib.rs"),
+    (
+        "wamn-generated-receiving-tui",
+        "packages/receiving/generated/receiving-tui/src/lib.rs",
+    ),
+    (
+        "wamn-generated-wms-tui",
+        "packages/wms/generated/wms-tui/src/lib.rs",
+    ),
+    (
+        "wamn-generated-client-acme-receiving-tui",
+        "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/lib.rs",
+    ),
     ("wamn-cdc-reader", "services/cdc-reader/src/lib.rs"),
     (
         "wamn-component-policy",

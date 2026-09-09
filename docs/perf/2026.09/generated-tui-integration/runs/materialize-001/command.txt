@@ -1,0 +1,1 @@
+python3 docs/perf/2026.09/generated-tui-integration/tools/materialize.py --evidence-dir /home/kaalin/.cache/wamn-lanes/generated-tui-20260908/docs/perf/2026.09/generated-tui-integration/runs/materialize-001/evidence

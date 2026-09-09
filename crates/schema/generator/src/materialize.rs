@@ -12,6 +12,7 @@ use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 use crate::StatementTransactionality;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_rust::emit_rust_client;
+use crate::client_tui::emit_tui;
 use crate::generate::GeneratedFile;
 use crate::{
     AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
@@ -230,7 +231,13 @@ fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Ve
         .context("read the release's published routes")?;
     let ir = ClientContractIr::from_release_contracts(&manifest.package.id, &contracts, &routes)
         .context("project the client-contract IR")?;
-    emit_rust_client(&ir).context("emit the Rust client bindings")
+    let mut files = emit_rust_client(&ir).context("emit the Rust client bindings")?;
+    let directory = package_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("package root must have a UTF-8 directory name")?;
+    files.extend(emit_tui(&ir, directory).context("emit the operator TUI crate")?);
+    Ok(files)
 }
 
 fn generate_package(
@@ -542,20 +549,22 @@ mod tests {
 
     struct TestPackage {
         root: PathBuf,
+        scratch: PathBuf,
     }
 
     impl TestPackage {
         fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
+            let scratch = std::env::temp_dir().join(format!(
                 "wamn-schema-generator-materialize-{}-{name}",
                 std::process::id()
             ));
-            if root.exists() {
-                fs::remove_dir_all(&root).expect("remove stale test package");
+            if scratch.exists() {
+                fs::remove_dir_all(&scratch).expect("remove stale test package");
             }
+            let root = scratch.join("test_package");
             fs::create_dir_all(&root).expect("create test package");
             fs::write(root.join("wamn.json"), MANIFEST).expect("write test manifest");
-            Self { root }
+            Self { root, scratch }
         }
 
         fn generated_snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -573,7 +582,7 @@ mod tests {
 
     impl Drop for TestPackage {
         fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("remove test package");
+            fs::remove_dir_all(&self.scratch).expect("remove test package");
         }
     }
 

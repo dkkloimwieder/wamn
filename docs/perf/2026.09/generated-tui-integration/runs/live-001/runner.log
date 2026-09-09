@@ -1,0 +1,10 @@
+Private live-proof scratch: /tmp/wamn-generated-tui-live-00wte6ny
+Stage: build-http-route
+Stage: create-registry-auth
+Stage: substrate-up
+Stage: postgres-ready
+Stage: push-http-route
+Stage: generated-operator-live
+Private live-proof scratch: /tmp/wamn-generated-tui-live-00wte6ny
+Redacted integration evidence: /home/kaalin/.cache/wamn-lanes/generated-tui-20260908/docs/perf/2026.09/generated-tui-integration/runs/live-001/evidence
+Disposable generated-operator live proof passed.
