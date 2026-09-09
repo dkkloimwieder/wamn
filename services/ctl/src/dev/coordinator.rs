@@ -851,10 +851,23 @@ impl ProductionDevStageRunner {
                 "the source worktree became dirty before Publish",
             ));
         }
+        // CARRY THE OBSERVATION; do not restate the refusal (wamn-10yt.49).
+        // The refusal above proves cleanliness only for a DURABLE target. A
+        // disposable target reaches this line with a dirty worktree by design,
+        // and a literal `false` would put a statement the run had just seen to
+        // be untrue into the attestation that
+        // `catalog.authoring_command_audit.provenance_dirty` keeps. The flag
+        // exists to be read, so it says what the snapshot said.
+        //
+        // Omitting `provenance` for a disposable target was the other honest
+        // shape and is rejected: `dirty` is not optional, and the audit CHECK
+        // ties `provenance_dirty` to `provenance_commit`, so dropping the flag
+        // also drops the commit -- which is TRUE -- and changes the command
+        // identity `authoring_command_id` derives from it.
         let provenance = CommitProvenance {
             commit: source.source_commit().to_owned(),
             r#ref: None,
-            dirty: false,
+            dirty: source.state() == super::DevSourceState::Dirty,
         };
 
         for admission in &self.admissions {
