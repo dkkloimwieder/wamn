@@ -1157,6 +1157,7 @@ mod tests {
         for policy in [None, Some(false), Some(true)] {
             let mut contract = serde_json::json!({
                 "operation": "orders:purchase-order/get@1.0.0",
+                "kind": "get",
                 "grant": "orders:purchase-order/get@1.0.0",
                 "permission_token": "purchase_order.get"
             });
