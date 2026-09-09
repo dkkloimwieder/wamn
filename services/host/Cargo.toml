@@ -13,6 +13,7 @@ wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-otel", "wasm_component_model_implements"] }
 anyhow = { workspace = true }
+humantime = { workspace = true }
 async-nats = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 # wamn-1fhk: the RouterDeliveryBridge's meter is INJECTED, not taken from
@@ -22,7 +23,7 @@ clap = { workspace = true, features = ["derive", "env"] }
 # in at the one construction site here — which is why this dep edge belongs to
 # the host and not to the bridge's crate.
 opentelemetry = { workspace = true, features = ["metrics"] }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net", "io-util"] }
 tokio-postgres = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }

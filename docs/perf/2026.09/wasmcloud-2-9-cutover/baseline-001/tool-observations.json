@@ -1,0 +1,51 @@
+{
+  "python3": {
+    "path": "/usr/bin/python3",
+    "version_output": "Python 3.14.4"
+  },
+  "rustc": {
+    "path": "/home/kaalin/.cargo/bin/rustc",
+    "version_output": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8"
+  },
+  "rustup": {
+    "path": "/home/kaalin/.cargo/bin/rustup",
+    "version_output": "1.98.0-x86_64-unknown-linux-gnu (overridden by '/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/rust-toolchain.toml')"
+  },
+  "wash": {
+    "path": "/usr/local/bin/wash",
+    "version_output": "wash          v0.40.0\n\u251c nats-server v2.10.20\n\u251c wadm        v0.20.2\n\u2514 wasmcloud   v1.6.1"
+  },
+  "helm": {
+    "path": "/home/kaalin/.local/bin/helm",
+    "version_output": "v4.2.2+gb05881c"
+  },
+  "kubectl": {
+    "path": "/home/kaalin/.local/bin/kubectl",
+    "version_output": "{\n  \"clientVersion\": {\n    \"major\": \"1\",\n    \"minor\": \"36\",\n    \"gitVersion\": \"v1.36.2\",\n    \"gitCommit\": \"24e2b02af5543d7910c2bb074c7264df5a8f0467\",\n    \"gitTreeState\": \"clean\",\n    \"buildDate\": \"2026-06-11T18:12:06Z\",\n    \"goVersion\": \"go1.26.4\",\n    \"compiler\": \"gc\",\n    \"platform\": \"linux/amd64\"\n  },\n  \"kustomizeVersion\": \"v5.8.1\"\n}"
+  },
+  "docker": {
+    "path": "/usr/bin/docker",
+    "version_output": "Docker version 28.5.1, build e180ab8"
+  },
+  "clang": {
+    "path": "/usr/bin/clang",
+    "version_output": "Ubuntu clang version 21.1.8 (6ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-21/bin"
+  },
+  "mold": {
+    "path": "/usr/bin/mold",
+    "version_output": "mold 2.40.4 (compatible with GNU ld)"
+  },
+  "cargo": {
+    "invoked": false,
+    "reason": "The baseline evidence lane does not invoke Cargo."
+  },
+  "environment_override_presence": {
+    "RUSTUP_TOOLCHAIN": false,
+    "RUSTC_WRAPPER": false,
+    "RUSTFLAGS": false,
+    "CARGO_BUILD_JOBS": false,
+    "CARGO_INCREMENTAL": false,
+    "CARGO_TARGET_DIR": false
+  },
+  "environment_values_captured": false
+}

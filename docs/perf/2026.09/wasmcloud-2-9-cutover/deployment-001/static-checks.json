@@ -1,0 +1,79 @@
+[
+  {
+    "name": "shell-syntax",
+    "argv": [
+      "bash",
+      "-n",
+      "tools/rc-gate-run",
+      "tools/receiving-cluster-journey-run",
+      "tools/wms-cluster-journey-run"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:18:40.677566+00:00",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "chart-test-format",
+    "argv": [
+      "rustfmt",
+      "--check",
+      "--edition",
+      "2024",
+      "tests/conformance/tests/chart_seam_governance.rs"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:18:40.679829+00:00",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "whitespace",
+    "argv": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:18:40.712074+00:00",
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "upstream-commit",
+    "argv": [
+      "git",
+      "-C",
+      "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909",
+      "rev-parse",
+      "HEAD"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:18:40.744960+00:00",
+    "exit": 0,
+    "stdout": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9\n",
+    "stderr": ""
+  },
+  {
+    "name": "native-mount-seam",
+    "argv": [
+      "git",
+      "-C",
+      "/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909",
+      "grep",
+      "-n",
+      "with \\.volumes\\|with \\.volumeMounts",
+      "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+      "--",
+      "charts/runtime-operator/templates/runtime/deployment.yaml"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:18:40.746184+00:00",
+    "exit": 0,
+    "stdout": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9:charts/runtime-operator/templates/runtime/deployment.yaml:155:        {{- with .volumes }}\n68ebece9c537f8bb4b5c9999f274ec68d60f35a9:charts/runtime-operator/templates/runtime/deployment.yaml:390:            {{- /* Optional host-container volumeMounts (pair with .volumes\n68ebece9c537f8bb4b5c9999f274ec68d60f35a9:charts/runtime-operator/templates/runtime/deployment.yaml:393:            {{- with .volumeMounts }}\n",
+    "stderr": ""
+  }
+]

@@ -1,0 +1,139 @@
+[
+  {
+    "name": "helm-version",
+    "argv": [
+      "helm",
+      "version",
+      "--short"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:14:48.561559+00:00",
+    "finished": "2026-09-09T13:14:48.595627+00:00",
+    "exit": 0
+  },
+  {
+    "name": "distributed-chart",
+    "argv": [
+      "helm",
+      "show",
+      "chart",
+      "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+      "--version",
+      "2.9.0"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:14:48.595960+00:00",
+    "finished": "2026-09-09T13:14:48.993190+00:00",
+    "exit": 0
+  },
+  {
+    "name": "host-default",
+    "argv": [
+      "helm",
+      "template",
+      "wamn-host",
+      "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+      "--version",
+      "2.9.0",
+      "--namespace",
+      "wamn-system",
+      "-f",
+      "deploy/platform/values-host-default.yaml",
+      "--show-only",
+      "templates/runtime/deployment.yaml",
+      "--show-only",
+      "templates/runtime/service.yaml",
+      "--show-only",
+      "templates/runtime/networkpolicy.yaml"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:14:48.994074+00:00",
+    "finished": "2026-09-09T13:14:49.446857+00:00",
+    "exit": 0
+  },
+  {
+    "name": "host-receiving",
+    "argv": [
+      "helm",
+      "template",
+      "wamn-host",
+      "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+      "--version",
+      "2.9.0",
+      "--namespace",
+      "wamn-system",
+      "-f",
+      "deploy/platform/values-host-default.yaml",
+      "-f",
+      "deploy/platform/values-host-receiving-pat.yaml",
+      "--show-only",
+      "templates/runtime/deployment.yaml",
+      "--show-only",
+      "templates/runtime/service.yaml",
+      "--show-only",
+      "templates/runtime/networkpolicy.yaml"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:14:49.464736+00:00",
+    "finished": "2026-09-09T13:14:49.918893+00:00",
+    "exit": 0
+  },
+  {
+    "name": "host-wms",
+    "argv": [
+      "helm",
+      "template",
+      "wamn-host",
+      "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+      "--version",
+      "2.9.0",
+      "--namespace",
+      "wamn-system",
+      "-f",
+      "deploy/platform/values-host-default.yaml",
+      "-f",
+      "deploy/platform/values-host-wms-pat.yaml",
+      "--show-only",
+      "templates/runtime/deployment.yaml",
+      "--show-only",
+      "templates/runtime/service.yaml",
+      "--show-only",
+      "templates/runtime/networkpolicy.yaml"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:14:49.931933+00:00",
+    "finished": "2026-09-09T13:14:50.375584+00:00",
+    "exit": 0
+  },
+  {
+    "name": "operator",
+    "argv": [
+      "helm",
+      "template",
+      "wamn",
+      "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+      "--version",
+      "2.9.0",
+      "--namespace",
+      "wamn-system",
+      "-f",
+      "deploy/infra/values-wamn.yaml",
+      "--show-only",
+      "templates/operator/deployment.yaml",
+      "--show-only",
+      "templates/operator/role.yaml",
+      "--show-only",
+      "templates/operator/rolebinding.yaml",
+      "--show-only",
+      "templates/operator/workload-crd-role.yaml",
+      "--show-only",
+      "templates/operator/workload-namespace-role.yaml",
+      "--show-only",
+      "templates/operator/endpointslice-role.yaml"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:14:50.390165+00:00",
+    "finished": "2026-09-09T13:14:51.218858+00:00",
+    "exit": 0
+  }
+]

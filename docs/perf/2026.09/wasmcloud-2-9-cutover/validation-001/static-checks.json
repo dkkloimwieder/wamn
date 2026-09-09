@@ -1,0 +1,339 @@
+[
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/execution/host/src/router_driver.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/engine.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/expected_router.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/lib.rs"
+    ],
+    "exit_code": 1,
+    "stdout": "Diff in /home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/crates/platform/runtime/src/component_admission.rs:387:\n             // unregistered but platform-family: the import policy's to refuse, by name\n             \"wasi:sockets/tcp@0.2.3\",\n         ] {\n-            assert!(!super::is_application_operation_import(platform), \"{platform} is a platform capability\");\n+            assert!(\n+                !super::is_application_operation_import(platform),\n+                \"{platform} is a platform capability\"\n+            );\n         }\n-        for application in [\"acme:orders/record@1.0.0\", \"wamn-receiving:receiving/record-receipt@1.0.0\"] {\n-            assert!(super::is_application_operation_import(application), \"{application} is an application call\");\n+        for application in [\n+            \"acme:orders/record@1.0.0\",\n+            \"wamn-receiving:receiving/record-receipt@1.0.0\",\n+        ] {\n+            assert!(\n+                super::is_application_operation_import(application),\n+                \"{application} is an application call\"\n+            );\n         }\n     }\n \nDiff in /home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/crates/platform/runtime/src/component_admission.rs:459:\n     /// The same fixture with a chosen lift/lower ABI, so an ASYNC-LIFTED\n     /// export can be built: the legacy mangling with the async-callback ABI\n     /// lifts every export `async`.\n-    fn component_bytes_with_abi(imports: &str, extra_exports: &str, abi: ManglingAndAbi) -> Vec<u8> {\n+    fn component_bytes_with_abi(\n+        imports: &str,\n+        extra_exports: &str,\n+        abi: ManglingAndAbi,\n+    ) -> Vec<u8> {\n         component_bytes_exporting(OPERATION, imports, extra_exports, abi)\n     }\n \nDiff in /home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/crates/platform/runtime/src/plugins/wamn_blobstore/plugin.rs:265:\n                     .ok_or_else(|| refused(\"the frozen world holds no binding for this alias\"))?,\n             ),\n         };\n-        let (effective_release_id, environment) =\n-            release_coordinates(&invocation, released_manifest, &self.tenant).map_err(|_| {\n-                refused(\"release coordinates: tenant, package or closure kind disagree with the manifest\")\n-            })?;\n+        let (effective_release_id, environment) = release_coordinates(\n+            &invocation,\n+            released_manifest,\n+            &self.tenant,\n+        )\n+        .map_err(|_| {\n+            refused(\n+                \"release coordinates: tenant, package or closure kind disagree with the manifest\",\n+            )\n+        })?;\n         let snapshot = self\n             .postgres\n             .connection_effect_snapshot(\nDiff in /home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:779:\n         let timeout = timeout.clone();\n         Box::pin(async move {\n             client\n-                .execute(\"SELECT set_config('statement_timeout', $1, false)\", &[\n-                    &timeout,\n-                ])\n+                .execute(\n+                    \"SELECT set_config('statement_timeout', $1, false)\",\n+                    &[&timeout],\n+                )\n                 .await\n                 .map_err(|e| {\n                     HookError::message(format!(\"set the session statement_timeout failed: {e}\"))\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/lifecycle.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/plugins/flow_http_routing.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/tests/executor_plugin_no_trap_live.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/tests/guest_environment_isolation.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/tests/sqlx_transaction_live.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/ctl/src/dev/activation.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/executor/src/lib.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/executor/src/main.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/executor/src/readiness.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/host/src/host.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/host/src/main.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/conformance/src/ip_name_lookup.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/conformance/src/runtime_inventory.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/conformance/tests/chart_seam_governance.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/conformance/tests/wasmcloud_release_check.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/conformance/tests/wasmtime_source_identity.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/integration/src/bin/instantiate-bench.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/integration/src/route_authentication_live.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/integration/src/router_tap_live.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/integration/src/virtualized_std_guest.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tools/probes/ctc8-13-native-http/src/main.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tools/probes/ctc8-14-wasi-http/host/src/main.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "bash",
+      "-n",
+      "tools/install-wash",
+      "tools/wasmcloud-release-check",
+      "tools/agent-pilot-run",
+      "tools/receiving-cluster-journey-run",
+      "tools/wms-cluster-journey-run",
+      "tools/rc-gate-run"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+]

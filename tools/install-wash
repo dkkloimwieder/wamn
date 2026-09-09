@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Install the exact upstream CLI used by WAMN publication commands.
+set -euo pipefail
+
+readonly version=2.9.0
+readonly digest=590130b23d897e80ba948c15cfd317e946e1b22b73b6d534af57dfec1e4f4bf6
+readonly asset=wash-x86_64-unknown-linux-gnu
+readonly repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly install_dir="$repo_root/.tools/wash/$version"
+readonly binary="$install_dir/wash"
+
+if [[ "$(uname -s)/$(uname -m)" != Linux/x86_64 ]]; then
+  echo 'install-wash: the pinned artifact requires Linux x86_64' >&2
+  exit 2
+fi
+
+matches_digest() {
+  printf '%s  %s\n' "$digest" "$1" | sha256sum --status --check
+}
+
+if [[ -x "$binary" ]] && matches_digest "$binary"; then
+  printf '%s\n' "$binary"
+  exit 0
+fi
+
+mkdir -p -- "$install_dir"
+install_temp=$(mktemp "$install_dir/.wash.XXXXXXXX")
+trap 'rm -f -- "$install_temp"' EXIT
+curl --fail --silent --show-error --location --retry 2 \
+  "https://github.com/wasmCloud/wasmCloud/releases/download/v$version/$asset" \
+  --output "$install_temp"
+if ! matches_digest "$install_temp"; then
+  echo 'install-wash: downloaded bytes do not match the pinned SHA-256' >&2
+  exit 1
+fi
+chmod 755 -- "$install_temp"
+mv -f -- "$install_temp" "$binary"
+printf '%s\n' "$binary"

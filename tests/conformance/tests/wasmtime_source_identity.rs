@@ -8,14 +8,10 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
-// Two DIFFERENT facts that a patch release pulls apart, so they cannot share a
-// constant. `RESOLVED` is what the lockfile actually resolves the family to;
-// `REQUIREMENT` is the caret requirement the workspace manifest declares, which
-// upstream wasmCloud owns and which a patch bump must NOT move (wamn-ufjr is
-// lockfile-only). Before 47.0.4 they were equal, which is why one constant
-// served both and hid the distinction.
+// The lockfile resolution and the workspace requirement are separate facts.
+// Upstream 2.9.0 declares 47.0.4; a later lockfile-only patch can resolve higher.
 const WASMTIME_RESOLVED: &str = "47.0.4";
-const WASMTIME_REQUIREMENT: &str = "47.0.3";
+const WASMTIME_REQUIREMENT: &str = "47.0.4";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
 const DIRECT_CONSUMERS: [(&str, &[(&str, &str)]); 4] = [
@@ -290,7 +286,7 @@ fn direct_wasmtime_consumers_inherit_workspace_source_contract() {
     assert_eq!(
         workspace.get("wasmtime").map(String::as_str),
         Some(
-            "{version=\"47.0.3\",default-features=false,features=[\"cache\",\"parallel-compilation\"]}"
+            "{version=\"47.0.4\",default-features=false,features=[\"cache\",\"parallel-compilation\"]}"
         ),
         "workspace must own the cache-enabled canonical `wasmtime` requirement"
     );

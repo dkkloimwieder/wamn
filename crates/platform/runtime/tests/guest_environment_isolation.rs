@@ -157,7 +157,11 @@ async fn observed_environment_entries(wasi: Option<WasiCtx>) -> u32 {
         Some(wasi) => builder.with_wasi_ctx(wasi).build(),
         None => builder.build(),
     };
-    let mut store = Store::new(raw, SharedCtx::new(ctx));
+    let mut store = Store::new(
+        raw,
+        SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
+    );
+    wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
     // `build_engine` turns epoch interruption on and this test starts no ticker,
     // so the epoch never advances; the default deadline of 0 would otherwise trap
     // the guest before it reached the import.

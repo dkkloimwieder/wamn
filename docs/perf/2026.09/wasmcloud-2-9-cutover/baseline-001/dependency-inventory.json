@@ -1,0 +1,6524 @@
+{
+  "method": "Python tomllib over committed manifests and captured lockfiles. Cargo did not run.",
+  "source": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+  "manifests": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "f92e94e655cba40d856a85931ecf156461b7ae256618f9d87d03c58e2859d858",
+      "manifest": {
+        "workspace": {
+          "resolver": "2",
+          "members": [
+            "services/host",
+            "services/identity",
+            "services/ctl",
+            "services/dispatcher",
+            "services/executor",
+            "services/scenario-worker",
+            "services/cdc-reader",
+            "services/waker",
+            "tests/orchestrator",
+            "tests/conformance",
+            "tests/integration",
+            "tests/system",
+            "test-support/harness",
+            "test-support/infrastructure",
+            "test-support/simulator",
+            "crates/client/core",
+            "crates/client/tui",
+            "crates/client/terminal",
+            "crates/client/receiving",
+            "crates/authoring/model",
+            "crates/catalog/model",
+            "crates/execution/host",
+            "crates/execution/router",
+            "crates/execution/run-state",
+            "crates/execution/scheduler",
+            "crates/schema/control",
+            "crates/schema/generator",
+            "crates/schema/introspection",
+            "crates/platform/pg-core",
+            "crates/platform/component-policy",
+            "crates/platform/component-virtualizer",
+            "crates/platform/runtime",
+            "crates/scenarios/model",
+            "crates/control/provision",
+            "crates/control/registry",
+            "crates/identity/platform",
+            "crates/identity/project-state",
+            "packages/receiving/generated/receiving-tui",
+            "packages/wms/generated/wms-tui",
+            "packages/client_acme_receiving/generated/client_acme_receiving-tui"
+          ],
+          "default-members": [
+            "crates/authoring/model",
+            "crates/catalog/model",
+            "crates/client/core",
+            "crates/client/receiving",
+            "crates/client/terminal",
+            "crates/client/tui",
+            "crates/execution/host",
+            "crates/execution/router",
+            "crates/execution/run-state",
+            "crates/execution/scheduler",
+            "crates/identity/platform",
+            "crates/platform/component-policy",
+            "crates/platform/pg-core",
+            "crates/platform/runtime",
+            "crates/scenarios/model",
+            "services/executor",
+            "services/host",
+            "services/identity",
+            "services/scenario-worker"
+          ],
+          "exclude": [
+            "components"
+          ],
+          "package": {
+            "version": "0.1.0",
+            "edition": "2024",
+            "license": "Apache-2.0"
+          },
+          "lints": {
+            "rust": {
+              "ambiguous_negative_literals": "deny",
+              "redundant_lifetimes": "deny",
+              "trivial_numeric_casts": "deny",
+              "unsafe_op_in_unsafe_fn": "deny",
+              "unused_lifetimes": "deny",
+              "missing_debug_implementations": "warn",
+              "redundant_imports": "warn"
+            },
+            "clippy": {
+              "correctness": {
+                "level": "deny",
+                "priority": -1
+              },
+              "suspicious": {
+                "level": "deny",
+                "priority": -1
+              },
+              "cargo": {
+                "level": "warn",
+                "priority": -1
+              },
+              "complexity": {
+                "level": "warn",
+                "priority": -1
+              },
+              "pedantic": {
+                "level": "warn",
+                "priority": -1
+              },
+              "perf": {
+                "level": "warn",
+                "priority": -1
+              },
+              "style": {
+                "level": "warn",
+                "priority": -1
+              },
+              "must_use_candidate": "allow",
+              "missing_errors_doc": "allow",
+              "doc_markdown": "allow",
+              "cargo_common_metadata": "allow",
+              "too_many_lines": "allow",
+              "missing_panics_doc": "allow",
+              "multiple_crate_versions": "allow",
+              "return_self_not_must_use": "allow"
+            }
+          },
+          "dependencies": {
+            "ratatui-core": {
+              "version": "0.1.2",
+              "default-features": false,
+              "features": [
+                "std"
+              ]
+            },
+            "ratatui": {
+              "version": "0.30",
+              "default-features": false,
+              "features": [
+                "crossterm"
+              ]
+            },
+            "crossterm": {
+              "version": "0.29",
+              "default-features": false,
+              "features": [
+                "event-stream",
+                "events"
+              ]
+            },
+            "wash-runtime": {
+              "git": "https://github.com/dkkloimwieder/wasmCloud",
+              "rev": "735b57982545358409a7d965a22549b08487ca09",
+              "default-features": false,
+              "features": [
+                "oci"
+              ]
+            },
+            "wasmtime": {
+              "version": "47.0.3",
+              "default-features": false,
+              "features": [
+                "cache",
+                "parallel-compilation"
+              ]
+            },
+            "wasmtime-wasi": "47.0.3",
+            "wasmtime-wasi-http": "47.0.3",
+            "pg_walstream": {
+              "git": "https://github.com/dkkloimwieder/pg-walstream",
+              "rev": "0b007cd627bb913d4b159c705a106b6d4152c91a"
+            },
+            "anyhow": "1",
+            "async-nats": {
+              "version": "0.49.1",
+              "default-features": false
+            },
+            "base64": "0.22",
+            "boon": "0.6",
+            "bytes": "1",
+            "chrono": {
+              "version": "0.4",
+              "default-features": false
+            },
+            "clap": "4",
+            "futures-util": "0.3",
+            "hex": "0.4",
+            "http-body-util": "0.1",
+            "hyper": "1",
+            "hyper-util": "0.1",
+            "url": "2",
+            "rust_decimal": {
+              "version": "1",
+              "default-features": false
+            },
+            "uuid": "1",
+            "jmespath": "0.3",
+            "libc": "0.2",
+            "opentelemetry": {
+              "version": "0.31",
+              "default-features": false
+            },
+            "opentelemetry-otlp": {
+              "version": "0.31",
+              "default-features": false
+            },
+            "opentelemetry_sdk": {
+              "version": "0.31",
+              "default-features": false
+            },
+            "oci-client": {
+              "version": "0.17",
+              "default-features": false,
+              "features": [
+                "rustls-tls"
+              ]
+            },
+            "object_store": {
+              "version": "0.14.1",
+              "default-features": false,
+              "features": [
+                "aws"
+              ]
+            },
+            "proptest": {
+              "version": "1.11",
+              "default-features": false,
+              "features": [
+                "std",
+                "bit-set"
+              ]
+            },
+            "rand_core": "0.10",
+            "reqwest": {
+              "version": "0.13",
+              "default-features": false
+            },
+            "ring": "0.17",
+            "rcgen": "0.14.8",
+            "rustls": {
+              "version": "0.23",
+              "default-features": false
+            },
+            "rustix": {
+              "version": "1",
+              "features": [
+                "fs",
+                "process"
+              ]
+            },
+            "schemars": "0.8",
+            "serde": "1",
+            "serde_json": "1",
+            "sha2": "0.11",
+            "subtle": "2",
+            "tokio": "1",
+            "tokio-postgres": "0.7",
+            "tokio-rustls": "0.26",
+            "tracing": "0.1",
+            "tracing-opentelemetry": {
+              "version": "0.32",
+              "default-features": false
+            },
+            "tracing-subscriber": "0.3",
+            "async-trait": "0.1",
+            "wasm-encoder": "0.251",
+            "wasi-virt": {
+              "version": "=0.2.0",
+              "git": "https://github.com/bytecodealliance/WASI-Virt.git",
+              "rev": "448f6df8f688cee5d6995e96b1ffc31f9bf00742",
+              "default-features": false
+            },
+            "wamn-authoring-model": {
+              "path": "crates/authoring/model",
+              "version": "0.1.0"
+            },
+            "wamn-catalog": {
+              "path": "crates/catalog/model",
+              "version": "0.1.0"
+            },
+            "wamn-client": {
+              "path": "crates/client/core",
+              "version": "0.1.0"
+            },
+            "wamn-client-terminal": {
+              "path": "crates/client/terminal",
+              "version": "0.1.0"
+            },
+            "wamn-client-tui": {
+              "path": "crates/client/tui",
+              "version": "0.1.0"
+            },
+            "wamn-generated-client-acme-receiving-tui": {
+              "path": "packages/client_acme_receiving/generated/client_acme_receiving-tui",
+              "version": "0.1.0"
+            },
+            "wamn-generated-receiving-tui": {
+              "path": "packages/receiving/generated/receiving-tui",
+              "version": "0.1.0"
+            },
+            "wamn-generated-wms-tui": {
+              "path": "packages/wms/generated/wms-tui",
+              "version": "0.1.0"
+            },
+            "wamn-receiving-tui": {
+              "path": "crates/client/receiving",
+              "version": "0.1.0"
+            },
+            "wamn-cdc-reader": {
+              "path": "services/cdc-reader",
+              "version": "0.1.0"
+            },
+            "wamn-component-policy": {
+              "path": "crates/platform/component-policy",
+              "version": "0.1.0"
+            },
+            "wamn-component-virtualizer": {
+              "path": "crates/platform/component-virtualizer",
+              "version": "0.1.0"
+            },
+            "wamn-control-provision": {
+              "path": "crates/control/provision",
+              "version": "0.1.0"
+            },
+            "wamn-control-registry": {
+              "path": "crates/control/registry",
+              "version": "0.1.0"
+            },
+            "wamn-ctl": {
+              "path": "services/ctl",
+              "version": "0.1.0"
+            },
+            "wamn-identity": {
+              "path": "services/identity",
+              "version": "0.1.0"
+            },
+            "wamn-dispatcher": {
+              "path": "services/dispatcher",
+              "version": "0.1.0"
+            },
+            "wamn-event-reg": {
+              "path": "components/events/registration",
+              "version": "0.1.0"
+            },
+            "wamn-event-wire": {
+              "path": "components/events/wire",
+              "version": "0.1.0"
+            },
+            "wamn-execution-contract": {
+              "path": "components/execution/contract",
+              "version": "0.1.0"
+            },
+            "wamn-execution-host": {
+              "path": "crates/execution/host",
+              "version": "0.1.0"
+            },
+            "wamn-executor": {
+              "path": "services/executor",
+              "version": "0.1.0"
+            },
+            "wamn-gate-harness": {
+              "path": "test-support/harness",
+              "version": "0.1.0"
+            },
+            "wamn-gates": {
+              "path": "tests/orchestrator",
+              "version": "0.1.0"
+            },
+            "wamn-host": {
+              "path": "services/host",
+              "version": "0.1.0"
+            },
+            "wamn-materializer": {
+              "path": "components/events/materializer",
+              "version": "0.1.0"
+            },
+            "wamn-pg-core": {
+              "path": "crates/platform/pg-core",
+              "version": "0.1.0"
+            },
+            "wamn-platform-identity": {
+              "path": "crates/identity/platform",
+              "version": "0.1.0"
+            },
+            "wamn-project-state": {
+              "path": "crates/identity/project-state",
+              "version": "0.1.0"
+            },
+            "wamn-proof-conformance": {
+              "path": "tests/conformance",
+              "version": "0.1.0"
+            },
+            "wamn-proof-integration": {
+              "path": "tests/integration",
+              "version": "0.1.0"
+            },
+            "wamn-proof-system": {
+              "path": "tests/system",
+              "version": "0.1.0"
+            },
+            "wamn-router": {
+              "path": "crates/execution/router",
+              "version": "0.1.0"
+            },
+            "wamn-run-state": {
+              "path": "crates/execution/run-state",
+              "version": "0.1.0"
+            },
+            "wamn-runtime": {
+              "path": "crates/platform/runtime",
+              "version": "0.1.0"
+            },
+            "wamn-scenario-model": {
+              "path": "crates/scenarios/model",
+              "version": "0.1.0"
+            },
+            "wamn-scenario-worker": {
+              "path": "services/scenario-worker",
+              "version": "0.1.0"
+            },
+            "wamn-scheduler": {
+              "path": "crates/execution/scheduler",
+              "version": "0.1.0"
+            },
+            "wamn-schema-control": {
+              "path": "crates/schema/control",
+              "version": "0.1.0"
+            },
+            "wamn-schema-generator": {
+              "path": "crates/schema/generator",
+              "version": "0.1.0"
+            },
+            "wamn-schema-introspection": {
+              "path": "crates/schema/introspection",
+              "version": "0.1.0"
+            },
+            "wamn-simulator": {
+              "path": "test-support/simulator",
+              "version": "0.1.0"
+            },
+            "wamn-test-infrastructure": {
+              "path": "test-support/infrastructure",
+              "version": "0.1.0"
+            },
+            "wamn-waker": {
+              "path": "services/waker",
+              "version": "0.1.0"
+            }
+          }
+        },
+        "profile": {
+          "release": {
+            "lto": "thin"
+          },
+          "dev": {
+            "lto": false,
+            "debug": "line-tables-only",
+            "split-debuginfo": "unpacked",
+            "package": {
+              "*": {
+                "debug": "line-tables-only",
+                "split-debuginfo": "unpacked"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "path": "components/Cargo.toml",
+      "sha256": "09ce2141d46030f9f45b6ea2cff231d9309b14fe8ee816ca58cebff67f93e1e4",
+      "manifest": {
+        "workspace": {
+          "resolver": "2",
+          "members": [
+            "application/client-acme-receiving",
+            "application/receiving",
+            "application/wms",
+            "ingress/http-route",
+            "events/materializer",
+            "events/registration",
+            "events/wire",
+            "execution/blob-put",
+            "execution/contract",
+            "execution/materializer",
+            "data/postgres-statements",
+            "data/postgres-sqlx",
+            "data/client-acme-receiving-data",
+            "data/receiving-data",
+            "data/wms-data",
+            "fixtures/busyloop",
+            "fixtures/connection-http-standard",
+            "fixtures/sockprobe",
+            "fixtures/sqlx-command",
+            "fixtures/std-virtualization-probe"
+          ],
+          "exclude": [
+            "no-std"
+          ],
+          "lints": {
+            "rust": {
+              "ambiguous_negative_literals": "deny",
+              "redundant_lifetimes": "deny",
+              "trivial_numeric_casts": "deny",
+              "unsafe_op_in_unsafe_fn": "deny",
+              "unused_lifetimes": "deny",
+              "missing_debug_implementations": "warn",
+              "redundant_imports": "warn"
+            },
+            "clippy": {
+              "correctness": {
+                "level": "deny",
+                "priority": -1
+              },
+              "suspicious": {
+                "level": "deny",
+                "priority": -1
+              },
+              "cargo": {
+                "level": "warn",
+                "priority": -1
+              },
+              "complexity": {
+                "level": "warn",
+                "priority": -1
+              },
+              "pedantic": {
+                "level": "warn",
+                "priority": -1
+              },
+              "perf": {
+                "level": "warn",
+                "priority": -1
+              },
+              "style": {
+                "level": "warn",
+                "priority": -1
+              },
+              "must_use_candidate": "allow",
+              "missing_errors_doc": "allow",
+              "doc_markdown": "allow",
+              "cargo_common_metadata": "allow",
+              "too_many_lines": "allow",
+              "missing_panics_doc": "allow",
+              "multiple_crate_versions": "allow",
+              "return_self_not_must_use": "allow"
+            }
+          },
+          "package": {
+            "version": "0.1.0",
+            "edition": "2024",
+            "license": "Apache-2.0"
+          },
+          "dependencies": {
+            "chrono": {
+              "version": "0.4",
+              "default-features": false
+            },
+            "jmespath": "0.3",
+            "schemars": "0.8",
+            "sha2": "0.11",
+            "base64": "0.22",
+            "boon": "0.6",
+            "serde": "1",
+            "serde_json": "1",
+            "sqlx-core": {
+              "version": "=0.9.0",
+              "default-features": false
+            },
+            "wit-bindgen": {
+              "version": "0.61",
+              "default-features": false,
+              "features": [
+                "macros",
+                "realloc"
+              ]
+            },
+            "wamn-event-reg": {
+              "path": "events/registration",
+              "version": "0.1.0"
+            },
+            "wamn-event-wire": {
+              "path": "events/wire",
+              "version": "0.1.0"
+            },
+            "wamn-execution-contract": {
+              "path": "execution/contract",
+              "version": "0.1.0"
+            },
+            "wamn-materializer": {
+              "path": "events/materializer",
+              "version": "0.1.0"
+            },
+            "wamn-postgres-statements": {
+              "path": "data/postgres-statements",
+              "version": "0.1.0"
+            },
+            "wamn-postgres-sqlx": {
+              "path": "data/postgres-sqlx",
+              "version": "0.1.0"
+            },
+            "wamn-client-acme-receiving-data-access": {
+              "path": "data/client-acme-receiving-data",
+              "version": "0.1.0"
+            },
+            "wamn-receiving-data-access": {
+              "path": "data/receiving-data",
+              "version": "0.1.0"
+            },
+            "wamn-wms-data-access": {
+              "path": "data/wms-data",
+              "version": "0.1.0"
+            }
+          }
+        },
+        "profile": {
+          "release": {
+            "opt-level": "s",
+            "strip": true
+          }
+        }
+      }
+    },
+    {
+      "path": "components/application/client-acme-receiving/Cargo.toml",
+      "sha256": "f70cc8986be145510b47d183389d6b47a983478e4f9a53250807f3b7e36df915",
+      "manifest": {
+        "package": {
+          "name": "client-acme-receiving",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Package-grain Acme Receiving overlay operation component",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "futures-executor": "0.3",
+          "wamn-client-acme-receiving-data-access": {
+            "workspace": true
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ],
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/application/receiving/Cargo.toml",
+      "sha256": "9ea125831effc31f8c7460dc042b9420e8dfc41fe83f80bd186fdf2e5dd5076c",
+      "manifest": {
+        "package": {
+          "name": "receiving",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Package-grain Receiving operation component",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "futures-executor": "0.3",
+          "wamn-receiving-data-access": {
+            "workspace": true
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ],
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/application/wms/Cargo.toml",
+      "sha256": "1eb652e180a0ac1ffb57da7f541b21416e47bfa2c00743841107a6fe817eed90",
+      "manifest": {
+        "package": {
+          "name": "wms",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Package-grain WMS operation component",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "futures-executor": "0.3",
+          "wamn-wms-data-access": {
+            "workspace": true
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ],
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/data/client-acme-receiving-data/Cargo.toml",
+      "sha256": "6c90543bc8232f977c6123e53162fc31f6e6ad9af01ca1905f202c0535a2760c",
+      "manifest": {
+        "package": {
+          "name": "wamn-client-acme-receiving-data-access",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Typed Acme Receiving overlay access over wamn:postgres",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "uuid": "1",
+          "wamn-postgres-statements": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "futures-executor": "0.3"
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/data/postgres-sqlx/Cargo.toml",
+      "sha256": "35f75829120bc3289b289eb804cdb2a2447f15fbc65db5bb74be4d024a19fa38",
+      "manifest": {
+        "package": {
+          "name": "wamn-postgres-sqlx",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "SQLx driver for the wamn:postgres capability",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "futures-core": {
+            "version": "0.3",
+            "default-features": false,
+            "features": [
+              "alloc"
+            ]
+          },
+          "futures-util": {
+            "version": "0.3",
+            "default-features": false,
+            "features": [
+              "alloc"
+            ]
+          },
+          "log": "0.4",
+          "sqlx-core": {
+            "workspace": true
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "futures-executor": "0.3",
+          "sqlx": {
+            "version": "=0.9.0",
+            "default-features": false,
+            "features": [
+              "derive"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/data/postgres-statements/Cargo.toml",
+      "sha256": "91c830b4b2f5d4959452f9ba8453b0c27582ce0b5f38b4e85aba0ec3987019e8",
+      "manifest": {
+        "package": {
+          "name": "wamn-postgres-statements",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Thin typed binding for content-addressed wamn:postgres statements",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/data/receiving-data/Cargo.toml",
+      "sha256": "07f928aae61721ff0fe88b2cea8b963335e522bb5baebca9643c81ae1b38fd1b",
+      "manifest": {
+        "package": {
+          "name": "wamn-receiving-data-access",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Typed Receiving data-access kernel over wamn:postgres",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "base64": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "uuid": "1",
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-postgres-statements": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/data/wms-data/Cargo.toml",
+      "sha256": "4951145111136f0c2b84d0f3578438d38ed4ee4cf431b6a76b07efc28bacb8e8",
+      "manifest": {
+        "package": {
+          "name": "wamn-wms-data-access",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Typed WMS data-access kernel over wamn:postgres",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "base64": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "uuid": "1",
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-postgres-statements": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/events/materializer/Cargo.toml",
+      "sha256": "d62425ba6f62063017843a5c599b9e210600a8fd1dbe50751cb8f0b3ba073cb2",
+      "manifest": {
+        "package": {
+          "name": "wamn-materializer",
+          "description": "wamn CDC materializer decisions: pure registration matching, tenant guards, causation bounds, condition evaluation, and event-input projection.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wamn-event-wire": {
+            "workspace": true
+          },
+          "wamn-event-reg": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "jmespath": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/events/registration/Cargo.toml",
+      "sha256": "6557fd89ed7f5e0c070739284969cf574f7689254358b41eebe67a94c94ec9a4",
+      "manifest": {
+        "package": {
+          "name": "wamn-event-reg",
+          "description": "wamn event registration model: a wiring subscription's entity, operations, condition, and event-or-batch input grain. Stored as jsonb in catalog.event_registrations.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wamn-event-wire": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "jmespath": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/events/wire/Cargo.toml",
+      "sha256": "95516e170b2df04b9d654a05c144e181831b29de0377c8526e8e9e422d607213",
+      "manifest": {
+        "package": {
+          "name": "wamn-event-wire",
+          "description": "D19 v3 event-plane wire contract (FROZEN 0.1.0, l5i9.30): envelope + subject + Nats-Msg-Id builders shared by the CDC reader and the materializer",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std",
+              "serde"
+            ]
+          },
+          "sha2": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/execution/blob-put/Cargo.toml",
+      "sha256": "b10c42d4c240c3c3b4a679db4baa1a80e183e93b2cd59ead8526f17d45f9043c",
+      "manifest": {
+        "package": {
+          "name": "blob-put",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Palette node writing one object at a caller-supplied deterministic key."
+        },
+        "dependencies": {
+          "serde_json": {
+            "workspace": true
+          },
+          "wit-bindgen": {
+            "workspace": true,
+            "features": [
+              "async"
+            ]
+          }
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ]
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/execution/contract/Cargo.toml",
+      "sha256": "173a5bc5323a45859cd32eb23eaea6462759354e78537de4ac7e31b97db5f633",
+      "manifest": {
+        "package": {
+          "name": "wamn-execution-contract",
+          "description": "Shared execution contract vocabulary: canonical JSON identity, the node contract, persisted port names, and the publish-gate test cases.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true,
+            "features": [
+              "float_roundtrip"
+            ]
+          },
+          "schemars": {
+            "workspace": true
+          },
+          "sha2": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/execution/materializer/Cargo.toml",
+      "sha256": "982f0a65a5badda6c9b876feb27c65d334587891b48b700dc2852d30fcb2f4d1",
+      "manifest": {
+        "package": {
+          "name": "materializer",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wit-bindgen": {
+            "workspace": true
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "wamn-materializer": {
+            "workspace": true
+          },
+          "wamn-event-reg": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/fixtures/busyloop/Cargo.toml",
+      "sha256": "799a53aec9035089b86c6bec47c30c07b6355a027c43e01ff6432a351f5b0149",
+      "manifest": {
+        "package": {
+          "name": "busyloop",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/fixtures/connection-http-standard/Cargo.toml",
+      "sha256": "5dbf6e59e7b22bba04ffd9b38223ef06fdb5ccb42d20ad0da37cc5db0302aeaa",
+      "manifest": {
+        "package": {
+          "name": "connection-http-standard",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "std": []
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ],
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/fixtures/sockprobe/Cargo.toml",
+      "sha256": "1e3584f6585a499110932d9203151f14a79df81ffafb2734470154eceb8bb719",
+      "manifest": {
+        "package": {
+          "name": "sockprobe",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/fixtures/sqlx-command/Cargo.toml",
+      "sha256": "41168f13e62f7c2b53605818cd1e95fac51b868cdeb0414e632e7dbf840bb31d",
+      "manifest": {
+        "package": {
+          "name": "sqlx-command",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Real-transport SQLx transaction acceptance fixture",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "futures-executor": "0.3",
+          "sqlx": {
+            "version": "=0.9.0",
+            "default-features": false
+          },
+          "wamn-postgres-sqlx": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/fixtures/std-virtualization-probe/Cargo.toml",
+      "sha256": "0257045a4e9ef4bc22cdc0edb1cf46ce8876738b3ef8fcd5aea4ea674d1df233",
+      "manifest": {
+        "package": {
+          "name": "std-virtualization-probe",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Behavioral proof fixture for the standard-library WASI virtualization stage",
+          "license": "Apache-2.0"
+        },
+        "dependencies": {
+          "serde_json": {
+            "workspace": true
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ],
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/ingress/http-route/Cargo.toml",
+      "sha256": "a391e610e81d6daca90ba132455983503635a5455b295c965042b3a2d0e626ec",
+      "manifest": {
+        "package": {
+          "name": "http-route",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib",
+            "rlib"
+          ]
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/no-std/Cargo.toml",
+      "sha256": "9e3bee081a9f24d0ad4d4868dab0fbb57e4ced92cbbcbd27b7cb07afcd62011c",
+      "manifest": {
+        "workspace": {
+          "resolver": "2",
+          "members": [
+            "http-request",
+            "label-render",
+            "label-template",
+            "transform"
+          ],
+          "lints": {
+            "rust": {
+              "ambiguous_negative_literals": "deny",
+              "redundant_lifetimes": "deny",
+              "trivial_numeric_casts": "deny",
+              "unsafe_op_in_unsafe_fn": "deny",
+              "unused_lifetimes": "deny",
+              "missing_debug_implementations": "warn",
+              "redundant_imports": "warn"
+            },
+            "clippy": {
+              "correctness": {
+                "level": "deny",
+                "priority": -1
+              },
+              "suspicious": {
+                "level": "deny",
+                "priority": -1
+              },
+              "cargo": {
+                "level": "warn",
+                "priority": -1
+              },
+              "complexity": {
+                "level": "warn",
+                "priority": -1
+              },
+              "pedantic": {
+                "level": "warn",
+                "priority": -1
+              },
+              "perf": {
+                "level": "warn",
+                "priority": -1
+              },
+              "style": {
+                "level": "warn",
+                "priority": -1
+              },
+              "must_use_candidate": "allow",
+              "missing_errors_doc": "allow",
+              "doc_markdown": "allow",
+              "cargo_common_metadata": "allow",
+              "too_many_lines": "allow",
+              "missing_panics_doc": "allow",
+              "multiple_crate_versions": "allow",
+              "return_self_not_must_use": "allow"
+            }
+          },
+          "package": {
+            "version": "0.1.0",
+            "edition": "2024"
+          },
+          "dependencies": {
+            "dlmalloc": {
+              "version": "0.2.14",
+              "features": [
+                "global"
+              ]
+            },
+            "wit-bindgen": {
+              "version": "0.44",
+              "default-features": false,
+              "features": [
+                "macros",
+                "realloc"
+              ]
+            }
+          }
+        },
+        "profile": {
+          "release": {
+            "opt-level": "s",
+            "strip": true
+          }
+        }
+      }
+    },
+    {
+      "path": "components/no-std/http-request/Cargo.toml",
+      "sha256": "4d4b31651195d94f2f67d008cda207ef158194559cb3004c6b790112c7edbc20",
+      "manifest": {
+        "package": {
+          "name": "http-request",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "dlmalloc": {
+            "workspace": true
+          },
+          "serde_json": {
+            "version": "1",
+            "default-features": false,
+            "features": [
+              "alloc"
+            ]
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "std": []
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ],
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/no-std/label-render/Cargo.toml",
+      "sha256": "aaa0eba9cc0b28251661865f7a024acfdf176f361d572462b0f2e29ef42dc2b8",
+      "manifest": {
+        "package": {
+          "name": "label-render",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "dlmalloc": {
+            "workspace": true
+          },
+          "label-template": {
+            "path": "../label-template"
+          },
+          "serde_json": {
+            "version": "1",
+            "default-features": false,
+            "features": [
+              "alloc"
+            ]
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "std": []
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ],
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/no-std/label-template/Cargo.toml",
+      "sha256": "f4ab675207c0fa525fd0db4266492018dacf0f8494879ae1e1e83114c2842485",
+      "manifest": {
+        "package": {
+          "name": "label-template",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "description": "Pure ZPL rendering for the closed label template set."
+        },
+        "dependencies": {
+          "serde_json": {
+            "version": "1",
+            "default-features": false,
+            "features": [
+              "alloc"
+            ]
+          }
+        },
+        "lib": {
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "components/no-std/transform/Cargo.toml",
+      "sha256": "fb329e697d1262ad29e0898269b176b8a69c6031ff545993d34b005e732e2aff",
+      "manifest": {
+        "package": {
+          "name": "transform",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "dlmalloc": {
+            "workspace": true
+          },
+          "serde_json": {
+            "version": "1",
+            "default-features": false,
+            "features": [
+              "alloc"
+            ]
+          },
+          "wit-bindgen": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "std": []
+        },
+        "lib": {
+          "crate-type": [
+            "cdylib"
+          ],
+          "test": false,
+          "bench": false
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/authoring/model/Cargo.toml",
+      "sha256": "101188669c5a2b39e27a47a4275d8e707f57ce571b2d86309fc5e833621a824d",
+      "manifest": {
+        "package": {
+          "name": "wamn-authoring-model",
+          "description": "Frontend-neutral, versioned authoring command and projection contracts.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "schemars": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/catalog/model/Cargo.toml",
+      "sha256": "d3af4dc9d6dbacc43ad0c42f445c715dc5adb06942c68c332fc55e7b4e431d4d",
+      "manifest": {
+        "package": {
+          "name": "wamn-catalog",
+          "description": "Canonical immutable catalog identities and definition hashing",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "test-util": []
+        },
+        "dependencies": {
+          "boon": {
+            "workspace": true
+          },
+          "schemars": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true,
+            "features": [
+              "float_roundtrip"
+            ]
+          },
+          "sha2": {
+            "workspace": true
+          },
+          "url": {
+            "workspace": true
+          },
+          "wamn-component-policy": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "wamn-catalog": {
+            "path": ".",
+            "features": [
+              "test-util"
+            ]
+          },
+          "wamn-control-provision": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/client/core/Cargo.toml",
+      "sha256": "fe8ece2a47807fa646a90b210c6eca336d1ea0885f71e7b210e53297f131a4c3",
+      "manifest": {
+        "package": {
+          "name": "wamn-client",
+          "description": "Transport for published WAMN routes: base URL, credentials, route construction, and operation-driven envelope semantics.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "boon": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "alloc"
+            ]
+          },
+          "uuid": {
+            "workspace": true
+          },
+          "async-trait": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt-multi-thread"
+            ]
+          },
+          "async-trait": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/client/receiving/Cargo.toml",
+      "sha256": "48bdc71515ba335e46066533c48dc8e7a51ab9cc34536c46a1ae06f29cacb6ec",
+      "manifest": {
+        "package": {
+          "name": "wamn-receiving-tui",
+          "description": "The Receiving operator terminal: purchase order list and receipt entry over published routes.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "bin": [
+          {
+            "name": "wamn-receiving",
+            "path": "src/main.rs"
+          }
+        ],
+        "dependencies": {
+          "ratatui": {
+            "workspace": true
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "wamn-client": {
+            "workspace": true
+          },
+          "wamn-client-terminal": {
+            "workspace": true
+          },
+          "wamn-client-tui": {
+            "workspace": true
+          },
+          "anyhow": {
+            "workspace": true
+          },
+          "async-trait": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "clock",
+              "std"
+            ]
+          },
+          "crossterm": {
+            "workspace": true
+          },
+          "futures-util": {
+            "workspace": true
+          },
+          "reqwest": {
+            "workspace": true,
+            "features": [
+              "rustls"
+            ]
+          },
+          "rust_decimal": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt-multi-thread"
+            ]
+          },
+          "uuid": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/client/terminal/Cargo.toml",
+      "sha256": "7dfb10b45d8933e200e42ef943e9d25a6de010939f84a749ae86d41239cdf175",
+      "manifest": {
+        "package": {
+          "name": "wamn-client-terminal",
+          "description": "The terminal driver: raw mode, the alternate screen, an event stream, and restoration on drop or panic.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "ratatui": {
+            "workspace": true
+          },
+          "crossterm": {
+            "workspace": true
+          },
+          "wamn-client": {
+            "workspace": true
+          },
+          "wamn-client-tui": {
+            "workspace": true
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "async-trait": {
+            "workspace": true
+          },
+          "reqwest": {
+            "workspace": true,
+            "features": [
+              "rustls"
+            ]
+          },
+          "futures-util": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "signal"
+            ]
+          },
+          "uuid": {
+            "workspace": true,
+            "features": [
+              "v4"
+            ]
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "clock",
+              "std"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/client/tui/Cargo.toml",
+      "sha256": "710dadf4de970eaab732bf36d9981b1c64548728aefbbe81987a56f359f91770",
+      "manifest": {
+        "package": {
+          "name": "wamn-client-tui",
+          "description": "Descriptor-driven terminal primitives: tables, forms, filters, paging and status, rendered from contract field descriptors.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "serde_json": {
+            "workspace": true
+          },
+          "ratatui-core": {
+            "workspace": true
+          },
+          "wamn-client": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "wamn-schema-generator": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/control/provision/Cargo.toml",
+      "sha256": "60035f70d29ff2d3df23ea6371ac482eb4c3e9703690e80de38214325e76c772",
+      "manifest": {
+        "package": {
+          "name": "wamn-control-provision",
+          "description": "wamn project provisioning (2.3): PURE Postgres SQL builders + identifier naming + per-project credential Secret rendering for standing up a per-project database on the shared cluster (D6: CloudNativePG, one shared Cluster, database-per-project). No DB / K8s client / clock \u2014 the `provision-project` subcommand (wamn-ctl) supplies the effects and the `provisionbench` gate (wamn-gates) drives it against a real cluster. Cross-project isolation = per-project DATABASE + per-DB CONNECT (PUBLIC revoked) + the shared NOSUPERUSER `wamn_app` role, with RLS confining within (the 2.2 model).",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "default": [],
+          "ops": []
+        },
+        "test": [
+          {
+            "name": "dump",
+            "path": "tests/dump.rs",
+            "required-features": [
+              "ops"
+            ]
+          },
+          {
+            "name": "ops_storage",
+            "path": "tests/ops_storage.rs",
+            "required-features": [
+              "ops"
+            ]
+          },
+          {
+            "name": "restore",
+            "path": "tests/restore.rs",
+            "required-features": [
+              "ops"
+            ]
+          }
+        ],
+        "dependencies": {
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-pg-core": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true,
+            "features": [
+              "effect-writer-credential"
+            ]
+          },
+          "wamn-schema-generator": {
+            "workspace": true
+          },
+          "hex": {
+            "workspace": true
+          },
+          "sha2": {
+            "workspace": true
+          },
+          "url": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          },
+          "wamn-schema-control": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/control/registry/Cargo.toml",
+      "sha256": "faeef8329e16a2f37cc328f0ac854cf5191dadcdb12a2a13535ff1fa5d342556",
+      "manifest": {
+        "package": {
+          "name": "wamn-control-registry",
+          "description": "Canonical wamn control-plane registry model (wamn-q3n.1): the (org, project, env) identity triple, org tier/cluster placement, and credential Secret references. A pure model \u2014 types, validation, import/export.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/execution/host/Cargo.toml",
+      "sha256": "b8c44a20c9c7a8fd4854a6f47941c52794b20945c0a61348fde5a67ac6ff22f2",
+      "manifest": {
+        "package": {
+          "name": "wamn-execution-host",
+          "description": "Shared production router driver.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "test-util": []
+        },
+        "dependencies": {
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          },
+          "wamn-router": {
+            "workspace": true
+          },
+          "wamn-runtime": {
+            "workspace": true,
+            "features": [
+              "wasm_component_model_implements"
+            ]
+          },
+          "wash-runtime": {
+            "workspace": true
+          },
+          "wasmtime-wasi": {
+            "workspace": true
+          },
+          "futures-util": {
+            "workspace": true
+          },
+          "anyhow": {
+            "workspace": true
+          },
+          "async-trait": {
+            "workspace": true
+          },
+          "opentelemetry": {
+            "workspace": true,
+            "features": [
+              "metrics",
+              "trace"
+            ]
+          },
+          "tracing-opentelemetry": {
+            "workspace": true
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt",
+              "sync",
+              "time"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "opentelemetry_sdk": {
+            "workspace": true,
+            "features": [
+              "testing"
+            ]
+          },
+          "tracing-subscriber": {
+            "workspace": true
+          },
+          "wat": "=1.252.0"
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/execution/router/Cargo.toml",
+      "sha256": "26a46bff4c181cfd3e7074d83b3724f9fa1a8f3c71bc0ed47287c6bb2c7ea418",
+      "manifest": {
+        "package": {
+          "name": "wamn-router",
+          "description": "wamn host router: the graph walk over a resolved wiring \u2014 frontier ordering, port routing, error-edge semantics, and the per-delivery hop limit. Node invocation is the caller's, behind a trait; the router only decides.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "serde_json": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          },
+          "opentelemetry": {
+            "workspace": true,
+            "features": [
+              "metrics"
+            ]
+          }
+        },
+        "dev-dependencies": {
+          "proptest": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/execution/run-state/Cargo.toml",
+      "sha256": "df422de12e38a1dd7fa17ee1b4f50893eb092ec18baf70a4bcc9308ef69707f0",
+      "manifest": {
+        "package": {
+          "name": "wamn-run-state",
+          "description": "The durable execution-state contract. Its default graph is pure and guest-safe; the optional native feature owns the private effect-writer Postgres adapter.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "tenant-key": [
+            "dep:hex",
+            "dep:sha2"
+          ],
+          "effect-writer-credential": [
+            "dep:chrono",
+            "dep:url",
+            "tenant-key"
+          ],
+          "native": [
+            "dep:deadpool-postgres",
+            "dep:tokio-postgres",
+            "effect-writer-credential"
+          ],
+          "test-util": [],
+          "durable-tier": []
+        },
+        "dependencies": {
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-pg-core": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ],
+            "optional": true
+          },
+          "hex": {
+            "workspace": true,
+            "optional": true
+          },
+          "sha2": {
+            "workspace": true,
+            "optional": true
+          },
+          "url": {
+            "workspace": true,
+            "optional": true
+          },
+          "deadpool-postgres": {
+            "version": "0.14",
+            "optional": true
+          },
+          "tokio-postgres": {
+            "workspace": true,
+            "optional": true
+          }
+        },
+        "dev-dependencies": {
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt-multi-thread"
+            ]
+          },
+          "wamn-control-provision": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/execution/scheduler/Cargo.toml",
+      "sha256": "5323f3015d55a3e13618ac3e37a0a5c10681e9ccf8ee57117e402d08220f278a",
+      "manifest": {
+        "package": {
+          "name": "wamn-scheduler",
+          "description": "Adaptive polling cadence shared by execution services.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/identity/platform/Cargo.toml",
+      "sha256": "3dc688236fdd144086a3555b7081cc8d50592afc1eadb9457539a34dc3f230d0",
+      "manifest": {
+        "package": {
+          "name": "wamn-platform-identity",
+          "description": "First-party platform identity core backed by the T1 system database.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "base64": {
+            "workspace": true
+          },
+          "hex": {
+            "workspace": true
+          },
+          "ring": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "sha2": {
+            "workspace": true
+          },
+          "subtle": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt-multi-thread",
+              "time",
+              "net",
+              "io-util",
+              "sync"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/identity/project-state/Cargo.toml",
+      "sha256": "89c527a7a246fe025f57683b9ceec4494fdd647d309975ce8d33b4ebb2221004",
+      "manifest": {
+        "package": {
+          "name": "wamn-project-state",
+          "description": "The per-project system schema v1 (wamn-as5 / plan 2.4): the auth/RBAC/config table manifest \u2014 users, roles, permissions, configurations, audit_log, api_keys \u2014 the single source for the schema name and CHECK literals, drift-guarded against deploy/sql/app-schema.sql.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {},
+        "dev-dependencies": {
+          "wamn-control-provision": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/platform/component-policy/Cargo.toml",
+      "sha256": "e4b14ac8e4c98cdcc201834f0b16d7999de0af14bf6fe9fc1c3e2b3e521cdd93",
+      "manifest": {
+        "package": {
+          "name": "wamn-component-policy",
+          "description": "Pure component import policy and capability-grant derivation.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {},
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/platform/component-virtualizer/Cargo.toml",
+      "sha256": "e87021e727bad49ed278de5db257baee30b02e617fd352a7659698e127780109",
+      "manifest": {
+        "package": {
+          "name": "wamn-component-virtualizer",
+          "description": "Deterministic WASI virtualization for native tenant components.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "wasi-virt": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/platform/pg-core/Cargo.toml",
+      "sha256": "de8b32a8ce7846bf5e72cbfede63e26ad7cb0592367efcc591b29e1b4c1e6624",
+      "manifest": {
+        "package": {
+          "name": "wamn-pg-core",
+          "description": "Guest-safe PostgreSQL identifiers and positional-parameter composition.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/platform/runtime/Cargo.toml",
+      "sha256": "525813b698a0972b6aab807300b7b122d8c39749114aac71dff9ea26abc99130",
+      "manifest": {
+        "package": {
+          "name": "wamn-runtime",
+          "description": "Shared native wasmCloud runtime configuration and host capability adapters.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "test-util": [],
+          "wasm_component_model_implements": [
+            "wash-runtime/wasm_component_model_implements"
+          ]
+        },
+        "dependencies": {
+          "boon": {
+            "workspace": true
+          },
+          "object_store": {
+            "workspace": true
+          },
+          "wash-runtime": {
+            "workspace": true
+          },
+          "wasmtime": {
+            "workspace": true
+          },
+          "wamn-component-policy": {
+            "workspace": true
+          },
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-platform-identity": {
+            "workspace": true
+          },
+          "wamn-pg-core": {
+            "workspace": true
+          },
+          "wamn-router": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true,
+            "features": [
+              "tenant-key"
+            ]
+          },
+          "anyhow": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "time",
+              "fs",
+              "net",
+              "io-util",
+              "rt",
+              "macros",
+              "sync"
+            ]
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "async-trait": {
+            "workspace": true
+          },
+          "async-nats": {
+            "workspace": true
+          },
+          "bytes": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          },
+          "deadpool-postgres": "0.14",
+          "futures-util": {
+            "workspace": true
+          },
+          "hex": {
+            "workspace": true
+          },
+          "hyper": {
+            "workspace": true
+          },
+          "url": {
+            "workspace": true
+          },
+          "opentelemetry": {
+            "workspace": true,
+            "features": [
+              "logs",
+              "metrics",
+              "trace"
+            ]
+          },
+          "tracing-opentelemetry": {
+            "workspace": true
+          },
+          "opentelemetry_sdk": {
+            "workspace": true,
+            "features": [
+              "logs"
+            ]
+          },
+          "opentelemetry-otlp": {
+            "workspace": true,
+            "features": [
+              "grpc-tonic",
+              "logs"
+            ]
+          },
+          "oci-client": {
+            "workspace": true
+          },
+          "rand_core": {
+            "workspace": true
+          },
+          "reqwest": {
+            "workspace": true,
+            "features": [
+              "rustls"
+            ]
+          },
+          "serde": {
+            "workspace": true
+          },
+          "sha2": {
+            "workspace": true
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "tokio-postgres": {
+            "workspace": true,
+            "features": [
+              "with-chrono-0_4"
+            ]
+          },
+          "wasmtime-wasi": {
+            "workspace": true
+          },
+          "wasmtime-wasi-http": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "base64": {
+            "workspace": true
+          },
+          "ring": {
+            "workspace": true
+          },
+          "rcgen": {
+            "workspace": true
+          },
+          "rustls": {
+            "workspace": true,
+            "features": [
+              "aws_lc_rs"
+            ]
+          },
+          "tokio-rustls": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true,
+            "features": [
+              "native",
+              "test-util"
+            ]
+          },
+          "wamn-control-provision": {
+            "workspace": true
+          },
+          "wamn-catalog": {
+            "workspace": true,
+            "features": [
+              "test-util"
+            ]
+          },
+          "wat": "=1.252.0",
+          "wit-component": {
+            "version": "=0.252.0",
+            "features": [
+              "dummy-module"
+            ]
+          },
+          "wit-parser": "=0.252.0",
+          "opentelemetry_sdk": {
+            "workspace": true,
+            "features": [
+              "logs",
+              "testing"
+            ]
+          },
+          "tracing-subscriber": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/scenarios/model/Cargo.toml",
+      "sha256": "bc47b413ce1e68b08907f78395e00496e0d9c5762ef1795a8a6fd71a79c9ea29",
+      "manifest": {
+        "package": {
+          "name": "wamn-scenario-model",
+          "description": "Pure evaluation of the MVP test cases carried by a flow document.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/schema/control/Cargo.toml",
+      "sha256": "e4e2a1967963dededf8e76f78b8e29072c6ba2a130041d36e05eef6d70790ae9",
+      "manifest": {
+        "package": {
+          "name": "wamn-schema-control",
+          "description": "Schema lifecycle, migration, and impact control: a pure forward-only executor that emits one-transaction plans for an effect-shell driver.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "wamn-schema-generator": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-pg-core": {
+            "workspace": true
+          },
+          "wamn-event-reg": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "sha2": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/schema/generator/Cargo.toml",
+      "sha256": "b677f61c76714cab31f579daa21ddcb463edc7c13fb8ad6e2bf636d4f60f34e0",
+      "manifest": {
+        "package": {
+          "name": "wamn-schema-generator",
+          "description": "Deterministic package-owned application artifacts derived from migration catalog IR.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "base64": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "alloc"
+            ]
+          },
+          "hex": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "sha2": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true,
+            "features": [
+              "with-serde_json-1"
+            ]
+          },
+          "wamn-schema-introspection": {
+            "workspace": true
+          },
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "proptest": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "crates/schema/introspection/Cargo.toml",
+      "sha256": "abf6802eed35c32f9dd95381b59eaeed7d89ad8f36bce31468e18fd0a42c371f",
+      "manifest": {
+        "package": {
+          "name": "wamn-schema-introspection",
+          "description": "PostgreSQL catalog introspection and normalized migration-derived schema IR.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "tokio-postgres": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt-multi-thread"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "packages/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml",
+      "sha256": "f8c67939faceca59624e7f7ec64d61dab622f895579463a4c2404c3f99ecc4a2",
+      "manifest": {
+        "package": {
+          "name": "wamn-generated-client-acme-receiving-tui",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "bin": [
+          {
+            "name": "wamn-client-acme-receiving-tui",
+            "path": "src/main.rs"
+          }
+        ],
+        "dependencies": {
+          "wamn-client": {
+            "workspace": true
+          },
+          "wamn-client-tui": {
+            "workspace": true
+          },
+          "wamn-client-terminal": {
+            "workspace": true
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true
+          },
+          "rust_decimal": {
+            "workspace": true
+          },
+          "uuid": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt-multi-thread"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "packages/receiving/generated/receiving-tui/Cargo.toml",
+      "sha256": "fd5031262093600a56e343a75a8b5a509e0557f9ea4f3d97f7e707a6bfdb031a",
+      "manifest": {
+        "package": {
+          "name": "wamn-generated-receiving-tui",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "bin": [
+          {
+            "name": "wamn-receiving-tui",
+            "path": "src/main.rs"
+          }
+        ],
+        "dependencies": {
+          "wamn-client": {
+            "workspace": true
+          },
+          "wamn-client-tui": {
+            "workspace": true
+          },
+          "wamn-client-terminal": {
+            "workspace": true
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true
+          },
+          "rust_decimal": {
+            "workspace": true
+          },
+          "uuid": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt-multi-thread"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "packages/wms/generated/wms-tui/Cargo.toml",
+      "sha256": "ed14f316c0530a7b2f970e318ec3583f622beb802276adec05e55895d03c6732",
+      "manifest": {
+        "package": {
+          "name": "wamn-generated-wms-tui",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "bin": [
+          {
+            "name": "wamn-wms-tui",
+            "path": "src/main.rs"
+          }
+        ],
+        "dependencies": {
+          "wamn-client": {
+            "workspace": true
+          },
+          "wamn-client-tui": {
+            "workspace": true
+          },
+          "wamn-client-terminal": {
+            "workspace": true
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true
+          },
+          "rust_decimal": {
+            "workspace": true
+          },
+          "uuid": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "macros",
+              "rt-multi-thread"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "services/cdc-reader/Cargo.toml",
+      "sha256": "c4d8490013725f195b91fafb881f8cf402f057fb57cebdf33b050e69d63bfdbd",
+      "manifest": {
+        "package": {
+          "name": "wamn-cdc-reader",
+          "description": "wamn CDC event reader service (l5i9.10, D19 v3 \u00a74, SR9): walsender session \u2192 envelopes \u2192 the EVT_ JetStream stream, LSN advances only on ack \u2014 its own deployment artifact, no runtime linked (E7 owns its placement/ownership model)",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "time",
+              "io-util",
+              "net",
+              "rt-multi-thread",
+              "macros",
+              "signal",
+              "sync"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true,
+            "features": [
+              "with-chrono-0_4"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "tracing-subscriber": {
+            "workspace": true,
+            "features": [
+              "env-filter"
+            ]
+          },
+          "async-nats": {
+            "workspace": true,
+            "features": [
+              "jetstream"
+            ]
+          },
+          "bytes": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          },
+          "futures-util": {
+            "workspace": true
+          },
+          "pg_walstream": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          },
+          "wamn-pg-core": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-control-provision": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "services/ctl/Cargo.toml",
+      "sha256": "8f40db885c0f8130f24626115c8918401afeaad190e2525a4bb2751621b8631f",
+      "manifest": {
+        "package": {
+          "name": "wamn-ctl",
+          "description": "wamn control-plane provisioning and catalog verbs",
+          "default-run": "wamn-ctl",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "features": {
+          "default": [],
+          "ops": [
+            "dep:wamn-event-wire",
+            "wamn-control-provision/ops"
+          ]
+        },
+        "bin": [
+          {
+            "name": "wamn-ctl-ops",
+            "path": "src/bin/wamn-ctl-ops.rs",
+            "required-features": [
+              "ops"
+            ]
+          },
+          {
+            "name": "wamn",
+            "path": "src/bin/wamn.rs"
+          }
+        ],
+        "test": [
+          {
+            "name": "protected_relations_live",
+            "path": "tests/protected_relations_live.rs",
+            "required-features": [
+              "ops"
+            ]
+          }
+        ],
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env",
+              "string"
+            ]
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt-multi-thread",
+              "macros",
+              "io-util",
+              "net",
+              "process",
+              "signal",
+              "sync",
+              "time"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true,
+            "features": [
+              "with-chrono-0_4"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "schemars": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "clock",
+              "std"
+            ]
+          },
+          "hex": {
+            "workspace": true
+          },
+          "ring": {
+            "workspace": true
+          },
+          "url": {
+            "workspace": true
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "tracing-subscriber": {
+            "workspace": true,
+            "features": [
+              "env-filter"
+            ]
+          },
+          "oci-client": {
+            "workspace": true
+          },
+          "async-nats": {
+            "workspace": true,
+            "features": [
+              "jetstream"
+            ]
+          },
+          "futures-util": {
+            "workspace": true
+          },
+          "crossterm": {
+            "workspace": true
+          },
+          "ratatui": {
+            "workspace": true
+          },
+          "reqwest": {
+            "workspace": true,
+            "features": [
+              "rustls"
+            ]
+          },
+          "rustix": {
+            "workspace": true
+          },
+          "wamn-authoring-model": {
+            "workspace": true
+          },
+          "wamn-client-terminal": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true,
+            "optional": true
+          },
+          "wamn-event-reg": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "wamn-schema-control": {
+            "workspace": true
+          },
+          "wamn-schema-generator": {
+            "workspace": true
+          },
+          "wamn-schema-introspection": {
+            "workspace": true
+          },
+          "wamn-control-provision": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-platform-identity": {
+            "workspace": true
+          },
+          "wamn-pg-core": {
+            "workspace": true
+          },
+          "wamn-runtime": {
+            "workspace": true
+          },
+          "wash-runtime": {
+            "workspace": true,
+            "features": [
+              "washlet"
+            ]
+          },
+          "wamn-run-state": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "wit-component": {
+            "version": "=0.252.0",
+            "features": [
+              "dummy-module"
+            ]
+          },
+          "wit-parser": "=0.252.0"
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "services/dispatcher/Cargo.toml",
+      "sha256": "9f3040428ef10a64c16b1d8108e7dd3f4eec5067211a68c7a601a6fe1a2c6ee9",
+      "manifest": {
+        "package": {
+          "name": "wamn-dispatcher",
+          "description": "wamn shared queue dispatcher: queued-work wake reconciliation across all projects",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "time",
+              "rt-multi-thread",
+              "macros",
+              "signal",
+              "sync",
+              "io-util",
+              "io-std"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "tracing-subscriber": {
+            "workspace": true,
+            "features": [
+              "env-filter"
+            ]
+          },
+          "opentelemetry": {
+            "workspace": true,
+            "features": [
+              "metrics",
+              "trace"
+            ]
+          },
+          "opentelemetry_sdk": {
+            "workspace": true,
+            "features": [
+              "metrics",
+              "trace"
+            ]
+          },
+          "opentelemetry-otlp": {
+            "workspace": true,
+            "features": [
+              "grpc-tonic",
+              "metrics",
+              "trace"
+            ]
+          },
+          "tracing-opentelemetry": {
+            "workspace": true
+          },
+          "async-nats": {
+            "workspace": true
+          },
+          "rustls": {
+            "workspace": true,
+            "features": [
+              "std",
+              "tls12",
+              "aws-lc-rs"
+            ]
+          },
+          "wamn-run-state": {
+            "workspace": true
+          },
+          "wamn-scheduler": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "wamn-control-provision": {
+            "workspace": true
+          },
+          "opentelemetry_sdk": {
+            "workspace": true,
+            "features": [
+              "metrics",
+              "testing"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "services/executor/Cargo.toml",
+      "sha256": "4e4e9001e446afabe0ff89fbd4464f60a1a278e0d2b0d88ad87eb493d2b6d33d",
+      "manifest": {
+        "package": {
+          "name": "wamn-executor",
+          "description": "Production serving executor for queued wiring deliveries.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "lib": {
+          "name": "wamn_executor"
+        },
+        "bin": [
+          {
+            "name": "wamn-run-worker",
+            "path": "src/main.rs"
+          }
+        ],
+        "dependencies": {
+          "wamn-execution-host": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true
+          },
+          "wamn-runtime": {
+            "workspace": true,
+            "features": [
+              "wasm_component_model_implements"
+            ]
+          },
+          "wash-runtime": {
+            "workspace": true,
+            "features": [
+              "washlet",
+              "wasm_component_model_implements"
+            ]
+          },
+          "anyhow": {
+            "workspace": true
+          },
+          "bytes": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "http-body-util": {
+            "workspace": true
+          },
+          "hyper": {
+            "workspace": true,
+            "features": [
+              "server",
+              "http1"
+            ]
+          },
+          "hyper-util": {
+            "workspace": true,
+            "features": [
+              "tokio"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt-multi-thread",
+              "macros",
+              "net",
+              "signal",
+              "sync",
+              "time"
+            ]
+          },
+          "tracing": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "opentelemetry": {
+            "workspace": true,
+            "features": [
+              "trace"
+            ]
+          },
+          "opentelemetry_sdk": {
+            "workspace": true,
+            "features": [
+              "testing"
+            ]
+          },
+          "tracing-opentelemetry": {
+            "workspace": true
+          },
+          "tracing-subscriber": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "services/host/Cargo.toml",
+      "sha256": "2ac0bdaff55214eb52e3989695ec345b6d50322c0182b7658a5516ddc0bddde1",
+      "manifest": {
+        "package": {
+          "name": "wamn-host",
+          "description": "General wasmCloud washlet host service.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wamn-execution-host": {
+            "workspace": true
+          },
+          "wamn-control-provision": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-platform-identity": {
+            "workspace": true
+          },
+          "wamn-runtime": {
+            "workspace": true,
+            "features": [
+              "wasm_component_model_implements"
+            ]
+          },
+          "wash-runtime": {
+            "workspace": true,
+            "features": [
+              "washlet",
+              "wasi-config",
+              "wasi-otel",
+              "wasm_component_model_implements"
+            ]
+          },
+          "anyhow": {
+            "workspace": true
+          },
+          "async-nats": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "opentelemetry": {
+            "workspace": true,
+            "features": [
+              "metrics"
+            ]
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt-multi-thread",
+              "macros",
+              "signal"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "url": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "services/identity/Cargo.toml",
+      "sha256": "beb994ab5684dc49630a731de4c0ec3cd21274795ae072141512f6c07a019d59",
+      "manifest": {
+        "package": {
+          "name": "wamn-identity",
+          "description": "Separate system-database-backed identity authority and public JWKS service.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "bytes": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "http-body-util": {
+            "workspace": true
+          },
+          "hyper": {
+            "workspace": true,
+            "features": [
+              "server",
+              "http1"
+            ]
+          },
+          "hyper-util": {
+            "workspace": true,
+            "features": [
+              "tokio"
+            ]
+          },
+          "rustls": {
+            "workspace": true,
+            "features": [
+              "aws_lc_rs",
+              "std",
+              "tls12"
+            ]
+          },
+          "ring": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt-multi-thread",
+              "macros",
+              "net",
+              "fs",
+              "io-util",
+              "signal",
+              "sync",
+              "time"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true
+          },
+          "tokio-rustls": {
+            "workspace": true
+          },
+          "wamn-control-provision": {
+            "workspace": true
+          },
+          "wamn-platform-identity": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "process"
+            ]
+          },
+          "url": {
+            "workspace": true
+          },
+          "wamn-pg-core": {
+            "workspace": true
+          },
+          "rcgen": {
+            "workspace": true
+          },
+          "reqwest": {
+            "workspace": true,
+            "features": [
+              "rustls"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "services/scenario-worker/Cargo.toml",
+      "sha256": "0eeb9614872f3017112fa8853e105151b76380f16fe02d5250b3d5d1d4518411",
+      "manifest": {
+        "package": {
+          "name": "wamn-scenario-worker",
+          "description": "Product worker for deterministic flow scenario execution.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wamn-authoring-model": {
+            "workspace": true
+          },
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "wamn-control-provision": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-platform-identity": {
+            "workspace": true
+          },
+          "wamn-runtime": {
+            "workspace": true
+          },
+          "wamn-schema-control": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wash-runtime": {
+            "workspace": true
+          },
+          "anyhow": {
+            "workspace": true
+          },
+          "bytes": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "http-body-util": {
+            "workspace": true
+          },
+          "hyper": {
+            "workspace": true,
+            "features": [
+              "server",
+              "http1"
+            ]
+          },
+          "hyper-util": {
+            "workspace": true,
+            "features": [
+              "tokio"
+            ]
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "sha2": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt-multi-thread",
+              "macros",
+              "net",
+              "time"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true,
+            "features": [
+              "with-serde_json-1"
+            ]
+          },
+          "tracing": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "io-util",
+              "time"
+            ]
+          },
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "url": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "services/waker/Cargo.toml",
+      "sha256": "200f9e2f7541bcb9e2f7ca922745e8a7c55a06d3b7ba6f8891f7176ae667ae1f",
+      "manifest": {
+        "package": {
+          "name": "wamn-waker",
+          "description": "wamn scale-to-zero wake actuator (wamn-fqg.12, POC-F3): a tiny always-on service that scales a parked runner Deployment 0->1 on a doorbell hint via the Kubernetes API \u2014 the ONE component granted k8s scale privilege",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt-multi-thread",
+              "macros",
+              "signal",
+              "sync",
+              "time"
+            ]
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "tracing-subscriber": {
+            "workspace": true,
+            "features": [
+              "env-filter"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "futures-util": {
+            "workspace": true
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "async-nats": {
+            "workspace": true
+          },
+          "rustls": {
+            "workspace": true,
+            "features": [
+              "std",
+              "tls12",
+              "aws-lc-rs"
+            ]
+          },
+          "reqwest": {
+            "workspace": true,
+            "features": [
+              "rustls"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "test-support/harness/Cargo.toml",
+      "sha256": "8821d494a461a470f17d19e6bffbec344c9bb5d3d4fe315634bf55fc28addbea",
+      "manifest": {
+        "package": {
+          "name": "wamn-gate-harness",
+          "description": "Shared gate measurement/assertion vocabulary for the wamn-gates suite (SR1)",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "serde_json": {
+            "workspace": true
+          },
+          "anyhow": {
+            "workspace": true
+          },
+          "tokio-postgres": {
+            "workspace": true,
+            "features": [
+              "with-chrono-0_4"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "test-support/infrastructure/Cargo.toml",
+      "sha256": "b4c6eac4200efc28ff88239cf6f9961014ed44de6df63b05b2e2a94dc4fa792e",
+      "manifest": {
+        "package": {
+          "name": "wamn-test-infrastructure",
+          "description": "Repository-only temporary infrastructure and proof adapters.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "lib": {
+          "path": "lib.rs"
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "process"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "test-support/simulator/Cargo.toml",
+      "sha256": "b817274312ec3a39e7175d1e3b656fc4239b7939fdfba3a118061a73058bac75",
+      "manifest": {
+        "package": {
+          "name": "wamn-simulator",
+          "description": "Deterministic, seeded event-stream profiles that drive real routes and consumers.",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "async-trait": {
+            "workspace": true
+          },
+          "reqwest": {
+            "workspace": true,
+            "features": [
+              "rustls"
+            ]
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "tests/conformance/Cargo.toml",
+      "sha256": "d751600ec23c1373593dabdc9638f1b883b3e83fd0ce105334186b911f1d6920",
+      "manifest": {
+        "package": {
+          "name": "wamn-proof-conformance",
+          "description": "Repository conformance proofs for component, wire, schema, and artifact contracts",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "bytes": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "http-body-util": {
+            "workspace": true
+          },
+          "hyper": {
+            "workspace": true
+          },
+          "hyper-util": {
+            "workspace": true,
+            "features": [
+              "tokio"
+            ]
+          },
+          "hex": {
+            "workspace": true
+          },
+          "ring": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "sha2": {
+            "workspace": true
+          },
+          "syn": {
+            "version": "2",
+            "features": [
+              "full",
+              "visit"
+            ]
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "net",
+              "time",
+              "rt",
+              "macros"
+            ]
+          },
+          "url": {
+            "workspace": true
+          },
+          "wamn-component-policy": {
+            "workspace": true
+          },
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-gate-harness": {
+            "workspace": true
+          },
+          "wamn-runtime": {
+            "workspace": true
+          },
+          "wash-runtime": {
+            "workspace": true
+          },
+          "wasmtime-wasi": {
+            "workspace": true
+          },
+          "wasm-encoder": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          },
+          "rust_decimal": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          },
+          "sqlx": {
+            "version": "=0.9.0",
+            "default-features": false,
+            "features": [
+              "chrono",
+              "json",
+              "macros",
+              "postgres",
+              "runtime-tokio",
+              "rust_decimal",
+              "uuid"
+            ]
+          },
+          "uuid": {
+            "workspace": true
+          },
+          "wamn-execution-host": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true,
+            "features": [
+              "test-util"
+            ]
+          },
+          "wat": "=1.252.0"
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "tests/integration/Cargo.toml",
+      "sha256": "5958f9a3aaa2a369c648ea6a587bc2bc6c752d97b6a296299d0ab06653905481",
+      "manifest": {
+        "package": {
+          "name": "wamn-proof-integration",
+          "description": "Repository integration and measurement proofs over real adapters",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "async-nats": {
+            "workspace": true
+          },
+          "bytes": {
+            "workspace": true
+          },
+          "chrono": {
+            "workspace": true,
+            "features": [
+              "std"
+            ]
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "futures-util": {
+            "workspace": true
+          },
+          "hex": {
+            "workspace": true
+          },
+          "libc": {
+            "workspace": true
+          },
+          "oci-client": {
+            "workspace": true
+          },
+          "opentelemetry": {
+            "workspace": true,
+            "features": [
+              "trace"
+            ]
+          },
+          "opentelemetry_sdk": {
+            "workspace": true,
+            "features": [
+              "testing",
+              "trace"
+            ]
+          },
+          "pg_walstream": {
+            "workspace": true
+          },
+          "reqwest": {
+            "workspace": true,
+            "features": [
+              "rustls"
+            ]
+          },
+          "schemars": {
+            "workspace": true
+          },
+          "serde": {
+            "workspace": true,
+            "features": [
+              "derive"
+            ]
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "fs",
+              "io-util",
+              "net",
+              "process",
+              "sync",
+              "time",
+              "rt",
+              "macros"
+            ]
+          },
+          "tokio-postgres": {
+            "workspace": true,
+            "features": [
+              "with-chrono-0_4",
+              "with-serde_json-1",
+              "with-uuid-1"
+            ]
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "tracing-opentelemetry": {
+            "workspace": true
+          },
+          "tracing-subscriber": {
+            "workspace": true
+          },
+          "wamn-control-provision": {
+            "workspace": true,
+            "features": [
+              "ops"
+            ]
+          },
+          "wamn-control-registry": {
+            "workspace": true
+          },
+          "wamn-ctl": {
+            "workspace": true
+          },
+          "wamn-catalog": {
+            "workspace": true
+          },
+          "wamn-component-policy": {
+            "workspace": true
+          },
+          "wamn-event-reg": {
+            "workspace": true
+          },
+          "wamn-event-wire": {
+            "workspace": true
+          },
+          "wamn-execution-contract": {
+            "workspace": true
+          },
+          "wamn-gate-harness": {
+            "workspace": true
+          },
+          "wamn-test-infrastructure": {
+            "workspace": true
+          },
+          "wamn-platform-identity": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true
+          },
+          "wamn-execution-host": {
+            "workspace": true,
+            "features": [
+              "test-util"
+            ]
+          },
+          "wamn-runtime": {
+            "workspace": true,
+            "features": [
+              "test-util"
+            ]
+          },
+          "wamn-scenario-worker": {
+            "workspace": true
+          },
+          "wamn-schema-control": {
+            "workspace": true
+          },
+          "wash-runtime": {
+            "workspace": true,
+            "features": [
+              "washlet"
+            ]
+          },
+          "wasmtime-wasi": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "http-body-util": {
+            "workspace": true
+          },
+          "hyper": {
+            "workspace": true
+          },
+          "uuid": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true,
+            "features": [
+              "test-util"
+            ]
+          },
+          "wasmtime-wasi-http": {
+            "workspace": true
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "tests/orchestrator/Cargo.toml",
+      "sha256": "15407807dd1c89c2e5a6745016ec83e67c91a4577cd10251595e9fd840c88408",
+      "manifest": {
+        "package": {
+          "name": "wamn-gates",
+          "description": "The wamn gate suite over reusable platform and domain libraries",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wamn-runtime": {
+            "workspace": true
+          },
+          "wamn-proof-conformance": {
+            "workspace": true
+          },
+          "wamn-proof-integration": {
+            "workspace": true
+          },
+          "wamn-proof-system": {
+            "workspace": true
+          },
+          "wash-runtime": {
+            "workspace": true
+          },
+          "anyhow": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "rt-multi-thread",
+              "macros"
+            ]
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "tests/system/Cargo.toml",
+      "sha256": "b2a0f1db6459ef841eb95f7e3f1af6ec217e6b9add297138c0545c7d86b6ddde",
+      "manifest": {
+        "package": {
+          "name": "wamn-proof-system",
+          "description": "Black-box repository system proofs over deployed and public surfaces",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          },
+          "build": "build.rs"
+        },
+        "dependencies": {
+          "anyhow": {
+            "workspace": true
+          },
+          "clap": {
+            "workspace": true,
+            "features": [
+              "derive",
+              "env"
+            ]
+          },
+          "hyper": {
+            "workspace": true
+          },
+          "opentelemetry": {
+            "workspace": true
+          },
+          "reqwest": {
+            "workspace": true
+          },
+          "serde_json": {
+            "workspace": true
+          },
+          "tokio": {
+            "workspace": true,
+            "features": [
+              "net",
+              "io-util",
+              "time",
+              "rt"
+            ]
+          },
+          "tracing": {
+            "workspace": true
+          },
+          "tracing-opentelemetry": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true
+          },
+          "wamn-runtime": {
+            "workspace": true
+          },
+          "wash-runtime": {
+            "workspace": true
+          }
+        },
+        "dev-dependencies": {
+          "opentelemetry_sdk": {
+            "workspace": true
+          },
+          "tracing-subscriber": {
+            "workspace": true
+          },
+          "wamn-run-state": {
+            "workspace": true,
+            "features": [
+              "test-util"
+            ]
+          }
+        },
+        "lints": {
+          "workspace": true
+        }
+      }
+    },
+    {
+      "path": "tools/probes/ctc8-13-native-http/Cargo.toml",
+      "sha256": "4fae58aa0dcf6e2c18c2c2cc76c915d57db7a72d222c68faed2ef3c205c7f5f2",
+      "manifest": {
+        "package": {
+          "name": "ctc8-13-native-http",
+          "version": "0.0.0",
+          "edition": "2024",
+          "publish": false
+        },
+        "workspace": {},
+        "dependencies": {
+          "anyhow": "1",
+          "bytes": "1",
+          "futures-util": "0.3",
+          "http-body-util": "0.1",
+          "hyper": {
+            "version": "1",
+            "features": [
+              "server",
+              "http1",
+              "http2"
+            ]
+          },
+          "hyper-util": {
+            "version": "0.1",
+            "features": [
+              "client-legacy",
+              "http1",
+              "http2",
+              "tokio"
+            ]
+          },
+          "mimalloc": "0.1",
+          "rcgen": "0.14.8",
+          "rustls": {
+            "version": "0.23",
+            "default-features": false,
+            "features": [
+              "std",
+              "aws_lc_rs",
+              "tls12"
+            ]
+          },
+          "serde_json": "1",
+          "tokio": {
+            "version": "1",
+            "features": [
+              "macros",
+              "rt-multi-thread",
+              "net",
+              "sync",
+              "time",
+              "io-util"
+            ]
+          },
+          "tokio-rustls": "0.26",
+          "wamn-runtime": {
+            "path": "../../../crates/platform/runtime"
+          },
+          "wamn-execution-contract": {
+            "path": "../../../components/execution/contract"
+          },
+          "wash-runtime": {
+            "git": "https://github.com/dkkloimwieder/wasmCloud",
+            "rev": "735b57982545358409a7d965a22549b08487ca09",
+            "default-features": false
+          },
+          "wasmtime-wasi": "=47.0.4",
+          "wasmtime-wasi-http": "=47.0.4"
+        }
+      }
+    },
+    {
+      "path": "tools/probes/ctc8-14-wasi-http/Cargo.toml",
+      "sha256": "90e3f3c2c6da822dac7c4968bf5f67a45857c8ad38852cfddf668bcb37a4b8ed",
+      "manifest": {
+        "workspace": {
+          "members": [
+            "host",
+            "guest"
+          ],
+          "default-members": [
+            "host"
+          ],
+          "resolver": "3",
+          "package": {
+            "version": "0.0.0",
+            "edition": "2024",
+            "publish": false,
+            "license": "Apache-2.0"
+          }
+        },
+        "profile": {
+          "dev": {
+            "debug": 0
+          }
+        }
+      }
+    },
+    {
+      "path": "tools/probes/ctc8-14-wasi-http/guest/Cargo.toml",
+      "sha256": "7d7f39e17922c57d1498610d7d4a9f6b53c6d57088ec5fc8decdc410244d8fcb",
+      "manifest": {
+        "package": {
+          "name": "ctc8-14-wasi-http-guest",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "publish": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "wasi": "=0.13.3",
+          "serde_json": "1"
+        }
+      }
+    },
+    {
+      "path": "tools/probes/ctc8-14-wasi-http/host/Cargo.toml",
+      "sha256": "04d2b8010eafe29e2151b26c9625e14032cacb3b51eb3afad41ce2e1c8e1c012",
+      "manifest": {
+        "package": {
+          "name": "ctc8-14-wasi-http-probe",
+          "version": {
+            "workspace": true
+          },
+          "edition": {
+            "workspace": true
+          },
+          "publish": {
+            "workspace": true
+          },
+          "license": {
+            "workspace": true
+          }
+        },
+        "dependencies": {
+          "anyhow": "1",
+          "bytes": "1",
+          "http-body-util": "0.1",
+          "hyper": {
+            "version": "1",
+            "features": [
+              "server",
+              "http1",
+              "http2"
+            ]
+          },
+          "hyper-util": {
+            "version": "0.1",
+            "features": [
+              "tokio",
+              "server-auto"
+            ]
+          },
+          "opentelemetry": {
+            "version": "0.31",
+            "features": [
+              "trace"
+            ]
+          },
+          "opentelemetry_sdk": {
+            "version": "0.31",
+            "features": [
+              "trace",
+              "testing"
+            ]
+          },
+          "rcgen": {
+            "version": "=0.14.8",
+            "default-features": false,
+            "features": [
+              "crypto",
+              "aws_lc_rs"
+            ]
+          },
+          "rustls": {
+            "version": "0.23",
+            "default-features": false,
+            "features": [
+              "std",
+              "tls12",
+              "aws_lc_rs"
+            ]
+          },
+          "serde_json": "1",
+          "tokio": {
+            "version": "1",
+            "features": [
+              "rt-multi-thread",
+              "macros",
+              "net",
+              "sync",
+              "time"
+            ]
+          },
+          "tokio-rustls": "0.26",
+          "tracing": "0.1",
+          "tracing-opentelemetry": "0.32",
+          "tracing-subscriber": {
+            "version": "0.3",
+            "features": [
+              "registry"
+            ]
+          },
+          "wamn-component-policy": {
+            "path": "../../../../crates/platform/component-policy"
+          },
+          "wash-runtime": {
+            "git": "https://github.com/dkkloimwieder/wasmCloud",
+            "rev": "735b57982545358409a7d965a22549b08487ca09",
+            "default-features": false,
+            "features": [
+              "oci"
+            ]
+          },
+          "wasmtime": {
+            "version": "=47.0.4",
+            "default-features": false
+          },
+          "wasmtime-wasi": "=47.0.4",
+          "wasmtime-wasi-http": "=47.0.4"
+        }
+      }
+    }
+  ],
+  "lockfiles": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "086e19657b641532bd34f71ff9fe1b0f07fc8c7d240496ecfeae9cbb7f0c76ce",
+      "selected_packages": [
+        {
+          "name": "cranelift-assembler-x64",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "16c273ba1bfc3a1cb27cb4f83df27134f3cb638a61f5ed79ab22cf86eb13da0d",
+          "dependencies": [
+            "cranelift-assembler-x64-meta"
+          ]
+        },
+        {
+          "name": "cranelift-assembler-x64-meta",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "cbf8909326a466739e83ffe11e74c0c8c6b4bfa911b612aece915daa746cff58",
+          "dependencies": [
+            "cranelift-srcgen"
+          ]
+        },
+        {
+          "name": "cranelift-bforest",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "3cb26b06b54d8b2f8cdf4d440a32fc3b3b91c71c162333a69a70a66fa265fc45",
+          "dependencies": [
+            "cranelift-entity",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-bitset",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "7ce4e57dbb7f73d08011808a19787c3a03c3e7854b2a479ed0b788915fb671be",
+          "dependencies": [
+            "serde",
+            "serde_derive",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-codegen",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "74b0a8968f33d0bc13bc86fe70dd3947e93acc9f358ed9848e9988448972a9be",
+          "dependencies": [
+            "bumpalo",
+            "cranelift-assembler-x64",
+            "cranelift-bforest",
+            "cranelift-bitset",
+            "cranelift-codegen-meta",
+            "cranelift-codegen-shared",
+            "cranelift-control",
+            "cranelift-entity",
+            "cranelift-isle",
+            "gimli 0.33.0",
+            "hashbrown 0.17.1",
+            "libm",
+            "log",
+            "postcard",
+            "pulley-interpreter",
+            "regalloc2",
+            "rustc-hash",
+            "serde",
+            "serde_derive",
+            "sha2 0.10.9",
+            "smallvec",
+            "target-lexicon",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-codegen-meta",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "f69e8e2fe9deb48ef7b8d0c61612f8c1e2277d0421c201e30a4c844a4ebac698",
+          "dependencies": [
+            "cranelift-assembler-x64-meta",
+            "cranelift-codegen-shared",
+            "cranelift-srcgen",
+            "heck",
+            "pulley-interpreter"
+          ]
+        },
+        {
+          "name": "cranelift-codegen-shared",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "ad4db1e87a65e9c5a832e3ede160830d4e34df938ac38b5604819f8825687e73"
+        },
+        {
+          "name": "cranelift-control",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "9248cd37bb6ec460981f57ead368e32b1eca7a207ad50e3e9c7adc3b161f20e9",
+          "dependencies": [
+            "arbitrary"
+          ]
+        },
+        {
+          "name": "cranelift-entity",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "26b8bc91c0a3530d132acbf118965dabe9a084029eb0fa74b64760360dec3316",
+          "dependencies": [
+            "cranelift-bitset",
+            "serde",
+            "serde_derive",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-frontend",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "5086f2ebc084a98b387e522680f62ef65a512444d8382151e03088716d3a1714",
+          "dependencies": [
+            "cranelift-codegen",
+            "hashbrown 0.17.1",
+            "log",
+            "smallvec",
+            "target-lexicon"
+          ]
+        },
+        {
+          "name": "cranelift-isle",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "b6a658670f779afc2df083be201ebe54805f69b7b9ffa8dab04142b72ed751c9"
+        },
+        {
+          "name": "cranelift-native",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "16a41083b1fd953debd6f32d21fcda765b258f323ce907fdd6b4715f2769c478",
+          "dependencies": [
+            "cranelift-codegen",
+            "libc",
+            "target-lexicon"
+          ]
+        },
+        {
+          "name": "cranelift-srcgen",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "244d9cd0759b0a3ccdd587cafb13434f9ea43b5c9d07701d277daf5cd0f7b7c1"
+        },
+        {
+          "name": "wash-runtime",
+          "version": "2.8.0",
+          "source": "git+https://github.com/dkkloimwieder/wasmCloud?rev=735b57982545358409a7d965a22549b08487ca09#735b57982545358409a7d965a22549b08487ca09",
+          "dependencies": [
+            "anyhow",
+            "arc-swap",
+            "async-nats",
+            "async-trait",
+            "bon",
+            "bytes",
+            "cap-net-ext",
+            "cap-std 3.4.6",
+            "chrono",
+            "docker_credential",
+            "etcetera 0.10.0",
+            "fastrand",
+            "futures",
+            "hostname",
+            "http",
+            "http-body-util",
+            "humantime",
+            "hyper",
+            "hyper-rustls",
+            "hyper-util",
+            "io-lifetimes 2.0.4",
+            "moka",
+            "names",
+            "oci-client",
+            "oci-wasm",
+            "opentelemetry",
+            "opentelemetry-appender-tracing",
+            "opentelemetry-http",
+            "opentelemetry-otlp",
+            "opentelemetry-semantic-conventions",
+            "opentelemetry_sdk",
+            "pbjson",
+            "pbjson-types",
+            "prost",
+            "redis",
+            "rustix",
+            "rustls",
+            "rustls-native-certs",
+            "semver",
+            "serde",
+            "serde_json",
+            "sha2 0.10.9",
+            "sysinfo",
+            "tempfile",
+            "tokio",
+            "tokio-rustls",
+            "tokio-util",
+            "tonic",
+            "tonic-prost",
+            "tower-service",
+            "tracing",
+            "tracing-opentelemetry",
+            "tracing-subscriber",
+            "url",
+            "uuid",
+            "wasmtime",
+            "wasmtime-wasi",
+            "wasmtime-wasi-http",
+            "wasmtime-wasi-io",
+            "webpki-roots 0.26.11",
+            "wit-component 0.254.0",
+            "zeroize"
+          ]
+        },
+        {
+          "name": "wasi-virt",
+          "version": "0.2.0",
+          "source": "git+https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8f688cee5d6995e96b1ffc31f9bf00742",
+          "dependencies": [
+            "anyhow",
+            "clap",
+            "semver",
+            "serde",
+            "toml 0.8.23",
+            "wac-graph",
+            "walrus",
+            "wasm-metadata 0.252.0",
+            "wit-component 0.252.0",
+            "wit-parser 0.252.0"
+          ]
+        },
+        {
+          "name": "wasmtime",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4cdaf5b8af5713146e3a62d940c71e3eb2ad1ebacfa6b55f0c8509a5b4b87718",
+          "dependencies": [
+            "addr2line",
+            "async-trait",
+            "bitflags",
+            "bumpalo",
+            "bytes",
+            "cc",
+            "cfg-if",
+            "encoding_rs",
+            "futures",
+            "libc",
+            "log",
+            "mach2",
+            "memfd",
+            "object",
+            "once_cell",
+            "postcard",
+            "pulley-interpreter",
+            "rayon",
+            "rustix",
+            "semver",
+            "serde",
+            "serde_derive",
+            "smallvec",
+            "target-lexicon",
+            "wasmparser 0.252.0",
+            "wasmtime-environ",
+            "wasmtime-internal-cache",
+            "wasmtime-internal-component-macro",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-core",
+            "wasmtime-internal-cranelift",
+            "wasmtime-internal-fiber",
+            "wasmtime-internal-jit-debug",
+            "wasmtime-internal-jit-icache-coherence",
+            "wasmtime-internal-unwinder",
+            "wasmtime-internal-versioned-export-macros",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-environ",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "58793271eab7ec26bab99ca497131f8b37702e7dc39e2f2d18293e3e915b4964",
+          "dependencies": [
+            "anyhow",
+            "cpp_demangle",
+            "cranelift-bforest",
+            "cranelift-bitset",
+            "cranelift-entity",
+            "gimli 0.33.0",
+            "hashbrown 0.17.1",
+            "indexmap",
+            "log",
+            "object",
+            "postcard",
+            "rustc-demangle",
+            "semver",
+            "serde",
+            "serde_derive",
+            "sha2 0.10.9",
+            "smallvec",
+            "target-lexicon",
+            "wasm-encoder 0.252.0",
+            "wasmparser 0.252.0",
+            "wasmprinter",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-cache",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "ede02ba77442cab88a2ddd5d16373e8bc450b55e05de8be039b024987a53d5a7",
+          "dependencies": [
+            "base64",
+            "directories-next",
+            "log",
+            "postcard",
+            "rustix",
+            "serde",
+            "serde_derive",
+            "sha2 0.10.9",
+            "toml 0.9.12+spec-1.1.0",
+            "wasmtime-environ",
+            "windows-sys 0.61.2",
+            "zstd"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-component-macro",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "c5bba4eff4804620bae04d7793308d97a0c5a8a97ea19e635452518f84560f84",
+          "dependencies": [
+            "anyhow",
+            "proc-macro2",
+            "quote",
+            "syn 2.0.119",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-wit-bindgen",
+            "wit-parser 0.252.0"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-component-util",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "3d7032ff6b4d7a45e05be1cb32ec1756df5f2669f08296dbe2c61c3789dead2c"
+        },
+        {
+          "name": "wasmtime-internal-core",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "f41d3b2cb9c3de7b696690af070d408b5e357011832f8b8bb7fbb315dbb620ed",
+          "dependencies": [
+            "anyhow",
+            "hashbrown 0.17.1",
+            "libm",
+            "serde"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-cranelift",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "1d5cda5b90247978dd2ba6ca4e309508da19e9244445671d2d0e6a34e5c3b847",
+          "dependencies": [
+            "cfg-if",
+            "cranelift-codegen",
+            "cranelift-control",
+            "cranelift-entity",
+            "cranelift-frontend",
+            "cranelift-native",
+            "gimli 0.33.0",
+            "itertools 0.14.0",
+            "log",
+            "object",
+            "pulley-interpreter",
+            "smallvec",
+            "target-lexicon",
+            "thiserror 2.0.20",
+            "wasmparser 0.252.0",
+            "wasmtime-environ",
+            "wasmtime-internal-core",
+            "wasmtime-internal-unwinder",
+            "wasmtime-internal-versioned-export-macros"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-fiber",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4d126366176553e8f304e8ac2078a4cc37134fe8f19d4d4695a09c5a2f577f10",
+          "dependencies": [
+            "cc",
+            "cfg-if",
+            "libc",
+            "rustix",
+            "wasmtime-environ",
+            "wasmtime-internal-versioned-export-macros",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-jit-debug",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "c1d28ff131bc40e11d84bc3a9fa0d264506439ffbbc89f3562fbb529d1caa617",
+          "dependencies": [
+            "cc",
+            "wasmtime-internal-versioned-export-macros"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-jit-icache-coherence",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4a52de8b6afbfcd618073f592c1450cb661574e7061f3f4a44f1f7ec0c7f7909",
+          "dependencies": [
+            "cfg-if",
+            "libc",
+            "wasmtime-internal-core",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-unwinder",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "5524fbaaf3d2134dd6229164d7fc81e443cce06d1e0576524d5f4e86e747cb13",
+          "dependencies": [
+            "cfg-if",
+            "cranelift-codegen",
+            "log",
+            "object",
+            "wasmtime-environ"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-versioned-export-macros",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "e93bb9ae112a80618510f938275a5d88637b656e7d0a021fc906f52206c708ad",
+          "dependencies": [
+            "proc-macro2",
+            "quote",
+            "syn 2.0.119"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-wit-bindgen",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "bfdbdd9d6fab1ecb67a7dc189e32c9e341444945fb709437bf8aab25d9a88459",
+          "dependencies": [
+            "anyhow",
+            "bitflags",
+            "heck",
+            "indexmap",
+            "wit-parser 0.252.0"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "b373095a6dc8382da56882ad16d7ea16771dd6927dd480b1ce3fe7c4b816d2cf",
+          "dependencies": [
+            "async-trait",
+            "bitflags",
+            "bytes",
+            "cap-fs-ext",
+            "cap-std 4.0.3",
+            "cfg-if",
+            "futures",
+            "io-lifetimes 3.0.1",
+            "rand 0.10.2",
+            "rustix",
+            "thiserror 2.0.20",
+            "tokio",
+            "tracing",
+            "url",
+            "wasmtime",
+            "wasmtime-wasi-io",
+            "wiggle",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi-http",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "372fc7845f26cd8f69bcbf6e4234fcc032f718480c7722fa20a28eb74d58998e",
+          "dependencies": [
+            "async-trait",
+            "bytes",
+            "futures",
+            "http",
+            "http-body",
+            "http-body-util",
+            "hyper",
+            "rustls",
+            "tokio",
+            "tokio-rustls",
+            "tokio-util",
+            "tracing",
+            "wasmtime",
+            "wasmtime-wasi",
+            "wasmtime-wasi-io",
+            "webpki-roots 1.0.9"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi-io",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "51b3c9b39b1a1b3029f80e614623e182f165133dfaca8610f156450343f080a4",
+          "dependencies": [
+            "async-trait",
+            "bytes",
+            "futures",
+            "tracing",
+            "wasmtime"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tools/probes/ctc8-13-native-http/Cargo.lock",
+      "sha256": "042169a9dd059f6d04928da510b7c2010d9743ddf5b36ea0e2ece8bbebfb8a1a",
+      "selected_packages": [
+        {
+          "name": "cranelift-assembler-x64",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "16c273ba1bfc3a1cb27cb4f83df27134f3cb638a61f5ed79ab22cf86eb13da0d",
+          "dependencies": [
+            "cranelift-assembler-x64-meta"
+          ]
+        },
+        {
+          "name": "cranelift-assembler-x64-meta",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "cbf8909326a466739e83ffe11e74c0c8c6b4bfa911b612aece915daa746cff58",
+          "dependencies": [
+            "cranelift-srcgen"
+          ]
+        },
+        {
+          "name": "cranelift-bforest",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "3cb26b06b54d8b2f8cdf4d440a32fc3b3b91c71c162333a69a70a66fa265fc45",
+          "dependencies": [
+            "cranelift-entity",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-bitset",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "7ce4e57dbb7f73d08011808a19787c3a03c3e7854b2a479ed0b788915fb671be",
+          "dependencies": [
+            "serde",
+            "serde_derive",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-codegen",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "74b0a8968f33d0bc13bc86fe70dd3947e93acc9f358ed9848e9988448972a9be",
+          "dependencies": [
+            "bumpalo",
+            "cranelift-assembler-x64",
+            "cranelift-bforest",
+            "cranelift-bitset",
+            "cranelift-codegen-meta",
+            "cranelift-codegen-shared",
+            "cranelift-control",
+            "cranelift-entity",
+            "cranelift-isle",
+            "gimli",
+            "hashbrown 0.17.1",
+            "libm",
+            "log",
+            "postcard",
+            "pulley-interpreter",
+            "regalloc2",
+            "rustc-hash",
+            "serde",
+            "serde_derive",
+            "sha2 0.10.9",
+            "smallvec",
+            "target-lexicon",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-codegen-meta",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "f69e8e2fe9deb48ef7b8d0c61612f8c1e2277d0421c201e30a4c844a4ebac698",
+          "dependencies": [
+            "cranelift-assembler-x64-meta",
+            "cranelift-codegen-shared",
+            "cranelift-srcgen",
+            "heck",
+            "pulley-interpreter"
+          ]
+        },
+        {
+          "name": "cranelift-codegen-shared",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "ad4db1e87a65e9c5a832e3ede160830d4e34df938ac38b5604819f8825687e73"
+        },
+        {
+          "name": "cranelift-control",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "9248cd37bb6ec460981f57ead368e32b1eca7a207ad50e3e9c7adc3b161f20e9",
+          "dependencies": [
+            "arbitrary"
+          ]
+        },
+        {
+          "name": "cranelift-entity",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "26b8bc91c0a3530d132acbf118965dabe9a084029eb0fa74b64760360dec3316",
+          "dependencies": [
+            "cranelift-bitset",
+            "serde",
+            "serde_derive",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-frontend",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "5086f2ebc084a98b387e522680f62ef65a512444d8382151e03088716d3a1714",
+          "dependencies": [
+            "cranelift-codegen",
+            "hashbrown 0.17.1",
+            "log",
+            "smallvec",
+            "target-lexicon"
+          ]
+        },
+        {
+          "name": "cranelift-isle",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "b6a658670f779afc2df083be201ebe54805f69b7b9ffa8dab04142b72ed751c9"
+        },
+        {
+          "name": "cranelift-native",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "16a41083b1fd953debd6f32d21fcda765b258f323ce907fdd6b4715f2769c478",
+          "dependencies": [
+            "cranelift-codegen",
+            "libc",
+            "target-lexicon"
+          ]
+        },
+        {
+          "name": "cranelift-srcgen",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "244d9cd0759b0a3ccdd587cafb13434f9ea43b5c9d07701d277daf5cd0f7b7c1"
+        },
+        {
+          "name": "wash-runtime",
+          "version": "2.8.0",
+          "source": "git+https://github.com/dkkloimwieder/wasmCloud?rev=735b57982545358409a7d965a22549b08487ca09#735b57982545358409a7d965a22549b08487ca09",
+          "dependencies": [
+            "anyhow",
+            "arc-swap",
+            "async-nats",
+            "async-trait",
+            "bon",
+            "bytes",
+            "cap-net-ext",
+            "cap-std 3.4.6",
+            "chrono",
+            "docker_credential",
+            "etcetera",
+            "fastrand",
+            "futures",
+            "hostname",
+            "http",
+            "http-body-util",
+            "humantime",
+            "hyper",
+            "hyper-rustls",
+            "hyper-util",
+            "io-lifetimes 2.0.4",
+            "moka",
+            "names",
+            "oci-client",
+            "oci-wasm",
+            "opentelemetry",
+            "opentelemetry-appender-tracing",
+            "opentelemetry-http",
+            "opentelemetry-otlp",
+            "opentelemetry-semantic-conventions",
+            "opentelemetry_sdk",
+            "pbjson",
+            "pbjson-types",
+            "prost",
+            "redis",
+            "rustix",
+            "rustls",
+            "rustls-native-certs",
+            "semver",
+            "serde",
+            "serde_json",
+            "sha2 0.10.9",
+            "sysinfo",
+            "tempfile",
+            "tokio",
+            "tokio-rustls",
+            "tokio-util",
+            "tonic",
+            "tonic-prost",
+            "tower-service",
+            "tracing",
+            "tracing-opentelemetry",
+            "tracing-subscriber",
+            "url",
+            "uuid",
+            "wasmtime",
+            "wasmtime-wasi",
+            "wasmtime-wasi-http",
+            "wasmtime-wasi-io",
+            "webpki-roots 0.26.11",
+            "wit-component 0.254.0",
+            "zeroize"
+          ]
+        },
+        {
+          "name": "wasmtime",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4cdaf5b8af5713146e3a62d940c71e3eb2ad1ebacfa6b55f0c8509a5b4b87718",
+          "dependencies": [
+            "addr2line",
+            "async-trait",
+            "bitflags",
+            "bumpalo",
+            "bytes",
+            "cc",
+            "cfg-if",
+            "encoding_rs",
+            "futures",
+            "libc",
+            "log",
+            "mach2",
+            "memfd",
+            "object",
+            "once_cell",
+            "postcard",
+            "pulley-interpreter",
+            "rayon",
+            "rustix",
+            "semver",
+            "serde",
+            "serde_derive",
+            "smallvec",
+            "target-lexicon",
+            "wasmparser 0.252.0",
+            "wasmtime-environ",
+            "wasmtime-internal-cache",
+            "wasmtime-internal-component-macro",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-core",
+            "wasmtime-internal-cranelift",
+            "wasmtime-internal-fiber",
+            "wasmtime-internal-jit-debug",
+            "wasmtime-internal-jit-icache-coherence",
+            "wasmtime-internal-unwinder",
+            "wasmtime-internal-versioned-export-macros",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-environ",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "58793271eab7ec26bab99ca497131f8b37702e7dc39e2f2d18293e3e915b4964",
+          "dependencies": [
+            "anyhow",
+            "cpp_demangle",
+            "cranelift-bforest",
+            "cranelift-bitset",
+            "cranelift-entity",
+            "gimli",
+            "hashbrown 0.17.1",
+            "indexmap",
+            "log",
+            "object",
+            "postcard",
+            "rustc-demangle",
+            "semver",
+            "serde",
+            "serde_derive",
+            "sha2 0.10.9",
+            "smallvec",
+            "target-lexicon",
+            "wasm-encoder 0.252.0",
+            "wasmparser 0.252.0",
+            "wasmprinter",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-cache",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "ede02ba77442cab88a2ddd5d16373e8bc450b55e05de8be039b024987a53d5a7",
+          "dependencies": [
+            "base64",
+            "directories-next",
+            "log",
+            "postcard",
+            "rustix",
+            "serde",
+            "serde_derive",
+            "sha2 0.10.9",
+            "toml",
+            "wasmtime-environ",
+            "windows-sys 0.61.2",
+            "zstd"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-component-macro",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "c5bba4eff4804620bae04d7793308d97a0c5a8a97ea19e635452518f84560f84",
+          "dependencies": [
+            "anyhow",
+            "proc-macro2",
+            "quote",
+            "syn 2.0.119",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-wit-bindgen",
+            "wit-parser 0.252.0"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-component-util",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "3d7032ff6b4d7a45e05be1cb32ec1756df5f2669f08296dbe2c61c3789dead2c"
+        },
+        {
+          "name": "wasmtime-internal-core",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "f41d3b2cb9c3de7b696690af070d408b5e357011832f8b8bb7fbb315dbb620ed",
+          "dependencies": [
+            "anyhow",
+            "hashbrown 0.17.1",
+            "libm",
+            "serde"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-cranelift",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "1d5cda5b90247978dd2ba6ca4e309508da19e9244445671d2d0e6a34e5c3b847",
+          "dependencies": [
+            "cfg-if",
+            "cranelift-codegen",
+            "cranelift-control",
+            "cranelift-entity",
+            "cranelift-frontend",
+            "cranelift-native",
+            "gimli",
+            "itertools 0.14.0",
+            "log",
+            "object",
+            "pulley-interpreter",
+            "smallvec",
+            "target-lexicon",
+            "thiserror 2.0.20",
+            "wasmparser 0.252.0",
+            "wasmtime-environ",
+            "wasmtime-internal-core",
+            "wasmtime-internal-unwinder",
+            "wasmtime-internal-versioned-export-macros"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-fiber",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4d126366176553e8f304e8ac2078a4cc37134fe8f19d4d4695a09c5a2f577f10",
+          "dependencies": [
+            "cc",
+            "cfg-if",
+            "libc",
+            "rustix",
+            "wasmtime-environ",
+            "wasmtime-internal-versioned-export-macros",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-jit-debug",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "c1d28ff131bc40e11d84bc3a9fa0d264506439ffbbc89f3562fbb529d1caa617",
+          "dependencies": [
+            "cc",
+            "wasmtime-internal-versioned-export-macros"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-jit-icache-coherence",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4a52de8b6afbfcd618073f592c1450cb661574e7061f3f4a44f1f7ec0c7f7909",
+          "dependencies": [
+            "cfg-if",
+            "libc",
+            "wasmtime-internal-core",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-unwinder",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "5524fbaaf3d2134dd6229164d7fc81e443cce06d1e0576524d5f4e86e747cb13",
+          "dependencies": [
+            "cfg-if",
+            "cranelift-codegen",
+            "log",
+            "object",
+            "wasmtime-environ"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-versioned-export-macros",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "e93bb9ae112a80618510f938275a5d88637b656e7d0a021fc906f52206c708ad",
+          "dependencies": [
+            "proc-macro2",
+            "quote",
+            "syn 2.0.119"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-wit-bindgen",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "bfdbdd9d6fab1ecb67a7dc189e32c9e341444945fb709437bf8aab25d9a88459",
+          "dependencies": [
+            "anyhow",
+            "bitflags",
+            "heck",
+            "indexmap",
+            "wit-parser 0.252.0"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "b373095a6dc8382da56882ad16d7ea16771dd6927dd480b1ce3fe7c4b816d2cf",
+          "dependencies": [
+            "async-trait",
+            "bitflags",
+            "bytes",
+            "cap-fs-ext",
+            "cap-std 4.0.3",
+            "cfg-if",
+            "futures",
+            "io-lifetimes 3.0.1",
+            "rand 0.10.2",
+            "rustix",
+            "thiserror 2.0.20",
+            "tokio",
+            "tracing",
+            "url",
+            "wasmtime",
+            "wasmtime-wasi-io",
+            "wiggle",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi-http",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "372fc7845f26cd8f69bcbf6e4234fcc032f718480c7722fa20a28eb74d58998e",
+          "dependencies": [
+            "async-trait",
+            "bytes",
+            "futures",
+            "http",
+            "http-body",
+            "http-body-util",
+            "hyper",
+            "rustls",
+            "tokio",
+            "tokio-rustls",
+            "tokio-util",
+            "tracing",
+            "wasmtime",
+            "wasmtime-wasi",
+            "wasmtime-wasi-io",
+            "webpki-roots 1.0.9"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi-io",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "51b3c9b39b1a1b3029f80e614623e182f165133dfaca8610f156450343f080a4",
+          "dependencies": [
+            "async-trait",
+            "bytes",
+            "futures",
+            "tracing",
+            "wasmtime"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "tools/probes/ctc8-14-wasi-http/Cargo.lock",
+      "sha256": "b1113a960615ece0e73a561f2294b39555dbc95a846a552b9d78ea21d89f45e3",
+      "selected_packages": [
+        {
+          "name": "cranelift-assembler-x64",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "16c273ba1bfc3a1cb27cb4f83df27134f3cb638a61f5ed79ab22cf86eb13da0d",
+          "dependencies": [
+            "cranelift-assembler-x64-meta"
+          ]
+        },
+        {
+          "name": "cranelift-assembler-x64-meta",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "cbf8909326a466739e83ffe11e74c0c8c6b4bfa911b612aece915daa746cff58",
+          "dependencies": [
+            "cranelift-srcgen"
+          ]
+        },
+        {
+          "name": "cranelift-bforest",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "3cb26b06b54d8b2f8cdf4d440a32fc3b3b91c71c162333a69a70a66fa265fc45",
+          "dependencies": [
+            "cranelift-entity",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-bitset",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "7ce4e57dbb7f73d08011808a19787c3a03c3e7854b2a479ed0b788915fb671be",
+          "dependencies": [
+            "serde",
+            "serde_derive",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-codegen",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "74b0a8968f33d0bc13bc86fe70dd3947e93acc9f358ed9848e9988448972a9be",
+          "dependencies": [
+            "bumpalo",
+            "cranelift-assembler-x64",
+            "cranelift-bforest",
+            "cranelift-bitset",
+            "cranelift-codegen-meta",
+            "cranelift-codegen-shared",
+            "cranelift-control",
+            "cranelift-entity",
+            "cranelift-isle",
+            "gimli",
+            "hashbrown 0.17.1",
+            "libm",
+            "log",
+            "postcard",
+            "pulley-interpreter",
+            "regalloc2",
+            "rustc-hash",
+            "serde",
+            "serde_derive",
+            "sha2 0.10.9",
+            "smallvec",
+            "target-lexicon",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-codegen-meta",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "f69e8e2fe9deb48ef7b8d0c61612f8c1e2277d0421c201e30a4c844a4ebac698",
+          "dependencies": [
+            "cranelift-assembler-x64-meta",
+            "cranelift-codegen-shared",
+            "cranelift-srcgen",
+            "heck",
+            "pulley-interpreter"
+          ]
+        },
+        {
+          "name": "cranelift-codegen-shared",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "ad4db1e87a65e9c5a832e3ede160830d4e34df938ac38b5604819f8825687e73"
+        },
+        {
+          "name": "cranelift-control",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "9248cd37bb6ec460981f57ead368e32b1eca7a207ad50e3e9c7adc3b161f20e9",
+          "dependencies": [
+            "arbitrary"
+          ]
+        },
+        {
+          "name": "cranelift-entity",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "26b8bc91c0a3530d132acbf118965dabe9a084029eb0fa74b64760360dec3316",
+          "dependencies": [
+            "cranelift-bitset",
+            "serde",
+            "serde_derive",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "cranelift-frontend",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "5086f2ebc084a98b387e522680f62ef65a512444d8382151e03088716d3a1714",
+          "dependencies": [
+            "cranelift-codegen",
+            "hashbrown 0.17.1",
+            "log",
+            "smallvec",
+            "target-lexicon"
+          ]
+        },
+        {
+          "name": "cranelift-isle",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "b6a658670f779afc2df083be201ebe54805f69b7b9ffa8dab04142b72ed751c9"
+        },
+        {
+          "name": "cranelift-native",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "16a41083b1fd953debd6f32d21fcda765b258f323ce907fdd6b4715f2769c478",
+          "dependencies": [
+            "cranelift-codegen",
+            "libc",
+            "target-lexicon"
+          ]
+        },
+        {
+          "name": "cranelift-srcgen",
+          "version": "0.134.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "244d9cd0759b0a3ccdd587cafb13434f9ea43b5c9d07701d277daf5cd0f7b7c1"
+        },
+        {
+          "name": "wash-runtime",
+          "version": "2.8.0",
+          "source": "git+https://github.com/dkkloimwieder/wasmCloud?rev=735b57982545358409a7d965a22549b08487ca09#735b57982545358409a7d965a22549b08487ca09",
+          "dependencies": [
+            "anyhow",
+            "arc-swap",
+            "async-nats",
+            "async-trait",
+            "bon",
+            "bytes",
+            "cap-net-ext",
+            "cap-std 3.4.6",
+            "chrono",
+            "docker_credential",
+            "etcetera",
+            "fastrand",
+            "futures",
+            "hostname",
+            "http",
+            "http-body-util",
+            "humantime",
+            "hyper",
+            "hyper-rustls",
+            "hyper-util",
+            "io-lifetimes 2.0.4",
+            "moka",
+            "names",
+            "oci-client",
+            "oci-wasm",
+            "opentelemetry",
+            "opentelemetry-appender-tracing",
+            "opentelemetry-http",
+            "opentelemetry-otlp",
+            "opentelemetry-semantic-conventions",
+            "opentelemetry_sdk",
+            "pbjson",
+            "pbjson-types",
+            "prost",
+            "redis",
+            "rustix",
+            "rustls",
+            "rustls-native-certs",
+            "semver",
+            "serde",
+            "serde_json",
+            "sha2 0.10.9",
+            "sysinfo",
+            "tempfile",
+            "tokio",
+            "tokio-rustls",
+            "tokio-util",
+            "tonic",
+            "tonic-prost",
+            "tower-service",
+            "tracing",
+            "tracing-opentelemetry",
+            "tracing-subscriber",
+            "url",
+            "uuid",
+            "wasmtime",
+            "wasmtime-wasi",
+            "wasmtime-wasi-http",
+            "wasmtime-wasi-io",
+            "webpki-roots 0.26.11",
+            "wit-component 0.254.0",
+            "zeroize"
+          ]
+        },
+        {
+          "name": "wasmtime",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4cdaf5b8af5713146e3a62d940c71e3eb2ad1ebacfa6b55f0c8509a5b4b87718",
+          "dependencies": [
+            "addr2line",
+            "async-trait",
+            "bitflags",
+            "bumpalo",
+            "bytes",
+            "cc",
+            "cfg-if",
+            "encoding_rs",
+            "futures",
+            "libc",
+            "log",
+            "mach2",
+            "memfd",
+            "object",
+            "once_cell",
+            "postcard",
+            "pulley-interpreter",
+            "rustix",
+            "semver",
+            "serde",
+            "serde_derive",
+            "smallvec",
+            "target-lexicon",
+            "wasmparser 0.252.0",
+            "wasmtime-environ",
+            "wasmtime-internal-component-macro",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-core",
+            "wasmtime-internal-cranelift",
+            "wasmtime-internal-fiber",
+            "wasmtime-internal-jit-debug",
+            "wasmtime-internal-jit-icache-coherence",
+            "wasmtime-internal-unwinder",
+            "wasmtime-internal-versioned-export-macros",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-environ",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "58793271eab7ec26bab99ca497131f8b37702e7dc39e2f2d18293e3e915b4964",
+          "dependencies": [
+            "anyhow",
+            "cpp_demangle",
+            "cranelift-bforest",
+            "cranelift-bitset",
+            "cranelift-entity",
+            "gimli",
+            "hashbrown 0.17.1",
+            "indexmap",
+            "log",
+            "object",
+            "postcard",
+            "rustc-demangle",
+            "semver",
+            "serde",
+            "serde_derive",
+            "sha2 0.10.9",
+            "smallvec",
+            "target-lexicon",
+            "wasm-encoder 0.252.0",
+            "wasmparser 0.252.0",
+            "wasmprinter",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-core"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-component-macro",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "c5bba4eff4804620bae04d7793308d97a0c5a8a97ea19e635452518f84560f84",
+          "dependencies": [
+            "anyhow",
+            "proc-macro2",
+            "quote",
+            "syn 2.0.119",
+            "wasmtime-internal-component-util",
+            "wasmtime-internal-wit-bindgen",
+            "wit-parser 0.252.0"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-component-util",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "3d7032ff6b4d7a45e05be1cb32ec1756df5f2669f08296dbe2c61c3789dead2c"
+        },
+        {
+          "name": "wasmtime-internal-core",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "f41d3b2cb9c3de7b696690af070d408b5e357011832f8b8bb7fbb315dbb620ed",
+          "dependencies": [
+            "anyhow",
+            "hashbrown 0.17.1",
+            "libm",
+            "serde"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-cranelift",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "1d5cda5b90247978dd2ba6ca4e309508da19e9244445671d2d0e6a34e5c3b847",
+          "dependencies": [
+            "cfg-if",
+            "cranelift-codegen",
+            "cranelift-control",
+            "cranelift-entity",
+            "cranelift-frontend",
+            "cranelift-native",
+            "gimli",
+            "itertools 0.14.0",
+            "log",
+            "object",
+            "pulley-interpreter",
+            "smallvec",
+            "target-lexicon",
+            "thiserror 2.0.20",
+            "wasmparser 0.252.0",
+            "wasmtime-environ",
+            "wasmtime-internal-core",
+            "wasmtime-internal-unwinder",
+            "wasmtime-internal-versioned-export-macros"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-fiber",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4d126366176553e8f304e8ac2078a4cc37134fe8f19d4d4695a09c5a2f577f10",
+          "dependencies": [
+            "cc",
+            "cfg-if",
+            "libc",
+            "rustix",
+            "wasmtime-environ",
+            "wasmtime-internal-versioned-export-macros",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-jit-debug",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "c1d28ff131bc40e11d84bc3a9fa0d264506439ffbbc89f3562fbb529d1caa617",
+          "dependencies": [
+            "cc",
+            "wasmtime-internal-versioned-export-macros"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-jit-icache-coherence",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "4a52de8b6afbfcd618073f592c1450cb661574e7061f3f4a44f1f7ec0c7f7909",
+          "dependencies": [
+            "cfg-if",
+            "libc",
+            "wasmtime-internal-core",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-unwinder",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "5524fbaaf3d2134dd6229164d7fc81e443cce06d1e0576524d5f4e86e747cb13",
+          "dependencies": [
+            "cfg-if",
+            "cranelift-codegen",
+            "log",
+            "object",
+            "wasmtime-environ"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-versioned-export-macros",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "e93bb9ae112a80618510f938275a5d88637b656e7d0a021fc906f52206c708ad",
+          "dependencies": [
+            "proc-macro2",
+            "quote",
+            "syn 2.0.119"
+          ]
+        },
+        {
+          "name": "wasmtime-internal-wit-bindgen",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "bfdbdd9d6fab1ecb67a7dc189e32c9e341444945fb709437bf8aab25d9a88459",
+          "dependencies": [
+            "anyhow",
+            "bitflags",
+            "heck",
+            "indexmap",
+            "wit-parser 0.252.0"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "b373095a6dc8382da56882ad16d7ea16771dd6927dd480b1ce3fe7c4b816d2cf",
+          "dependencies": [
+            "async-trait",
+            "bitflags",
+            "bytes",
+            "cap-fs-ext",
+            "cap-std 4.0.3",
+            "cfg-if",
+            "futures",
+            "io-lifetimes 3.0.1",
+            "rand 0.10.2",
+            "rustix",
+            "thiserror 2.0.20",
+            "tokio",
+            "tracing",
+            "url",
+            "wasmtime",
+            "wasmtime-wasi-io",
+            "wiggle",
+            "windows-sys 0.61.2"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi-http",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "372fc7845f26cd8f69bcbf6e4234fcc032f718480c7722fa20a28eb74d58998e",
+          "dependencies": [
+            "async-trait",
+            "bytes",
+            "futures",
+            "http",
+            "http-body",
+            "http-body-util",
+            "hyper",
+            "rustls",
+            "tokio",
+            "tokio-rustls",
+            "tokio-util",
+            "tracing",
+            "wasmtime",
+            "wasmtime-wasi",
+            "wasmtime-wasi-io",
+            "webpki-roots 1.0.9"
+          ]
+        },
+        {
+          "name": "wasmtime-wasi-io",
+          "version": "47.0.4",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "checksum": "51b3c9b39b1a1b3029f80e614623e182f165133dfaca8610f156450343f080a4",
+          "dependencies": [
+            "async-trait",
+            "bytes",
+            "futures",
+            "tracing",
+            "wasmtime"
+          ]
+        }
+      ]
+    },
+    {
+      "path": "components/Cargo.lock",
+      "sha256": "caab5b1a614decce625f58c9234602b4cb29e74ecd60be5a51224a45bd481946",
+      "selected_packages": []
+    },
+    {
+      "path": "components/no-std/Cargo.lock",
+      "sha256": "43b63a298427ab10d65e738eced2426d8d3a12c77e9594ef4bd41051dce2ac8d",
+      "selected_packages": []
+    }
+  ],
+  "effective_feature_tree_status": "Not executed. Declared features are captured. Cargo must resolve features separately for each build selection."
+}

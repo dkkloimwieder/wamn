@@ -1,0 +1,28 @@
+helm-version 0
+distributed-chart 0
+host-default 0
+host-receiving 0
+host-wms 0
+operator 0
+Traceback (most recent call last):
+  File "/tmp/wamn_capture_deployment.py", line 80, in <module>
+    executor=yaml.safe_load((root/'deploy/platform/executor.yaml').read_text());spec=executor['spec']['template']['spec'];container=spec['containers'][0]
+  File "/usr/lib/python3/dist-packages/yaml/__init__.py", line 125, in safe_load
+    return load(stream, SafeLoader)
+  File "/usr/lib/python3/dist-packages/yaml/__init__.py", line 81, in load
+    return loader.get_single_data()
+           ~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3/dist-packages/yaml/constructor.py", line 49, in get_single_data
+    node = self.get_single_node()
+  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 41, in get_single_node
+    raise ComposerError("expected a single document in the stream",
+            document.start_mark, "but found another document",
+            event.start_mark)
+yaml.composer.ComposerError: expected a single document in the stream
+  in "<unicode string>", line 64, column 1:
+    apiVersion: apps/v1
+    ^
+but found another document
+  in "<unicode string>", line 272, column 1:
+    ---
+    ^

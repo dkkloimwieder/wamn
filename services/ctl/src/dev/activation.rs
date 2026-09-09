@@ -34,7 +34,13 @@ pub const HOST_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bound for each native workload request and response.
 pub const WORKLOAD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bound for graceful host shutdown before the kill-and-reap fallback.
-pub const HOST_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// The local release host has seven plugins and no drain delay: native cleanup
+/// takes up to 51 seconds, then identity, probes, flush, and runtime exit add five.
+/// Its cleared environment excludes ambient WASH timeout overrides.
+pub const HOST_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(70);
+/// Separate bound for reaping a host after the forced-kill fallback.
+const HOST_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 
 const FLOW_HTTP_NAME: &str = "flow-http";
 const FLOW_HTTP_WORKLOAD_ID: &str = "wamn-dev-flow-http";
@@ -720,6 +726,8 @@ fn flow_http_request(
                     image: request.config.flow_http_workload_image().to_owned(),
                     local_resources: Some(local_resources),
                     pool_size: 0,
+                    reclaim_window_seconds: 0,
+                    reclaim_min_instances: 0,
                     max_invocations: 0,
                     image_pull_secret: Some(pull_secret),
                     name: FLOW_HTTP_NAME.to_owned(),
@@ -1092,10 +1100,7 @@ where
                 )
             });
         }
-        if let Err(source) = backend
-            .reap_host(Instant::now() + HOST_SHUTDOWN_TIMEOUT)
-            .await
-        {
+        if let Err(source) = backend.reap_host(Instant::now() + HOST_REAP_TIMEOUT).await {
             first_error.get_or_insert_with(|| {
                 DevActivationError::with_source(
                     DevActivationErrorKind::CleanupFailed,
@@ -1279,6 +1284,7 @@ mod tests {
         events: Mutex<Vec<Event>>,
         spec: Mutex<Option<HostProcessSpec>>,
         requests: Mutex<Vec<(String, Box<[u8]>)>>,
+        reap_deadline: Mutex<Option<Instant>>,
     }
 
     struct FakeBackend {
@@ -1286,6 +1292,7 @@ mod tests {
         heartbeats: VecDeque<RuntimeMessage>,
         responses: VecDeque<Box<[u8]>>,
         waits: VecDeque<Option<bool>>,
+        host_exit_after: Duration,
     }
 
     impl FakeBackend {
@@ -1300,6 +1307,7 @@ mod tests {
                 heartbeats: heartbeats.into_iter().collect(),
                 responses: responses.into_iter().collect(),
                 waits: waits.into_iter().collect(),
+                host_exit_after: Duration::ZERO,
             }
         }
 
@@ -1365,8 +1373,11 @@ mod tests {
             Ok(())
         }
 
-        async fn wait_host(&mut self, _deadline: Instant) -> Result<Option<bool>, Self::Error> {
+        async fn wait_host(&mut self, deadline: Instant) -> Result<Option<bool>, Self::Error> {
             self.record(Event::Wait);
+            if Instant::now() + self.host_exit_after > deadline {
+                return Ok(None);
+            }
             self.waits
                 .pop_front()
                 .ok_or(FakeError("no wait outcome configured"))
@@ -1377,8 +1388,13 @@ mod tests {
             Ok(())
         }
 
-        async fn reap_host(&mut self, _deadline: Instant) -> Result<(), Self::Error> {
+        async fn reap_host(&mut self, deadline: Instant) -> Result<(), Self::Error> {
             self.record(Event::Reap);
+            *self
+                .shared
+                .reap_deadline
+                .lock()
+                .expect("reap-deadline lock is not poisoned") = Some(deadline);
             Ok(())
         }
     }
@@ -1626,9 +1642,18 @@ mod tests {
             .expect("the exact local host activates");
         assert_eq!(&*active.host_id, "selected-host-id");
         assert_eq!(active.http_port, 38_080);
+        let shutdown_started = Instant::now();
         shutdown_backend(&mut active.backend, &active.host_id, &active.workload_id)
             .await
             .expect("timeout falls back to kill and bounded reap");
+        let shutdown_finished = Instant::now();
+        let reap_deadline = shared
+            .reap_deadline
+            .lock()
+            .expect("reap-deadline lock is not poisoned")
+            .expect("forced kill has a reap deadline");
+        assert!(reap_deadline >= shutdown_started + Duration::from_secs(5));
+        assert!(reap_deadline <= shutdown_finished + Duration::from_secs(5));
 
         let spec = shared
             .spec
@@ -1767,7 +1792,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_accepts_sigterm_exit_without_kill_fallback() {
+    async fn shutdown_allows_native_cleanup_then_accepts_sigterm_exit_without_kill_fallback() {
         let shared = Arc::new(Shared::default());
         let mut backend = FakeBackend::new(
             Arc::clone(&shared),
@@ -1777,6 +1802,8 @@ mod tests {
             })],
             [Some(false)],
         );
+        // Model the full default local-host exit envelope without a wall-clock wait.
+        backend.host_exit_after = Duration::from_secs(56);
 
         shutdown_backend(&mut backend, "selected-host-id", FLOW_HTTP_WORKLOAD_ID)
             .await

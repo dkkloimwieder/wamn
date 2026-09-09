@@ -1,0 +1,60 @@
+[
+  {
+    "name": "helm-pull-2.9.0",
+    "argv": [
+      "helm",
+      "pull",
+      "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+      "--version",
+      "2.9.0",
+      "--destination",
+      "/tmp/wamn-distributed-crds-zba5e7vf/2.9.0"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:48:11.108390+00:00",
+    "finished": "2026-09-09T13:48:11.604275+00:00",
+    "exit": 0
+  },
+  {
+    "name": "helm-show-crds-2.9.0",
+    "argv": [
+      "helm",
+      "show",
+      "crds",
+      "/tmp/wamn-distributed-crds-zba5e7vf/2.9.0/runtime-operator-2.9.0.tgz"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:48:11.825882+00:00",
+    "finished": "2026-09-09T13:48:11.914647+00:00",
+    "exit": 0
+  },
+  {
+    "name": "helm-pull-2.8.0",
+    "argv": [
+      "helm",
+      "pull",
+      "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+      "--version",
+      "2.8.0",
+      "--destination",
+      "/tmp/wamn-distributed-crds-zba5e7vf/2.8.0"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:48:12.250494+00:00",
+    "finished": "2026-09-09T13:48:12.772013+00:00",
+    "exit": 0
+  },
+  {
+    "name": "helm-show-crds-2.8.0",
+    "argv": [
+      "helm",
+      "show",
+      "crds",
+      "/tmp/wamn-distributed-crds-zba5e7vf/2.8.0/runtime-operator-2.8.0.tgz"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started": "2026-09-09T13:48:13.029429+00:00",
+    "finished": "2026-09-09T13:48:13.102408+00:00",
+    "exit": 0
+  }
+]

@@ -1,4 +1,4 @@
-//! Guards the runtime-operator chart seam ruling 4's manifest mount rides.
+//! Guards registry credential mounts and native runtime controls in the chart.
 //!
 //! The chart is pulled from OCI at install time and is not in this repository,
 //! so no hermetic test can render it. What is guarded instead is the coupling
@@ -27,11 +27,13 @@ use serde_json::Value;
 const VALUES: &str = "deploy/infra/values-wamn.yaml";
 const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
 const RECEIVING_HOST_VALUES: &str = "deploy/platform/values-host-receiving-pat.yaml";
+const WMS_HOST_VALUES: &str = "deploy/platform/values-host-wms-pat.yaml";
+const EVENTS_RBAC: &str = "deploy/platform/runtime-operator-events-rbac.example.yaml";
 const EXECUTOR: &str = "deploy/platform/executor.yaml";
 const SOCKPROBE: &str = "components/fixtures/sockprobe/src/main.rs";
-const EXPECTED_CHART_VERSION: &str = "2.8.0";
+const EXPECTED_CHART_VERSION: &str = "2.9.0";
 static RENDER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-const EXPECTED_RUNTIME_REVISION: &str = "735b5798";
+const EXPECTED_RUNTIME_REVISION: &str = "68ebece9";
 
 /// The component workloads the operator schedules onto the host tier — the only
 /// two in scope for operator management (ruling wamn-0h0g.13.46).
@@ -107,12 +109,12 @@ impl Drop for RenderDirectory {
     }
 }
 
-fn render_host_deployment(root: &Path, values: &[&str]) -> Value {
+fn render_chart(root: &Path, release: &str, values: &[&str]) -> RenderDirectory {
     let output = RenderDirectory::create();
     let mut helm = Command::new("helm");
     helm.current_dir(root).args([
         "template",
-        "wamn-host",
+        release,
         "oci://ghcr.io/wasmcloud/charts/runtime-operator",
         "--version",
         EXPECTED_CHART_VERSION,
@@ -129,13 +131,17 @@ fn render_host_deployment(root: &Path, values: &[&str]) -> Value {
         "Helm render failed: {}",
         String::from_utf8_lossy(&rendered.stderr)
     );
-    let rendered = fs::read(
-        output
+    assert!(
+        !output
             .path()
-            .join("runtime-operator/templates/runtime/deployment.yaml"),
-    )
-    .expect("read rendered host Deployment");
+            .join("runtime-operator/templates/gateway")
+            .exists(),
+        "release {release} rendered the disabled gateway"
+    );
+    output
+}
 
+fn decode_manifest(root: &Path, manifest: &[u8]) -> Value {
     let mut kubectl = Command::new("kubectl")
         .current_dir(root)
         .args([
@@ -154,7 +160,7 @@ fn render_host_deployment(root: &Path, values: &[&str]) -> Value {
         .stdin
         .take()
         .expect("kubectl stdin is piped")
-        .write_all(&rendered)
+        .write_all(manifest)
         .expect("send rendered chart to the structural decoder");
     let decoded = kubectl
         .wait_with_output()
@@ -164,7 +170,25 @@ fn render_host_deployment(root: &Path, values: &[&str]) -> Value {
         "Kubernetes decode failed: {}",
         String::from_utf8_lossy(&decoded.stderr)
     );
-    serde_json::from_slice(&decoded.stdout).expect("rendered host Deployment is JSON")
+    serde_json::from_slice(&decoded.stdout).expect("Kubernetes manifest decodes as JSON")
+}
+
+fn rendered_manifest(root: &Path, output: &RenderDirectory, template: &str) -> Value {
+    let path = output
+        .path()
+        .join("runtime-operator/templates")
+        .join(template);
+    let manifest = fs::read(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    decode_manifest(root, &manifest)
+}
+
+fn render_host_objects(root: &Path, values: &[&str]) -> (Value, Value) {
+    let output = render_chart(root, "wamn-host", values);
+    (
+        rendered_manifest(root, &output, "runtime/deployment.yaml"),
+        rendered_manifest(root, &output, "runtime/networkpolicy.yaml"),
+    )
 }
 
 fn host_container(deployment: &Value) -> &Value {
@@ -185,6 +209,232 @@ fn environment_entry<'a>(container: &'a Value, name: &str) -> Option<&'a Value> 
         .expect("rendered host container carries env")
         .iter()
         .find(|entry| entry["name"] == name)
+}
+
+fn assert_native_host_controls(
+    deployment: &Value,
+    network_policy: &Value,
+    concurrent_starts: &str,
+    cpu_request: &str,
+    cpu_limit: &str,
+) {
+    let pod = &deployment["spec"]["template"]["spec"];
+    let container = host_container(deployment);
+    assert_eq!(deployment["metadata"]["namespace"], "wamn-system");
+    assert_eq!(pod["terminationGracePeriodSeconds"], 70);
+    for (name, expected) in [
+        ("WASH_HOST_MAX_GUEST_MEMORY", "4Gi"),
+        ("WASH_DEFAULT_HEAP_MEMORY", "256MiB"),
+        ("WASH_CORE_INSTANCES", "512"),
+        ("WASH_GUEST_MEMORY_MODE", "count"),
+        ("WASH_MAX_CONCURRENT_STARTS", concurrent_starts),
+    ] {
+        let entries = container["env"]
+            .as_array()
+            .expect("host environment is an array")
+            .iter()
+            .filter(|entry| entry["name"] == name)
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), 1, "host must set {name} exactly once");
+        assert_eq!(entries[0]["value"], expected, "wrong host {name}");
+    }
+    assert_eq!(
+        container["resources"],
+        serde_json::json!({
+            "requests": {"cpu": cpu_request, "memory": "256Mi"},
+            "limits": {"cpu": cpu_limit, "memory": "4Gi"},
+        }),
+        "native host controls must not leak into Kubernetes resources or change CPU limits"
+    );
+    for argument in [
+        "--probe-addr=0.0.0.0:8081",
+        "--drain-delay=5s",
+        "--nats-connect-timeout=60s",
+    ] {
+        assert_eq!(
+            container["args"]
+                .as_array()
+                .expect("host arguments are an array")
+                .iter()
+                .filter(|entry| *entry == argument)
+                .count(),
+            1,
+            "host must receive {argument} exactly once"
+        );
+    }
+    let ports = container["ports"].as_array().expect("host exposes ports");
+    let probes = ports
+        .iter()
+        .filter(|port| port["name"] == "probes")
+        .collect::<Vec<_>>();
+    assert_eq!(probes.len(), 1, "host must expose one native probe port");
+    assert_eq!(probes[0]["containerPort"], 8081);
+    assert_eq!(probes[0]["protocol"], "TCP");
+    for (name, path) in [
+        ("startupProbe", "/livez"),
+        ("livenessProbe", "/livez"),
+        ("readinessProbe", "/readyz"),
+    ] {
+        assert_eq!(
+            container[name]["httpGet"],
+            serde_json::json!({"path": path, "port": "probes"}),
+            "host {name} must use the native health listener"
+        );
+        assert!(container[name].get("tcpSocket").is_none());
+    }
+    assert_eq!(container["startupProbe"]["periodSeconds"], 5);
+    assert_eq!(container["startupProbe"]["failureThreshold"], 60);
+
+    let registry_volume = pod["volumes"]
+        .as_array()
+        .expect("host volumes are an array")
+        .iter()
+        .find(|volume| volume["name"] == "registry-pull")
+        .expect("host must mount the pull-only registry credential");
+    assert_eq!(
+        registry_volume["secret"],
+        serde_json::json!({
+            "secretName": "wamn-registry-pull",
+            "optional": false,
+            "items": [{"key": ".dockerconfigjson", "path": "config.json"}],
+        }),
+        "native volumes passthrough must preserve the mandatory registry Secret"
+    );
+    let registry_mount = container["volumeMounts"]
+        .as_array()
+        .expect("host volume mounts are an array")
+        .iter()
+        .find(|mount| mount["name"] == "registry-pull")
+        .expect("host container must mount the registry credential");
+    assert_eq!(registry_mount["mountPath"], "/etc/wamn/registry");
+    assert_eq!(registry_mount["readOnly"], true);
+
+    assert_eq!(network_policy["kind"], "NetworkPolicy");
+    assert_eq!(
+        network_policy["metadata"]["namespace"], deployment["metadata"]["namespace"],
+        "probe ingress permission must stay in the host group's namespace"
+    );
+    assert_eq!(
+        network_policy["spec"]["podSelector"], deployment["spec"]["selector"],
+        "probe ingress permission must select only the host group"
+    );
+    assert_eq!(
+        network_policy["spec"]["policyTypes"],
+        serde_json::json!(["Ingress"])
+    );
+    assert_eq!(
+        network_policy["spec"]["ingress"],
+        serde_json::json!([{"ports": [
+            {"port": 80, "protocol": "TCP"},
+            {"port": 8081, "protocol": "TCP"},
+        ]}]),
+        "native policy must allow traffic and probe ports without changing source scope"
+    );
+    assert!(network_policy["spec"].get("egress").is_none());
+}
+
+fn assert_executor_native_controls(root: &Path) {
+    let source = read_repository_file(root, EXECUTOR);
+    let manifest = decode_manifest(root, source.as_bytes());
+    let deployment = manifest["items"]
+        .as_array()
+        .expect("executor manifest contains a Deployment and disruption budget")
+        .iter()
+        .find(|object| object["kind"] == "Deployment")
+        .expect("executor Deployment is present");
+    let pod = &deployment["spec"]["template"]["spec"];
+    // Five seconds to drain, one to stop probes, two to flush, one to stop Tokio.
+    assert!(
+        pod["terminationGracePeriodSeconds"]
+            .as_u64()
+            .is_some_and(|seconds| seconds > 9),
+        "executor grace must exceed its complete nine-second shutdown envelope"
+    );
+    let container = host_container(deployment);
+    assert_eq!(
+        environment_entry(container, "WASH_GUEST_MEMORY_MODE")
+            .and_then(|entry| entry["value"].as_str()),
+        Some("count")
+    );
+    for (name, path) in [
+        ("startupProbe", "/livez"),
+        ("livenessProbe", "/livez"),
+        ("readinessProbe", "/readyz"),
+    ] {
+        assert_eq!(container[name]["httpGet"]["path"], path);
+        assert_eq!(container[name]["httpGet"]["port"], "readiness");
+        assert!(container[name].get("tcpSocket").is_none());
+    }
+    assert!(
+        container["ports"]
+            .as_array()
+            .expect("executor exposes its health port")
+            .iter()
+            .any(|port| port["name"] == "readiness" && port["containerPort"] == 8089)
+    );
+}
+
+fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
+    let values = read_repository_file(root, VALUES);
+    let overlay = read_repository_file(root, EVENTS_RBAC);
+    let output = render_chart(root, "wamn", &[VALUES]);
+    let namespace_roles = rendered_manifest(root, &output, "operator/workload-namespace-role.yaml");
+    let namespace_roles = namespace_roles["items"]
+        .as_array()
+        .expect("watched namespaces render operator Roles and RoleBindings");
+    let namespaces = list_items(&values, "watchNamespaces");
+    assert!(
+        !namespaces.is_empty(),
+        "operator must name its watched namespaces"
+    );
+    for namespace in namespaces {
+        let manifest = decode_manifest(
+            root,
+            overlay
+                .replace("__ENVIRONMENT_NAMESPACE__", namespace)
+                .as_bytes(),
+        );
+        let objects = manifest["items"]
+            .as_array()
+            .expect("Events overlay contains a Role and RoleBinding");
+        assert_eq!(objects.len(), 2, "Events overlay must stay narrowly scoped");
+        let role = objects
+            .iter()
+            .find(|object| object["kind"] == "Role")
+            .expect("Events overlay contains a namespaced Role");
+        assert_eq!(role["metadata"]["namespace"], namespace);
+        assert_eq!(
+            role["rules"],
+            serde_json::json!([{
+                "apiGroups": ["events.k8s.io"],
+                "resources": ["events"],
+                "verbs": ["create", "patch"],
+            }])
+        );
+        let binding = objects
+            .iter()
+            .find(|object| object["kind"] == "RoleBinding")
+            .expect("Events overlay contains a namespaced RoleBinding");
+        assert_eq!(binding["metadata"]["namespace"], namespace);
+        assert_eq!(
+            binding["roleRef"],
+            serde_json::json!({
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "Role",
+                "name": role["metadata"]["name"],
+            })
+        );
+        let chart_binding = namespace_roles
+            .iter()
+            .find(|object| {
+                object["kind"] == "RoleBinding" && object["metadata"]["namespace"] == namespace
+            })
+            .expect("watched namespace has the chart's operator RoleBinding");
+        assert_eq!(
+            binding["subjects"], chart_binding["subjects"],
+            "Events overlay must bind the existing operator identity"
+        );
+    }
 }
 
 fn installed_chart_version(values: &str) -> &str {
@@ -275,16 +525,8 @@ fn seam_record_names_both_undeclared_passthrough_keys() {
         );
     }
     assert!(
-        values.contains("e256a9f6"),
-        "{VALUES} must record the upstream commit that introduced the passthrough keys"
-    );
-    assert!(
         values.contains(EXPECTED_RUNTIME_REVISION),
         "{VALUES} must record that the seam was re-verified at the pinned runtime revision"
-    );
-    assert!(
-        values.contains("no values.schema.json"),
-        "{VALUES} must record why a rename is silent rather than an install error"
     );
     assert!(
         values.contains(RE_VERIFY),
@@ -293,26 +535,19 @@ fn seam_record_names_both_undeclared_passthrough_keys() {
 }
 
 #[test]
-fn install_command_and_seam_record_agree_on_the_installed_chart() {
+fn operator_install_command_pins_the_upstream_chart() {
     let root = repository_root();
     let values = read_repository_file(&root, VALUES);
 
     let installed = installed_chart_version(&values);
     assert_eq!(
         installed, EXPECTED_CHART_VERSION,
-        "{VALUES} must install the chart matching the pinned vanilla runtime"
-    );
-    let expected = format!("pulls chart {installed},");
-
-    assert!(
-        values.contains(&expected),
-        "{VALUES} install command pulls chart {installed}, which its seam record \
-         does not state; expected {expected:?}"
+        "{VALUES} must install the chart matching the pinned upstream runtime"
     );
 }
 
 #[test]
-fn host_and_executor_use_the_native_v2_8_memory_contract() {
+fn host_and_executor_use_the_native_v2_9_memory_contract() {
     let root = repository_root();
     let host_values = read_repository_file(&root, HOST_VALUES);
     let executor = read_repository_file(&root, EXECUTOR);
@@ -324,7 +559,7 @@ fn host_and_executor_use_the_native_v2_8_memory_contract() {
     ] {
         assert!(
             host_values.contains(marker),
-            "{HOST_VALUES} must carry the native v2.8 memory setting {marker:?}"
+            "{HOST_VALUES} must carry the native v2.9 memory setting {marker:?}"
         );
     }
     for marker in [
@@ -337,7 +572,7 @@ fn host_and_executor_use_the_native_v2_8_memory_contract() {
     ] {
         assert!(
             executor.contains(marker),
-            "{EXECUTOR} must carry the native v2.8 memory setting {marker:?}"
+            "{EXECUTOR} must carry the native v2.9 memory setting {marker:?}"
         );
     }
 
@@ -587,8 +822,15 @@ fn the_component_workloads_target_the_host_tier_environment() {
 #[ignore = "pulls and renders the pinned OCI chart; run via [RECEIVING-HOST-OVERLAY]"]
 fn receiving_pat_overlay_renders_a_complete_scoped_host() {
     let root = repository_root();
-    let base = render_host_deployment(&root, &[HOST_VALUES]);
-    let receiving = render_host_deployment(&root, &[HOST_VALUES, RECEIVING_HOST_VALUES]);
+    let (base, base_policy) = render_host_objects(&root, &[HOST_VALUES]);
+    let (receiving, receiving_policy) =
+        render_host_objects(&root, &[HOST_VALUES, RECEIVING_HOST_VALUES]);
+    let (wms, wms_policy) = render_host_objects(&root, &[HOST_VALUES, WMS_HOST_VALUES]);
+    assert_native_host_controls(&base, &base_policy, "4", "2", "6");
+    assert_native_host_controls(&receiving, &receiving_policy, "4", "2", "6");
+    assert_native_host_controls(&wms, &wms_policy, "1", "250m", "2");
+    assert_executor_native_controls(&root);
+    assert_events_overlay_remains_namespace_scoped(&root);
     let base_container = host_container(&base);
     let receiving_container = host_container(&receiving);
 

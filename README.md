@@ -1,17 +1,17 @@
 # wamn
 
 A wasmCloud-based managed low-code platform: a data/schema layer, wiring execution,
-and a four-tier Postgres control plane, all hosted on a customized wasmCloud
-runtime. **`docs/exe-model.md` is the single WIP design authority.**
+and a four-tier Postgres control plane, all hosted on the native wasmCloud runtime with WAMN plugins. **`docs/exe-model.md` is the single WIP design authority.**
 `docs/PLAN/PLAN.md` is its non-normative ordering and ambiguity map; Beads and
 git own status. `docs/operations/build-and-test.md` is the gate of record and
 the per-bead build and test commands.
 
 `services/host` is the production washlet host. Production queue execution and
 deterministic scenario execution are separate artifacts which share
-`crates/execution/host`. Our wash-runtime changes are carried commits on a fork,
-pinned in one place: `workspace.dependencies.wash-runtime.rev` in the root
-`Cargo.toml`.
+`crates/execution/host`. The root `Cargo.toml` pins `wash-runtime` directly to
+upstream wasmCloud v2.9.0 at `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
+WAMN carries no upstream patches. The [cutover runbook](deploy/README.md#wasmcloud-29-cutover)
+keeps one active runtime version and links the separate live proof requirements.
 
 ## Repository layout
 
@@ -99,7 +99,7 @@ docs/                   exe-model.md: single WIP design authority
                         operations/build-and-test.md: gate of record and the
                         per-bead build + test commands
 
-Cargo.toml              root workspace; pins the wash-runtime fork rev
+Cargo.toml              root workspace; pins the direct upstream wash-runtime rev
 Dockerfile              shared build plus one final stage per deployable artifact
 ```
 

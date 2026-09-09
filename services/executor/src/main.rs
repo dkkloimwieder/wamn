@@ -20,19 +20,22 @@ struct Cli {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    async_main(cli)
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(async_main(cli));
+    runtime.shutdown_timeout(wamn_runtime::lifecycle::RUNTIME_SHUTDOWN_BUDGET);
+    result
 }
 
-#[tokio::main]
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let level = tracing::Level::from_str(&cli.log_level)
         .map_err(|_| anyhow::anyhow!("invalid log level: {}", cli.log_level))?;
     // OTel exporters activate when OTEL_* env vars are present.
-    let shutdown_observability =
+    let _shutdown_observability =
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = wamn_executor::run(cli.args).await;
 
-    shutdown_observability();
-    result
+    wamn_runtime::lifecycle::finish(result).await
 }

@@ -7,7 +7,7 @@
 #     deploy/platform/runtime-operator-events-rbac.example.yaml \
 #     | kubectl apply -f -
 #
-# Chart 2.8.0 grants the operator access to core-group Events, but its native
+# Chart 2.9.0 grants the operator access to core-group Events, but its native
 # recorder writes `events.k8s.io/v1`. This WAMN-owned overlay supplies only that
 # missing write surface in each watched namespace. It binds the ServiceAccount
 # the fixed `wamn` Helm release creates in `wamn-system`; it does not mint a

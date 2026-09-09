@@ -1,0 +1,190 @@
+{
+  "spec_hash_encoding": "UTF-8 JSON of CRD .spec, sorted keys, compact separators, ensure_ascii=False",
+  "source_commit": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "versions": {
+    "2.9.0": {
+      "artifacts.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_artifacts.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "artifacts.runtime.wasmcloud.dev",
+        "resource_kind": "Artifact",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "f12ca639438a0410e7415723a66196c1e4f9dc898e2eaf385213224b8813ed22",
+        "spec_sha256": "822bd091bee0209a72dd953171dc69d152369a0c327ae5e589c4fdb423eab159",
+        "source_file_sha256": "f12ca639438a0410e7415723a66196c1e4f9dc898e2eaf385213224b8813ed22",
+        "source_file_byte_identical": true
+      },
+      "hosts.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_hosts.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "hosts.runtime.wasmcloud.dev",
+        "resource_kind": "Host",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "35418ad8284cdb0daba21e6c43a44d2914e8ca9de11265bb2a588573ef6b773c",
+        "spec_sha256": "ecdd001c039a6822379d80510561f16959cad38f46ab289975d07049322afe6c",
+        "source_file_sha256": "35418ad8284cdb0daba21e6c43a44d2914e8ca9de11265bb2a588573ef6b773c",
+        "source_file_byte_identical": true
+      },
+      "workloaddeployments.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloaddeployments.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloaddeployments.runtime.wasmcloud.dev",
+        "resource_kind": "WorkloadDeployment",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "385b56a0544fa15df048f5824eb99e354a8f3654ca5465775223de37641f547e",
+        "spec_sha256": "66cbc474f4199799b02d5263b96e0774b9d12526010c21daf240153e46e7757e",
+        "source_file_sha256": "385b56a0544fa15df048f5824eb99e354a8f3654ca5465775223de37641f547e",
+        "source_file_byte_identical": true
+      },
+      "workloadreplicasets.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloadreplicasets.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloadreplicasets.runtime.wasmcloud.dev",
+        "resource_kind": "WorkloadReplicaSet",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "877b2127b51867b7411910121f0892ed1f1b9200825a7bb3687b72df334f9fc9",
+        "spec_sha256": "b6017a0434466233ae1e51de09e33d36baa79e7479016c035f3598e6a9f6bf84",
+        "source_file_sha256": "877b2127b51867b7411910121f0892ed1f1b9200825a7bb3687b72df334f9fc9",
+        "source_file_byte_identical": true
+      },
+      "workloads.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloads.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloads.runtime.wasmcloud.dev",
+        "resource_kind": "Workload",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "426c9325ce1bb7d0d5d12a592ca6c2376fb10469f063b2fcc5b96fa03f6e18cc",
+        "spec_sha256": "9be1e077da54ec84505bf104768f971b00b15974f0010bb4318579b25f2b6242",
+        "source_file_sha256": "426c9325ce1bb7d0d5d12a592ca6c2376fb10469f063b2fcc5b96fa03f6e18cc",
+        "source_file_byte_identical": true
+      }
+    },
+    "2.8.0": {
+      "artifacts.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_artifacts.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "artifacts.runtime.wasmcloud.dev",
+        "resource_kind": "Artifact",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "f12ca639438a0410e7415723a66196c1e4f9dc898e2eaf385213224b8813ed22",
+        "spec_sha256": "822bd091bee0209a72dd953171dc69d152369a0c327ae5e589c4fdb423eab159"
+      },
+      "hosts.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_hosts.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "hosts.runtime.wasmcloud.dev",
+        "resource_kind": "Host",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "35418ad8284cdb0daba21e6c43a44d2914e8ca9de11265bb2a588573ef6b773c",
+        "spec_sha256": "ecdd001c039a6822379d80510561f16959cad38f46ab289975d07049322afe6c"
+      },
+      "workloaddeployments.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloaddeployments.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloaddeployments.runtime.wasmcloud.dev",
+        "resource_kind": "WorkloadDeployment",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "9132c1ef0f54ae41ca056caeee000a534118b26ae9e3ea5290f54aa638f98152",
+        "spec_sha256": "e280ffc8e0edec3bca3d79563e88018e0387adc50125b84ad24976126dd5b29f"
+      },
+      "workloadreplicasets.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloadreplicasets.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloadreplicasets.runtime.wasmcloud.dev",
+        "resource_kind": "WorkloadReplicaSet",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "45963a9cc38c841807a94b4af1cc0bcfca500968a100edadd42fc4c7cdb02cf2",
+        "spec_sha256": "96e14bdac6df8ea5f64205730a4f4dd271c27e2fcc44405e69669650144ea3a3"
+      },
+      "workloads.runtime.wasmcloud.dev": {
+        "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_workloads.yaml",
+        "api_version": "apiextensions.k8s.io/v1",
+        "kind": "CustomResourceDefinition",
+        "name": "workloads.runtime.wasmcloud.dev",
+        "resource_kind": "Workload",
+        "scope": "Namespaced",
+        "versions": [
+          {
+            "name": "v1alpha1",
+            "served": true,
+            "storage": true
+          }
+        ],
+        "file_sha256": "d013f79a752b80a94771bbac0094c87cb1a7a58adf7aff67f9829b1030e81826",
+        "spec_sha256": "ba5c9491c74e34a82060ca0d8d58afe8a6abb8153f3159f728b8139685f25679"
+      }
+    }
+  }
+}

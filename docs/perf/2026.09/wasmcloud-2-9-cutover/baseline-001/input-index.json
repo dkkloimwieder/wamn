@@ -1,0 +1,119 @@
+[
+  {
+    "path": "Cargo.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "f92e94e655cba40d856a85931ecf156461b7ae256618f9d87d03c58e2859d858",
+    "bytes": 14595,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/Cargo.toml.snapshot"
+  },
+  {
+    "path": "Cargo.lock",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "086e19657b641532bd34f71ff9fe1b0f07fc8c7d240496ecfeae9cbb7f0c76ce",
+    "bytes": 177634,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/Cargo.lock.snapshot"
+  },
+  {
+    "path": "rust-toolchain.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "23683dfbf6cabcc562cc16276cc7b959d0ba03501ba71e888407a0f26db1275f",
+    "bytes": 173,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/rust-toolchain.toml.snapshot"
+  },
+  {
+    "path": ".cargo/config.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "97101306f298aaf8eef145317c3af11e120541cd40ae66d5c82f015ec210f48d",
+    "bytes": 1482,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/.cargo/config.toml.snapshot"
+  },
+  {
+    "path": "tools/probes/ctc8-13-native-http/Cargo.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "4fae58aa0dcf6e2c18c2c2cc76c915d57db7a72d222c68faed2ef3c205c7f5f2",
+    "bytes": 1032,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/tools/probes/ctc8-13-native-http/Cargo.toml.snapshot"
+  },
+  {
+    "path": "tools/probes/ctc8-13-native-http/Cargo.lock",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "042169a9dd059f6d04928da510b7c2010d9743ddf5b36ea0e2ece8bbebfb8a1a",
+    "bytes": 138225,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/tools/probes/ctc8-13-native-http/Cargo.lock.snapshot"
+  },
+  {
+    "path": "tools/probes/ctc8-14-wasi-http/Cargo.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "90e3f3c2c6da822dac7c4968bf5f67a45857c8ad38852cfddf668bcb37a4b8ed",
+    "bytes": 202,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/tools/probes/ctc8-14-wasi-http/Cargo.toml.snapshot"
+  },
+  {
+    "path": "tools/probes/ctc8-14-wasi-http/Cargo.lock",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "b1113a960615ece0e73a561f2294b39555dbc95a846a552b9d78ea21d89f45e3",
+    "bytes": 122118,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/tools/probes/ctc8-14-wasi-http/Cargo.lock.snapshot"
+  },
+  {
+    "path": "tools/probes/ctc8-14-wasi-http/host/Cargo.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "04d2b8010eafe29e2151b26c9625e14032cacb3b51eb3afad41ce2e1c8e1c012",
+    "bytes": 1278,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/tools/probes/ctc8-14-wasi-http/host/Cargo.toml.snapshot"
+  },
+  {
+    "path": "tools/probes/ctc8-14-wasi-http/guest/Cargo.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "7d7f39e17922c57d1498610d7d4a9f6b53c6d57088ec5fc8decdc410244d8fcb",
+    "bytes": 193,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/tools/probes/ctc8-14-wasi-http/guest/Cargo.toml.snapshot"
+  },
+  {
+    "path": "components/Cargo.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "09ce2141d46030f9f45b6ea2cff231d9309b14fe8ee816ca58cebff67f93e1e4",
+    "bytes": 4506,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/components/Cargo.toml.snapshot"
+  },
+  {
+    "path": "components/Cargo.lock",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "caab5b1a614decce625f58c9234602b4cb29e74ecd60be5a51224a45bd481946",
+    "bytes": 35296,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/components/Cargo.lock.snapshot"
+  },
+  {
+    "path": "components/no-std/Cargo.toml",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "9e3bee081a9f24d0ad4d4868dab0fbb57e4ced92cbbcbd27b7cb07afcd62011c",
+    "bytes": 3007,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/components/no-std/Cargo.toml.snapshot"
+  },
+  {
+    "path": "components/no-std/Cargo.lock",
+    "source_sha": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "sha256": "43b63a298427ab10d65e738eced2426d8d3a12c77e9594ef4bd41051dce2ac8d",
+    "bytes": 10116,
+    "working_tree_matches_source": true,
+    "snapshot": "inputs/components/no-std/Cargo.lock.snapshot"
+  },
+  {
+    "path": "docs/wamn_wasmcloud_2_9_cutover.md",
+    "git_show_exit_code": 128,
+    "stderr": "fatal: path 'docs/wamn_wasmcloud_2_9_cutover.md' exists on disk, but not in 'dfa1c3187fe8cd671688a442b23106046e502cb6'\n"
+  }
+]

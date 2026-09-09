@@ -8,6 +8,8 @@ pub mod component_artifact_source;
 pub mod connection_authority;
 pub mod connection_generation;
 pub mod engine;
+pub mod expected_router;
+pub mod lifecycle;
 pub mod plugins;
 pub mod registry_credentials;
 mod registry_transport;

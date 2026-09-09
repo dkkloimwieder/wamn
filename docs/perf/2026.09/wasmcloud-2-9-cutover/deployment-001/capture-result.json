@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "python",
+    "/tmp/wamn_capture_deployment.py"
+  ],
+  "started": "2026-09-09T13:15:34.331029+00:00",
+  "finished": "2026-09-09T13:15:37.404833+00:00",
+  "exit": 0
+}

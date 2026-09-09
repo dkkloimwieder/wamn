@@ -154,7 +154,11 @@ async fn drive_guest(
     let ctx = Ctx::builder(GUEST_ID.to_string(), GUEST_ID.to_string())
         .with_plugins(plugins)
         .build();
-    let mut store = Store::new(raw, SharedCtx::new(ctx));
+    let mut store = Store::new(
+        raw,
+        SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
+    );
+    wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
     // `build_engine` turns epoch interruption ON. This test starts no ticker, so
     // the epoch never advances and a deadline this far out never fires — but
     // leaving the store at its default deadline of 0 would trap the guest before

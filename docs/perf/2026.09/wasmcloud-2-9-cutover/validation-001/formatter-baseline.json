@@ -1,0 +1,33 @@
+{
+  "unchanged_baseline_files": [
+    {
+      "path": "crates/platform/runtime/src/component_admission.rs",
+      "matches_baseline": true,
+      "sha256": "fb1031894bdcbcb69b89678f9cca0bc050ff949a45b9fe9b852193073c9911fa"
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_blobstore/plugin.rs",
+      "matches_baseline": true,
+      "sha256": "d8b3ec1f011626a9a59d71bf510b8c88adc1a182ecbd33f280e16532ea678d17"
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_postgres/pool.rs",
+      "matches_baseline": true,
+      "sha256": "c8e40533b0e3c08fa7a0026e5c0993b0a90d6fff93a2af0b5e14a6fd5d24266b"
+    }
+  ],
+  "owning_module": {
+    "command": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/src/lib.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+}

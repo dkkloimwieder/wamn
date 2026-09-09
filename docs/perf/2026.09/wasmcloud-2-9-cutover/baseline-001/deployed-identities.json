@@ -1,0 +1,60 @@
+[
+  {
+    "argv": [
+      "kubectl",
+      "config",
+      "current-context"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "execution_scope": "outside sandbox, read-only",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "error: current-context is not set\n"
+  },
+  {
+    "argv": [
+      "helm",
+      "list",
+      "-A",
+      "-o",
+      "json"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "execution_scope": "outside sandbox, read-only",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "Error: kubernetes cluster unreachable: Get \"http://localhost:8080/version\": dial tcp 127.0.0.1:8080: connect: connection refused\n"
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--request-timeout=10s",
+      "-n",
+      "wamn-system",
+      "get",
+      "deployments,statefulsets",
+      "-o=jsonpath={range .items[*]}{.kind}{\"\\t\"}{.metadata.name}{\"\\t\"}{.metadata.labels.helm\\.sh/chart}{\"\\t\"}{range .spec.template.spec.containers[*]}{.name}{\"=\"}{.image}{\" \"}{end}{\"\\n\"}{end}"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "execution_scope": "outside sandbox, read-only",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "E0909 08:35:22.246746 2835015 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.246985 2835015 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.248000 2835015 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.248107 2835015 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.249293 2835015 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.249426 2835015 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nThe connection to the server localhost:8080 was refused - did you specify the right host or port?\n"
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--request-timeout=10s",
+      "-n",
+      "wamn-system",
+      "get",
+      "pods",
+      "-o=jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{range .status.containerStatuses[*]}{.name}{\"=\"}{.imageID}{\" \"}{end}{\"\\n\"}{end}"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "execution_scope": "outside sandbox, read-only",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "E0909 08:35:22.283980 2835024 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.284159 2835024 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.285402 2835024 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.285507 2835024 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nE0909 08:35:22.286740 2835024 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=10s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"\nThe connection to the server localhost:8080 was refused - did you specify the right host or port?\n"
+  }
+]

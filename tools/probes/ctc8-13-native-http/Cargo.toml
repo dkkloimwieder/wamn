@@ -22,6 +22,6 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync",
 tokio-rustls = "0.26"
 wamn-runtime = { path = "../../../crates/platform/runtime" }
 wamn-execution-contract = { path = "../../../components/execution/contract" }
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "735b57982545358409a7d965a22549b08487ca09", default-features = false }
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "68ebece9c537f8bb4b5c9999f274ec68d60f35a9", default-features = false }
 wasmtime-wasi = "=47.0.4"
 wasmtime-wasi-http = "=47.0.4"

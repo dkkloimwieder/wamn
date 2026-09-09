@@ -43,7 +43,7 @@ context=kind-wamn-rc
 namespace=wamn-rc
 system_namespace=wamn-system
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
-chart_version=2.8.0
+chart_version=2.9.0
 run_id=$$
 host_tag=rc-${short_head}-${run_id}-debug
 gate_image=wamn-gates:${host_tag}
@@ -420,11 +420,11 @@ helm list --kubeconfig "$kubeconfig" --kube-context "$context" \
   >"$evidence_dir/helm-releases.json"
 jq -e --arg namespace "$namespace" '
   ([.[] | select(.name == "wamn" and .namespace == "wamn-system" and
-                 .status == "deployed" and .chart == "runtime-operator-2.8.0" and
-                 .app_version == "2.8.0")] | length == 1) and
+                 .status == "deployed" and .chart == "runtime-operator-2.9.0" and
+                 .app_version == "2.9.0")] | length == 1) and
   ([.[] | select(.name == "wamn-host" and .namespace == $namespace and
-                 .status == "deployed" and .chart == "runtime-operator-2.8.0" and
-                 .app_version == "2.8.0")] | length == 1)
+                 .status == "deployed" and .chart == "runtime-operator-2.9.0" and
+                 .app_version == "2.9.0")] | length == 1)
 ' >/dev/null "$evidence_dir/helm-releases.json"
 "${kube[@]}" -n "$namespace" get deployment hostgroup-default -o json \
   >"$evidence_dir/host-deployment.json"

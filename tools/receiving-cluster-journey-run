@@ -167,7 +167,7 @@ app_materializer_trigger=${app_materializer_workload}-trigger
 # the package names carry hyphens.
 app_components=(receiving client_acme_receiving)
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
-chart_version=2.8.0
+chart_version=2.9.0
 route_host=receiving.localhost
 run_id=$$
 host_tag=receiving-${short_head}-${run_id}-release
@@ -188,13 +188,13 @@ if [[ "$apply" != true ]]; then
   if [[ "$session_host_proof" == true ]]; then
     printf '  order: Dockerfile host + gates + identity -> disposable v1 session release -> two distinct deployed hosts -> reachable/unavailable JWKS removal Jobs (300 seconds each) -> exact teardown\n'
   elif [[ "$membershipproof" == true ]]; then
-    printf '  order: Dockerfile host + gates -> production mint/attest -> operator 2.8.0 -> deployed HTTP membershipproof Job -> exact teardown\n'
+    printf '  order: Dockerfile host + gates -> production mint/attest -> operator 2.9.0 -> deployed HTTP membershipproof Job -> exact teardown\n'
   elif [[ "$throughput" == true ]]; then
-    printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> throughput sweep (route, no-DB route, direct statement; c=1..64) -> exact teardown\n'
+    printf '  order: build -> production mint/attest -> operator 2.9.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> throughput sweep (route, no-DB route, direct statement; c=1..64) -> exact teardown\n'
   elif [[ "$measure_startup" == true ]]; then
-    printf '  order: build -> production mint/attest -> operator 2.8.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> exact teardown\n'
+    printf '  order: build -> production mint/attest -> operator 2.9.0 -> cold request -> same-Pod restart -> restart-first/steady requests -> exact teardown\n'
   else
-    printf '  order: build -> production mint/attest -> CDC + JetStream -> operator 2.8.0 -> host + materializer ready -> HTTP receipt -> causal inspection + ACK -> cross-environment refusal -> exact teardown\n'
+    printf '  order: build -> production mint/attest -> CDC + JetStream -> operator 2.9.0 -> host + materializer ready -> HTTP receipt -> causal inspection + ACK -> cross-environment refusal -> exact teardown\n'
   fi
   exit 0
 fi
@@ -215,7 +215,7 @@ if [[ $(uname -m) != x86_64 ]]; then
 fi
 for required in awk bash cargo chmod cmp cp curl date docker find flock git grep head helm \
     install jq kind kubectl mkdir openssl psql rm sed seq sha256sum sleep sort tee \
-    stat timeout tr wash xargs; do
+    stat timeout tr xargs; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "required executable not found: $required" >&2
     exit 2
@@ -962,29 +962,28 @@ jq --arg namespace "$namespace" '.metadata.namespace = $namespace' \
 route_caller_secret_name=$(jq -er '.metadata.name' "$route_caller_kube_secret")
 run "${kube[@]}" apply -f "$route_caller_kube_secret"
 
+wash_bin=$("$repo_root/tools/install-wash")
 flow_http_push_ref=$registry_authority/wamn/flow-http:$host_tag
 materializer_push_ref=$registry_authority/wamn/materializer:$host_tag
-record_command env WASH_REG_USER='<redacted>' WASH_REG_PASSWORD='<redacted>' wash push \
-  --insecure --allow-latest --output json "$flow_http_push_ref" "$flow_http_wasm"
-WASH_REG_USER="$registry_username" WASH_REG_PASSWORD="$registry_password" \
-  wash push --insecure --allow-latest --output json \
+record_command env DOCKER_CONFIG='<private-registry-directory>' \
+  "$wash_bin" -o json oci push --insecure "$flow_http_push_ref" "$flow_http_wasm"
+DOCKER_CONFIG="$docker_config_directory" "$wash_bin" -o json oci push --insecure \
   "$flow_http_push_ref" "$flow_http_wasm" \
   >"$evidence_dir/flow-http-push.json"
-record_command env WASH_REG_USER='<redacted>' WASH_REG_PASSWORD='<redacted>' wash push \
-  --insecure --allow-latest --output json "$materializer_push_ref" "$materializer_wasm"
-WASH_REG_USER="$registry_username" WASH_REG_PASSWORD="$registry_password" \
-  wash push --insecure --allow-latest --output json \
+record_command env DOCKER_CONFIG='<private-registry-directory>' \
+  "$wash_bin" -o json oci push --insecure "$materializer_push_ref" "$materializer_wasm"
+DOCKER_CONFIG="$docker_config_directory" "$wash_bin" -o json oci push --insecure \
   "$materializer_push_ref" "$materializer_wasm" \
   >"$evidence_dir/materializer-push.json"
 unset registry_password
 for push_receipt in "$evidence_dir/flow-http-push.json" \
     "$evidence_dir/materializer-push.json"; do
-  jq -e '.success == true and (.digest | test("^sha256:[0-9a-f]{64}$"))' \
+  jq -e '.success == true and .data.success == true and (.data.digest | test("^sha256:[0-9a-f]{64}$"))' \
     >/dev/null "$push_receipt"
 done
-flow_http_digest=$(jq -er '.digest' "$evidence_dir/flow-http-push.json")
+flow_http_digest=$(jq -er '.data.digest' "$evidence_dir/flow-http-push.json")
 flow_http_ref=$registry_authority/wamn/flow-http@$flow_http_digest
-materializer_digest=$(jq -er '.digest' "$evidence_dir/materializer-push.json")
+materializer_digest=$(jq -er '.data.digest' "$evidence_dir/materializer-push.json")
 materializer_ref=$registry_authority/wamn/materializer@$materializer_digest
 
 # The identity comes from the declaration, and psql quotes it. Note the form:
@@ -1412,9 +1411,9 @@ measurement_pod=
 measurement_uid=
 cold_startup_ms=
 if [[ "$measure_startup" == true ]]; then
-  # Scale from zero without altering runtime-operator 2.8.0's native probes.
-  # Port 80 becomes reachable at runtime-up; released wirings resolve only when
-  # a routed request actually demands them.
+  # Scale from zero without altering runtime-operator 2.9.0's native probes.
+  # Native probes on port 8081 stay separate from workload HTTP. Host startup
+  # preloads the released synchronous closure before the native loop can be ready.
   run "${kube[@]}" -n "$namespace" scale deployment/hostgroup-default --replicas=1
   run "${kube[@]}" -n "$namespace" wait --for=condition=Available \
     deployment/hostgroup-default --timeout=120s
@@ -1426,11 +1425,10 @@ if [[ "$measure_startup" == true ]]; then
     .spec.replicas == 1 and .status.availableReplicas == 1 and
     (.spec.template.spec.containers | length == 1) and
     .spec.template.spec.containers[0].name == "host" and
-    (.spec.template.spec.containers[0].livenessProbe.tcpSocket.port == "http" or
-     .spec.template.spec.containers[0].livenessProbe.tcpSocket.port == 80) and
-    (.spec.template.spec.containers[0].readinessProbe.tcpSocket.port == "http" or
-     .spec.template.spec.containers[0].readinessProbe.tcpSocket.port == 80) and
-    (.spec.template.spec.containers[0].startupProbe // null) == null
+    .spec.template.spec.containers[0].livenessProbe.httpGet == {path:"/livez",port:"probes"} and
+    .spec.template.spec.containers[0].readinessProbe.httpGet == {path:"/readyz",port:"probes"} and
+    .spec.template.spec.containers[0].startupProbe.httpGet == {path:"/livez",port:"probes"} and
+    any(.spec.template.spec.containers[0].ports[]; .name == "probes" and .containerPort == 8081)
   ' >/dev/null "$evidence_dir/host-measurement-deployment.json"
   measurement_selector=$(jq -er '
     .spec.selector.matchLabels | to_entries |
@@ -1472,11 +1470,11 @@ helm list --kubeconfig "$kubeconfig" --kube-context "$context" --all-namespaces 
   >"$evidence_dir/helm-releases.json"
 jq -e --arg namespace "$namespace" '
   ([.[] | select(.name == "wamn" and .namespace == "wamn-system" and
-                 .status == "deployed" and .chart == "runtime-operator-2.8.0" and
-                 .app_version == "2.8.0")] | length == 1) and
+                 .status == "deployed" and .chart == "runtime-operator-2.9.0" and
+                 .app_version == "2.9.0")] | length == 1) and
   ([.[] | select(.name == "wamn-host" and .namespace == $namespace and
-                 .status == "deployed" and .chart == "runtime-operator-2.8.0" and
-                 .app_version == "2.8.0")] | length == 1)
+                 .status == "deployed" and .chart == "runtime-operator-2.9.0" and
+                 .app_version == "2.9.0")] | length == 1)
 ' >/dev/null "$evidence_dir/helm-releases.json"
 "${kube[@]}" -n "$namespace" get deployment hostgroup-default -o json \
   >"$evidence_dir/host-deployment.json"
@@ -2989,7 +2987,7 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
     passing_arms:[
       "production-mint-and-attestation",
       "production-cdc-reader-session",
-      "operator-before-host-2.8.0",
+      "operator-before-host-2.9.0",
       "three-ready-default-hosts",
       "flow-http-workload-ready",
       "materializer-workload-ready",

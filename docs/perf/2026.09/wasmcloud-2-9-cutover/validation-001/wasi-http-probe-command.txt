@@ -1,0 +1,1 @@
+cargo check --manifest-path tools/probes/ctc8-14-wasi-http/Cargo.toml -p ctc8-14-wasi-http-probe --all-targets --locked 

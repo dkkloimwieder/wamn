@@ -52,7 +52,7 @@
 #      operator without Pod RBAC or informer cache access there.
 #      tests/conformance/tests/chart_seam_governance.rs enforces the agreement.
 #   3. `deploy/platform/runtime-operator-events-rbac.example.yaml`, instantiated
-#      into this namespace. Chart 2.8.0 grants only core-group Events while its
+#      into this namespace. Chart 2.9.0 grants only core-group Events while its
 #      native recorder writes `events.k8s.io/v1`; the overlay supplies that
 #      missing write grant to the existing operator ServiceAccount.
 #   4. `deploy/platform/registry-credentials.example.yaml`, instantiated into

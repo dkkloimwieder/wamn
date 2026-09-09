@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use wash_runtime::engine::guest_memory::GuestMemoryMode;
 pub use wash_runtime::engine::host_memory::HostMemoryBudgets;
 use wash_runtime::engine::{Engine, WasmProposal};
 use wash_runtime::host::egress_policy::EgressAddressPolicy;
@@ -14,8 +15,7 @@ use wash_runtime::sockets::policy::{EgressMode, SocketPolicy};
 ///
 /// This becomes `HostMemoryBudgets::default_heap_memory`, which wasmCloud
 /// installs as the pooling allocator's `max_memory_size`. It bounds each
-/// linear memory; WAMN intentionally has no second, fork-owned per-store
-/// limiter.
+/// linear memory. Native store limiters also charge the shared guest budget.
 pub const MEMORY_CAP_BYTES: usize = 256 << 20;
 
 /// Default pooling-allocator core-instance budget for one host group.
@@ -172,6 +172,7 @@ fn build_engine_inner(
 
     let mut builder = Engine::builder()
         .with_host_memory(host_memory)
+        .with_guest_memory_mode(GuestMemoryMode::Count)
         .with_pooling_allocator(true)
         .with_socket_policy(Arc::new(socket_policy));
     if let Some(config) = config {
@@ -212,14 +213,19 @@ fn validate_pooling_capacity_environment(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::future::Future as _;
     use std::net::SocketAddr;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Waker};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use wash_runtime::engine::ctx::{Ctx, SharedCtx};
+    use wash_runtime::engine::guest_memory::install_memory_limiter;
     use wash_runtime::host::allowed_hosts::AllowedHost;
     use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
     use wash_runtime::wasmtime::component::Component;
-    use wash_runtime::wasmtime::{Instance, Module, Store};
+    use wash_runtime::wasmtime::{Instance, Linker, Memory, Module, Store};
 
     use super::*;
 
@@ -484,6 +490,148 @@ mod tests {
             "the refusal is the configured slot count, not another instantiation error: \
              {exhausted:?}"
         );
+    }
+
+    fn memory_budgets(pages: u64) -> HostMemoryBudgets {
+        HostMemoryBudgets::resolve(Some(pages * PAGE as u64), Some(4 * PAGE as u64), Some(4))
+            .expect("nonzero guest budgets")
+    }
+
+    fn memory_store(engine: &Engine) -> (Store<SharedCtx>, Memory) {
+        let bytes = wat::parse_str("(module (memory (export \"memory\") 1))")
+            .expect("encode the memory fixture");
+        let module = Module::new(engine.inner(), bytes).expect("compile the memory fixture");
+        let ctx = SharedCtx::new(Ctx::builder("memory-proof", "memory-proof").build())
+            .with_guest_memory(engine.guest_memory());
+        let mut store = Store::new(engine.inner(), ctx);
+        install_memory_limiter(&mut store);
+        let instance = Instance::new(&mut store, &module, &[]).expect("allocate the first page");
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .expect("the fixture exports its memory");
+        (store, memory)
+    }
+
+    #[test]
+    fn count_mode_accounts_for_concurrent_stores_and_keeps_the_heap_ceiling() {
+        let engine = build_engine_with_host_memory(&[], memory_budgets(2))
+            .expect("build the production Count engine");
+        let cloned = engine.clone();
+        let budget = engine.guest_memory();
+        let (mut first, first_memory) = memory_store(&engine);
+        let (second, _) = memory_store(&cloned);
+        assert_eq!(budget.in_use(), 2 * PAGE as u64);
+
+        assert_eq!(first_memory.grow(&mut first, 2).unwrap(), 1);
+        assert_eq!(budget.in_use(), 4 * PAGE as u64);
+        assert_eq!(budget.would_refuse(), 1);
+        assert_eq!(budget.refused(), 0);
+        assert_eq!(budget.high_water(), 4 * PAGE as u64);
+
+        first_memory
+            .grow(&mut first, 2)
+            .expect_err("Count still refuses growth beyond the per-memory ceiling");
+        assert_eq!(first_memory.size(&first), 3);
+        assert_eq!(budget.in_use(), 4 * PAGE as u64);
+        drop(first);
+        assert_eq!(budget.in_use(), PAGE as u64);
+        drop(second);
+        assert_eq!(budget.in_use(), 0);
+    }
+
+    #[test]
+    fn enforce_mode_refuses_aggregate_growth_until_another_store_releases_memory() {
+        let engine = Engine::builder()
+            .with_host_memory(memory_budgets(3))
+            .with_guest_memory_mode(GuestMemoryMode::Enforce)
+            .with_pooling_allocator(true)
+            .build()
+            .expect("build the disposable Enforce engine");
+        let budget = engine.guest_memory();
+        let (mut first, first_memory) = memory_store(&engine);
+        let (mut second, second_memory) = memory_store(&engine);
+        first_memory.grow(&mut first, 1).unwrap();
+        assert_eq!(budget.in_use(), 3 * PAGE as u64);
+
+        second_memory
+            .grow(&mut second, 1)
+            .expect_err("both stores charge the same aggregate ceiling");
+        assert_eq!(second_memory.size(&second), 1);
+        assert_eq!(budget.refused(), 1);
+        assert_eq!(budget.in_use(), 3 * PAGE as u64);
+        drop(first);
+        assert_eq!(budget.in_use(), PAGE as u64);
+        second_memory.grow(&mut second, 2).unwrap();
+        assert_eq!(budget.in_use(), 3 * PAGE as u64);
+        drop(second);
+        assert_eq!(budget.in_use(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_guest_waiting_in_a_host_call_releases_its_memory() {
+        let engine = build_engine_with_host_memory(&[], memory_budgets(2))
+            .expect("build the production Count engine");
+        let bytes = wat::parse_str(
+            r#"(module
+                (import "host" "wait" (func $wait))
+                (memory 2)
+                (func (export "run") call $wait))"#,
+        )
+        .expect("encode a guest that waits in a host call");
+        let module = Module::new(engine.inner(), bytes).expect("compile the waiting guest");
+        let entered = Arc::new(AtomicBool::new(false));
+        let entered_call = Arc::clone(&entered);
+        let mut linker = Linker::<SharedCtx>::new(engine.inner());
+        linker
+            .func_wrap_async("host", "wait", move |_, ()| {
+                entered_call.store(true, Ordering::Relaxed);
+                Box::new(std::future::pending::<()>())
+            })
+            .expect("link the pending host call");
+        let ctx = SharedCtx::new(Ctx::builder("memory-proof", "memory-proof").build())
+            .with_guest_memory(engine.guest_memory());
+        let mut store = Store::new(engine.inner(), ctx);
+        install_memory_limiter(&mut store);
+        store.set_epoch_deadline(u64::MAX / 2);
+        let instance = linker
+            .instantiate_async(&mut store, &module)
+            .await
+            .expect("instantiate the waiting guest");
+        let run = instance
+            .get_typed_func::<(), ()>(&mut store, "run")
+            .expect("the fixture exports run");
+        let mut call = Box::pin(async move {
+            run.call_async(&mut store, ())
+                .await
+                .expect("the waiting guest must not trap");
+        });
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(call.as_mut().poll(&mut context).is_pending());
+        assert!(entered.load(Ordering::Relaxed));
+        assert_eq!(engine.guest_memory().in_use(), 2 * PAGE as u64);
+        drop(call);
+        assert_eq!(engine.guest_memory().in_use(), 0);
+    }
+
+    #[tokio::test]
+    async fn dropping_a_store_after_a_guest_start_trap_releases_its_memory() {
+        let engine = build_engine_with_host_memory(&[], memory_budgets(2))
+            .expect("build the production Count engine");
+        let bytes = wat::parse_str("(module (memory 1) (func $start unreachable) (start $start))")
+            .expect("encode a guest that traps after allocating memory");
+        let module = Module::new(engine.inner(), bytes).expect("compile the trapping guest");
+        let ctx = SharedCtx::new(Ctx::builder("memory-proof", "memory-proof").build())
+            .with_guest_memory(engine.guest_memory());
+        let mut store = Store::new(engine.inner(), ctx);
+        install_memory_limiter(&mut store);
+        store.set_epoch_deadline(u64::MAX / 2);
+        let error = Instance::new_async(&mut store, &module, &[])
+            .await
+            .expect_err("the guest start function traps");
+        assert!(format!("{error:?}").contains("unreachable"), "{error:?}");
+        assert_eq!(engine.guest_memory().in_use(), PAGE as u64);
+        drop(store);
+        assert_eq!(engine.guest_memory().in_use(), 0);
     }
 
     /// Invalid native budgets fail before wasmCloud or Wasmtime can interpret

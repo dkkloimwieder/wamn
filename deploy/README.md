@@ -76,10 +76,9 @@ Shared App-login cutover (`wamn-0h0g.12.140`) is an operator-run transition,
 not a runtime compatibility subsystem. Repeat preparation and rollout steps 1-2
 for every affected tenant/database on a cluster. Run final posture/drain steps
 3-4 once for that cluster, only after every replacement carrier there is Ready.
-Schedule one maintenance window and inventory every consumer first: the first
-prepare disables new shared-login connections cluster-wide, so an omitted or
-unrolled consumer will lose reconnect capability even though its existing
-session remains alive until the final drain.
+WAMN is greenfield and has no running clients, so this procedure requires no maintenance window.
+Record any disposable test consumers before the first prepare disables new shared-login connections across the cluster.
+An old test consumer loses reconnect capability, while its existing session remains alive until the final drain.
 
 1. Prepare the inactive App generation with the production action and keep the
    emitted credential off stdout:
@@ -114,7 +113,7 @@ session remains alive until the final drain.
    kubectl -n wamn-system rollout status deployment/executor --timeout=300s
    kubectl -n wamn-system apply -f deploy/platform/host-db.example.yaml
    helm upgrade --install -n wamn-system wamn-host \
-     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
      -f deploy/platform/values-host-default.yaml \
      -f deploy/platform/values-host-receiving-pat.yaml
    kubectl -n wamn-system rollout restart deployment/hostgroup-default
@@ -144,6 +143,146 @@ session remains alive until the final drain.
    is refused. Record `pg_authid.xmin` for `wamn_app`, reapply the same `role.sql`,
    and require the same `xmin` plus zero sessions before retiring any predecessor
    App generation.
+
+## wasmCloud 2.9 cutover
+
+Use chart `2.9.0` with WAMN images built from the direct upstream pin
+`68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
+Complete the build and source gates in `docs/operations/build-and-test.md` before this procedure.
+The source tree and distributed chart are separate inputs. The render and public image metadata
+receipts live in `docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/`.
+Those receipts create no cluster resources and prove no running image identity.
+
+This is a direct stop/start cutover with one active runtime version per environment.
+WAMN is greenfield and has no running clients.
+This procedure needs no maintenance window or compatibility period.
+If an environment already has runtime carriers, stop them before replacing the operator and host releases.
+Keep the existing database, registry, certificate, and namespace prerequisites.
+The application release rollout procedure below remains separate from this runtime version change.
+
+1. Prepare and load distinct WAMN host and executor image tags through the build guide.
+   Record their source revision, image IDs, and release manifest digest.
+   Replace every release and credential placeholder through the existing publication procedure.
+   Choose the matching complete application overlay.
+
+   ```bash
+   set -euo pipefail
+   : "${HOST_TAG:?set the built 2.9 WAMN host image tag}"
+   : "${EXECUTOR_TAG:?set the built 2.9 WAMN executor image tag}"
+   HOST_OVERLAY=deploy/platform/values-host-receiving-pat.yaml
+   ```
+
+2. If runtime carriers already exist, stop them and wait for their Pods to disappear.
+   Skip this step for a fresh cluster.
+   Do not start replacement carriers while an earlier runtime version still runs.
+
+   ```bash
+   kubectl -n wamn-system scale deployment \
+     -l wasmcloud.com/name=hostgroup --replicas=0
+   kubectl -n wamn-system scale deployment/executor --replicas=0
+   kubectl -n wamn-system wait --for=delete pod \
+     -l wasmcloud.com/name=hostgroup --timeout=90s
+   kubectl -n wamn-system wait --for=delete pod -l app=executor --timeout=90s
+   ```
+
+3. Apply the pinned chart's CustomResourceDefinitions (CRDs), which define Kubernetes resource schemas, before upgrading the operator.
+   Helm installs missing CRDs from `crds/`, but [does not upgrade existing CRDs](https://helm.sh/docs/chart_best_practices/custom_resource_definitions/).
+   The earlier `deployment-001/operator.json` render contains no CRDs.
+   Set `CRD_EVIDENCE` to a new directory under the repository's `docs/perf/` tree.
+   During fixed-source proofs, keep evidence outside the build worktree.
+   Save the downloaded inputs, commands, exits, and installed schemas there.
+   If apply reports field ownership conflicts, stop and inspect those owners before continuing.
+
+   ```bash
+   : "${CRD_EVIDENCE:?set a fresh repository docs/perf evidence directory}"
+   mkdir -- "$CRD_EVIDENCE"
+   CRD_CHART="$CRD_EVIDENCE/runtime-operator-2.9.0.tgz"
+   capture_crd_command() {
+     local name=$1 result=0
+     shift
+     printf '%q ' "$@" > "$CRD_EVIDENCE/$name.command"
+     printf '\n' >> "$CRD_EVIDENCE/$name.command"
+     "$@" > "$CRD_EVIDENCE/$name.stdout" 2> "$CRD_EVIDENCE/$name.stderr" || result=$?
+     printf '%s\n' "$result" > "$CRD_EVIDENCE/$name.exit-code"
+     return "$result"
+   }
+   capture_crd_command pull helm pull \
+     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+     --destination "$CRD_EVIDENCE"
+   capture_crd_command chart-identity rg -Fqx \
+     'Digest: sha256:d70b240cfc3c745f306fc6ebecebff4370e6c8c0568b55c1d02b1eda1716fd17' \
+     "$CRD_EVIDENCE/pull.stdout" "$CRD_EVIDENCE/pull.stderr"
+   capture_crd_command crds helm show crds "$CRD_CHART"
+   capture_crd_command input-hashes sha256sum "$CRD_CHART" "$CRD_EVIDENCE/crds.stdout"
+   capture_crd_command apply kubectl apply --server-side --field-manager=wamn-cutover \
+     -f "$CRD_EVIDENCE/crds.stdout"
+   capture_crd_command established kubectl wait --for=condition=Established --timeout=60s \
+     -f "$CRD_EVIDENCE/crds.stdout"
+   capture_crd_command installed kubectl get -f "$CRD_EVIDENCE/crds.stdout" -o json
+   helm upgrade --install --create-namespace -n wamn-system wamn "$CRD_CHART" \
+     -f deploy/infra/values-wamn.yaml --wait --timeout 5m
+   sed 's/__ENVIRONMENT_NAMESPACE__/wamn-system/g' \
+     deploy/platform/runtime-operator-events-rbac.example.yaml \
+     | kubectl apply -f -
+   ```
+
+   Keep the existing namespace-scoped modern Event permission overlay above.
+   The upstream [install target](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/runtime-operator/Makefile#L155) also uses server-side apply, but includes `--force-conflicts`.
+   This procedure leaves conflicts visible and does not enable the gateway.
+
+   The source and distributed CRD hashes are in `docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/`.
+   Those read-only receipts prove no installed schema identity.
+
+   Host and Artifact CRD files match 2.8 byte-for-byte.
+   Workload, WorkloadDeployment, and WorkloadReplicaSet schemas add `reclaimMinInstances` and `reclaimWindowSeconds`.
+
+4. Start the prepared host and executor images.
+   The host base carries native probes, connection retry, drain delay, and termination grace.
+
+   ```bash
+   helm upgrade --install -n wamn-system wamn-host "$CRD_CHART" \
+     -f deploy/platform/values-host-default.yaml -f "$HOST_OVERLAY" \
+     --set-string runtime.image.tag="$HOST_TAG" --wait --timeout 5m
+   kubectl set image --local -f deploy/platform/executor.yaml \
+     executor="wamn-executor:$EXECUTOR_TAG" -o yaml | kubectl apply -f -
+   kubectl -n wamn-system rollout status deployment/hostgroup-default --timeout=300s
+   kubectl -n wamn-system rollout status deployment/executor --timeout=300s
+   ```
+
+5. Capture the installed chart versions, Pod image IDs, rendered controls, probe results, and exact command exits.
+   Run the separate stage 4 gates before declaring the cutover operationally proven.
+
+Native host probes use port `8081`. Executor probes retain port `8089` and their existing release-readiness owner.
+Host readiness waits for a real native command-loop beat. Executor liveness follows queue turns and successful lease renewals.
+A missing first beat fails after the normal silence budget. No timer supplies a synthetic beat.
+The chart's host NetworkPolicy retains its group namespace and selector, with HTTP and probe ports allowed.
+The gateway stays disabled. The distributed operator Roles still need the existing namespace-scoped
+`events.k8s.io/events` overlay with only `create` and `patch`.
+
+The host termination grace is `70s`. Its process envelope is
+`D + 5s + 2s + N × (P + 1s) + 2s + 1s + 1s + 2s + 1s`.
+Here, `D` is the drain delay and `N` is the registered plugin count.
+`P` is `WASH_PLUGIN_STOP_TIMEOUT_SECS`, which uses whole seconds and defaults to `5`.
+Unset or unparseable values use that native default.
+The remaining terms cover command drain, command abort, HTTP-stop coordination, identity cleanup,
+probe-task cleanup, telemetry flush, and final runtime shutdown, respectively.
+With `D=5s` and seven plugins, the envelope is `61s`.
+The `2s` HTTP-stop term is an outer allowance, not a native completion guarantee.
+Cleanup timeout or native task failure remains a process error and can leave plugin cleanup incomplete.
+If a timeout override or plugin count changes, recompute the envelope and raise termination grace before deployment.
+
+The executor termination grace is `15s`, above its `9s` envelope.
+That envelope allows `5s` for its current queue turn, `1s` for probe tasks, `2s` for telemetry, and `1s` for runtime shutdown.
+A turn that exceeds the drain budget retains its existing durable lease and recovery fence.
+The host profiles explicitly use native memory `count` mode.
+Default and Receiving retain their six-core limits with four concurrent starts.
+WMS retains its two-core limit with one concurrent start.
+
+Stage 4 remains unexecuted by this procedure's static render evidence.
+Required live receipts cover both signals, forced ingress/runtime failure, probes during saturation,
+NATS and operator recovery, Receiving and WMS journeys, and cold-start/performance comparisons.
+Readiness alone does not prove route-aware traffic removal.
+The native route controller can bypass Service readiness, so this cutover does not claim to remove rebind outages.
 
 Release rollout, and rollback by revert: **the controller question re-opens on a
 named trigger, and on nothing else.** Two fire it, and only two — a SECOND
@@ -243,7 +382,7 @@ wamn-ctl print-release-env \
 kubectl -n wamn-system apply -f deploy/platform/executor.yaml
 kubectl -n wamn-system rollout status deploy/executor --timeout=300s
 helm upgrade --install -n wamn-system wamn-host \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
   -f deploy/platform/values-host-default.yaml \
   -f deploy/platform/values-host-receiving-pat.yaml
 kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
@@ -346,8 +485,8 @@ install command mints it.
 One chart, two tiers (wamn-0h0g.15.15, rulings `.13.49` + `.13.50`): the
 runtime-operator chart is installed twice with different values, and the tier
 split *is* the ruling. `infra/values-wamn.yaml` is the cluster-singleton
-operator release — the five CRDs are cluster-scoped and Helm installs them once,
-so it is install-once by construction and carries no host groups.
+operator release. Its five CRDs are cluster-scoped, and it carries no host groups.
+Runtime upgrades update those CRDs through the [cutover procedure](#wasmcloud-29-cutover).
 `platform/values-host-<environment>.yaml` is the host tier, one Helm release per
 environment, because host images and host groups are per-environment and
 per-release values. Install the operator release first; a host release applied

@@ -1,0 +1,567 @@
+[
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--name-only",
+      "--diff-filter=ACMRT"
+    ],
+    "exit_code": 0,
+    "stdout": ".gitignore\nCargo.lock\nCargo.toml\nREADME.md\ncrates/execution/host/src/router_driver.rs\ncrates/platform/runtime/src/engine.rs\ncrates/platform/runtime/src/lib.rs\ncrates/platform/runtime/src/plugins/flow_http_routing.rs\ncrates/platform/runtime/tests/executor_plugin_no_trap_live.rs\ncrates/platform/runtime/tests/guest_environment_isolation.rs\ncrates/platform/runtime/tests/sqlx_transaction_live.rs\ndeploy/README.md\ndeploy/infra/values-wamn.yaml\ndeploy/infra/wasmcloud-ca-issuer.yaml\ndeploy/platform/executor.yaml\ndeploy/platform/host-environment-certs.example.yaml\ndeploy/platform/http-route-workload.example.yaml\ndeploy/platform/registry.yaml\ndeploy/platform/runtime-operator-events-rbac.example.yaml\ndeploy/platform/values-host-default.yaml\ndeploy/platform/values-host-receiving-pat.yaml\ndeploy/platform/values-host-wms-pat.yaml\ndocs/architecture/native-alignment-ledger.md\ndocs/operations/build-and-test.md\ndocs/perf/2026.09/generated-tui-integration/live.py\nservices/ctl/src/dev/activation.rs\nservices/executor/Cargo.toml\nservices/executor/src/lib.rs\nservices/executor/src/main.rs\nservices/executor/src/readiness.rs\nservices/host/Cargo.toml\nservices/host/src/host.rs\nservices/host/src/main.rs\ntests/conformance/runtime-inventory.json\ntests/conformance/src/ip_name_lookup.rs\ntests/conformance/src/runtime_inventory.rs\ntests/conformance/tests/chart_seam_governance.rs\ntests/conformance/tests/wasmtime_source_identity.rs\ntests/integration/src/bin/instantiate-bench.rs\ntests/integration/src/route_authentication_live.rs\ntests/integration/src/router_tap_live.rs\ntests/integration/src/virtualized_std_guest.rs\ntools/agent-pilot-run\ntools/probes/ctc8-13-native-http/Cargo.lock\ntools/probes/ctc8-13-native-http/Cargo.toml\ntools/probes/ctc8-13-native-http/README.md\ntools/probes/ctc8-13-native-http/src/main.rs\ntools/probes/ctc8-14-wasi-http/Cargo.lock\ntools/probes/ctc8-14-wasi-http/README.md\ntools/probes/ctc8-14-wasi-http/host/Cargo.toml\ntools/probes/ctc8-14-wasi-http/host/src/main.rs\ntools/rc-gate-run\ntools/receiving-cluster-journey-run\ntools/wms-cluster-journey-run\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "ls-files",
+      "--others",
+      "--exclude-standard"
+    ],
+    "exit_code": 0,
+    "stdout": "crates/platform/runtime/src/expected_router.rs\ncrates/platform/runtime/src/lifecycle.rs\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/capture-command.py.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/commands.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/declared-image-inputs.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/dependency-inventory.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/deployed-identities.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/evidence.sha256\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/input-index.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/.cargo/config.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/Cargo.lock.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/components/Cargo.lock.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/components/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/components/no-std/Cargo.lock.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/components/no-std/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/docs/wamn_wasmcloud_2_9_cutover.md.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/rust-toolchain.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/tools/probes/ctc8-13-native-http/Cargo.lock.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/tools/probes/ctc8-13-native-http/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/tools/probes/ctc8-14-wasi-http/Cargo.lock.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/tools/probes/ctc8-14-wasi-http/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/tools/probes/ctc8-14-wasi-http/guest/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/tools/probes/ctc8-14-wasi-http/host/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/upstream/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/upstream/charts/runtime-operator/Chart.yaml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/inputs/upstream/crates/wash-runtime/Cargo.toml.snapshot\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/prior-results.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/source-observations.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/tool-observations.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/baseline-001/unexecuted-proofs.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-001/after-api-fix-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-001/cargo-check-after-api-fix.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-001/cargo-check.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-001/exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-001/finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-001/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-001/started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-002/launcher.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-002/metadata-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-002/metadata.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-002/metadata.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-002/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-002/started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/cargo-check.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/launcher.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/metadata-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/metadata.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/metadata.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/build-003/started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/attempt001-capture-command.py.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/attempt001-commands.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/attempt001-result.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/attempt002-capture-command.py.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/attempt002-capture-result.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/attempt002-capture.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/attempt002-commands.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/capture-command.py.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/capture-result.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/capture.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/commands.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-chart.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-chart.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/events-overlay.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/evidence.sha256\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/executor.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/helm-version.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/helm-version.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/host-default.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/host-default.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/host-receiving.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/host-receiving.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/host-wms.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/host-wms.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/input-digests.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/observations.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/operator-image-manifest.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/operator.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/operator.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/static-checks.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/capture-command.py.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/capture-result.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/commands.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/comparison.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/crd-inventory.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/distributed-chart-identities.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/evidence.sha256\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/helm-pull-2.8.0.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/helm-pull-2.8.0.stdout\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/helm-pull-2.9.0.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/helm-pull-2.9.0.stdout\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/helm-show-crds-2.8.0.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/helm-show-crds-2.8.0.stdout\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/helm-show-crds-2.9.0.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/helm-show-crds-2.9.0.stdout\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/schema-changes.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/static-checks.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/upstream-recipe.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/report.md\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/aligned-probe-commands.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/commands.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/components-features.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/components-features.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/components-no-std-features.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/components-no-std-features.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/conformance-tests-wash-runtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/conformance-tests-wash-runtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/conformance-tests-wasmtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/conformance-tests-wasmtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-13-probe-wash-runtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-13-probe-wash-runtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-13-probe-wasmtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-13-probe-wasmtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wash-runtime-aligned.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wash-runtime-aligned.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wash-runtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wash-runtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wasmtime-aligned.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wasmtime-aligned.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wasmtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/ctc8-14-probe-wasmtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/executor-normal-wash-runtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/executor-normal-wash-runtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/executor-normal-wasmtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/executor-normal-wasmtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/host-normal-wash-runtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/host-normal-wash-runtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/host-normal-wasmtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/host-normal-wasmtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/integration-tests-wash-runtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/integration-tests-wash-runtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/integration-tests-wasmtime.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/integration-tests-wasmtime.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/upstream-wasip1-target-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/upstream-wasip1-target.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/wash-binary-path.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/wash-cli.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/source-001/wash-push-help.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-001/exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-001/finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-001/release-check.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-001/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-001/started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-002/exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-002/finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-002/release-check.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-002/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-002/started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/launcher.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/release-check.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/results.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/activation-format.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/capture-source.py\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/executor-build-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/executor-build-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/executor-build-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/executor-build-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/executor-build.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/exercise-chart-arguments.py\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/formatter-baseline.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-arguments-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-arguments-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-arguments-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-arguments-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-arguments.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-arguments.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-build-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-build-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-build-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-build-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-build.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-default-arguments.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-default-arguments.stdout\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-receiving-arguments.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-receiving-arguments.stdout\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-wms-arguments.stderr\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/host-wms-arguments.stdout\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/launcher.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/native-http-probe-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/native-http-probe-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/native-http-probe-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/native-http-probe-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/native-http-probe.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/source-inputs-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/source-inputs-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/source-inputs-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/source-inputs-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/source-inputs.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/source-inputs.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/static-checks.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/wasi-http-probe-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/wasi-http-probe-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/wasi-http-probe-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/wasi-http-probe-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/wasi-http-probe.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-results.json\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-002/clippy.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-002/command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-002/exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-002/finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-002/launcher.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-002/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-002/started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/launcher.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/lifecycle-tests-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/lifecycle-tests-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/lifecycle-tests-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/lifecycle-tests-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/lifecycle-tests.log\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/run.sh\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/runtime-clippy-command.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/runtime-clippy-exit-code.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/runtime-clippy-finished.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/runtime-clippy-started.txt\ndocs/perf/2026.09/wasmcloud-2-9-cutover/validation-003/runtime-clippy.log\ndocs/wamn_wasmcloud_2_9_cutover.md\ntests/conformance/tests/wasmcloud_release_check.rs\ntools/install-wash\ntools/wasmcloud-release-check\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--check"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/execution/host/src/router_driver.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/src/engine.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/src/expected_router.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/src/lib.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/src/lifecycle.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/src/plugins/flow_http_routing.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/tests/executor_plugin_no_trap_live.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/tests/guest_environment_isolation.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "crates/platform/runtime/tests/sqlx_transaction_live.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "python3",
+      "ast.parse",
+      "docs/perf/2026.09/generated-tui-integration/live.py"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "services/ctl/src/dev/activation.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "services/executor/src/lib.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "services/executor/src/main.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "services/executor/src/readiness.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "services/host/src/host.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "services/host/src/main.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/conformance/src/ip_name_lookup.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/conformance/src/runtime_inventory.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/conformance/tests/chart_seam_governance.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/conformance/tests/wasmcloud_release_check.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/conformance/tests/wasmtime_source_identity.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/integration/src/bin/instantiate-bench.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/integration/src/route_authentication_live.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/integration/src/router_tap_live.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tests/integration/src/virtualized_std_guest.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/agent-pilot-run"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/install-wash"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tools/probes/ctc8-13-native-http/src/main.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--config",
+      "skip_children=true",
+      "--check",
+      "tools/probes/ctc8-14-wasi-http/host/src/main.rs"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/rc-gate-run"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/receiving-cluster-journey-run"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/wasmcloud-release-check"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/wms-cluster-journey-run"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-004/deployment-step-01.bash"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-004/deployment-step-02.bash"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-004/deployment-step-03.bash"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-004/deployment-step-04.bash"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-004/deployment-step-05.bash"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-004/deployment-step-06.bash"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-004/deployment-step-07.bash"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit_code": 0,
+    "stdout": "dfa1c3187fe8cd671688a442b23106046e502cb6\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "branch",
+      "--show-current"
+    ],
+    "exit_code": 0,
+    "stdout": "work/wasmcloud-2-9-20260909\n",
+    "stderr": ""
+  },
+  {
+    "argv": [
+      "git",
+      "diff",
+      "--name-only",
+      "--diff-filter=D"
+    ],
+    "exit_code": 0,
+    "stdout": "tests/conformance/tests/fork_sync_check.rs\ntools/fork-sync-check\n",
+    "stderr": ""
+  }
+]

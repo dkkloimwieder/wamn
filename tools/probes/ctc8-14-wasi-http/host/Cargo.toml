@@ -22,7 +22,7 @@ tracing = "0.1"
 tracing-opentelemetry = "0.32"
 tracing-subscriber = { version = "0.3", features = ["registry"] }
 wamn-component-policy = { path = "../../../../crates/platform/component-policy" }
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "735b57982545358409a7d965a22549b08487ca09", default-features = false, features = ["oci"] }
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "68ebece9c537f8bb4b5c9999f274ec68d60f35a9", default-features = false, features = ["oci"] }
 wasmtime = { version = "=47.0.4", default-features = false }
 wasmtime-wasi = "=47.0.4"
 wasmtime-wasi-http = "=47.0.4"

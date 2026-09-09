@@ -16,8 +16,8 @@ use wash_runtime::sockets::policy::{EgressMode, SocketPolicy};
 use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
 use wash_runtime::types::LocalResources;
 
-pub(super) const EXPECTED_VERSION: &str = "2.8.0";
-pub(super) const EXPECTED_REVISION: &str = "735b57982545358409a7d965a22549b08487ca09";
+pub(super) const EXPECTED_VERSION: &str = "2.9.0";
+pub(super) const EXPECTED_REVISION: &str = "68ebece9c537f8bb4b5c9999f274ec68d60f35a9";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -29,11 +29,9 @@ struct CargoPackage {
     name: String,
     version: String,
     source: Option<String>,
-    manifest_path: String,
 }
 
 pub(super) struct RuntimePackage {
-    pub(super) root: PathBuf,
     pub(super) version: String,
     pub(super) source: String,
 }
@@ -65,24 +63,12 @@ pub(super) fn runtime_package() -> RuntimePackage {
         .into_iter()
         .find(|package| package.name == "wash-runtime")
         .expect("resolved graph must contain wash-runtime");
-    let manifest = PathBuf::from(package.manifest_path);
     RuntimePackage {
-        root: manifest
-            .parent()
-            .expect("wash-runtime manifest must have a parent")
-            .to_path_buf(),
         version: package.version,
         source: package
             .source
             .expect("wash-runtime must resolve from the pinned repository"),
     }
-}
-
-pub(super) fn compact(source: &str) -> String {
-    source
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect()
 }
 
 fn host(name: &str) -> Host<String> {
@@ -188,14 +174,15 @@ fn local_resources_default_is_an_empty_deny_all_lookup_policy() {
 }
 
 #[test]
-fn pinned_runtime_is_vanilla_v2_8_0() {
+fn pinned_runtime_is_direct_upstream_v2_9_0() {
     let package = runtime_package();
     assert_eq!(package.version, EXPECTED_VERSION);
-    assert!(
-        package.source.contains(&format!("rev={EXPECTED_REVISION}"))
-            && package.source.ends_with(&format!("#{EXPECTED_REVISION}")),
-        "wash-runtime must resolve to vanilla v2.8.0 revision {EXPECTED_REVISION}, got {}",
-        package.source
+    assert_eq!(
+        package.source,
+        format!(
+            "git+https://github.com/wasmCloud/wasmCloud?rev={EXPECTED_REVISION}#{EXPECTED_REVISION}"
+        ),
+        "wash-runtime must resolve directly to upstream v2.9.0 revision {EXPECTED_REVISION}"
     );
 }
 

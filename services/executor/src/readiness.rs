@@ -1,75 +1,51 @@
-//! HTTP transport for the router driver's probe-owned readiness state.
+//! Native probe transport for the router driver's readiness authority.
 
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use bytes::Bytes;
-use http_body_util::Full;
-use hyper::body::Incoming;
-use hyper::service::service_fn;
-use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
+use wash_runtime::host::probes::{self, ProbeState, ReadinessCheck};
 
 use wamn_execution_host::RouterReadinessProbe;
 
 pub(crate) const DEFAULT_BIND: &str = "0.0.0.0:8089";
-
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub(crate) async fn bind(address: SocketAddr) -> anyhow::Result<TcpListener> {
-    TcpListener::bind(address)
-        .await
-        .with_context(|| format!("bind executor readiness endpoint on {address}"))
+#[derive(Debug)]
+struct ReleaseClosure(Arc<RouterReadinessProbe>);
+
+impl ReadinessCheck for ReleaseClosure {
+    fn name(&self) -> &'static str {
+        "release_closure"
+    }
+
+    fn ready(&self) -> bool {
+        self.0.snapshot().is_ready()
+    }
 }
 
-/// Serve one status-only endpoint while the existing probe owns evaluation.
-///
-/// The refresh task stores no state: it only supplies a bounded retry cadence
-/// to [`RouterReadinessProbe`]. The listener handles one non-keepalive request
-/// at a time and bounds an incomplete connection, so readiness cannot grow an
-/// unbounded task or request queue inside the process.
+pub(crate) async fn bind(address: SocketAddr) -> anyhow::Result<TcpListener> {
+    probes::bind(address).await.context("bind executor probes")
+}
+
+/// Keep release evaluation under its existing owner and supervise both tasks.
 pub(crate) async fn serve(
     listener: TcpListener,
     probe: Arc<RouterReadinessProbe>,
+    state: ProbeState,
 ) -> anyhow::Result<()> {
-    let address = listener
-        .local_addr()
-        .context("read executor readiness listener address")?;
-    tracing::info!(%address, "executor readiness endpoint listening");
-
+    state.register(Arc::new(ReleaseClosure(Arc::clone(&probe))));
     let mut tasks = JoinSet::new();
-    tasks.spawn(refresh(Arc::clone(&probe)));
-    loop {
-        tokio::select! {
-            refresh = tasks.join_next() => match refresh {
-                Some(Ok(())) => anyhow::bail!("executor readiness refresh loop stopped"),
-                Some(Err(error)) => return Err(error).context("executor readiness refresh task"),
-                None => anyhow::bail!("executor readiness refresh task disappeared"),
-            },
-            accepted = listener.accept() => {
-                let (stream, _) = accepted.context("accept executor readiness connection")?;
-                let probe = Arc::clone(&probe);
-                let service = service_fn(move |request| route(Arc::clone(&probe), request));
-                let connection = hyper::server::conn::http1::Builder::new()
-                    .keep_alive(false)
-                    .serve_connection(TokioIo::new(stream), service);
-                match tokio::time::timeout(CONNECTION_TIMEOUT, connection).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        tracing::debug!(%error, "executor readiness connection ended");
-                    }
-                    Err(_) => {
-                        tracing::debug!("executor readiness connection timed out");
-                    }
-                }
-            }
-        }
+    tasks.spawn(refresh(probe));
+    tasks.spawn(probes::serve(listener, state, std::future::pending()));
+    // Dropping this owner aborts both tasks, including on a service failure.
+    match tasks.join_next().await {
+        Some(Ok(())) => anyhow::bail!("executor probe listener or readiness refresh stopped"),
+        Some(Err(error)) => Err(error).context("executor probe listener or readiness refresh task"),
+        None => anyhow::bail!("executor probe tasks disappeared"),
     }
 }
 
@@ -95,38 +71,96 @@ async fn refresh(probe: Arc<RouterReadinessProbe>) {
     }
 }
 
-async fn route(
-    probe: Arc<RouterReadinessProbe>,
-    request: Request<Incoming>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    let status = route_status(
-        request.method(),
-        request.uri().path(),
-        probe.snapshot().is_ready(),
-    );
-    Ok(Response::builder()
-        .status(status)
-        .body(Full::new(Bytes::new()))
-        .expect("static executor readiness response is valid"))
-}
-
-fn route_status(method: &Method, path: &str, ready: bool) -> StatusCode {
-    match (method, path, ready) {
-        (&Method::GET, "/readyz", true) => StatusCode::OK,
-        (&Method::GET, "/readyz", false) => StatusCode::SERVICE_UNAVAILABLE,
-        _ => StatusCode::NOT_FOUND,
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpStream;
+
     use super::*;
 
-    #[test]
-    fn only_the_exact_get_endpoint_exposes_binary_readiness() {
-        assert_eq!(route_status(&Method::GET, "/readyz", false), 503);
-        assert_eq!(route_status(&Method::GET, "/readyz", true), 200);
-        assert_eq!(route_status(&Method::POST, "/readyz", true), 404);
-        assert_eq!(route_status(&Method::GET, "/ready", true), 404);
+    #[derive(Debug)]
+    struct Available(AtomicBool);
+
+    impl ReadinessCheck for Available {
+        fn name(&self) -> &'static str {
+            "release_closure"
+        }
+        fn ready(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+    }
+
+    async fn request(address: SocketAddr, method: &str, path: &str) -> String {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let mut stream = TcpStream::connect(address).await.unwrap();
+            stream
+                .write_all(
+                    format!(
+                        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            let mut response = String::new();
+            stream.read_to_string(&mut response).await.unwrap();
+            response
+        })
+        .await
+        .expect("native probe answers within its test budget")
+    }
+
+    #[tokio::test]
+    async fn native_probes_preserve_readiness_authority_and_report_starting_and_draining() {
+        let listener = bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let state = ProbeState::default();
+        let available = Arc::new(Available(AtomicBool::new(false)));
+        state.register(available.clone());
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let serving = tokio::spawn(probes::serve(listener, state.clone(), async {
+            let _ = stopped.await;
+        }));
+        let response = request(address, "GET", "/readyz").await;
+        assert!(response.starts_with("HTTP/1.1 503"));
+        assert!(response.contains("starting"));
+        state.started();
+        let response = request(address, "GET", "/readyz").await;
+        assert!(response.starts_with("HTTP/1.1 503"));
+        assert!(response.contains("release_closure"));
+        assert!(
+            request(address, "GET", "/livez")
+                .await
+                .starts_with("HTTP/1.1 200")
+        );
+        available.0.store(true, Ordering::Relaxed);
+        assert!(
+            request(address, "GET", "/readyz")
+                .await
+                .starts_with("HTTP/1.1 200")
+        );
+        // The native contract routes by exact path, independently of method.
+        assert!(
+            request(address, "POST", "/readyz")
+                .await
+                .starts_with("HTTP/1.1 200")
+        );
+        assert!(
+            request(address, "GET", "/ready")
+                .await
+                .starts_with("HTTP/1.1 404")
+        );
+        state.drain();
+        let response = request(address, "GET", "/readyz").await;
+        assert!(response.starts_with("HTTP/1.1 503"));
+        assert!(response.contains("draining"));
+        assert!(
+            request(address, "GET", "/livez")
+                .await
+                .starts_with("HTTP/1.1 200")
+        );
+        stop.send(()).unwrap();
+        serving.await.unwrap();
     }
 }

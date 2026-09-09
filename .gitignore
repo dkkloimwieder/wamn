@@ -23,3 +23,6 @@
 # wave 54 at ~20 minutes lost). Lanes run in isolated worktrees, so a path
 # inside the worktree is unique by construction rather than by convention.
 .lane-logs/
+
+# Checksum-pinned local command-line tools
+/.tools/

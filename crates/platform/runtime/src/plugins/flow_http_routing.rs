@@ -796,6 +796,21 @@ fn carries_http_route(kind: AttachmentKind) -> bool {
     matches!(kind, AttachmentKind::Http | AttachmentKind::Studio)
 }
 
+/// Project explicit hostnames from the same routes that the HTTP plugin serves.
+///
+/// Wildcards cannot identify a host before its workload binds. This projection
+/// neither expands them nor invents aliases from operator-managed Services.
+pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<String> {
+    manifest
+        .attachments
+        .iter()
+        .filter(|(_, attachment)| carries_http_route(attachment.kind))
+        .filter_map(|(id, attachment)| route_definition(id, attachment))
+        .map(|definition| definition.host)
+        .filter(|host| !host.is_empty() && host != WILDCARD_HOST)
+        .collect()
+}
+
 /// Return whether a serving release requires PAT-backed route authentication.
 ///
 /// Only externally selectable HTTP route kinds participate. An internal or
@@ -1488,6 +1503,53 @@ mod tests {
             ["http-attachment", "studio-attachment"],
             "an internal or cron attachment has no HTTP route and must never be reachable \
              over HTTP"
+        );
+    }
+
+    #[test]
+    fn expected_hosts_follow_the_serviceable_projection_without_wildcard_expansion() {
+        let attachments = [
+            ("http", AttachmentKind::Http, "api.example.test", false),
+            ("duplicate", AttachmentKind::Http, "api.example.test", false),
+            (
+                "studio",
+                AttachmentKind::Studio,
+                "studio.example.test",
+                false,
+            ),
+            ("cron", AttachmentKind::Cron, "cron.example.test", false),
+            (
+                "internal",
+                AttachmentKind::Internal,
+                "internal.example.test",
+                false,
+            ),
+            ("wildcard", AttachmentKind::Http, WILDCARD_HOST, false),
+            ("empty", AttachmentKind::Http, "", false),
+            (
+                "malformed",
+                AttachmentKind::Http,
+                "broken.example.test",
+                true,
+            ),
+        ]
+        .into_iter()
+        .map(|(id, kind, host, malformed)| {
+            let mut definition = orders_definition();
+            definition["route"]["host"] = json!(host);
+            if malformed {
+                definition["raw-body-bytes"] = json!({"maximum": "invalid"});
+            }
+            (id.to_string(), attachment(kind, definition))
+        })
+        .collect();
+
+        assert_eq!(
+            expected_http_hostnames(&release_manifest(attachments)),
+            HashSet::from([
+                "api.example.test".to_string(),
+                "studio.example.test".to_string()
+            ]),
         );
     }
 

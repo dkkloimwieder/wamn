@@ -34,8 +34,9 @@ const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
 /// it. `18ba72b6` deleted the host plan-supply path this used to name, leaving
 /// `crates/execution/host/src/lib.rs` a module-declaration file; the surviving
 /// store is the router driver's, created per invocation.
-const EXECUTION_HOST_STORE_CONSTRUCTOR: &str =
-    "let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));";
+const EXECUTION_HOST_STORE_CONSTRUCTOR: &str = "let mut store = Store::new(\n                engine.inner(),\n                \
+     SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),\n            );\n            \
+     wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);";
 const EXECUTION_HOST_STORE_FILE: &str = "crates/execution/host/src/router_driver.rs";
 
 /// The release-manifest weld construction call, deliberately truncated before the
@@ -439,16 +440,9 @@ fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
         .unwrap_or_else(|error| panic!("read {}: {error}", component_plugin_path.display()));
     assert_one(
         &component_plugin,
-        "Store::new(engine.inner(), SharedCtx::new(ctx).with_resource_registry())",
+        "Store::new(\n        engine.inner(),\n        SharedCtx::new(ctx)\n            \
+         .with_resource_registry()\n            .with_guest_memory(engine.guest_memory()),\n    )",
         "feature-gated host-component plugin store",
-    );
-
-    let pool_path = wash_runtime.join("src/engine/instance_pool.rs");
-    let pool = fs::read_to_string(&pool_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", pool_path.display()));
-    assert!(
-        pool.contains("Some(pool_size) => Self::Warm"),
-        "nonzero pool_size must remain the warm-store activation seam"
     );
 
     let execution_path = root.join(EXECUTION_HOST_STORE_FILE);
@@ -460,6 +454,24 @@ fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
         "runtime: new_store_from_templates (single production site)".to_string(),
         "wamn: ExecutionHost store (crates/execution/host)".to_string(),
     ])
+}
+
+#[test]
+fn only_positive_pool_sizes_keep_instances_warm() {
+    use wash_runtime::engine::InstancePolicy;
+    use wash_runtime::types::Component;
+
+    for pool_size in [i32::MIN, -1, 0, 1, i32::MAX] {
+        let component = Component {
+            pool_size,
+            ..Default::default()
+        };
+        assert_eq!(
+            InstancePolicy::from_component(&component).keeps_instances_warm(),
+            pool_size > 0,
+            "pool_size {pool_size} must preserve the native fresh-store boundary"
+        );
+    }
 }
 
 fn resolved_features(tree: &str) -> BTreeSet<String> {
@@ -818,7 +830,7 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
 ///
 /// **Re-converge trigger:** when upstream exposes the constant publicly, import
 /// it, compare it directly, and DELETE this scan. Checked at every tagged-release
-/// fork sync — see `docs/architecture/native-alignment-ledger.md`.
+/// upgrade — see `docs/architecture/native-alignment-ledger.md`.
 #[test]
 fn the_manual_store_epoch_tick_still_mirrors_the_runtime_ticker() {
     /// The upstream declaration, spelled without its visibility so a
@@ -984,8 +996,7 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
     }
     validate_feature_policy(&all_features).unwrap_or_else(|error| panic!("{error}"));
     validate_wasmtime_feature_policy(
-        &fs::read_to_string(root.join(WORKSPACE_MANIFEST))
-            .expect("read the workspace manifest"),
+        &fs::read_to_string(root.join(WORKSPACE_MANIFEST)).expect("read the workspace manifest"),
     )
     .unwrap_or_else(|error| panic!("{error}"));
     assert!(
@@ -1507,7 +1518,7 @@ fn weld_inventory_rejects_construction_after_the_first_bind() {
 mod wasmtime_feature_policy_tests {
     use super::validate_wasmtime_feature_policy;
 
-    const REVIEWED: &str = "wasmtime = { version = \"47.0.3\", default-features = false, features = [\n    \"cache\",\n    \"parallel-compilation\",\n] }\n";
+    const REVIEWED: &str = "wasmtime = { version = \"47.0.4\", default-features = false, features = [\n    \"cache\",\n    \"parallel-compilation\",\n] }\n";
 
     #[test]
     fn the_reviewed_pin_is_accepted() {

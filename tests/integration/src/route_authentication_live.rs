@@ -2007,9 +2007,13 @@ fn verify_dev_command_receipt(output: &std::process::Output) -> anyhow::Result<(
     let (base_url, route_host) = served
         .split_once(" host=")
         .with_context(|| format!("the served line names a host: {served:?}"))?;
-    let (route_host, target_instance) = route_host.split_once(" target_instance=")
+    let (route_host, target_instance) = route_host
+        .split_once(" target_instance=")
         .context("the served line names the exact target instance")?;
-    anyhow::ensure!(!target_instance.is_empty(), "the served target instance is empty");
+    anyhow::ensure!(
+        !target_instance.is_empty(),
+        "the served target instance is empty"
+    );
     anyhow::ensure!(
         base_url.starts_with("http://127.0.0.1:")
             && base_url
@@ -3054,6 +3058,12 @@ async fn build_journey_runtime(
     Ok((engine, flow_http, routing, bridge, identity_task))
 }
 
+#[derive(Clone, Debug)]
+struct JourneyGuestMemory {
+    shell_bytes: u64,
+    peak_bytes: u64,
+}
+
 async fn invoke_journey_route(
     engine: &wash_runtime::engine::Engine,
     flow_http: &Component,
@@ -3107,7 +3117,11 @@ async fn invoke_journey_route(
     let ctx = Ctx::builder(workload_id, component_id)
         .with_plugins(plugins)
         .build();
-    let mut store = Store::new(raw, SharedCtx::new(ctx));
+    let mut store = Store::new(
+        raw,
+        SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
+    );
+    wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
     store.set_epoch_deadline(u64::MAX / 2);
     let compiled = workload.component().clone();
     let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
@@ -3137,12 +3151,22 @@ async fn invoke_journey_route(
         .http()
         .new_response_outparam(sender)
         .map_err(|error| anyhow::anyhow!("allocate the Receiving response outparam: {error}"))?;
+    let guest_memory = Arc::clone(engine.guest_memory());
     let call = wasmtime_wasi::runtime::spawn(async move {
         proxy
             .wasi_http_incoming_handler()
             .call_handle(&mut store, incoming, out)
             .await
-            .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))
+            .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?;
+        let shell_bytes = store.data().memory_limiter.charged();
+        anyhow::ensure!(
+            guest_memory.in_use() == shell_bytes,
+            "Receiving invocation retained memory outside its flow-http store"
+        );
+        Ok::<_, anyhow::Error>(JourneyGuestMemory {
+            shell_bytes,
+            peak_bytes: guest_memory.high_water(),
+        })
     });
     let response = receiver
         .await
@@ -3153,8 +3177,14 @@ async fn invoke_journey_route(
         .collect()
         .await
         .context("collect the Receiving HTTP response")?;
-    call.await.context("join flow-http")?;
-    Ok(hyper::Response::from_parts(parts, body.to_bytes()))
+    let memory = call.await.context("join flow-http")?;
+    anyhow::ensure!(
+        engine.guest_memory().in_use() == 0,
+        "Receiving invocation retained guest memory after its stores dropped"
+    );
+    let mut response = hyper::Response::from_parts(parts, body.to_bytes());
+    response.extensions_mut().insert(memory);
+    Ok(response)
 }
 
 fn successful_value(response: &hyper::Response<Bytes>, request_id: &str) -> anyhow::Result<Value> {
@@ -3522,6 +3552,14 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
     )
     .await?;
     let value = successful_value(&response, "acme-record-receipt")?;
+    let memory = response
+        .extensions()
+        .get::<JourneyGuestMemory>()
+        .context("cold nested Receiving invocation did not report guest memory")?;
+    anyhow::ensure!(
+        memory.shell_bytes > 0 && memory.peak_bytes > memory.shell_bytes,
+        "cold nested Receiving invocation did not share its budget with flow-http: {memory:?}"
+    );
     anyhow::ensure!(
         value["purchase_order_status"] == "complete"
             && value["row_version"] == "2"

@@ -31,8 +31,8 @@ async fn main() -> Result<()> {
         "scope",
         "declared",
         json!({
-            "production_base":"7780a6313bc72a0bc7141b32da3de4cc5bc4ed93",
-            "runtime_pin":"735b57982545358409a7d965a22549b08487ca09",
+            "production_base":"dfa1c3187fe8cd671688a442b23106046e502cb6",
+            "runtime_pin":"68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
             "entry":"public native HostHandler, no guest WIT execution",
             "credentials":"synthetic probe markers only", "production_adoption":false
         }),

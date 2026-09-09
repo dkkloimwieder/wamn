@@ -1,0 +1,12 @@
+{
+  "command": [
+    "rustfmt",
+    "--edition",
+    "2024",
+    "--check",
+    "services/ctl/src/dev/activation.rs"
+  ],
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": ""
+}

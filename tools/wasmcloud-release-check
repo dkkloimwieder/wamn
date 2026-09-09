@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WAMN_USAGE='usage: tools/wasmcloud-release-check [run|dry-run] [upstream-checkout]'
+readonly WAMN_EXPECTED_REPOSITORY='https://github.com/wasmCloud/wasmCloud'
+readonly WAMN_EXPECTED_TAG='v2.9.0'
+readonly WAMN_EXPECTED_REVISION='68ebece9c537f8bb4b5c9999f274ec68d60f35a9'
+
+wamn_fail() {
+  local -r exit_code="$1"
+  shift
+  printf 'wasmcloud-release-check: %s\n' "$*" >&2
+  exit "$exit_code"
+}
+
+wamn_usage_error() {
+  printf '%s\n' "$WAMN_USAGE" >&2
+  wamn_fail 64 "$*"
+}
+
+readonly WAMN_TOOL_DIRECTORY="$(
+  CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_REPOSITORY_ROOT="$(
+  CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_CARGO="${CARGO:-cargo}"
+
+(($# <= 2)) || wamn_usage_error 'expected at most a command and upstream checkout'
+readonly WAMN_COMMAND="${1:-run}"
+readonly WAMN_UPSTREAM_CHECKOUT="${2:-$WAMN_REPOSITORY_ROOT/../wasmcloud}"
+
+case "$WAMN_COMMAND" in
+  run | dry-run) ;;
+  *) wamn_usage_error "unknown command '$WAMN_COMMAND'" ;;
+esac
+
+# Expand upstream's `xtask = "run --package xtask --"` alias so --locked
+# belongs to Cargo and the checkout need not be the caller's working directory.
+readonly -a WAMN_BUILD_FIXTURES=(
+  run --manifest-path "$WAMN_UPSTREAM_CHECKOUT/Cargo.toml" --locked
+  --package xtask -- build-fixtures
+)
+readonly -a WAMN_RUNTIME_TEST=(
+  test --manifest-path "$WAMN_UPSTREAM_CHECKOUT/Cargo.toml" --locked
+  -p wash-runtime --features default --no-fail-fast
+  -- --include-ignored --nocapture
+)
+readonly -a WAMN_GIT_FIXTURE_TEST=(
+  test --manifest-path "$WAMN_UPSTREAM_CHECKOUT/Cargo.toml" --locked
+  -p wash --features default --lib clone_template_
+  -- --include-ignored --nocapture --test-threads=1
+)
+readonly -a WAMN_FORMAT=(
+  fmt --manifest-path "$WAMN_UPSTREAM_CHECKOUT/Cargo.toml" --all -- --check
+)
+readonly -a WAMN_RUNTIME_FEATURES=(
+  tree --manifest-path "$WAMN_UPSTREAM_CHECKOUT/Cargo.toml" --locked
+  -p wash-runtime --features default -e features
+)
+readonly -a WAMN_GIT_FIXTURE_FEATURES=(
+  tree --manifest-path "$WAMN_UPSTREAM_CHECKOUT/Cargo.toml" --locked
+  -p wash --features default -e features
+)
+
+wamn_print_command() {
+  local -r label="$1"
+  shift
+  printf '%s:' "$label"
+  printf ' %q' "$WAMN_CARGO" "$@"
+  printf '\n'
+}
+
+wamn_dry_run() {
+  printf 'upstream-checkout: %q\n' "$WAMN_UPSTREAM_CHECKOUT"
+  printf 'expected-repository: %s\n' "$WAMN_EXPECTED_REPOSITORY"
+  printf 'expected-tag: %s\n' "$WAMN_EXPECTED_TAG"
+  printf 'expected-revision: %s\n' "$WAMN_EXPECTED_REVISION"
+  printf 'test-features: upstream defaults, separate from WAMN production features\n'
+  printf 'git-config-global: /dev/null\n'
+  printf 'git-config-nosystem: 1\n'
+  wamn_print_command format "${WAMN_FORMAT[@]}"
+  wamn_print_command wash-runtime-fixtures "${WAMN_BUILD_FIXTURES[@]}"
+  wamn_print_command wash-runtime-features "${WAMN_RUNTIME_FEATURES[@]}"
+  wamn_print_command wash-runtime "${WAMN_RUNTIME_TEST[@]}"
+  wamn_print_command git-template-features "${WAMN_GIT_FIXTURE_FEATURES[@]}"
+  wamn_print_command git-template-fixture "${WAMN_GIT_FIXTURE_TEST[@]}"
+}
+
+wamn_require_cargo() {
+  if [[ "$WAMN_CARGO" == */* ]]; then
+    [[ -x "$WAMN_CARGO" ]] || {
+      wamn_fail 127 "Cargo executable is not executable: $WAMN_CARGO"
+    }
+  else
+    command -v "$WAMN_CARGO" >/dev/null 2>&1 || {
+      wamn_fail 127 "Cargo executable was not found: $WAMN_CARGO"
+    }
+  fi
+}
+
+wamn_git() {
+  git -C "$WAMN_UPSTREAM_CHECKOUT" "$@"
+}
+
+wamn_assert_identity() {
+  [[ -r "$WAMN_UPSTREAM_CHECKOUT/Cargo.toml" ]] || {
+    wamn_fail 66 "upstream checkout has no readable Cargo.toml: $WAMN_UPSTREAM_CHECKOUT"
+  }
+  [[ "$(wamn_git rev-parse --is-inside-work-tree 2>/dev/null)" == true ]] || {
+    wamn_fail 65 "upstream checkout is not a Git worktree: $WAMN_UPSTREAM_CHECKOUT"
+  }
+
+  local repository tag_revision head_revision
+  repository="$(wamn_git remote get-url origin)"
+  [[ "${repository%.git}" == "$WAMN_EXPECTED_REPOSITORY" ]] || {
+    wamn_fail 65 'origin must name the direct upstream repository'
+  }
+  tag_revision="$(wamn_git rev-parse "$WAMN_EXPECTED_TAG^{commit}")"
+  head_revision="$(wamn_git rev-parse HEAD)"
+  [[ "$tag_revision" == "$WAMN_EXPECTED_REVISION" ]] || {
+    wamn_fail 65 "$WAMN_EXPECTED_TAG peels to $tag_revision, expected $WAMN_EXPECTED_REVISION"
+  }
+  [[ "$head_revision" == "$WAMN_EXPECTED_REVISION" ]] || {
+    wamn_fail 65 "checkout HEAD $head_revision is not $WAMN_EXPECTED_TAG at $WAMN_EXPECTED_REVISION"
+  }
+  [[ -z "$(wamn_git status --porcelain --untracked-files=all)" ]] || {
+    wamn_fail 65 'upstream checkout is dirty; the gate requires the exact released source'
+  }
+}
+
+wamn_run() {
+  local -r label="$1"
+  shift
+  wamn_print_command "$label" "$@"
+  local exit_code=0
+  "$WAMN_CARGO" "$@" || exit_code=$?
+  printf 'wasmcloud-release-check: %s exit-code=%s\n' "$label" "$exit_code" >&2
+  return "$exit_code"
+}
+
+case "$WAMN_COMMAND" in
+  dry-run)
+    wamn_dry_run
+    ;;
+  run)
+    wamn_require_cargo
+    command -v git >/dev/null 2>&1 || wamn_fail 127 'Git executable was not found'
+    # Isolate developer Git settings without changing upstream source or fixtures.
+    export GIT_CONFIG_GLOBAL=/dev/null
+    export GIT_CONFIG_NOSYSTEM=1
+    wamn_assert_identity
+    wamn_dry_run
+    WAMN_GATE_STATUS=0
+    wamn_run format "${WAMN_FORMAT[@]}" || WAMN_GATE_STATUS=$?
+    wamn_assert_identity
+    wamn_run wash-runtime-fixtures "${WAMN_BUILD_FIXTURES[@]}" || WAMN_GATE_STATUS=$?
+    wamn_assert_identity
+    wamn_run wash-runtime-features "${WAMN_RUNTIME_FEATURES[@]}" || WAMN_GATE_STATUS=$?
+    wamn_run wash-runtime "${WAMN_RUNTIME_TEST[@]}" || WAMN_GATE_STATUS=$?
+    wamn_assert_identity
+    wamn_run git-template-features "${WAMN_GIT_FIXTURE_FEATURES[@]}" || WAMN_GATE_STATUS=$?
+    wamn_run git-template-fixture "${WAMN_GIT_FIXTURE_TEST[@]}" || WAMN_GATE_STATUS=$?
+    wamn_assert_identity
+    exit "$WAMN_GATE_STATUS"
+    ;;
+esac

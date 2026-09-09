@@ -1,0 +1,115 @@
+import datetime, hashlib, json, os, pathlib, re, subprocess, urllib.request, urllib.parse
+import yaml
+root=pathlib.Path('/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909')
+upstream=pathlib.Path('/home/kaalin/.cache/wamn-lanes/upstream-wasmcloud-2-9-20260909')
+out=root/'docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001'
+out.mkdir(parents=True,exist_ok=True)
+commands=[]
+
+def stamp(): return datetime.datetime.now(datetime.timezone.utc).isoformat()
+def run(name,argv):
+ start=stamp()
+ try:
+  p=subprocess.run(argv,cwd=root,text=True,capture_output=True,timeout=75)
+  result={'name':name,'argv':argv,'cwd':str(root),'started':start,'finished':stamp(),'exit':p.returncode}
+ except subprocess.TimeoutExpired as e:
+  result={'name':name,'argv':argv,'cwd':str(root),'started':start,'finished':stamp(),'exit':124,'error':'timeout75s'}
+  commands.append(result);(out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n');raise
+ commands.append(result);(out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
+ (out/f'{name}.stderr').write_text(p.stderr)
+ if p.returncode:
+  (out/f'{name}.stdout').write_text(p.stdout)
+  raise RuntimeError(f'{name} failed: {p.returncode}')
+ print(name,p.returncode,flush=True)
+ return p.stdout,p.stderr
+
+text,err=run('helm-version',['helm','version','--short'])
+(out/'helm-version.txt').write_text(text)
+chart='oci://ghcr.io/wasmcloud/charts/runtime-operator'
+text,err=run('distributed-chart',['helm','show','chart',chart,'--version','2.9.0'])
+doc=next(d for d in yaml.safe_load_all(text) if isinstance(d,dict) and d.get('name')=='runtime-operator')
+assert doc['version']==doc['appVersion']=='2.9.0'
+(out/'distributed-chart.json').write_text(json.dumps(doc,indent=2)+'\n')
+identities=[]
+for line in (text+'\n'+err).splitlines():
+ if line.startswith(('Pulled:','Digest:')): identities.append(line)
+profiles={}
+for name,overlay,starts,cpu in [('default',None,'4','6'),('receiving','receiving-pat','4','6'),('wms','wms-pat','1','2')]:
+ argv=['helm','template','wamn-host',chart,'--version','2.9.0','--namespace','wamn-system','-f','deploy/platform/values-host-default.yaml']
+ if overlay: argv+=['-f',f'deploy/platform/values-host-{overlay}.yaml']
+ for template in ['deployment','service','networkpolicy']: argv+=['--show-only',f'templates/runtime/{template}.yaml']
+ text,err=run('host-'+name,argv)
+ # Helm4 adds a Pulled/Digest document. Keep only Kubernetes resource documents.
+ docs=[d for d in yaml.safe_load_all(text) if isinstance(d,dict) and 'apiVersion' in d and 'kind' in d]
+ assert docs and all(d['kind'] in ['Deployment','Service','NetworkPolicy'] for d in docs)
+ (out/f'host-{name}.json').write_text(json.dumps(docs,indent=2)+'\n')
+ dep=next(d for d in docs if d['kind']=='Deployment');spec=dep['spec']['template']['spec'];container=spec['containers'][0]
+ env={v['name']:v.get('value',v.get('valueFrom')) for v in container['env']}
+ assert spec['terminationGracePeriodSeconds']==70
+ assert env['WASH_GUEST_MEMORY_MODE']=='count' and env['WASH_MAX_CONCURRENT_STARTS']==starts
+ assert container['resources']['limits']['cpu']==cpu
+ assert all(k not in container['resources'] for k in ['coreInstances','defaultHeapMemory','guestMemoryMode','maxConcurrentStarts'])
+ for probe,path in [('startupProbe','/livez'),('livenessProbe','/livez'),('readinessProbe','/readyz')]: assert container[probe]['httpGet']=={'path':path,'port':'probes'}
+ assert container['startupProbe']['periodSeconds']==5 and container['startupProbe']['failureThreshold']==60
+ assert any(v['name']=='probes' and v['containerPort']==8081 for v in container['ports'])
+ for arg in ['--drain-delay=5s','--nats-connect-timeout=60s','--probe-addr=0.0.0.0:8081']: assert arg in container['args']
+ policy=next(d for d in docs if d['kind']=='NetworkPolicy')
+ assert policy['metadata']['namespace']=='wamn-system'
+ assert policy['spec']['podSelector']['matchLabels']==dep['spec']['selector']['matchLabels']
+ assert policy['spec']['policyTypes']==['Ingress']
+ assert policy['spec']['ingress']==[{'ports':[{'port':80,'protocol':'TCP'},{'port':8081,'protocol':'TCP'}]}]
+ profiles[name]={'image':container['image'],'cpu_limit':cpu,'max_concurrent_starts':int(starts),'guest_memory_mode':'count','termination_grace_seconds':70,'probe_port':8081}
+argv=['helm','template','wamn',chart,'--version','2.9.0','--namespace','wamn-system','-f','deploy/infra/values-wamn.yaml']
+for f in ['deployment','role','rolebinding','workload-crd-role','workload-namespace-role','endpointslice-role']: argv+=['--show-only',f'templates/operator/{f}.yaml']
+text,err=run('operator',argv)
+docs=[d for d in yaml.safe_load_all(text) if isinstance(d,dict) and 'apiVersion' in d and 'kind' in d]
+assert docs and all(d['kind'] in ['Deployment','Role','RoleBinding'] for d in docs)
+(out/'operator.json').write_text(json.dumps(docs,indent=2)+'\n')
+operator=next(d for d in docs if d['kind']=='Deployment');image=operator['spec']['template']['spec']['containers'][0]['image']
+assert image.endswith(':2.9.0')
+roles=[d for d in docs if d['kind']=='Role']
+assert roles and all(d['metadata']['namespace']=='wamn-system' for d in roles)
+event_rules=[v for d in roles for v in d['rules'] if 'events' in v['resources']]
+assert event_rules and all(v['apiGroups']==[''] for v in event_rules)
+overlay=list(yaml.safe_load_all((root/'deploy/platform/runtime-operator-events-rbac.example.yaml').read_text().replace('__ENVIRONMENT_NAMESPACE__','wamn-system')))
+assert all(d['metadata']['namespace']=='wamn-system' for d in overlay)
+role=next(d for d in overlay if d['kind']=='Role');binding=next(d for d in overlay if d['kind']=='RoleBinding')
+assert role['rules']==[{'apiGroups':['events.k8s.io'],'resources':['events'],'verbs':['create','patch']}]
+assert binding['subjects']==[{'kind':'ServiceAccount','name':operator['spec']['template']['spec']['serviceAccountName'],'namespace':'wamn-system'}]
+(out/'events-overlay.json').write_text(json.dumps(overlay,indent=2)+'\n')
+executor=next(d for d in yaml.safe_load_all((root/'deploy/platform/executor.yaml').read_text()) if d and d.get('kind')=='Deployment');spec=executor['spec']['template']['spec'];container=spec['containers'][0]
+assert spec['terminationGracePeriodSeconds']==15
+assert {'name':'WASH_GUEST_MEMORY_MODE','value':'count'} in container['env']
+for probe,path in [('startupProbe','/livez'),('livenessProbe','/livez'),('readinessProbe','/readyz')]:
+ assert container[probe]['httpGet']['path']==path and container[probe]['httpGet']['port']=='readiness'
+(out/'executor.json').write_text(json.dumps(executor,indent=2)+'\n')
+for f in ['deploy/infra/values-wamn.yaml','deploy/platform/values-host-default.yaml']: assert yaml.safe_load((root/f).read_text())['gateway']['enabled'] is False
+
+# Anonymous public OCI registry manifest retrieval. No token is persisted or printed.
+registry,rest=image.split('/',1);repo,tag=rest.rsplit(':',1)
+url=f'https://{registry}/v2/{repo}/manifests/{tag}'
+accept='application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json'
+start=stamp()
+try:
+ req=urllib.request.Request(url,headers={'Accept':accept})
+ try: response=urllib.request.urlopen(req,timeout=30)
+ except urllib.error.HTTPError as e:
+  if e.code!=401: raise
+  challenge=e.headers['WWW-Authenticate'];parts=dict(re.findall(r'(\w+)="([^"]*)"',challenge))
+  token_url=parts['realm']+'?'+urllib.parse.urlencode({'service':parts['service'],'scope':parts['scope']})
+  token=json.load(urllib.request.urlopen(token_url,timeout=30))['token']
+  req.add_header('Authorization','Bearer '+token);response=urllib.request.urlopen(req,timeout=30)
+ with response:
+  raw=response.read();digest=response.headers.get('Docker-Content-Digest');manifest=json.loads(raw)
+ assert digest=='sha256:'+hashlib.sha256(raw).hexdigest()
+ (out/'operator-image-manifest.json').write_bytes(raw)
+ metadata={'image':image,'manifest_url':url,'digest':digest,'media_type':manifest.get('mediaType'),'platforms':[{'digest':m['digest'],'platform':m.get('platform')} for m in manifest.get('manifests',[])]}
+ (out/'distributed-image.json').write_text(json.dumps(metadata,indent=2)+'\n')
+ commands.append({'name':'operator-image-metadata','method':'GET','url':url,'authentication':'anonymous public registry token, not persisted','started':start,'finished':stamp(),'exit':0})
+ print('operator-image-metadata 0',flush=True)
+except Exception as e:
+ commands.append({'name':'operator-image-metadata','method':'GET','url':url,'started':start,'finished':stamp(),'exit':1,'error':str(e)})
+ raise
+finally: (out/'commands.json').write_text(json.dumps(commands,indent=2)+'\n')
+(out/'observations.json').write_text(json.dumps({'source_commit':'68ebece9c537f8bb4b5c9999f274ec68d60f35a9','chart':chart,'chart_version':'2.9.0','chart_pull_identity':identities,'profiles':profiles,'operator_image':image,'distributed_roles_event_groups':[''],'modern_event_overlay_preserved':True,'stage4_live_proofs':'not executed','wamn_image_identity':'rendered tag only; no WAMN image build or deployed image proof'},indent=2)+'\n')
+(out/'capture-command.py.txt').write_text(pathlib.Path(__file__).read_text())

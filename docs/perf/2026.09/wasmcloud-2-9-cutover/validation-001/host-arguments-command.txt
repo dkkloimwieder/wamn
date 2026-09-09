@@ -1,0 +1,1 @@
+python3 docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/exercise-chart-arguments.py 

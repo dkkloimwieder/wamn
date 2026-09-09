@@ -185,7 +185,11 @@ async fn run_component(component_path: &Path, guest_url: String) -> anyhow::Resu
         .with_plugins(plugins)
         .with_wasi_ctx(wasi.build())
         .build();
-    let mut store = Store::new(raw, SharedCtx::new(ctx));
+    let mut store = Store::new(
+        raw,
+        SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
+    );
+    wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
     store.set_epoch_deadline(u64::MAX / 2);
 
     let traces = TraceHarness::install();

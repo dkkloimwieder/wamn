@@ -225,7 +225,7 @@ def export_evidence(tree, scratch, evidence, redactor, report):
             redactor.secrets.add(value)
 
     complete = True
-    for path in [*scratch.rglob("*.json"), scratch / ".dockerconfigjson"]:
+    for path in scratch.rglob("*.json"):
         if not path.exists():
             continue
         try:
@@ -302,9 +302,11 @@ def main():
     for name in ("wamn", "wamn-host", "wamn-scenario-worker", "wamn-receiving-tui"):
         if not os.access(target / "debug" / name, os.X_OK):
             raise ProofFailure(f"required native artifact is absent: {name}")
-    for command in ("docker", "cargo", "wash"):
+    for command in ("docker", "cargo", "curl", "sha256sum"):
         if shutil.which(command) is None:
             raise ProofFailure(f"required executable is absent: {command}")
+
+    wash_bin = subprocess.check_output([tree / "tools/install-wash"], text=True).strip()
 
     source_before = source_identity(tree)
     redactor = proof_redactor(proof)
@@ -327,7 +329,9 @@ def main():
     for name in ("postgres", "standard_registry", "registry", "nats", "tempo", "otlp", "gate"):
         held[name], ports[name] = reserve_port()
     htpasswd = scratch / "htpasswd"
-    auth = scratch / ".dockerconfigjson"
+    docker_config = scratch / "docker"
+    docker_config.mkdir(mode=0o700)
+    auth = docker_config / "config.json"
     authority = f"127.0.0.1:{ports['registry']}"
     image = authority + "/wamn/flow-http:dev"
     environment.update({
@@ -364,6 +368,7 @@ def main():
         with htpasswd.open("wb") as output:
             owned.run("create-registry-auth", ["docker", "run", "--rm", "-i", "--name", temporary_container, "--entrypoint", "htpasswd", "httpd:2-alpine", "-Bni", username], output=output, input_data=(password + "\n").encode())
         auth.write_text(json.dumps({"auths": {authority: {"username": username, "password": password}}}) + "\n")
+        auth.chmod(0o600)
         # Gate stays reserved until immediately before dev up; Compose ports are released together.
         for name in set(held) - {"gate"}:
             held.pop(name).close()
@@ -373,7 +378,7 @@ def main():
         owned.run("postgres-ready", compose + ["exec", "-T", "-e", "PGPASSWORD=probe", "receiving-route-postgres", "psql", "-h", "127.0.0.1", "-U", "postgres", "-Atqc", "select 1"])
         if http_status(f"http://{authority}/v2/") != 401:
             raise ProofFailure("registry does not enforce authentication")
-        owned.run("push-http-route", ["wash", "push", image, guest, "--insecure"], timeout=180, environment=environment | {"WASH_REG_USER": username, "WASH_REG_PASSWORD": password})
+        owned.run("push-http-route", [wash_bin, "oci", "push", image, guest, "--insecure"], timeout=180, environment=environment | {"DOCKER_CONFIG": str(docker_config)})
         del password
         held.pop("gate").close()
         env_root = scratch / "environment"

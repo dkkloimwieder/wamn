@@ -195,7 +195,7 @@ validate_steps() {
 
 preflight() {
   local tool
-  for tool in docker wash cargo jq psql curl git openssl flock ss tee; do
+  for tool in docker cargo jq psql curl git openssl flock ss tee sha256sum; do
     command -v "$tool" >/dev/null || die "$tool is not on PATH" "$EX_ENV"
   done
   # The shim's `wait` covers process substitutions only from 5.1. Without that
@@ -340,10 +340,11 @@ start_infrastructure() {
   printf '%s\n' "$password" \
     | docker run --rm -i --entrypoint htpasswd httpd:2-alpine -Bni "$REGISTRY_USERNAME" \
     > "$DIR/env/htpasswd"
+  mkdir -m 0700 -- "$DIR/env/docker"
   jq -n --arg authority "$REGISTRY_AUTHORITY" --arg username "$REGISTRY_USERNAME" \
         --arg password "$password" \
         '{auths:{($authority):{username:$username,password:$password}}}' \
-    > "$DIR/env/dockerconfig.json"
+    > "$DIR/env/docker/config.json"
 
   WAMN_STD_VIRT_PG_PORT="$PG_PORT" \
   WAMN_STD_VIRT_REGISTRY_PORT=5003 \
@@ -367,8 +368,10 @@ start_infrastructure() {
   PGPASSWORD=probe psql "postgresql://postgres@127.0.0.1:$PG_PORT/postgres" -Atqc 'select 1' >/dev/null \
     || die "the disposable PostgreSQL did not answer a query" "$EX_ENV"
 
-  WASH_REG_USER="$REGISTRY_USERNAME" WASH_REG_PASSWORD="$password" \
-    wash push "$FLOW_HTTP_IMAGE" "$TARGET/wasm32-wasip2/debug/http_route.wasm" --insecure \
+  local wash_bin
+  wash_bin=$("$TREE/tools/install-wash")
+  DOCKER_CONFIG="$DIR/env/docker" "$wash_bin" oci push \
+    "$FLOW_HTTP_IMAGE" "$TARGET/wasm32-wasip2/debug/http_route.wasm" --insecure \
     >> "$DIR/env.log" 2>&1 \
     || die "the flow-http workload did not publish; see $DIR/env.log" "$EX_ENV"
   unset password
@@ -411,7 +414,7 @@ run_standup() {
     --otel-exporter-otlp-endpoint "http://127.0.0.1:$OTLP_PORT" \
     --component-artifact-base "$REGISTRY_AUTHORITY/wamn/components" \
     --release-artifact-base "$REGISTRY_AUTHORITY/wamn/releases" \
-    --registry-auth-file "$DIR/env/dockerconfig.json" \
+    --registry-auth-file "$DIR/env/docker/config.json" \
     --route-host "$M_ROUTE_HOST" \
     --flow-http-workload-image "$FLOW_HTTP_IMAGE" \
     --host-binary "$TARGET/debug/wamn-host" \

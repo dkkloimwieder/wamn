@@ -1,0 +1,20 @@
+{
+  "bash_recipe_syntax": {
+    "argv": [
+      "bash",
+      "-n",
+      "/tmp/wamn-crd-recipe-t6_gnjdu.bash"
+    ],
+    "exit": 0,
+    "input": "all bash fences in deploy/README.md wasmCloud 2.9 cutover section"
+  },
+  "no_maintenance_window_wording_preserved": true,
+  "schema_capture_commands_exit": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "cluster_calls_executed": false,
+  "deploy_readme_sha256": "702522589c1e0e6a73bf7b3c0be826cb65bdcbf05dffed53ddfc4f34ed494791"
+}

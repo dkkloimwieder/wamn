@@ -87,41 +87,57 @@ inventory in `architecture/workspace-tiers.json` instead of by hand; it
 requires `jq`. `tools/workspace-tier list|dry-run|run TIER WORKSPACE MODE`
 resolves a named tier's package selectors from the same manifest.
 
-## Fork sync
+## Upstream release gate
 
-The fork-sync gate takes an explicit wasmCloud checkout and refuses unless
-`wamn/2.8.0`, the peeled `v2.8.0` tag, and the recorded upstream revision are
-the same commit:
+The release gate takes an explicit, clean upstream wasmCloud checkout.
+Its `origin` must name `https://github.com/wasmCloud/wasmCloud`.
+Both `HEAD` and the peeled `v2.9.0` tag must equal
+`68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
+
+Install both Wasm targets for the repository's pinned Rust toolchain.
+The runtime tests also require Docker for their disposable services.
 
 ```bash
-tools/fork-sync-check dry-run ../wasmcloud
-tools/fork-sync-check run ../wasmcloud
+rustup target add --toolchain 1.98.0 wasm32-wasip1 wasm32-wasip2
+tools/wasmcloud-release-check dry-run ../wasmcloud
+tools/wasmcloud-release-check run ../wasmcloud
 ```
 
-The run requires a clean checkout, runs the fork formatter and wash-runtime
-tests, then runs wash's template-clone fixture. It exports
-`GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1` for every Git and
-Cargo child, so developer settings such as `tag.gpgsign=true` cannot change
-the fixture. Keep that isolation in this WAMN-owned gate; do not carry a
-fixture-only patch in the wasmCloud branch.
+The gate runs the read-only formatter, builds upstream Wasm fixtures, and runs wash-runtime tests and wash template-clone fixtures.
+Upstream `cargo xtask build-fixtures` owns fixture generation.
+Generated files must leave the upstream tracked source and lockfiles clean.
+It records each command, feature tree, exit code, and test skip message.
+Both test legs include ignored tests and select upstream default features.
+WAMN production features remain separate, with `default-features = false`.
+The gate includes later legs after a test failure and returns a failing exit code.
 
-The gate deliberately does not elevate upstream rustdoc warnings into a WAMN
-fork requirement. The branch policy is vanilla source plus only a consumed,
-red behavior patch; local documentation strictness is not such a behavior.
+The gate exports `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1` for every Git and Cargo child.
+This isolates the Git fixtures from developer signing requirements.
+The gate makes sure that upstream source stays clean between test legs.
+Do not edit upstream source or fixtures to satisfy this gate.
+Retain warnings, failures, and missing test inputs in the release evidence.
 
-**A fork patch is one recipe, and every step of it is pinned.** Commit on
-`wamn/2.8.0` in the sibling checkout and push that branch fast-forward. Then
-ONE in-tree change moves the `wash-runtime` rev in `Cargo.toml`, runs
-`cargo update -p wash-runtime`, and updates every pin that names the revision
-or the patch count: `tools/fork-sync-check` (revision and patch count),
-`fork_sync_check.rs`, `chart_seam_governance.rs` (short rev),
-`ip_name_lookup.rs`, `runtime-inventory.json` (`cargo_tree_root`), the
-`values-wamn.yaml` seam comment, and the ledger row in
-`docs/architecture/native-alignment-ledger.md` -- a deviation lands with its
-row or refuses. One bead under `wamn-2w3x` per patch. `tools/fork-sync-check
-run <fork>` is the gate (about 15 minutes: the fork formatter plus the
-wash-runtime tests). Never force-push the fork branch: a fix to a landed patch
-is a further commit and an amended row, not a rewrite.
+A source update moves the root and standalone HTTP probe manifests and lockfiles together.
+Update the source identity tests, runtime inventory, release gate, and native-alignment ledger in the same change.
+Update the chart seam record when the deployment stage moves the chart.
+The cutover charter requires zero carried patches and records separate build, deployment, and live-evidence stages.
+A passing source gate does not establish release readiness.
+
+Install the controlled CLI before manual publication:
+
+```bash
+wamn_wash=$(tools/install-wash)
+"$wamn_wash" --version
+```
+
+The installer pins upstream wash 2.9.0 for Linux x86_64 by a fixed SHA-256.
+It checks downloaded and cached bytes before returning the ignored `.tools/wash/2.9.0/wash` path.
+Active publishers select their private credential directory through `DOCKER_CONFIG` and call upstream `oci push`.
+The directory contains their existing registry credential document as `config.json`.
+Passwords stay out of command arguments and command records.
+JSON publication receipts must report both `.success` and `.data.success` as true.
+The component digest is `.data.digest`.
+WAMN custom artifact publication remains owned by `wamn-ctl push-component` and its admission proof.
 
 ## The full sweep
 
@@ -1207,12 +1223,17 @@ current_tenant_key`.
 
 ### `[RECEIVING-HOST-OVERLAY]` — rendered Receiving/PAT host values
 
-This gate renders the pinned runtime-operator chart twice: the generic values
-alone, then the same base plus the complete Receiving/PAT overlay. It decodes
-the rendered Deployment through Kubernetes' client-side loader and proves the
-base is release-less, the overlay preserves the full host profile despite Helm
-list replacement, and the trusted Receiving scope plus both mandatory scoped
-Secret references reach the Pod structurally. It creates no cluster object.
+This gate renders runtime-operator 2.9.0 with three host profiles: generic,
+Receiving/PAT, and WMS/PAT. It also renders the operator release and decodes the
+manifests with Kubernetes' client-side loader. The host assertions cover registry
+mounts, native memory and startup configuration, HTTP probes, termination grace,
+and NetworkPolicy scope.
+
+Receiving assertions preserve the full host profile, the base without a release,
+and the trusted application scope. All four mandatory scoped Secret references
+must reach the Pod. The gate also covers executor health and grace, the disabled
+gateway, and the Events overlay's namespace and operator identity. It creates no
+cluster object.
 
 ```bash
 cargo test -p wamn-proof-conformance --test chart_seam_governance \
@@ -1220,7 +1241,10 @@ cargo test -p wamn-proof-conformance --test chart_seam_governance \
   -- --ignored --exact --nocapture
 ```
 
-The gate requires `helm` and `kubectl`; Helm pulls the chart pinned at 2.8.0.
+The gate requires `helm` and `kubectl`, and Helm pulls chart 2.9.0.
+A standalone render passed in the
+[deployment-001 evidence](../perf/2026.09/wasmcloud-2-9-cutover/deployment-001/).
+The updated Rust gate and live 2.9.0 proofs remain unexecuted.
 
 ### `[ROUTE-AUTH-LIVE]` — route PAT and exact-operation authorization
 
@@ -1719,7 +1743,8 @@ WAMN_DEV_LIVE_AUTHORITY="127.0.0.1:${WAMN_DEV_LIVE_REGISTRY_PORT}"
 WAMN_DEV_LIVE_USERNAME=wamn-dev-live
 WAMN_DEV_LIVE_PASSWORD="$(openssl rand -hex 32)"
 WAMN_DEV_LIVE_HTPASSWD="$WAMN_DEV_LIVE_SCRATCH/htpasswd"
-WAMN_DEV_LIVE_DOCKER_AUTH="$WAMN_DEV_LIVE_SCRATCH/.dockerconfigjson"
+WAMN_DEV_LIVE_DOCKER_AUTH="$WAMN_DEV_LIVE_SCRATCH/docker/config.json"
+mkdir -m 0700 -- "$WAMN_DEV_LIVE_SCRATCH/docker"
 WAMN_DEV_LIVE_FLOW_HTTP_IMAGE="$WAMN_DEV_LIVE_AUTHORITY/wamn/flow-http:dev"
 
 wamn_dev_live_cleanup() {
@@ -1793,9 +1818,9 @@ PGPASSWORD=probe psql \
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
   "http://${WAMN_DEV_LIVE_AUTHORITY}/v2/")" = 401
 
-WASH_REG_USER="$WAMN_DEV_LIVE_USERNAME" \
-WASH_REG_PASSWORD="$WAMN_DEV_LIVE_PASSWORD" \
-  wash push "$WAMN_DEV_LIVE_FLOW_HTTP_IMAGE" "$WAMN_DEV_LIVE_FLOW_HTTP" \
+wamn_wash=$(tools/install-wash)
+DOCKER_CONFIG="$(dirname "$WAMN_DEV_LIVE_DOCKER_AUTH")" \
+  "$wamn_wash" oci push "$WAMN_DEV_LIVE_FLOW_HTTP_IMAGE" "$WAMN_DEV_LIVE_FLOW_HTTP" \
     --insecure
 unset WAMN_DEV_LIVE_PASSWORD
 
@@ -1891,7 +1916,8 @@ WAMN_DEV_ENV_AUTHORITY="127.0.0.1:${WAMN_DEV_ENV_REGISTRY_PORT}"
 WAMN_DEV_ENV_USERNAME=wamn-dev-env
 WAMN_DEV_ENV_PASSWORD="$(openssl rand -hex 32)"
 WAMN_DEV_ENV_HTPASSWD="$WAMN_DEV_ENV_SCRATCH/htpasswd"
-WAMN_DEV_ENV_DOCKER_AUTH="$WAMN_DEV_ENV_SCRATCH/.dockerconfigjson"
+WAMN_DEV_ENV_DOCKER_AUTH="$WAMN_DEV_ENV_SCRATCH/docker/config.json"
+mkdir -m 0700 -- "$WAMN_DEV_ENV_SCRATCH/docker"
 WAMN_DEV_ENV_FLOW_HTTP_IMAGE="$WAMN_DEV_ENV_AUTHORITY/wamn/flow-http:dev"
 
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
@@ -1948,9 +1974,9 @@ PGPASSWORD=probe psql \
   "postgresql://postgres@127.0.0.1:${WAMN_DEV_ENV_PG_PORT}/postgres" \
   -Atqc 'select 1' >/dev/null
 
-WASH_REG_USER="$WAMN_DEV_ENV_USERNAME" \
-WASH_REG_PASSWORD="$WAMN_DEV_ENV_PASSWORD" \
-  wash push "$WAMN_DEV_ENV_FLOW_HTTP_IMAGE" "$WAMN_DEV_ENV_FLOW_HTTP" --insecure
+wamn_wash=$(tools/install-wash)
+DOCKER_CONFIG="$(dirname "$WAMN_DEV_ENV_DOCKER_AUTH")" \
+  "$wamn_wash" oci push "$WAMN_DEV_ENV_FLOW_HTTP_IMAGE" "$WAMN_DEV_ENV_FLOW_HTTP" --insecure
 unset WAMN_DEV_ENV_PASSWORD
 
 "$WAMN_DEV_ENV_TARGET/debug/wamn" dev up \
@@ -2066,7 +2092,8 @@ WAMN_TUI_FLOW_HTTP="$WAMN_TUI_TREE/components/target/wasm32-wasip2/debug/http_ro
 WAMN_TUI_AUTHORITY="127.0.0.1:${WAMN_TUI_REGISTRY_PORT}"
 WAMN_TUI_USERNAME=wamn-receiving-tui
 WAMN_TUI_HTPASSWD="$WAMN_TUI_ROOT/htpasswd"
-WAMN_TUI_DOCKER_AUTH="$WAMN_TUI_ROOT/.dockerconfigjson"
+WAMN_TUI_DOCKER_AUTH="$WAMN_TUI_ROOT/docker/config.json"
+mkdir -m 0700 -- "$WAMN_TUI_ROOT/docker"
 WAMN_TUI_FLOW_HTTP_IMAGE="$WAMN_TUI_AUTHORITY/wamn/flow-http:dev"
 WAMN_TUI_ENV_DIR="$WAMN_TUI_ROOT/environment"
 WAMN_TUI_UP_LOG="$WAMN_TUI_ROOT/dev-up.log"
@@ -2145,8 +2172,9 @@ PGPASSWORD=probe psql \
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
   "http://${WAMN_TUI_AUTHORITY}/v2/")" = 401
 
-WASH_REG_USER="$WAMN_TUI_USERNAME" WASH_REG_PASSWORD="$WAMN_TUI_PASSWORD" \
-  wash push "$WAMN_TUI_FLOW_HTTP_IMAGE" "$WAMN_TUI_FLOW_HTTP" --insecure
+wamn_wash=$(tools/install-wash)
+DOCKER_CONFIG="$(dirname "$WAMN_TUI_DOCKER_AUTH")" \
+  "$wamn_wash" oci push "$WAMN_TUI_FLOW_HTTP_IMAGE" "$WAMN_TUI_FLOW_HTTP" --insecure
 unset WAMN_TUI_PASSWORD
 ```
 
@@ -2939,8 +2967,8 @@ unchanged mechanisms.
 ### `[RECEIVING-CLUSTER-JOURNEY]` — released flow-http scheduling and reachability
 
 The same runner wraps the production Receiving route and materializer journeys
-above, then installs the pinned operator 2.8.0 release before the pinned host
-2.8.0 release on its own three-node kind cluster. It proves three Ready
+above, then installs the pinned operator 2.9.0 release before the pinned host
+2.9.0 release on its own three-node kind cluster. The gate checks three Ready
 default-group Hosts, native Workload scheduling, the operator-managed
 EndpointSlice, the exact typed `route-not-found` response through
 `receiving.localhost`, and the native `CrossEnvironmentSchedulingDenied`
@@ -2949,6 +2977,7 @@ and RoleBinding, proves the operator's actual ServiceAccount has exactly
 `create,patch` on `events.k8s.io/events`, and records both the durable condition
 and matching native Warning Event. The 404 proves only HTTP routing and guest
 execution; the Kubernetes objects independently prove the other arms.
+The updated 2.9.0 cluster journey remains unexecuted.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \
@@ -2998,16 +3027,24 @@ templates, and wiring them into the Rust gate would make a one-second check
 cost a build.
 
 
-`wamn-10yt.8` measures the same published release under runtime-operator
-2.8.0's unchanged TCP liveness and readiness probes. It records cold runtime
-startup and a cache-seeding authenticated request, restarts the container in
-that same Pod, then records the restart-first and immediate steady-state
-requests. A disposable Tempo/OTel pair receives the real request traces; the
-receipts split authentication, resolution, artifact pull, compilation, linking,
-instantiation, SQL, and the ExecutorPlatform, CallableHttp, and GuestSql
-connection acquisitions. The gate also proves the compiled cache remained byte-
-and inode-identical. Listener readiness is not evidence that the full release
-closure is resident; exact released wirings resolve on demand.
+`wamn-10yt.8` measures the published release with runtime-operator 2.9.0's native
+HTTP probes. The runner asserts `/livez` and `/readyz` on port `8081`, including
+a `startupProbe` against `/livez`. These probes use a separate listener from
+workload HTTP. The timing protocol, request counts, and acceptance thresholds
+stay unchanged.
+
+The gate records cold startup and a cache-seeding authenticated request. It
+restarts the container in the same Pod, then records restart-first and
+steady-state requests. A disposable Tempo/OTel pair receives the real request
+traces. Receipts separate authentication, resolution, artifact pull, compilation,
+linking, instantiation, and SQL. They also record the ExecutorPlatform,
+CallableHttp, and GuestSql connection acquisitions. Compiled cache bytes and
+inodes must match across the restart.
+
+The host prepares the released synchronous closure before its native command
+loop becomes ready. Other released wirings still resolve on demand. Historical
+measurements below used runtime-operator 2.8.0 and TCP probes. The updated 2.9.0
+startup proof remains unexecuted.
 
 ```bash
 tools/receiving-cluster-journey-run --apply --measure-startup \

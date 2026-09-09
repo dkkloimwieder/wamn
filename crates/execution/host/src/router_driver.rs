@@ -76,7 +76,7 @@ pub const WIRING_CACHE_CAPACITY_ENV: &str = "WAMN_WIRING_CACHE_CAPACITY";
 /// path re-parsing; the hit/eviction metrics make the choice evidence-tunable.
 pub const DEFAULT_WIRING_CACHE_CAPACITY: usize = 1_024;
 
-/// Cadence of the epoch ticker owned by wash-runtime v2.8.
+/// Cadence of the epoch ticker owned by wash-runtime v2.9.
 ///
 /// Manual stores set deadlines in ticks, while wash-runtime keeps its ticker
 /// private. Keep this conversion beside the only manual store construction
@@ -2610,7 +2610,11 @@ impl NodeInstance {
             // is recorded in docs/perf/2026.09/1b-linker-clone.md; the guard
             // is worth more than keeping the span.
             drop(scope_entered);
-            let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
+            let mut store = Store::new(
+                engine.inner(),
+                SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
+            );
+            wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
             // Instantiation executes guest start code, so it needs the same bounded
             // ceiling as a call. One tick is only 10 ms and interrupts valid
             // virtualized std components before their instance is ready.
@@ -3619,6 +3623,8 @@ mod tests {
             r#"(component
               (import "wamn:postgres/client@0.1.0" (instance))
               (import "wasi:logging/logging" (instance))
+              (core module $memory (memory 1))
+              (core instance (instantiate $memory))
             )"#,
         )
         .expect("encode the importing fixture");
@@ -3694,7 +3700,7 @@ mod tests {
             (&fact_b, (2, 3, 2, 3)),
             (&fact_a_readmitted, (3, 4, 3, 4)),
         ] {
-            NodeInstance::instantiate_compiled(
+            let instance = NodeInstance::instantiate_compiled(
                 &engine,
                 &base_linker,
                 compiled.clone(),
@@ -3712,6 +3718,13 @@ mod tests {
             )
             .await
             .expect("the fixture instantiates");
+            assert_eq!(engine.guest_memory().in_use(), 64 * 1024);
+            assert!(Arc::ptr_eq(
+                engine.guest_memory(),
+                instance.nested.engine.guest_memory(),
+            ));
+            drop(instance);
+            assert_eq!(engine.guest_memory().in_use(), 0);
             assert_eq!(
                 counts(),
                 expected,

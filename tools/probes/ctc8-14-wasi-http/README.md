@@ -1,8 +1,10 @@
 # ctc8.14: standard WASI HTTP hook probe
 
-This standalone workspace tests the runtime pinned by WAMN commit
-`7780a6313bc72a0bc7141b32da3de4cc5bc4ed93`. It changes no production imports,
-admission policy, runtime adapter, WIT, or root dependency lockfile.
+This standalone workspace tests upstream wasmCloud 2.9.0 at
+`68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
+The cutover source base is WAMN commit `dfa1c3187fe8cd671688a442b23106046e502cb6`.
+Earlier evidence retains its original source and runtime identities.
+The probe changes no production imports, admission policy, runtime adapter, or WIT.
 Its Wasmtime, WASI, and WASI HTTP host crates match the root lockfile at 47.0.4.
 
 The P2 guest uses the `wasi` 0.13.3 bindings, whose source describes HTTP 0.2.2.

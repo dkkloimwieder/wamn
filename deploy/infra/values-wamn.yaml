@@ -16,7 +16,7 @@
 # Install, in this order — the CRDs must exist before any host release or
 # WorkloadDeployment is applied:
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
 #     -f deploy/infra/values-wamn.yaml
 #   # then this environment's host base plus its application/release overlay
 #
@@ -40,8 +40,8 @@
 #
 # WHERE THE 365 COMES FROM, measured not repeated: the chart hard-codes it,
 # `{{- $ca = genCA "wasmcloud CA" 365 }}` at
-# charts/runtime-operator/templates/certificates.yaml:31, pinned rev 5c4ec4a3
-# = chart 2.8.0. No value exposes it. The four leaves this release signs —
+# charts/runtime-operator/templates/certificates.yaml:31, pinned upstream rev 68ebece9
+# = chart 2.9.0. No value exposes it. The four leaves this release signs —
 # `wasmcloud-operator-tls`, `wasmcloud-nats-tls`, `wasmcloud-runtime-tls`,
 # `wasmcloud-data-tls` — are `genSignedCert … 365 $ca` at :44, :52, :60 and :81,
 # so THEY EXPIRE ON THE SAME DAY as the CA that signed them, not staggered.
@@ -66,7 +66,7 @@
 #     wasmcloud-ca wasmcloud-operator-tls wasmcloud-nats-tls \
 #     wasmcloud-runtime-tls wasmcloud-data-tls
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
 #     -f deploy/infra/values-wamn.yaml          # re-mints all five
 #   # every pod holding the old PEM in memory must be restarted. NATS first —
 #   # nothing can register against a server still presenting the old cert:
@@ -116,39 +116,34 @@
 # operator and the two cannot drift. `operator.image.tag` is deliberately left
 # unset: hard-coding it would add a second place to forget, and the published
 # chart's own appVersion is by construction the tag that exists. Move this pin
-# ONLY on the fork-sync cadence, together with
+# with an upstream release cutover, together with
 # `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`, and re-run
 # the seam re-verification below when you do.
 #
-# [wamn-0h0g.15.54] CHART SEAM RECORD — re-verify on every fork sync.
-# Nothing in this repository renders the chart; it is pulled from OCI at
-# install time. These are human-verified facts about the chart carried at the
-# fork rev the workspace pins, and
-# tests/conformance/tests/chart_seam_governance.rs fails the moment that pin
-# moves without this record moving with it.
+# [wamn-0h0g.15.54] CHART SEAM RECORD — reinspect on every upstream release change.
+# Install commands pull the distributed OCI chart. The conformance gate also
+# renders it and checks the resources below. Reinspect the source when the pin
+# changes, then compare the distributed chart before deployment.
 #
-# Seam: ruling 4's release-manifest-<digest> ConfigMap mounts through two
-# optional per-host-group passthrough keys the chart renders but never declares
-# in its own values.yaml hostGroups block —
+# The host groups use these native passthrough keys for registry credentials:
 #   runtime.hostGroups[].volumes      -> {{- with .volumes }}
 #   runtime.hostGroups[].volumeMounts -> {{- with .volumeMounts }}
-# in templates/runtime/deployment.yaml. Upstream e256a9f6 added them. The chart
-# ships no values.schema.json, so a rename downgrades our keys to a SILENT
-# no-op instead of an install error — which is why the record exists. Nothing
-# sets either key yet; when ruling 4's mount lands it goes on the host-tier
-# file's host group, since this release has no host group to hang it on.
+# Both expressions remain in templates/runtime/deployment.yaml at upstream
+# 68ebece9c537f8bb4b5c9999f274ec68d60f35a9, the v2.9.0 release commit.
+# The same source passes group env entries through unchanged. Resource blocks
+# replace the chart-wide block and remove defaultHeapMemory, coreInstances,
+# guestMemoryMode and maxConcurrentStarts before rendering Kubernetes resources.
+# The four fields reach the host through their native WASH_* environment names.
 #
-# Pinned: runtime rev 735b5798, whose chart is upstream 5c4ec4a3 = chart 2.8.0.
-# The two fork patches at that rev (wamn-2w3x.2, wamn-2w3x.3) touch
-# crates/wash-runtime only and no chart template, so the seam verified at
-# 5c4ec4a3 holds unchanged at 2eadd937. Both expressions were re-verified present and unrenamed at this pin;
-# this is a fresh check, not a carry-forward from the 2.7.0 record. The install above pulls chart 2.8.0, the chart the
-# pinned runtime rev carries. Not yet exercised against a cluster — the kind
-# cluster is frozen, so this install is proved at the RC's fresh-namespace
-# convergence.
+# Historical records at 735b5798 and 2eadd937 inspected the v2.8.0 chart through
+# a fork checkout. The current dependency points directly to upstream and
+# carries no fork patches. Release manifests arrive over OCI, not ConfigMaps.
 #
-# Re-verify — the chart ships inside the pinned fork checkout:
-#   git -C ../wasmcloud grep -n 'with \.volumes\|with \.volumeMounts' v2.8.0 -- charts/runtime-operator/templates/runtime/deployment.yaml
+# Reinspect the exact source:
+#   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' 68ebece9c537f8bb4b5c9999f274ec68d60f35a9 -- charts/runtime-operator/templates/runtime/deployment.yaml
+# Distributed render and image metadata evidence:
+#   docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/
+# Live stage 4 proofs remain separate and unexecuted by this source inspection.
 
 # Deprecated HTTP gateway off, and never adopted: HTTP exposure rides
 # operator-managed EndpointSlices on standard Services (chart

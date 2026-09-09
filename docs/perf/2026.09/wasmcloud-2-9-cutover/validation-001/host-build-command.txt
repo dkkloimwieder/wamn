@@ -1,0 +1,1 @@
+cargo build -p wamn-host --bin wamn-host --locked 

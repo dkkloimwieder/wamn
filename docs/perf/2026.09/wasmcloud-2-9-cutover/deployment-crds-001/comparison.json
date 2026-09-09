@@ -1,0 +1,36 @@
+{
+  "distributed_2_9_vs_2_8": [
+    {
+      "name": "artifacts.runtime.wasmcloud.dev",
+      "file_byte_identical": true,
+      "spec_identical": true
+    },
+    {
+      "name": "hosts.runtime.wasmcloud.dev",
+      "file_byte_identical": true,
+      "spec_identical": true
+    },
+    {
+      "name": "workloaddeployments.runtime.wasmcloud.dev",
+      "file_byte_identical": false,
+      "spec_identical": false
+    },
+    {
+      "name": "workloadreplicasets.runtime.wasmcloud.dev",
+      "file_byte_identical": false,
+      "spec_identical": false
+    },
+    {
+      "name": "workloads.runtime.wasmcloud.dev",
+      "file_byte_identical": false,
+      "spec_identical": false
+    }
+  ],
+  "all_five_files_byte_identical": false,
+  "all_five_specs_identical": false,
+  "source_2_9_vs_distributed_2_9": "all five CRD files byte-identical",
+  "deployment_001_operator_render": "selected operator templates only; no CRDs",
+  "cluster_apply": "not executed",
+  "installed_crd_schema_identity": "not inspected or proven",
+  "gateway": "unchanged, disabled in WAMN values"
+}

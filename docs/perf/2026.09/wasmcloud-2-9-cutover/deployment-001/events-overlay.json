@@ -1,0 +1,44 @@
+[
+  {
+    "apiVersion": "rbac.authorization.k8s.io/v1",
+    "kind": "Role",
+    "metadata": {
+      "name": "wamn-runtime-operator-events",
+      "namespace": "wamn-system"
+    },
+    "rules": [
+      {
+        "apiGroups": [
+          "events.k8s.io"
+        ],
+        "resources": [
+          "events"
+        ],
+        "verbs": [
+          "create",
+          "patch"
+        ]
+      }
+    ]
+  },
+  {
+    "apiVersion": "rbac.authorization.k8s.io/v1",
+    "kind": "RoleBinding",
+    "metadata": {
+      "name": "wamn-runtime-operator-events",
+      "namespace": "wamn-system"
+    },
+    "roleRef": {
+      "apiGroup": "rbac.authorization.k8s.io",
+      "kind": "Role",
+      "name": "wamn-runtime-operator-events"
+    },
+    "subjects": [
+      {
+        "kind": "ServiceAccount",
+        "name": "wamn-runtime-operator",
+        "namespace": "wamn-system"
+      }
+    ]
+  }
+]

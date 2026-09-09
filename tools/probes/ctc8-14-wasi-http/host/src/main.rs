@@ -27,7 +27,7 @@ use wasmtime_wasi::{WasiCtxBuilder, p2::pipe::MemoryOutputPipe};
 
 const WORKLOAD: &str = "ctc8-14-shared-workload";
 const GUEST_TRACE: &str = "00-11111111111111111111111111111111-2222222222222222-01";
-const RUNTIME_REV: &str = "735b57982545358409a7d965a22549b08487ca09";
+const RUNTIME_REV: &str = "68ebece9c537f8bb4b5c9999f274ec68d60f35a9";
 
 #[derive(Clone)]
 struct RequestCase {
@@ -106,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
     println!(
         "{}",
         json!({"case":"production_admission", "result":"denied", "imports":imports,
-        "runtime_rev":RUNTIME_REV, "wamn_rev":"7780a6313bc72a0bc7141b32da3de4cc5bc4ed93"})
+        "runtime_rev":RUNTIME_REV, "wamn_rev":"dfa1c3187fe8cd671688a442b23106046e502cb6"})
     );
 
     let plain = server::start(None).await?;
@@ -480,7 +480,11 @@ async fn invoke(
     if let Some(handler) = handler {
         ctx = ctx.with_http_handler(handler);
     }
-    let mut store = Store::new(engine.inner(), SharedCtx::new(ctx.build()));
+    let mut store = Store::new(
+        engine.inner(),
+        SharedCtx::new(ctx.build()).with_guest_memory(engine.guest_memory()),
+    );
+    wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
     store.set_epoch_deadline(u64::MAX / 2);
     let mut linker = Linker::new(engine.inner());
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;

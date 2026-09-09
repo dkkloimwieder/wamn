@@ -1,0 +1,26 @@
+apiVersion: v2
+name: runtime-operator
+description: A Helm chart for Kubernetes
+
+# A chart can be either an 'application' or a 'library' chart.
+#
+# Application charts are a collection of templates that can be packaged into versioned archives
+# to be deployed.
+#
+# Library charts provide useful utilities or functions for the chart developer. They're included as
+# a dependency of application charts to inject those utilities and functions into the rendering
+# pipeline. Library charts do not define any templates and therefore cannot be deployed.
+type: application
+
+# The chart version. This is what `helm-publish` packages the chart with. It is
+# release-driven: the release-train workflow sets it equal to `appVersion` on
+# every release, so the two always match. Don't bump it in feature PRs — chart
+# changes ride out with the next release. (ct does not enforce a per-PR bump;
+# see .github/ct.yaml.)
+version: 2.9.0
+
+# The version of the application being deployed (the operator image tag default).
+# This tracks the release-train tag rather than this file: at release time
+# `helm-publish` overrides it with the pushed `vX.Y.Z` tag. The value here is the
+# local/dev default used by `helm template` and canary builds.
+appVersion: "2.9.0"

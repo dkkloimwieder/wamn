@@ -12,9 +12,11 @@ use clap::Args;
 use opentelemetry::global;
 use tokio_postgres::NoTls;
 use wash_runtime::engine::WasmProposal;
-use wash_runtime::engine::host_memory::{HostMemoryBudgets, parse_bytes};
+use wash_runtime::engine::host_memory::HostMemoryBudgets;
 use wash_runtime::host::HostConfig;
-use wash_runtime::host::http::{DynamicRouter, Ingress};
+use wash_runtime::host::http::{ConnectionLimit, Ingress};
+use wash_runtime::host::probes::{self, Liveness, ProbeState};
+use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
@@ -54,6 +56,14 @@ pub struct HostArgs {
     /// NATS URL for control-plane communications
     #[arg(long = "scheduler-nats-url", default_value = "nats://localhost:4222")]
     pub scheduler_nats_url: String,
+
+    /// How long to retry the initial scheduler connection; zero fails immediately.
+    #[arg(long, default_value = "0s", value_parser = humantime::parse_duration)]
+    pub nats_connect_timeout: Duration,
+
+    /// Keep serving after draining readiness so traffic removal can propagate.
+    #[arg(long, env = "WASH_DRAIN_DELAY", default_value = "0s", value_parser = humantime::parse_duration)]
+    pub drain_delay: Duration,
 
     #[arg(long = "scheduler-nats-tls-ca")]
     pub scheduler_nats_tls_ca: Option<PathBuf>,
@@ -103,6 +113,18 @@ pub struct HostArgs {
     /// Address for the workload HTTP server
     #[arg(long = "http-addr")]
     pub http_addr: Option<SocketAddr>,
+
+    /// Address for native readiness and liveness probes.
+    #[arg(long, env = "WASH_PROBE_ADDR")]
+    pub probe_addr: Option<SocketAddr>,
+
+    /// Maximum simultaneous incoming HTTP connections.
+    #[arg(long, env = "WASH_MAX_HTTP_INGRESS_CONNECTIONS")]
+    pub max_http_ingress_connections: Option<usize>,
+
+    /// Maximum workloads that the native host starts concurrently.
+    #[arg(long, env = "WASH_MAX_CONCURRENT_STARTS")]
+    pub max_concurrent_starts: Option<usize>,
 
     #[arg(long = "tls-cert-path", requires = "tls_key_path")]
     pub tls_cert_path: Option<PathBuf>,
@@ -169,6 +191,10 @@ pub struct HostArgs {
         default_value_t = DEFAULT_CORE_INSTANCES
     )]
     pub core_instances: u32,
+
+    /// Guest memory accounting mode. Production uses the native count mode.
+    #[arg(long, env = "WASH_GUEST_MEMORY_MODE", default_value = "count", value_parser = ["count"])]
+    pub guest_memory_mode: String,
 
     /// Registry/repository holding this environment's release-manifest
     /// artifacts, paired with [`HostArgs::release_manifest_digest`].
@@ -362,16 +388,21 @@ async fn load_release(
 
 /// Resolve the native wash-runtime memory settings carried by the host CLI.
 fn host_memory(args: &HostArgs) -> anyhow::Result<HostMemoryBudgets> {
-    let max_guest_memory = args
-        .max_guest_memory
-        .as_deref()
-        .map(parse_bytes)
-        .transpose()
-        .map_err(anyhow::Error::msg)?;
-    let default_heap_memory = parse_bytes(&args.default_heap_memory).map_err(anyhow::Error::msg)?;
-    HostMemoryBudgets::resolve(
-        max_guest_memory,
-        Some(default_heap_memory),
+    for (name, value) in [
+        ("max-guest-memory", args.max_guest_memory.as_deref()),
+        (
+            "default-heap-memory",
+            Some(args.default_heap_memory.as_str()),
+        ),
+    ] {
+        anyhow::ensure!(
+            value.is_none_or(|value| !value.trim().is_empty()),
+            "--{name} must not be blank"
+        );
+    }
+    HostMemoryBudgets::resolve_strs(
+        args.max_guest_memory.as_deref(),
+        Some(&args.default_heap_memory),
         Some(args.core_instances),
     )
     .map_err(anyhow::Error::msg)
@@ -582,6 +613,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let scheduler_nats_client = connect_nats(
         args.scheduler_nats_url.clone(),
         NatsConnectionOptions {
+            connect_retry: (!args.nats_connect_timeout.is_zero())
+                .then_some(args.nats_connect_timeout),
             request_timeout: None,
             tls_ca: args.scheduler_nats_tls_ca.clone(),
             tls_first: args.scheduler_nats_tls_first,
@@ -777,26 +810,22 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None => flow_http,
     };
 
-    let mut builder = ClusterHostBuilder::default()
-        .with_engine((*engine).clone())
-        .with_host_config(host_config)
-        .with_nats_client(Arc::new(scheduler_nats_client))
-        .with_host_group(args.host_group.clone())
-        .with_plugin(Arc::new(
+    let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
+        Arc::new(
             plugin::wasi_config::DynamicConfig::builder()
                 .copy_environment(true)
                 .build(),
-        ))?
+        ),
         // S5: the custom wamn:logging plugin replaces the vendored TracingLogger
         // — it enriches (host-trusted tenant/project + guest flow/run/node),
         // owns a bounded front queue + drop counter, and ships enriched OTel log
         // records to the collector. Both claim wasi:logging/logging, so exactly
         // one may be registered.
-        .with_plugin(logging)?
-        .with_plugin(Arc::new(plugin::wasi_otel::WasiOtel::default()))?
+        logging,
+        Arc::new(plugin::wasi_otel::WasiOtel::default()),
         // Pool config from WAMN_PG_URL + the WAMN_PG_* tuning env; without a URL
         // the plugin still links and returns connection-unavailable on use.
-        .with_plugin(postgres)?
+        postgres,
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
         // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
         // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
@@ -805,15 +834,16 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // release's registration projection, so an event whose registration
         // identity is not in this release never reaches a component. The plugin
         // takes the loaded manifest — it does not load one.
-        .with_plugin(Arc::clone(&jetstream))?
+        jetstream.clone(),
         // wamn-0h0g.15.96: READER 3 of the weld. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the scoped
         // identity reader and preloads exact grants from the existing
         // callable-HTTP project pool during authentication.
-        .with_plugin(Arc::new(flow_http))?;
+        Arc::new(flow_http),
+    ];
 
     if let (Some(driver), Some(release)) = (&router_driver, &release) {
-        builder = builder.with_plugin(Arc::new(
+        plugins.push(Arc::new(
             RouterDeliveryBridge::new(
                 Arc::clone(driver),
                 Arc::clone(release),
@@ -827,8 +857,22 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             // variable is set. Without this call both `wamn.router.delivery`
             // series exist and stay permanently silent (wamn-1fhk).
             .with_metrics(&global::meter(ROUTER_DELIVERY_ID)),
-        ))?;
+        ));
     }
+
+    // Count the same plugins supplied to the native host, including the optional bridge.
+    let cleanup_budget = host_cleanup_budget(plugins.len())?;
+    let mut host_builder = wash_runtime::host::HostBuilder::default();
+    for plugin in plugins {
+        host_builder = host_builder.with_plugin(plugin)?;
+    }
+    let mut builder = ClusterHostBuilder::default()
+        .with_host_builder(host_builder)
+        .with_engine((*engine).clone())
+        .with_host_config(host_config)
+        .with_meters(Meters::new(MeterKind::Duration))
+        .with_nats_client(Arc::new(scheduler_nats_client))
+        .with_host_group(args.host_group.clone());
 
     if let Some(host_name) = &args.host_name {
         builder = builder.with_host_name(host_name);
@@ -837,19 +881,37 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         builder = builder.with_environment(environment);
     }
 
+    if let Some(starts) = args.max_concurrent_starts {
+        builder = builder.with_max_concurrent_starts(starts);
+    }
+    let silence_budget = wash_runtime::washlet::liveness_silence(builder.heartbeat_interval());
+    let liveness = Liveness::new(silence_budget);
+    builder = builder.with_liveness(Arc::clone(&liveness));
+    let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
+    let mut ingress_connections = None;
     if let Some(addr) = args.http_addr {
-        let router = DynamicRouter::default();
-        let server = if let (Some(cert), Some(key)) = (&args.tls_cert_path, &args.tls_key_path) {
+        let router = wamn_runtime::expected_router::expected_host_router(release.as_deref());
+        let mut ingress = Ingress::builder(router, addr);
+        if let Some(max) = args.max_http_ingress_connections {
+            ingress = ingress.max_connections(max);
+        }
+        if let (Some(cert), Some(key)) = (&args.tls_cert_path, &args.tls_key_path) {
             let mut tls = wash_runtime::host::http::TlsConfig::new(cert, key);
             if let Some(ca) = args.tls_ca_path.as_deref() {
                 tls = tls.with_ca(ca);
             }
-            Ingress::new_with_tls(router, addr, tls).await?
-        } else {
-            Ingress::new(router, addr).await?
-        };
+            ingress = ingress.tls(tls);
+        }
+        let server = ingress.build().await?;
+        let connections = server.connection_limit();
+        probe_state.register(Arc::new(connections.clone()));
+        ingress_connections = Some(connections);
         builder = builder.with_http_handler(Arc::new(server));
     }
+    let probe_listener = match args.probe_addr {
+        Some(address) => Some(probes::bind(address).await?),
+        None => None,
+    };
 
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
@@ -871,40 +933,121 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             tracing::info!("wamn-host carries no release; no release-gated interface is served")
         }
     }
+    let mut probe_tasks = tokio::task::JoinSet::new();
+    if let Some(listener) = probe_listener {
+        probe_tasks.spawn(probes::serve(
+            listener,
+            probe_state.clone(),
+            std::future::pending(),
+        ));
+    }
     let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
         .await
         .context("failed to start cluster host")?;
     tracing::info!(
         elapsed_ms = %startup_started.elapsed().as_millis(),
+        cleanup_budget_secs = cleanup_budget.as_secs(),
         "wamn-host runtime startup completed"
     );
 
-    // Kubernetes stops pods with SIGTERM; honor both it and Ctrl-C.
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let identity_failure = async {
-        let Some(connection) = identity_connection.as_mut() else {
-            return std::future::pending::<anyhow::Error>().await;
+    // Polling cleanup requests shutdown. Observe the retained native state instead.
+    let stopped = async {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let identity_failure = async {
+            let Some(connection) = identity_connection.as_mut() else {
+                return std::future::pending::<anyhow::Error>().await;
+            };
+            connection.failure().await
         };
-        connection.failure().await
-    };
-    let identity_error = tokio::select! {
-        _ = tokio::signal::ctrl_c() => None,
-        _ = sigterm.recv() => None,
-        error = identity_failure => Some(error),
-    };
-    tracing::info!("shutting down wamn-host");
-    let cleanup_result = cleanup.await;
-    if let Some(mut connection) = identity_connection.take() {
-        connection.shutdown().await;
-    }
-    match (identity_error, cleanup_result) {
-        (Some(error), Err(cleanup_error)) => {
-            tracing::warn!(error = %cleanup_error, "cluster cleanup also failed");
-            Err(error)
+        tokio::select! {
+            signal = tokio::signal::ctrl_c() => signal.context("receive SIGINT"),
+            _ = sigterm.recv() => Ok(()),
+            error = identity_failure => Err(error),
+            error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => Err(error),
+            () = ingress_stopped(ingress_connections.as_ref()) => anyhow::bail!("native HTTP ingress stopped unexpectedly"),
+            task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
+                anyhow::bail!("native probe listener stopped unexpectedly: {task:?}")
+            }
         }
-        (Some(error), Ok(())) => Err(error),
-        (None, result) => result,
+    };
+    let result = stop_after(
+        stopped,
+        cleanup,
+        &probe_state,
+        args.drain_delay,
+        cleanup_budget,
+    )
+    .await;
+    // Abort and join auxiliary tasks even when the native command task skipped Host::stop.
+    let identity_result = wamn_runtime::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
+        if let Some(mut connection) = identity_connection.take() {
+            connection.shutdown().await;
+        }
+        Ok(())
+    })
+    .await;
+    probe_tasks.abort_all();
+    let probe_result = wamn_runtime::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
+        while probe_tasks.join_next().await.is_some() {}
+        Ok(())
+    })
+    .await;
+    result.and(identity_result).and(probe_result)
+}
+
+// Native timeout accessors are private; this is the documented whole-seconds
+// override and default used by Host::stop in the pinned upstream runtime.
+fn host_cleanup_budget(plugin_count: usize) -> anyhow::Result<Duration> {
+    let plugin_stop = std::env::var("WASH_PLUGIN_STOP_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(5);
+    cleanup_budget_for_plugins(plugin_count, Duration::from_secs(plugin_stop))
+}
+
+fn cleanup_budget_for_plugins(
+    plugin_count: usize,
+    plugin_stop: Duration,
+) -> anyhow::Result<Duration> {
+    let plugin_count = u32::try_from(plugin_count).context("too many host plugins")?;
+    let fixed = wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT
+        + wash_runtime::washlet::COMMAND_ABORT_TIMEOUT
+        // Native HTTP stop has no timeout; this caps its coordination overhead.
+        + Duration::from_secs(2);
+    plugin_stop
+        .checked_add(Duration::from_secs(1))
+        .and_then(|budget| budget.checked_mul(plugin_count))
+        .and_then(|budget| budget.checked_add(fixed))
+        .context("native plugin stop override exceeds the supported shutdown budget")
+}
+
+async fn ingress_stopped(connections: Option<&ConnectionLimit>) {
+    match connections {
+        Some(connections) => connections.stopped().await,
+        None => std::future::pending().await,
     }
+}
+
+async fn stop_after(
+    stopped: impl std::future::Future<Output = anyhow::Result<()>>,
+    cleanup: impl std::future::Future<Output = anyhow::Result<()>>,
+    probes: &ProbeState,
+    drain_delay: Duration,
+    cleanup_budget: Duration,
+) -> anyhow::Result<()> {
+    let result = stopped.await;
+    probes.drain();
+    if result.is_ok() && !drain_delay.is_zero() {
+        tokio::time::sleep(drain_delay).await;
+    }
+    tracing::info!("shutting down wamn-host");
+    let cleanup_result = wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, cleanup).await;
+    if let Err(error) = &cleanup_result {
+        // Subscribe failure and command-task panic may bypass native Host::stop.
+        tracing::error!(%error, "native host cleanup failed; plugin cleanup may be incomplete");
+    }
+    result.and(cleanup_result)
 }
 
 #[cfg(test)]
@@ -921,6 +1064,99 @@ mod tests {
     struct TestCli {
         #[command(flatten)]
         args: HostArgs,
+    }
+
+    #[test]
+    fn chart_lifecycle_flags_parse_with_native_defaults() {
+        let defaults = TestCli::try_parse_from(["wamn-host"]).unwrap().args;
+        assert!(defaults.drain_delay.is_zero());
+        assert!(defaults.nats_connect_timeout.is_zero());
+        let args = TestCli::try_parse_from([
+            "wamn-host",
+            "--drain-delay=5s",
+            "--nats-connect-timeout=60s",
+            "--probe-addr=0.0.0.0:8081",
+            "--max-http-ingress-connections=64",
+            "--max-concurrent-starts=2",
+        ])
+        .unwrap()
+        .args;
+        assert_eq!(args.drain_delay, Duration::from_secs(5));
+        assert_eq!(args.nats_connect_timeout, Duration::from_secs(60));
+        assert_eq!(args.probe_addr.unwrap().port(), 8081);
+        assert_eq!(args.max_http_ingress_connections, Some(64));
+        assert_eq!(args.max_concurrent_starts, Some(2));
+    }
+
+    #[test]
+    fn cleanup_budget_accounts_for_every_native_plugin_and_override() {
+        assert_eq!(
+            cleanup_budget_for_plugins(6, Duration::from_secs(5)).unwrap(),
+            Duration::from_secs(45)
+        );
+        assert_eq!(
+            cleanup_budget_for_plugins(7, Duration::from_secs(5)).unwrap(),
+            Duration::from_secs(51)
+        );
+        assert_eq!(
+            cleanup_budget_for_plugins(7, Duration::from_secs(30)).unwrap(),
+            Duration::from_secs(226)
+        );
+        assert!(cleanup_budget_for_plugins(7, Duration::MAX).is_err());
+    }
+
+    #[tokio::test]
+    async fn cleanup_is_not_polled_before_the_shutdown_trigger() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let cleanup_polled = AtomicBool::new(false);
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let probes = ProbeState::default();
+        let running = stop_after(
+            async { stopped.await.context("test shutdown sender") },
+            async {
+                cleanup_polled.store(true, Ordering::Relaxed);
+                Ok(())
+            },
+            &probes,
+            Duration::ZERO,
+            Duration::from_secs(1),
+        );
+        tokio::pin!(running);
+        tokio::select! {
+            biased;
+            _ = &mut running => panic!("service must wait for shutdown"),
+            () = tokio::task::yield_now() => {}
+        }
+        assert!(!cleanup_polled.load(Ordering::Relaxed));
+        stop.send(()).unwrap();
+        running.await.unwrap();
+        assert!(cleanup_polled.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn failure_skips_traffic_delay_and_cannot_hide_incomplete_cleanup() {
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            stop_after(
+                async { anyhow::bail!("native ingress stopped") },
+                std::future::pending(),
+                &ProbeState::default(),
+                Duration::from_secs(60),
+                Duration::ZERO,
+            ),
+        )
+        .await
+        .expect("failure must skip the signal-only drain delay");
+        assert_eq!(result.unwrap_err().to_string(), "native ingress stopped");
+        let result = stop_after(
+            async { Ok(()) },
+            async { anyhow::bail!("native cleanup failed") },
+            &ProbeState::default(),
+            Duration::ZERO,
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "native cleanup failed");
     }
 
     const GUEST: &str = "postgres://guest@h/db";
@@ -1139,16 +1375,29 @@ mod tests {
     /// The chart's native memory settings reach `HostMemoryBudgets` intact.
     #[test]
     fn the_native_memory_flags_reach_host_memory_budgets() {
-        let cli = TestCli::try_parse_from([
+        let arguments = [
             "wamn-host",
+            "--guest-memory-mode=count",
             "--max-guest-memory",
             "512Mi",
             "--default-heap-memory",
             "64MiB",
             "--core-instances",
             "7",
-        ])
-        .expect("the native memory flags parse");
+        ];
+        let mut cli = TestCli::try_parse_from(arguments).expect("the native memory flags parse");
+        assert_eq!(cli.args.guest_memory_mode, "count");
+        for mode in ["enforce", "off"] {
+            let invalid = arguments.iter().map(|argument| {
+                if *argument == "--guest-memory-mode=count" {
+                    format!("--guest-memory-mode={mode}")
+                } else {
+                    (*argument).to_owned()
+                }
+            });
+            let error = TestCli::try_parse_from(invalid).unwrap_err();
+            assert!(error.to_string().contains("--guest-memory-mode"));
+        }
         assert_eq!(
             host_memory(&cli.args).expect("memory settings resolve"),
             HostMemoryBudgets {
@@ -1157,6 +1406,21 @@ mod tests {
                 core_instances: 7,
             },
             "all native memory settings must reach the engine"
+        );
+        cli.args.max_guest_memory = Some("  ".to_owned());
+        assert!(
+            host_memory(&cli.args)
+                .unwrap_err()
+                .to_string()
+                .contains("max-guest-memory must not be blank")
+        );
+        cli.args.max_guest_memory = None;
+        cli.args.default_heap_memory = "  ".to_owned();
+        assert!(
+            host_memory(&cli.args)
+                .unwrap_err()
+                .to_string()
+                .contains("default-heap-memory must not be blank")
         );
     }
 

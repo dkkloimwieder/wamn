@@ -1,0 +1,59 @@
+Push a Wasm component to an OCI registry
+
+Usage: wash oci push [OPTIONS] <REFERENCE> <COMPONENT_PATH>
+
+Arguments:
+  <REFERENCE>
+          The OCI reference to push
+
+  <COMPONENT_PATH>
+          The path to the component to push
+
+Options:
+      --insecure
+          Use HTTP or HTTPS protocol
+
+  -o, --output <OUTPUT>
+          Specify output format (text or json)
+          
+          [default: text]
+
+  -u, --user <USER>
+          Username for basic authentication
+
+  -l, --log-level <LOG_LEVEL>
+          Set the opentelemetry log level (trace, debug, info, warn, error)
+          
+          [default: INFO]
+
+  -p, --password <PASSWORD>
+          Password for basic authentication
+
+      --ca-path <CA_PATHS>
+          Extra CA certificate bundle files (PEM) to trust for this registry: one behind a private
+          or in-cluster CA, which the compiled-in public roots do not cover
+          
+          [env: WASH_OCI_CA_PATHS=]
+
+      --verbose
+          Enable verbose output
+
+      --non-interactive
+          Run in non-interactive mode: skip terminal checks for host exec and accept the default
+          answer for any confirmation prompts. Automatically enabled when stdin is not a TTY
+
+      --user-config <USER_CONFIG>
+          Path to user configuration file
+
+      --meters <METERS>
+          What to measure about guests: `off`, `duration`, or `fuel`.
+          
+          `duration` reports how many invocations there were, how many failed and how long they
+          took, for two clock reads a call — the default, because it is what an operator needs first
+          and costs the guest nothing. `fuel` adds an exact count of the operations a guest
+          executed, at the price of a counter compiled into every block of its code.
+          
+          [default: duration]
+
+  -h, --help
+          Print help (see a summary with '-h')

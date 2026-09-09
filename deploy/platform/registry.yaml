@@ -59,26 +59,27 @@
 # repositories live behind that one registry authority; they do not get a second
 # transport or credential dialect.
 #
-# Push flow (from a machine with `wash` and the push robot credential). The
+# Push flow (with the pinned CLI and the push robot credential). The
 # certificate below carries `localhost` and `127.0.0.1` so a port-forward is a
-# name the certificate is valid for; `wash push` takes the trust root as
+# name the certificate is valid for; `wash oci push` takes the trust root as
 # `--ca-path` (crates/wash/src/cli/oci.rs:31, env `WASH_OCI_CA_PATHS`), which
 # replaces the `--insecure` this flow used to pass:
 #   kubectl -n wamn-system get secret wasmcloud-ca \
 #     -o jsonpath='{.data.tls\.crt}' | base64 -d > /tmp/wamn-ca.crt
 #   kubectl -n wamn-system port-forward svc/registry 5000:5000 &
-#   wash push localhost:5000/wamn/materializer:dev \
+#   wamn_wash=$(tools/install-wash)
+#   DOCKER_CONFIG="$WAMN_REGISTRY_DOCKER_CONFIG" "$wamn_wash" oci push \
+#     localhost:5000/wamn/materializer:dev \
 #     components/target/wasm32-wasip2/release/materializer.wasm \
-#     --ca-path /tmp/wamn-ca.crt \
-#     --user "$WAMN_REGISTRY_PUSH_USER" --password "$WAMN_REGISTRY_PUSH_PASSWORD"
+#     --ca-path /tmp/wamn-ca.crt
+# WAMN_REGISTRY_DOCKER_CONFIG names a private directory whose config.json
+# contains only the selected registry's push robot credential.
 # The registry addresses artifacts by repo path (hostname-independent), so
 # pushing via localhost:5000 and pulling via the Service DNS name at the SAME
 # repo path (wamn/materializer:dev) resolve to the same manifest/blobs.
 #
-# STILL STALE, AND NOT THIS LEG'S TO FIX: the recipe at
-# deploy/platform/http-route-workload.example.yaml:6-7 still publishes
-# `wash push localhost:5000 ... --insecure`, which this file breaks. The ctl
-# publish path is `wamn-ctl push-component`.
+# The HTTP workload example uses the same trust and credential directory.
+# WAMN custom component publication remains `wamn-ctl push-component`.
 #
 # [15.45] Storage is a PersistentVolumeClaim: a pod restart no longer loses every
 # blob, so readiness prefetch does not fail cluster-wide until someone

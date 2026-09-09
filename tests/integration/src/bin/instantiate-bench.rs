@@ -70,7 +70,11 @@ async fn main() -> anyhow::Result<()> {
         let mut samples = Vec::with_capacity(SAMPLES);
         for round in 0..(WARMUP + SAMPLES) {
             let ctx = Ctx::builder("bench".to_owned(), "bench".to_owned()).build();
-            let mut store = Store::new(engine.inner(), SharedCtx::new(ctx));
+            let mut store = Store::new(
+                engine.inner(),
+                SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
+            );
+            wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
             // The production engine enables epoch interruption; without a
             // deadline every instantiation traps on interrupt immediately.
             store.set_epoch_deadline(1_000_000);

@@ -1,10 +1,11 @@
 # Native HTTP probe
 
-This disposable crate calls the public HTTP transport hooks at runtime revision `735b57982545358409a7d965a22549b08487ca09`.
+This disposable crate calls the public HTTP transport hooks at runtime revision `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
 It does not replace a production transport or execute guest WIT.
-The production source base is `7780a6313bc72a0bc7141b32da3de4cc5bc4ed93`.
-The probe pins the Wasmtime family to `47.0.4`, as resolved by that source base's lockfile.
-The workspace manifest's `47.0.3` floor is not the resolved version.
+The cutover source base is `dfa1c3187fe8cd671688a442b23106046e502cb6`.
+The probe pins the Wasmtime family to `47.0.4`.
+The root requirement and both lockfiles use that version.
+Earlier evidence retains its original source and runtime identities.
 
 The probe owns recording servers on ephemeral loopback ports.
 Its TLS certificates and credential markers are synthetic.

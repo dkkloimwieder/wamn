@@ -13,8 +13,9 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::Args;
 use tracing::Instrument as _;
-use wash_runtime::engine::host_memory::{HostMemoryBudgets, parse_bytes};
+use wash_runtime::engine::host_memory::HostMemoryBudgets;
 use wash_runtime::host::allowed_hosts::AllowedHost;
+use wash_runtime::host::probes::{Liveness, ProbeState};
 
 use wamn_event_wire::Causation;
 use wamn_execution_host::{
@@ -229,20 +230,29 @@ pub struct ExecutorArgs {
         default_value_t = DEFAULT_CORE_INSTANCES
     )]
     pub core_instances: u32,
+
+    /// Guest memory accounting mode. Production uses the native count mode.
+    #[arg(long, env = "WASH_GUEST_MEMORY_MODE", default_value = "count", value_parser = ["count"])]
+    pub guest_memory_mode: String,
 }
 
 /// Resolve the native wash-runtime memory settings carried by the executor CLI.
 fn host_memory(args: &ExecutorArgs) -> anyhow::Result<HostMemoryBudgets> {
-    let max_guest_memory = args
-        .max_guest_memory
-        .as_deref()
-        .map(parse_bytes)
-        .transpose()
-        .map_err(anyhow::Error::msg)?;
-    let default_heap_memory = parse_bytes(&args.default_heap_memory).map_err(anyhow::Error::msg)?;
-    HostMemoryBudgets::resolve(
-        max_guest_memory,
-        Some(default_heap_memory),
+    for (name, value) in [
+        ("max-guest-memory", args.max_guest_memory.as_deref()),
+        (
+            "default-heap-memory",
+            Some(args.default_heap_memory.as_str()),
+        ),
+    ] {
+        anyhow::ensure!(
+            value.is_none_or(|value| !value.trim().is_empty()),
+            "--{name} must not be blank"
+        );
+    }
+    HostMemoryBudgets::resolve_strs(
+        args.max_guest_memory.as_deref(),
+        Some(&args.default_heap_memory),
         Some(args.core_instances),
     )
     .map_err(anyhow::Error::msg)
@@ -478,17 +488,62 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         lease_ttl_ms,
         "executor router queue driver ready"
     );
+    let silence_budget = Duration::from_millis(args.lease_ttl_ms).saturating_mul(3);
+    let liveness = Liveness::new(silence_budget);
+    let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
+    let mut probe_tasks = tokio::task::JoinSet::new();
+    probe_tasks.spawn(readiness::serve(
+        readiness_listener,
+        readiness_probe,
+        probe_state.clone(),
+    ));
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let serving = serve_queue(driver.as_ref(), &postgres, &jetstream, &scope, lease_ttl_ms);
-    let readiness = readiness::serve(readiness_listener, readiness_probe);
-    tokio::pin!(serving);
-    tokio::pin!(readiness);
-    let result = tokio::select! {
-        result = &mut serving => result,
-        result = &mut readiness => result,
-        _ = tokio::signal::ctrl_c() => Ok(()),
-        _ = sigterm.recv() => Ok(()),
+    let (stop_queue, stopping) = tokio::sync::watch::channel(false);
+    let result = {
+        let serving = serve_queue(stopping, &liveness, async || {
+            drain_one(
+                driver.as_ref(),
+                &postgres,
+                &jetstream,
+                &scope,
+                lease_ttl_ms,
+                &liveness,
+            )
+            .await
+        });
+        tokio::pin!(serving);
+        let (result, queue_finished) = tokio::select! {
+            result = &mut serving => (result.and(Err(anyhow::anyhow!("executor queue loop stopped unexpectedly"))), true),
+            task = probe_tasks.join_next() => (Err(anyhow::anyhow!("executor probes stopped unexpectedly: {task:?}")), false),
+            error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => (Err(error), false),
+            signal = tokio::signal::ctrl_c() => (signal.context("receive SIGINT"), false),
+            _ = sigterm.recv() => (Ok(()), false),
+        };
+        probe_state.drain();
+        let _ = stop_queue.send(true);
+        let cleanup = if queue_finished {
+            Ok(())
+        } else {
+            wamn_runtime::lifecycle::bounded_cleanup(
+                wash_runtime::washlet::COMMAND_DRAIN_TIMEOUT,
+                &mut serving,
+            )
+            .await
+        };
+        if let Err(error) = &cleanup {
+            tracing::error!(%error, "executor drain did not complete; queue lease remains fenced for recovery");
+        }
+        result.and(cleanup)
+        // Drop the serving future before revoking its queue scope. A delivery
+        // that exceeds the drain keeps its existing durable lease/fence semantics.
     };
+    probe_tasks.abort_all();
+    let probe_result = wamn_runtime::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
+        while probe_tasks.join_next().await.is_some() {}
+        Ok(())
+    })
+    .await;
+
     let snapshot = driver.snapshot();
     tracing::info!(
         cache_hits = snapshot.wiring_cache.hits,
@@ -496,26 +551,31 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         "executor router driver stopping"
     );
     postgres.revoke_session_claims(QUEUE_CLAIM_SCOPE);
-    result
+    result.and(probe_result)
 }
 
 async fn serve_queue(
-    driver: &RouterDriver,
-    postgres: &WamnPostgres,
-    jetstream: &WamnJetstream,
-    scope: &QueueScope,
-    lease_ttl_ms: i64,
+    mut stopping: tokio::sync::watch::Receiver<bool>,
+    liveness: &Liveness,
+    mut turn: impl AsyncFnMut() -> anyhow::Result<bool>,
 ) -> anyhow::Result<()> {
-    loop {
-        match drain_one(driver, postgres, jetstream, scope, lease_ttl_ms).await {
+    while !*stopping.borrow() {
+        // Real queue progress, including an empty poll or a retry. Long calls
+        // also beat after a successful durable lease renewal below.
+        liveness.beat();
+        match turn().await {
             Ok(true) => continue,
             Ok(false) => {}
             Err(error) => {
                 tracing::warn!(error = %error, "executor queue turn failed; retrying");
             }
         }
-        tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)).await;
+        tokio::select! {
+            _ = stopping.changed() => return Ok(()),
+            () = tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)) => {}
+        }
     }
+    Ok(())
 }
 
 async fn drain_one(
@@ -524,6 +584,7 @@ async fn drain_one(
     jetstream: &WamnJetstream,
     scope: &QueueScope,
     lease_ttl_ms: i64,
+    liveness: &Liveness,
 ) -> anyhow::Result<bool> {
     match postgres
         .reap_one_exhausted_production(
@@ -620,6 +681,7 @@ async fn drain_one(
                 &run_id,
                 lease_generation,
                 lease_ttl_ms,
+                liveness,
                 durable_caller_attached,
                 result_only,
                 request,
@@ -643,6 +705,7 @@ async fn drive_claim(
     run_id: &str,
     lease_generation: i64,
     lease_ttl_ms: i64,
+    liveness: &Liveness,
     durable_caller_attached: bool,
     result_only: bool,
     request: QueueDriverRequest,
@@ -682,7 +745,7 @@ async fn drive_claim(
                     )
                     .await?
                 {
-                    ProductionLeaseRenewal::Renewed => {}
+                    ProductionLeaseRenewal::Renewed => liveness.beat(),
                     ProductionLeaseRenewal::FenceLost => {
                         tracing::warn!(run_id, lease_generation, "executor queue fence lost");
                         return Ok(());
@@ -828,6 +891,52 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
+
+    #[tokio::test]
+    async fn shutdown_finishes_the_current_queue_turn_without_claiming_again() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let liveness = Liveness::new(Duration::from_secs(90));
+        assert_eq!(liveness.silence(), None);
+        let turns = AtomicUsize::new(0);
+        let release_turn = tokio::sync::Notify::new();
+        let (entered, entering) = tokio::sync::oneshot::channel();
+        let mut entered = Some(entered);
+        let (stop, stopping) = tokio::sync::watch::channel(false);
+        let serving = serve_queue(stopping, &liveness, async || {
+            turns.fetch_add(1, Ordering::Relaxed);
+            entered.take().unwrap().send(()).unwrap();
+            release_turn.notified().await;
+            Ok(true)
+        });
+        tokio::pin!(serving);
+        tokio::select! {
+            result = &mut serving => panic!("queue exited during its turn: {result:?}"),
+            result = entering => result.unwrap(),
+        }
+        assert!(
+            liveness.silence().is_some(),
+            "only the real queue loop starts liveness"
+        );
+        stop.send(true).unwrap();
+        release_turn.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), &mut serving)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(turns.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn shutdown_before_the_first_turn_never_claims_or_beats() {
+        let liveness = Liveness::new(Duration::from_secs(90));
+        let (_stop, stopping) = tokio::sync::watch::channel(true);
+        serve_queue(stopping, &liveness, async || {
+            panic!("a stopped queue cannot claim")
+        })
+        .await
+        .unwrap();
+        assert_eq!(liveness.silence(), None);
+    }
 
     #[test]
     fn executor_cli_exposes_the_shared_cache_capacity() {
@@ -1028,13 +1137,13 @@ mod tests {
     /// The native memory settings reach `HostMemoryBudgets` intact.
     #[test]
     fn the_native_memory_flags_reach_host_memory_budgets() {
-        #[derive(clap::Parser)]
+        #[derive(Debug, clap::Parser)]
         struct TestCli {
             #[command(flatten)]
             args: ExecutorArgs,
         }
 
-        let cli = TestCli::try_parse_from([
+        let arguments = [
             "wamn-executor",
             "--release-artifact-base",
             "registry.invalid/wamn/releases",
@@ -1044,14 +1153,27 @@ mod tests {
             "registry.invalid/wamn/components",
             "--registry-auth-file",
             "/registry/config.json",
+            "--guest-memory-mode=count",
             "--max-guest-memory",
             "512Mi",
             "--default-heap-memory",
             "64MiB",
             "--core-instances",
             "7",
-        ])
-        .expect("the native memory flags parse");
+        ];
+        let mut cli = TestCli::try_parse_from(arguments).expect("the native memory flags parse");
+        assert_eq!(cli.args.guest_memory_mode, "count");
+        for mode in ["enforce", "off"] {
+            let invalid = arguments.iter().map(|argument| {
+                if *argument == "--guest-memory-mode=count" {
+                    format!("--guest-memory-mode={mode}")
+                } else {
+                    (*argument).to_owned()
+                }
+            });
+            let error = TestCli::try_parse_from(invalid).unwrap_err();
+            assert!(error.to_string().contains("--guest-memory-mode"));
+        }
         assert_eq!(
             host_memory(&cli.args).expect("memory settings resolve"),
             HostMemoryBudgets {
@@ -1060,6 +1182,21 @@ mod tests {
                 core_instances: 7,
             },
             "all native memory settings must reach the engine"
+        );
+        cli.args.max_guest_memory = Some("  ".to_owned());
+        assert!(
+            host_memory(&cli.args)
+                .unwrap_err()
+                .to_string()
+                .contains("max-guest-memory must not be blank")
+        );
+        cli.args.max_guest_memory = None;
+        cli.args.default_heap_memory = "  ".to_owned();
+        assert!(
+            host_memory(&cli.args)
+                .unwrap_err()
+                .to_string()
+                .contains("default-heap-memory must not be blank")
         );
     }
 

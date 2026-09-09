@@ -149,7 +149,11 @@ mod tests {
         let ctx = Ctx::builder(workload_id, component_id)
             .with_plugins(plugins)
             .build();
-        let mut store = Store::new(raw, SharedCtx::new(ctx));
+        let mut store = Store::new(
+            raw,
+            SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),
+        );
+        wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
         store.set_epoch_deadline(u64::MAX / 2);
         let compiled = workload.component().clone();
         let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
