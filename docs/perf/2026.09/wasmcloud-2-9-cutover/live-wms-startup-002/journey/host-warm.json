@@ -1,0 +1,557 @@
+{
+    "apiVersion": "v1",
+    "kind": "Pod",
+    "metadata": {
+        "creationTimestamp": "2026-09-09T17:41:40Z",
+        "finalizers": [
+            "runtime.wasmcloud.dev/pod-host-finalizer"
+        ],
+        "generateName": "hostgroup-default-5cf8968459-",
+        "generation": 1,
+        "labels": {
+            "app.kubernetes.io/instance": "wamn-host",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "runtime-operator",
+            "app.kubernetes.io/version": "2.9.0",
+            "helm.sh/chart": "runtime-operator-2.9.0",
+            "pod-template-hash": "5cf8968459",
+            "wasmcloud.com/hostgroup": "default",
+            "wasmcloud.com/name": "hostgroup"
+        },
+        "name": "hostgroup-default-5cf8968459-f7clx",
+        "namespace": "wamn-wms-journey",
+        "ownerReferences": [
+            {
+                "apiVersion": "apps/v1",
+                "blockOwnerDeletion": true,
+                "controller": true,
+                "kind": "ReplicaSet",
+                "name": "hostgroup-default-5cf8968459",
+                "uid": "c48556c3-3143-4176-9933-e81245dc646a"
+            }
+        ],
+        "resourceVersion": "1380",
+        "uid": "3349877d-83e8-4daf-b00a-6c3c300cc763"
+    },
+    "spec": {
+        "automountServiceAccountToken": false,
+        "containers": [
+            {
+                "args": [
+                    "host",
+                    "--host-name=$(WASMCLOUD_HOST_IP)",
+                    "--host-group=default",
+                    "--environment=$(WASMCLOUD_HOST_ENVIRONMENT)",
+                    "--scheduler-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+                    "--scheduler-nats-tls-ca=/runtime-cert/ca.crt",
+                    "--scheduler-nats-tls-cert=/runtime-cert/tls.crt",
+                    "--scheduler-nats-tls-key=/runtime-cert/tls.key",
+                    "--data-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+                    "--data-nats-tls-ca=/data-cert/ca.crt",
+                    "--data-nats-tls-cert=/data-cert/tls.crt",
+                    "--data-nats-tls-key=/data-cert/tls.key",
+                    "--oci-cache-dir=/oci-cache",
+                    "--drain-delay=5s",
+                    "--nats-connect-timeout=60s",
+                    "--probe-addr=0.0.0.0:8081",
+                    "--http-addr=0.0.0.0:80",
+                    "--oci-ca-path=/runtime-cert/ca.crt",
+                    "--release-artifact-base=172.28.0.9:5000/wamn/releases",
+                    "--release-manifest-digest=sha256:815452e40e4e6da7ac9feb0788f7279bf3972bfc0891eb44b16904c6d52b53cf",
+                    "--allow-insecure-registries"
+                ],
+                "env": [
+                    {
+                        "name": "HOME",
+                        "value": "/tmp"
+                    },
+                    {
+                        "name": "WASMCLOUD_HOST_IP",
+                        "valueFrom": {
+                            "fieldRef": {
+                                "apiVersion": "v1",
+                                "fieldPath": "status.podIP"
+                            }
+                        }
+                    },
+                    {
+                        "name": "WASMCLOUD_HOST_ENVIRONMENT",
+                        "valueFrom": {
+                            "fieldRef": {
+                                "apiVersion": "v1",
+                                "fieldPath": "metadata.namespace"
+                            }
+                        }
+                    },
+                    {
+                        "name": "WASH_HOST_MAX_GUEST_MEMORY",
+                        "value": "4Gi"
+                    },
+                    {
+                        "name": "WASH_DEFAULT_HEAP_MEMORY",
+                        "value": "256MiB"
+                    },
+                    {
+                        "name": "WASH_CORE_INSTANCES",
+                        "value": "512"
+                    },
+                    {
+                        "name": "WASH_GUEST_MEMORY_MODE",
+                        "value": "count"
+                    },
+                    {
+                        "name": "WASH_MAX_CONCURRENT_STARTS",
+                        "value": "1"
+                    },
+                    {
+                        "name": "WAMN_PG_URL",
+                        "valueFrom": {
+                            "secretKeyRef": {
+                                "key": "url",
+                                "name": "wamn-guest-acme--wms--dev"
+                            }
+                        }
+                    },
+                    {
+                        "name": "WAMN_PG_GUEST_POOL_MAX",
+                        "value": "14"
+                    },
+                    {
+                        "name": "WAMN_PG_PLATFORM_POOL_MAX",
+                        "value": "2"
+                    },
+                    {
+                        "name": "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT",
+                        "value": "64"
+                    },
+                    {
+                        "name": "WAMN_WASMTIME_CACHE_DIR",
+                        "value": "/tmp/wamn-wasmtime-cache"
+                    },
+                    {
+                        "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                        "value": "http://otel-collector.wamn-system.svc.cluster.local:4317"
+                    },
+                    {
+                        "name": "OTEL_BSP_SCHEDULE_DELAY",
+                        "value": "1"
+                    },
+                    {
+                        "name": "OTEL_BSP_MAX_EXPORT_BATCH_SIZE",
+                        "value": "1"
+                    },
+                    {
+                        "name": "DOCKER_CONFIG",
+                        "value": "/etc/wamn/registry"
+                    },
+                    {
+                        "name": "WAMN_REGISTRY_AUTH_FILE",
+                        "value": "/etc/wamn/registry/config.json"
+                    },
+                    {
+                        "name": "WAMN_COMPONENT_ARTIFACT_BASE",
+                        "value": "172.28.0.9:5000/wamn/components"
+                    },
+                    {
+                        "name": "WAMN_EVT_NATS_URL",
+                        "value": "nats://172.28.0.10:4222"
+                    },
+                    {
+                        "name": "WAMN_ORG",
+                        "value": "acme"
+                    },
+                    {
+                        "name": "WAMN_PROJECT",
+                        "value": "wms"
+                    },
+                    {
+                        "name": "WAMN_SCHEMA",
+                        "value": "wms"
+                    },
+                    {
+                        "name": "WAMN_CREDENTIALS_FILE",
+                        "value": "/etc/wamn/credentials/credentials.json"
+                    },
+                    {
+                        "name": "WAMN_SYSTEM_URL",
+                        "valueFrom": {
+                            "secretKeyRef": {
+                                "key": "url",
+                                "name": "wamn-identity-reader-acme--wms--dev",
+                                "optional": false
+                            }
+                        }
+                    },
+                    {
+                        "name": "WAMN_EXECUTOR_PLATFORM_PG_URL",
+                        "valueFrom": {
+                            "secretKeyRef": {
+                                "key": "url",
+                                "name": "wamn-executor-platform-acme--wms--dev",
+                                "optional": false
+                            }
+                        }
+                    },
+                    {
+                        "name": "WAMN_HTTP_ADMITTER_PG_URL",
+                        "valueFrom": {
+                            "secretKeyRef": {
+                                "key": "url",
+                                "name": "wamn-http-admitter-acme--wms--dev",
+                                "optional": false
+                            }
+                        }
+                    },
+                    {
+                        "name": "WAMN_EVENT_MATERIALIZER_PG_URL",
+                        "valueFrom": {
+                            "secretKeyRef": {
+                                "key": "url",
+                                "name": "wamn-event-materializer-acme--wms--dev",
+                                "optional": false
+                            }
+                        }
+                    }
+                ],
+                "image": "wamn-host:wms-6bfda73b730e-3604069-debug",
+                "imagePullPolicy": "Never",
+                "livenessProbe": {
+                    "failureThreshold": 5,
+                    "httpGet": {
+                        "path": "/livez",
+                        "port": "probes",
+                        "scheme": "HTTP"
+                    },
+                    "initialDelaySeconds": 10,
+                    "periodSeconds": 30,
+                    "successThreshold": 1,
+                    "timeoutSeconds": 5
+                },
+                "name": "host",
+                "ports": [
+                    {
+                        "containerPort": 80,
+                        "name": "http",
+                        "protocol": "TCP"
+                    },
+                    {
+                        "containerPort": 8081,
+                        "name": "probes",
+                        "protocol": "TCP"
+                    }
+                ],
+                "readinessProbe": {
+                    "failureThreshold": 3,
+                    "httpGet": {
+                        "path": "/readyz",
+                        "port": "probes",
+                        "scheme": "HTTP"
+                    },
+                    "initialDelaySeconds": 5,
+                    "periodSeconds": 10,
+                    "successThreshold": 1,
+                    "timeoutSeconds": 1
+                },
+                "resources": {
+                    "limits": {
+                        "cpu": "2",
+                        "memory": "4Gi"
+                    },
+                    "requests": {
+                        "cpu": "250m",
+                        "memory": "256Mi"
+                    }
+                },
+                "securityContext": {
+                    "allowPrivilegeEscalation": false,
+                    "capabilities": {
+                        "drop": [
+                            "ALL"
+                        ]
+                    },
+                    "readOnlyRootFilesystem": true,
+                    "runAsNonRoot": true
+                },
+                "startupProbe": {
+                    "failureThreshold": 60,
+                    "httpGet": {
+                        "path": "/livez",
+                        "port": "probes",
+                        "scheme": "HTTP"
+                    },
+                    "periodSeconds": 5,
+                    "successThreshold": 1,
+                    "timeoutSeconds": 1
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                    {
+                        "mountPath": "/oci-cache",
+                        "name": "oci-cache"
+                    },
+                    {
+                        "mountPath": "/tmp",
+                        "name": "tmp"
+                    },
+                    {
+                        "mountPath": "/runtime-cert",
+                        "name": "runtime-cert",
+                        "readOnly": true
+                    },
+                    {
+                        "mountPath": "/data-cert",
+                        "name": "data-cert",
+                        "readOnly": true
+                    },
+                    {
+                        "mountPath": "/etc/wamn/registry",
+                        "name": "registry-pull",
+                        "readOnly": true
+                    },
+                    {
+                        "mountPath": "/etc/wamn/credentials",
+                        "name": "connection-credentials",
+                        "readOnly": true
+                    }
+                ]
+            }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "wamn-wms-journey-worker2",
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Always",
+        "schedulerName": "default-scheduler",
+        "securityContext": {
+            "fsGroup": 65532,
+            "runAsGroup": 65532,
+            "runAsNonRoot": true,
+            "runAsUser": 65532,
+            "seccompProfile": {
+                "type": "RuntimeDefault"
+            }
+        },
+        "serviceAccount": "wamn-host-runtime-operator-runtime",
+        "serviceAccountName": "wamn-host-runtime-operator-runtime",
+        "terminationGracePeriodSeconds": 70,
+        "tolerations": [
+            {
+                "effect": "NoExecute",
+                "key": "node.kubernetes.io/not-ready",
+                "operator": "Exists",
+                "tolerationSeconds": 300
+            },
+            {
+                "effect": "NoExecute",
+                "key": "node.kubernetes.io/unreachable",
+                "operator": "Exists",
+                "tolerationSeconds": 300
+            }
+        ],
+        "volumes": [
+            {
+                "emptyDir": {},
+                "name": "oci-cache"
+            },
+            {
+                "emptyDir": {},
+                "name": "tmp"
+            },
+            {
+                "name": "runtime-cert",
+                "secret": {
+                    "defaultMode": 420,
+                    "secretName": "wasmcloud-runtime-tls"
+                }
+            },
+            {
+                "name": "data-cert",
+                "secret": {
+                    "defaultMode": 420,
+                    "secretName": "wasmcloud-data-tls"
+                }
+            },
+            {
+                "name": "registry-pull",
+                "secret": {
+                    "defaultMode": 420,
+                    "items": [
+                        {
+                            "key": ".dockerconfigjson",
+                            "path": "config.json"
+                        }
+                    ],
+                    "optional": false,
+                    "secretName": "wamn-registry-pull"
+                }
+            },
+            {
+                "name": "connection-credentials",
+                "secret": {
+                    "defaultMode": 420,
+                    "items": [
+                        {
+                            "key": "credentials.json",
+                            "path": "credentials.json"
+                        }
+                    ],
+                    "optional": false,
+                    "secretName": "wamn-object-store-credentials-acme--wms--dev"
+                }
+            }
+        ]
+    },
+    "status": {
+        "allocatedResources": {
+            "cpu": "250m",
+            "memory": "256Mi"
+        },
+        "conditions": [
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-09-09T17:41:40Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "PodReadyToStartContainers"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-09-09T17:41:40Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Initialized"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-09-09T17:42:22Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-09-09T17:42:22Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "ContainersReady"
+            },
+            {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-09-09T17:41:40Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "PodScheduled"
+            }
+        ],
+        "containerStatuses": [
+            {
+                "allocatedResources": {
+                    "cpu": "250m",
+                    "memory": "256Mi"
+                },
+                "containerID": "containerd://a735d03113bc5a9eac794d87d96e70a6f8e769bd615e32da365587ec96676fc9",
+                "image": "docker.io/library/wamn-host:wms-6bfda73b730e-3604069-debug",
+                "imageID": "docker.io/library/import-2026-09-09@sha256:8ce2ea9aeb6942ec9ff77615b5687ec583c8ff68b882c36f58f3c24851b8bd4f",
+                "lastState": {
+                    "terminated": {
+                        "containerID": "containerd://b55a99c970520e496ea19bc95311bc45f54352815b95e2f33f309704da48d138",
+                        "exitCode": 0,
+                        "finishedAt": "2026-09-09T17:42:08Z",
+                        "reason": "Completed",
+                        "startedAt": "2026-09-09T17:41:40Z"
+                    }
+                },
+                "name": "host",
+                "ready": true,
+                "resources": {
+                    "limits": {
+                        "cpu": "2",
+                        "memory": "4Gi"
+                    },
+                    "requests": {
+                        "cpu": "250m",
+                        "memory": "256Mi"
+                    }
+                },
+                "restartCount": 1,
+                "started": true,
+                "state": {
+                    "running": {
+                        "startedAt": "2026-09-09T17:42:09Z"
+                    }
+                },
+                "user": {
+                    "linux": {
+                        "gid": 65532,
+                        "supplementalGroups": [
+                            65532
+                        ],
+                        "uid": 65532
+                    }
+                },
+                "volumeMounts": [
+                    {
+                        "mountPath": "/oci-cache",
+                        "name": "oci-cache"
+                    },
+                    {
+                        "mountPath": "/tmp",
+                        "name": "tmp"
+                    },
+                    {
+                        "mountPath": "/runtime-cert",
+                        "name": "runtime-cert",
+                        "readOnly": true,
+                        "recursiveReadOnly": "Disabled"
+                    },
+                    {
+                        "mountPath": "/data-cert",
+                        "name": "data-cert",
+                        "readOnly": true,
+                        "recursiveReadOnly": "Disabled"
+                    },
+                    {
+                        "mountPath": "/etc/wamn/registry",
+                        "name": "registry-pull",
+                        "readOnly": true,
+                        "recursiveReadOnly": "Disabled"
+                    },
+                    {
+                        "mountPath": "/etc/wamn/credentials",
+                        "name": "connection-credentials",
+                        "readOnly": true,
+                        "recursiveReadOnly": "Disabled"
+                    }
+                ]
+            }
+        ],
+        "hostIP": "172.28.0.7",
+        "hostIPs": [
+            {
+                "ip": "172.28.0.7"
+            }
+        ],
+        "observedGeneration": 1,
+        "phase": "Running",
+        "podIP": "10.244.2.5",
+        "podIPs": [
+            {
+                "ip": "10.244.2.5"
+            }
+        ],
+        "qosClass": "Burstable",
+        "resources": {
+            "limits": {
+                "cpu": "2",
+                "memory": "4Gi"
+            },
+            "requests": {
+                "cpu": "232m",
+                "memory": "256Mi"
+            }
+        },
+        "startTime": "2026-09-09T17:41:40Z"
+    }
+}
