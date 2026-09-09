@@ -14,9 +14,10 @@ use std::mem::MaybeUninit;
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::{Component, Path, PathBuf};
-use std::process::Output;
+use std::process::{Output, Stdio};
 
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
+use tokio::io::AsyncWriteExt as _;
 use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
 use wamn_schema_generator::PackageManifest;
@@ -366,6 +367,79 @@ async fn git_output(
     }
 }
 
+/// Ask the originating worktree which of `candidates` its ignore rules cover.
+///
+/// `check-ignore` reports a tracked path as not ignored, so this answers the
+/// exact question the watcher has: is this directory the repository's own
+/// output rather than authored source.
+async fn git_ignored(
+    repository: &Path,
+    candidates: &[PathBuf],
+) -> Result<BTreeSet<PathBuf>, GitSourceError> {
+    const OPERATION: &str = "read Git ignore rules";
+    if candidates.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let mut request = Vec::new();
+    for candidate in candidates {
+        request.extend_from_slice(candidate.as_os_str().as_bytes());
+        request.push(0);
+    }
+    let mut child = Command::new("git")
+        .arg("--no-optional-locks")
+        .arg("-C")
+        .arg(repository)
+        .args(["check-ignore", "-z", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|source| {
+            GitSourceError::io(GitSourceErrorKind::Inspect, OPERATION, repository, source)
+        })?;
+    let mut stdin = child.stdin.take().ok_or_else(|| {
+        GitSourceError::output(
+            GitSourceErrorKind::Inspect,
+            OPERATION,
+            repository,
+            "Git did not accept a path list on standard input",
+        )
+    })?;
+    // Written while the output is drained: a directory with more entries than
+    // one pipe buffer would otherwise deadlock against Git's own writes.
+    let (written, output) = tokio::join!(
+        async move {
+            stdin.write_all(&request).await?;
+            stdin.shutdown().await
+        },
+        child.wait_with_output()
+    );
+    written.map_err(|source| {
+        GitSourceError::io(GitSourceErrorKind::Inspect, OPERATION, repository, source)
+    })?;
+    let output = output.map_err(|source| {
+        GitSourceError::io(GitSourceErrorKind::Inspect, OPERATION, repository, source)
+    })?;
+    match output.status.code() {
+        // Git echoes each ignored path back exactly as it was given, so the
+        // caller can match on the paths it supplied.
+        Some(0) => Ok(output
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| PathBuf::from(OsString::from_vec(path.to_vec())))
+            .collect()),
+        Some(1) => Ok(BTreeSet::new()),
+        _ => Err(GitSourceError::command(
+            GitSourceErrorKind::Inspect,
+            OPERATION,
+            repository,
+            &output,
+        )),
+    }
+}
+
 async fn git_output_allowing_detached(
     repository: &Path,
     args: &[&str],
@@ -631,6 +705,7 @@ struct WatchRoots {
     packages: Vec<PackageRoot>,
     component_build_roots: Box<[PathBuf]>,
     git_metadata: BTreeSet<PathBuf>,
+    excluded: BTreeSet<PathBuf>,
 }
 
 impl WatchRoots {
@@ -678,10 +753,28 @@ impl WatchRoots {
             packages,
             component_build_roots: component_build_roots.into_boxed_slice(),
             git_metadata: git.metadata_paths().iter().cloned().collect(),
+            excluded: BTreeSet::new(),
         })
     }
 
+    /// Record one directory the ignore rules put outside the watch.
+    fn exclude(&mut self, directory: PathBuf) {
+        self.excluded.insert(directory);
+    }
+
+    fn is_excluded(&self, path: &Path) -> bool {
+        self.excluded
+            .iter()
+            .any(|directory| path == directory || path.starts_with(directory))
+    }
+
     fn stage(&self, path: &Path) -> Option<DevStage> {
+        // An excluded directory is unwatched, so nothing inside it can arrive
+        // here; the directory ITSELF still can, through its watched parent,
+        // when a build creates or replaces it.
+        if self.is_excluded(path) {
+            return None;
+        }
         if self
             .packages
             .iter()
@@ -760,7 +853,7 @@ impl fmt::Debug for FilesystemInvalidationSource {
 
 impl FilesystemInvalidationSource {
     /// Register recursive event watches for exact roots supplied by the caller.
-    pub fn new(
+    pub async fn new(
         package_roots: impl IntoIterator<Item = PathBuf>,
         component_build_roots: impl IntoIterator<Item = PathBuf>,
         git: GitSource,
@@ -796,7 +889,7 @@ impl FilesystemInvalidationSource {
             .map(Path::to_owned)
             .collect::<Vec<_>>();
         for root in watched_roots {
-            source.add_tree(&root)?;
+            source.add_tree(&root).await?;
         }
         let metadata_parents = metadata_watch_directories(source.git.metadata_paths());
         for parent in metadata_parents {
@@ -805,41 +898,58 @@ impl FilesystemInvalidationSource {
         Ok(source)
     }
 
-    fn add_tree(&mut self, root: &Path) -> Result<(), FilesystemInvalidationError> {
-        let mut pending = vec![root.to_owned()];
+    /// Register `root` and every directory beneath it that Git does not ignore.
+    ///
+    /// The ignore rules are the filter because the loop's own outputs are
+    /// exactly what they cover: the Build stage writes into
+    /// `components/target/`, which lies inside a component build root, so a
+    /// watch that descended there invalidated on its own artifacts and reran
+    /// forever with no edit at all (wamn-10yt.55). Ignored bytes are already
+    /// not source by this module's other definition — [`GitSource::snapshot`]
+    /// reads `--ignored=no` — so one rule now decides both questions.
+    async fn add_tree(&mut self, root: &Path) -> Result<(), FilesystemInvalidationError> {
+        let mut pending = self.retain_watchable(vec![root.to_owned()]).await?;
         while let Some(directory) = pending.pop() {
             self.add_directory(&directory)?;
-            let entries = fs::read_dir(&directory).map_err(|source| {
+            let children = read_subdirectories(&directory)?;
+            pending.extend(self.retain_watchable(children).await?);
+        }
+        Ok(())
+    }
+
+    /// Drop the ignored candidates, remembering each as permanently unwatched.
+    ///
+    /// Only paths inside the worktree are put to Git. The commit-metadata
+    /// watches deliberately sit in the Git directory, and a LINKED worktree's
+    /// Git directory lives in the main checkout, outside this repository
+    /// entirely; asking Git about a path out there is a fatal refusal rather
+    /// than an answer. Nothing there is ignored, so nothing needs asking.
+    async fn retain_watchable(
+        &mut self,
+        candidates: Vec<PathBuf>,
+    ) -> Result<Vec<PathBuf>, FilesystemInvalidationError> {
+        let inside = candidates
+            .iter()
+            .filter(|candidate| candidate.starts_with(self.git.repository_root()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let ignored = git_ignored(self.git.repository_root(), &inside)
+            .await
+            .map_err(|source| {
                 FilesystemInvalidationError::with_source(
-                    FilesystemInvalidationErrorKind::Watch,
-                    &directory,
-                    "cannot enumerate watched directory",
+                    FilesystemInvalidationErrorKind::Git,
+                    self.git.repository_root(),
+                    "cannot read the ignore rules that bound the watch",
                     source,
                 )
             })?;
-            for entry in entries {
-                let entry = entry.map_err(|source| {
-                    FilesystemInvalidationError::with_source(
-                        FilesystemInvalidationErrorKind::Watch,
-                        &directory,
-                        "cannot read watched directory entry",
-                        source,
-                    )
-                })?;
-                let file_type = entry.file_type().map_err(|source| {
-                    FilesystemInvalidationError::with_source(
-                        FilesystemInvalidationErrorKind::Watch,
-                        entry.path(),
-                        "cannot inspect watched directory entry",
-                        source,
-                    )
-                })?;
-                if file_type.is_dir() && !file_type.is_symlink() {
-                    pending.push(entry.path());
-                }
-            }
+        for directory in &ignored {
+            self.roots.exclude(directory.clone());
         }
-        Ok(())
+        Ok(candidates
+            .into_iter()
+            .filter(|candidate| !ignored.contains(candidate))
+            .collect())
     }
 
     fn add_directory(&mut self, directory: &Path) -> Result<(), FilesystemInvalidationError> {
@@ -910,7 +1020,7 @@ impl FilesystemInvalidationSource {
                     .intersects(ReadFlags::CREATE | ReadFlags::MOVED_TO)
                 && path.is_dir()
             {
-                self.add_tree(path)?;
+                self.add_tree(path).await?;
             }
             self.roots.refresh_manifest(path);
             head_changed |= path == &self.git.head_path();
@@ -1028,6 +1138,40 @@ fn read_changes(
             Err(source) => return Err(errno_to_io(source)),
         }
     }
+}
+
+fn read_subdirectories(directory: &Path) -> Result<Vec<PathBuf>, FilesystemInvalidationError> {
+    let entries = fs::read_dir(directory).map_err(|source| {
+        FilesystemInvalidationError::with_source(
+            FilesystemInvalidationErrorKind::Watch,
+            directory,
+            "cannot enumerate watched directory",
+            source,
+        )
+    })?;
+    let mut children = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| {
+            FilesystemInvalidationError::with_source(
+                FilesystemInvalidationErrorKind::Watch,
+                directory,
+                "cannot read watched directory entry",
+                source,
+            )
+        })?;
+        let file_type = entry.file_type().map_err(|source| {
+            FilesystemInvalidationError::with_source(
+                FilesystemInvalidationErrorKind::Watch,
+                entry.path(),
+                "cannot inspect watched directory entry",
+                source,
+            )
+        })?;
+        if file_type.is_dir() && !file_type.is_symlink() {
+            children.push(entry.path());
+        }
+    }
+    Ok(children)
 }
 
 fn metadata_watch_directories(paths: &[PathBuf]) -> BTreeSet<PathBuf> {
@@ -1222,6 +1366,89 @@ mod tests {
         fs::remove_file(untracked).expect("remove untracked file");
     }
 
+    /// The Build stage writes inside a component build root, so a watch that
+    /// descended into that output invalidated on its own artifacts and reran
+    /// with no edit until it was stopped (wamn-10yt.55). Both orders matter:
+    /// the output root can already exist when the session starts, and the
+    /// first build of a fresh worktree creates it mid-session.
+    #[tokio::test]
+    async fn ignored_build_output_inside_a_component_root_never_reruns_the_loop() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let output = repository.component().join("ignored");
+        fs::create_dir(&output).expect("create the pre-existing build output root");
+        let git_source = GitSource::discover(&repository.root)
+            .await
+            .expect("discover source repository");
+        let mut source = FilesystemInvalidationSource::new(
+            [repository.package()],
+            [repository.component()],
+            git_source,
+        )
+        .await
+        .expect("construct filesystem invalidation source");
+
+        fs::create_dir(output.join("wasm32-wasip2")).expect("create the build target directory");
+        fs::write(output.join("wasm32-wasip2/guest.wasm"), "artifact")
+            .expect("write a build artifact");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), source.next())
+                .await
+                .is_err(),
+            "an output root that existed at construction is never watched at all"
+        );
+
+        // Recreated mid-session the root is seen once, through its watched
+        // parent, and must still classify as nothing to rerun.
+        fs::remove_dir_all(&output).expect("remove the build output root");
+        fs::create_dir(&output).expect("recreate the build output root");
+        fs::write(output.join("guest.wasm"), "artifact").expect("write a rebuilt artifact");
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("build output event arrived")
+            .expect("read build output event")
+            .expect("source remains open");
+        assert!(
+            collect_batch(first, &mut source)
+                .iter()
+                .all(|event| *event == DevInvalidation::Ignore),
+            "a rebuilt output root must not invalidate the loop that wrote it"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), source.next())
+                .await
+                .is_err(),
+            "the recreated output root must be pruned again, not rewatched"
+        );
+    }
+
+    /// The commit-metadata watches sit in the Git directory, and for a LINKED
+    /// worktree that directory is in the main checkout, outside this
+    /// repository. Git refuses to answer an ignore question about a path out
+    /// there, and a watch that treated the refusal as a failure died mid
+    /// session the first time another worktree created `.git/sequencer`.
+    #[tokio::test]
+    async fn a_directory_outside_the_worktree_is_watched_without_asking_git() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let git_source = GitSource::discover(&repository.root)
+            .await
+            .expect("discover source repository");
+        let mut source = FilesystemInvalidationSource::new(
+            [repository.package()],
+            [repository.component()],
+            git_source,
+        )
+        .await
+        .expect("construct filesystem invalidation source");
+
+        let outside = repository.root.with_extension("outside");
+        fs::create_dir(&outside).expect("create a directory outside the worktree");
+        let watched = source.add_tree(&outside).await;
+        fs::remove_dir_all(&outside).expect("remove the outside directory");
+        watched.expect("a path Git cannot be asked about is still watchable");
+    }
+
     #[tokio::test]
     async fn filesystem_events_map_owned_inputs_and_ignore_generated_outputs() {
         let repository = TempRepository::new();
@@ -1234,6 +1461,7 @@ mod tests {
             [repository.component()],
             git_source,
         )
+        .await
         .expect("construct filesystem invalidation source");
 
         fs::write(repository.package().join("generated/wamn.rs"), "generated")
@@ -1294,6 +1522,7 @@ mod tests {
             [repository.component()],
             git_source,
         )
+        .await
         .expect("construct filesystem invalidation source");
 
         fs::write(

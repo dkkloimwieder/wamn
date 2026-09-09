@@ -162,12 +162,34 @@ where
     }
 }
 
-struct CommandObserver;
+/// Prints every watch and held run, reading the endpoint off the session seam.
+///
+/// The engine hands `completed` a receipt and nothing else, so a watch run has
+/// to read where it served from the same handle the interactive client reads.
+/// Without it a `--watch` session printed only that stages finished, and the
+/// operator had no way to learn the port each rerun had just bound
+/// (wamn-10yt.55).
+struct CommandObserver {
+    read: DevReadHandle,
+}
 
 impl DevWatchObserver for CommandObserver {
     fn completed(&mut self, outcome: DevWatchOutcome) {
         match outcome.into_result() {
-            Ok(receipt) => print_receipt("watch", &receipt),
+            Ok(receipt) => {
+                print_receipt("watch", &receipt);
+                // Absent whenever the run stopped before Activate, which the
+                // read handle reports by clearing the endpoint on reset.
+                let snapshot = self.read.snapshot();
+                if let Some(endpoint) = snapshot.runtime_endpoint() {
+                    print_served(endpoint);
+                }
+                // The reader of a watch session is a person or a script sitting
+                // on a pipe, and it acts on the endpoint line while this process
+                // goes back to waiting. Line buffering never leaves a terminal
+                // short, but a pipe holds the line until the buffer fills.
+                let _ = io::stdout().flush();
+            }
             Err(error) => eprintln!("{error}"),
         }
     }
@@ -339,7 +361,9 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     }
     let hold = args.hold();
     let mut session = DevSession::prepare(args).await?;
-    let mut observer = CommandObserver;
+    let mut observer = CommandObserver {
+        read: session.read_handle(),
+    };
     let receipt = session.run_with_observer(&mut observer, hold).await?;
     // Under --hold the observer already printed, before the hold. Printing
     // here as well would repeat all of it once the interrupt arrives.
@@ -381,6 +405,7 @@ async fn run_watch_command(
         .collect::<Vec<_>>();
     let component_roots = component_build_watch_roots(git.repository_root()).await?;
     let filesystem = FilesystemInvalidationSource::new(package_roots, component_roots, git.clone())
+        .await
         .context("watch package and component inputs")?;
     let source_state = git
         .snapshot()
