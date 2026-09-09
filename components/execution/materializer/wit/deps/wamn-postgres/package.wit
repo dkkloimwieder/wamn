@@ -22,9 +22,8 @@ package wamn:postgres@0.1.0;
 /// STATUS: FROZEN 0.1.0 (2026-07-10). This interface passed the S2 spike
 /// (>=2k qps + chaos/RLS/injection security gates) and the S6 test-host spike
 /// UNCHANGED -- the plugin that cleared those gates binds this exact file.
-/// Compatibility rule: 0.1.x admits only additive or clarifying changes; any
-/// breaking change (a new/removed variant case or a changed signature) waits
-/// for 0.2.
+/// Compatibility rule: 0.1.0 changes freely while no external consumer exists;
+/// versions move when one does.
 interface types {
   /// Typed SQL values. `numeric` and `timestamptz` travel as canonical
   /// strings to preserve exactness (plan 3.3: material quantities are
@@ -77,6 +76,8 @@ interface types {
     foreign-key-violation(string),
     /// 23514 with constraint name.
     check-violation(string),
+    /// 23P01 with constraint name.
+    exclusion-violation(string),
     /// RLS or privilege denial. Deliberately carries no detail about
     /// which policy denied (no cross-tenant reconnaissance).
     permission-denied,

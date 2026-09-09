@@ -216,6 +216,7 @@ struct ConstraintRow {
     supporting_index_predicate: bool,
     exclusion_operators: Vec<String>,
     exclusion_key_definitions: Vec<String>,
+    exclusion_dependency_columns: Vec<i16>,
 }
 
 #[derive(Debug)]
@@ -526,7 +527,21 @@ SELECT namespace.nspname::text AS schema_name,
             WHERE constraint_row.contype = 'x'
               AND key_definition.position <= supporting_index.indnkeyatts
             ORDER BY key_definition.position
-       ) AS exclusion_key_definitions
+       ) AS exclusion_key_definitions,
+       ARRAY(
+           SELECT DISTINCT dependency.refobjsubid::smallint
+             FROM pg_catalog.pg_depend AS dependency
+            WHERE constraint_row.contype = 'x'
+              AND dependency.deptype = 'a'
+              AND dependency.refclassid = 'pg_catalog.pg_class'::regclass
+              AND dependency.refobjid = constraint_row.conrelid
+              AND dependency.refobjsubid > 0
+              AND ((dependency.classid = 'pg_catalog.pg_constraint'::regclass
+                    AND dependency.objid = constraint_row.oid)
+                OR (dependency.classid = 'pg_catalog.pg_class'::regclass
+                    AND dependency.objid = constraint_row.conindid))
+            ORDER BY 1
+       ) AS exclusion_dependency_columns
   FROM pg_catalog.pg_constraint AS constraint_row
   JOIN pg_catalog.pg_class AS relation
     ON relation.oid = constraint_row.conrelid
@@ -1358,6 +1373,7 @@ fn constraint_row(row: &Row) -> ConstraintRow {
         supporting_index_predicate: row.get("supporting_index_has_predicate"),
         exclusion_operators: row.get("exclusion_operators"),
         exclusion_key_definitions: row.get("exclusion_key_definitions"),
+        exclusion_dependency_columns: row.get("exclusion_dependency_columns"),
     }
 }
 
@@ -1618,7 +1634,30 @@ fn map_exclusion(
         };
         keys.push(ExclusionKey::new(element, operator.clone()));
     }
-    Exclusion::new(row.name.clone(), ExclusionAccessMethod::Gist, keys)
+
+    // PostgreSQL records an auto dependency from the constraint to each plain
+    // key column and from its index to each column an expression key reads --
+    // the dependency that blocks `DROP COLUMN`. Reading it is how the column
+    // behind `tstzrange(starts_at, ends_at)` is known without parsing SQL.
+    let columns = names_for_attributes(
+        PostgresIntrospectionErrorKind::UnsupportedConstraint,
+        &row.schema,
+        &row.table,
+        &row.name,
+        &row.exclusion_dependency_columns,
+        attributes,
+    )?;
+    if !row
+        .columns
+        .iter()
+        .all(|number| *number == 0 || row.exclusion_dependency_columns.contains(number))
+    {
+        return Err(refuse(
+            "exclusion constraint depends on fewer columns than it keys".to_owned(),
+        ));
+    }
+
+    Exclusion::new(row.name.clone(), ExclusionAccessMethod::Gist, keys, columns)
         .map_err(|error| ir_error(&row.schema, &row.name, &error))
 }
 

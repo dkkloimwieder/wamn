@@ -14,8 +14,8 @@ use wamn_schema_generator::{
     validate_operation_vocabulary, validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
-    Table,
+    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
+    ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn, Table,
 };
 
 const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
@@ -1770,6 +1770,11 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             },
             "check": {
                 "constant": "UPDATE_CHECK_CONSTRAINTS",
+                "visibility": "crate",
+                "names": []
+            },
+            "exclusion": {
+                "constant": "UPDATE_EXCLUSION_CONSTRAINTS",
                 "visibility": "crate",
                 "names": []
             }
@@ -4117,4 +4122,93 @@ fn an_authored_claim_is_refused_unless_every_identity_comes_from_it() {
             "{label}"
         );
     }
+}
+
+/// wamn-10yt.54. An exclusion violation is SQLSTATE 23P01. The generated
+/// operation names it exactly as it names a unique or foreign-key violation,
+/// carrying the constraint name in the `{constraint}` detail the matrix already
+/// defines.
+///
+/// The reachable constraint is reachable ONLY through its dependency columns:
+/// `supplier_id` is the single field `update` writes, and it appears in no key
+/// -- it sits inside the expression key. PostgreSQL records it as a dependency
+/// of the constraint's index, which is what [`Exclusion::columns`] carries, so
+/// intersecting written fields with that set is what names the refusal. The
+/// second constraint depends on nothing this operation writes and is therefore
+/// not named, so the contract does not over-declare.
+#[test]
+fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
+    let base = catalog(false);
+    let purchase_order = table(&base, "purchase_order");
+    let with_exclusions = rebuilt_table(
+        purchase_order,
+        purchase_order.columns().to_vec(),
+        purchase_order.constraints().to_vec(),
+    )
+    .with_exclusions(vec![
+        Exclusion::new(
+            "purchase_order_supplier_window",
+            ExclusionAccessMethod::Gist,
+            vec![
+                ExclusionKey::new(ExclusionElement::column("status"), "="),
+                ExclusionKey::new(
+                    ExclusionElement::expression("tstzrange(created_at, created_at)"),
+                    "&&",
+                ),
+            ],
+            ["status", "created_at", "supplier_id"],
+        )
+        .unwrap(),
+        Exclusion::new(
+            "purchase_order_untouched_window",
+            ExclusionAccessMethod::Gist,
+            vec![ExclusionKey::new(ExclusionElement::column("status"), "=")],
+            ["status", "created_at"],
+        )
+        .unwrap(),
+    ]);
+    let catalog = replacing_table(&base, with_exclusions);
+
+    let mut manifest = manifest();
+    manifest["models"]["purchase_order"]["operations"]["update"]["error_details"]["exclusion_violation"] =
+        json!({"required": ["constraint"]});
+
+    let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
+    let errors = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/update.errors.json",
+    );
+    assert_eq!(errors["closed"], json!(true));
+    let named = errors["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case["literal"] == "exclusion_violation")
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        named,
+        vec![json!({
+            "literal": "exclusion_violation",
+            "from": "exclusion_violation",
+            "constraint": "purchase_order_supplier_window",
+            "detail": {"required": ["constraint"]}
+        })],
+        "the reachable exclusion is named once, in the same case shape a unique \
+         violation uses"
+    );
+
+    // The refusal vocabulary stays closed: an operation that can violate an
+    // exclusion must declare it, exactly as it must for the other three.
+    let mut undeclared = manifest.clone();
+    undeclared["models"]["purchase_order"]["operations"]["update"]["error_details"]
+        .as_object_mut()
+        .unwrap()
+        .remove("exclusion_violation");
+    assert_eq!(
+        run(&catalog, &undeclared, &QUERY_SOURCES)
+            .unwrap_err()
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
 }

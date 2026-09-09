@@ -1117,7 +1117,8 @@ CREATE TABLE receiving.dock_appointment (
 const EXCLUSION_CANONICAL_JSON: &str = concat!(
     r#""exclusions":[{"name":"dock_appointment_no_overlap","access_method":"gist","keys":["#,
     r#"{"element":"column","name":"dock_id","operator":"="},"#,
-    r#"{"element":"expression","expression":"tstzrange(starts_at, ends_at)","operator":"&&"}]}]"#,
+    r#"{"element":"expression","expression":"tstzrange(starts_at, ends_at)","operator":"&&"}],"#,
+    r#""columns":["dock_id","ends_at","starts_at"]}]"#,
 );
 
 impl Fixture {
@@ -1130,6 +1131,38 @@ impl Fixture {
             migration_path: PathBuf::new(),
         }
     }
+}
+
+/// Read the constraint's dependency columns straight from `pg_depend` -- the
+/// same auto dependency that blocks `DROP COLUMN` -- so the modelled column set
+/// is compared against the server's own answer and never against a parsed
+/// expression or a hand-typed list (wamn-10yt.54).
+async fn server_exclusion_columns(client: &Client) -> Vec<String> {
+    client
+        .query(
+            "SELECT DISTINCT attribute.attname::text \
+               FROM pg_catalog.pg_constraint AS constraint_row \
+               JOIN pg_catalog.pg_depend AS dependency \
+                 ON dependency.deptype = 'a' \
+                AND dependency.refclassid = 'pg_catalog.pg_class'::regclass \
+                AND dependency.refobjid = constraint_row.conrelid \
+                AND dependency.refobjsubid > 0 \
+                AND ((dependency.classid = 'pg_catalog.pg_constraint'::regclass \
+                      AND dependency.objid = constraint_row.oid) \
+                  OR (dependency.classid = 'pg_catalog.pg_class'::regclass \
+                      AND dependency.objid = constraint_row.conindid)) \
+               JOIN pg_catalog.pg_attribute AS attribute \
+                 ON attribute.attrelid = constraint_row.conrelid \
+                AND attribute.attnum = dependency.refobjsubid \
+              WHERE constraint_row.conname = 'dock_appointment_no_overlap' \
+              ORDER BY 1",
+            &[],
+        )
+        .await
+        .expect("read the exclusion dependency columns from the server catalog")
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect()
 }
 
 /// Read the exclusion constraint straight from `pg_catalog`, so the modelled
@@ -1235,6 +1268,39 @@ async fn assert_exclusion_is_modelled(client: &Client) {
         table.constraints().len(),
         1,
         "the exclusion constraint is modelled beside the primary key, not inside it"
+    );
+
+    // THE COLUMN SET BEHIND THE EXPRESSION. `starts_at` and `ends_at` are named
+    // by no key; they live inside `tstzrange(starts_at, ends_at)`. PostgreSQL
+    // records them as dependencies of the constraint's index, so the modelled
+    // set reaches them without anyone parsing the expression text. An update
+    // that writes either one can therefore name this refusal (wamn-10yt.54).
+    let dependency_columns = server_exclusion_columns(client).await;
+    assert_eq!(
+        dependency_columns,
+        ["dock_id", "ends_at", "starts_at"],
+        "the server records every keyed and every expression-read column"
+    );
+    assert!(
+        exclusion
+            .columns()
+            .iter()
+            .map(Box::as_ref)
+            .eq(dependency_columns.iter().map(String::as_str)),
+        "modelled dependency columns are the server's dependency columns"
+    );
+    assert_eq!(
+        exclusion
+            .keys()
+            .iter()
+            .filter_map(|key| match key.element() {
+                ExclusionElement::Column { name } => Some(name.as_ref()),
+                ExclusionElement::Expression { .. } => None,
+            })
+            .collect::<Vec<_>>(),
+        ["dock_id"],
+        "exactly one key names a column, so the other two columns are reachable \
+         only through the catalog dependency"
     );
     // THE ONE NAMING EXEMPTION. This constraint carries an expression key, so
     // the convention cannot be reconstructed from column names and only a name

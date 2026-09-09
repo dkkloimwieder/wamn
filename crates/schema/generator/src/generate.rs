@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind, Table,
+    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind, Exclusion, Table,
 };
 
 use crate::manifest::{
@@ -721,10 +721,13 @@ fn validate_constraint_error_details(
 ) -> Result<(), GenerateError> {
     use AccessOperationErrorLiteral as Code;
 
-    let expected = operation_constraints(table, action, operation)
+    let mut expected = operation_constraints(table, action, operation)
         .into_iter()
         .map(|constraint| constraint_error_code(constraint.kind()))
         .collect::<BTreeSet<_>>();
+    if !operation_exclusions(table, action, operation).is_empty() {
+        expected.insert(Code::ExclusionViolation);
+    }
     let declared = operation
         .error_details
         .keys()
@@ -732,7 +735,10 @@ fn validate_constraint_error_details(
         .filter(|code| {
             matches!(
                 code,
-                Code::UniqueViolation | Code::ForeignKeyViolation | Code::CheckViolation
+                Code::UniqueViolation
+                    | Code::ForeignKeyViolation
+                    | Code::CheckViolation
+                    | Code::ExclusionViolation
             )
         })
         .collect::<BTreeSet<_>>();
@@ -1318,33 +1324,13 @@ fn validate_constraint_error_mappings(
     declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
     for (name, _) in &declaration.constraint_errors {
-        declaration
-            .relations
-            .iter()
-            .find_map(|relation| {
-                relation.constraints.contains(name).then(|| {
-                    catalog
-                        .tables()
-                        .iter()
-                        .find(|table| {
-                            table.schema() == relation.schema && table.name() == relation.table
-                        })
-                        .and_then(|table| {
-                            table
-                                .constraints()
-                                .iter()
-                                .find(|constraint| constraint.name() == name)
-                        })
-                })
-            })
-            .flatten()
-            .ok_or_else(|| {
-                GenerateError::for_object(
-                    GenerateErrorKind::InvalidOperation,
-                    format!("{operation} maps undeclared constraint {name}"),
-                    name.clone(),
-                )
-            })?;
+        custom_operation_constraint_origin(catalog, declaration, name).ok_or_else(|| {
+            GenerateError::for_object(
+                GenerateErrorKind::InvalidOperation,
+                format!("{operation} maps undeclared constraint {name}"),
+                name.clone(),
+            )
+        })?;
     }
     Ok(())
 }
@@ -2232,12 +2218,11 @@ fn custom_operation_error_contract(
                 .iter()
                 .find_map(|(constraint, mapped)| (mapped == literal).then_some(constraint));
             let mut case = if let Some(constraint) = constraint {
-                let constraint_kind = custom_operation_constraint(catalog, operation, constraint)
-                    .expect("custom constraint mapping was validated")
-                    .kind();
+                let origin = custom_operation_constraint_origin(catalog, operation, constraint)
+                    .expect("custom constraint mapping was validated");
                 json!({
                     "literal": literal,
-                    "from": constraint_error(constraint_kind),
+                    "from": origin,
                     "constraint": constraint,
                 })
             } else {
@@ -2260,11 +2245,13 @@ fn custom_operation_error_contract(
     json!({"closed": true, "cases": cases})
 }
 
-fn custom_operation_constraint<'a>(
-    catalog: &'a CatalogIr,
+/// The `from` literal for the constraint a custom operation maps, whether the
+/// database enforces it as a [`Constraint`] or as an exclusion constraint.
+fn custom_operation_constraint_origin(
+    catalog: &CatalogIr,
     operation: &CustomOperationDeclaration,
     name: &str,
-) -> Option<&'a Constraint> {
+) -> Option<&'static str> {
     for relation in &operation.relations {
         if !relation
             .constraints
@@ -2277,10 +2264,20 @@ fn custom_operation_constraint<'a>(
             .tables()
             .iter()
             .find(|table| table.schema() == relation.schema && table.name() == relation.table)?;
-        return table
+        if let Some(constraint) = table
             .constraints()
             .iter()
-            .find(|constraint| constraint.name() == name);
+            .find(|constraint| constraint.name() == name)
+        {
+            return Some(constraint_error(constraint.kind()));
+        }
+        if table
+            .exclusions()
+            .iter()
+            .any(|exclusion| exclusion.name() == name)
+        {
+            return Some("exclusion_violation");
+        }
     }
     None
 }
@@ -3083,6 +3080,16 @@ fn error_contract(table: &Table, action: CrudAction, operation: &OperationDeclar
             }),
         ));
     }
+    for exclusion in operation_exclusions(table, action, operation) {
+        cases.push((
+            Code::ExclusionViolation,
+            json!({
+                "literal": "exclusion_violation",
+                "from": "exclusion_violation",
+                "constraint": exclusion.name(),
+            }),
+        ));
+    }
     let cases = cases
         .into_iter()
         .map(|(code, mut case)| {
@@ -3130,6 +3137,36 @@ fn operation_constraints<'a>(
         .filter(|constraint| {
             action != CrudAction::Update
                 || update_can_violate(constraint.kind(), &operation.writable_fields)
+        })
+        .collect()
+}
+
+/// Exclusions the operation can violate.
+///
+/// An INSERT can always collide with a row already stored. An UPDATE can only
+/// collide when it writes a column the constraint depends on -- including a
+/// column an expression key reads, which PostgreSQL records as a dependency and
+/// [`Exclusion::columns`] carries. A DELETE never can: removing a row cannot
+/// create an overlap.
+fn operation_exclusions<'a>(
+    table: &'a Table,
+    action: CrudAction,
+    operation: &OperationDeclaration,
+) -> Vec<&'a Exclusion> {
+    if !matches!(action, CrudAction::Create | CrudAction::Update) {
+        return Vec::new();
+    }
+    table
+        .exclusions()
+        .iter()
+        .filter(|exclusion| {
+            action != CrudAction::Update
+                || exclusion.columns().iter().any(|column| {
+                    operation
+                        .writable_fields
+                        .iter()
+                        .any(|field| field.as_str() == column.as_ref())
+                })
         })
         .collect()
 }
@@ -3182,6 +3219,7 @@ struct MutationConstraintNames {
     unique: ConstraintNameSlice,
     foreign_key: ConstraintNameSlice,
     check: ConstraintNameSlice,
+    exclusion: ConstraintNameSlice,
 }
 
 #[derive(Debug, Serialize)]
@@ -3545,11 +3583,16 @@ fn mutation_constraint_names(
             }
         }
     }
+    let exclusion = operation_exclusions(table, action, operation)
+        .into_iter()
+        .map(|exclusion| exclusion.name().to_owned())
+        .collect();
     MutationConstraintNames {
         operation: action,
         unique: constraint_name_slice(action, "unique", unique),
         foreign_key: constraint_name_slice(action, "foreign_key", foreign_key),
         check: constraint_name_slice(action, "check", check),
+        exclusion: constraint_name_slice(action, "exclusion", exclusion),
     }
 }
 
@@ -3848,6 +3891,7 @@ fn emit_projection(
             emit_constraint_name_slice(&mut source, &constraints.unique);
             emit_constraint_name_slice(&mut source, &constraints.foreign_key);
             emit_constraint_name_slice(&mut source, &constraints.check);
+            emit_constraint_name_slice(&mut source, &constraints.exclusion);
         }
         if !api.mutation_constraints.is_empty() {
             source.push('\n');

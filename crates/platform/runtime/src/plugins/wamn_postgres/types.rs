@@ -44,6 +44,7 @@ pub(super) fn map_pg_error(e: &tokio_postgres::Error) -> PgError {
             "23505" => PgError::UniqueViolation(constraint()),
             "23503" => PgError::ForeignKeyViolation(constraint()),
             "23514" => PgError::CheckViolation(constraint()),
+            "23P01" => PgError::ExclusionViolation(constraint()),
             // RLS / privilege denials deliberately carry no policy detail.
             "42501" => PgError::PermissionDenied,
             code => PgError::QueryError((code.to_string(), db.message().to_string())),

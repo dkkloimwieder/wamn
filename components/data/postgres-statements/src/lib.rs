@@ -49,6 +49,7 @@ pub enum StatementErrorKind {
     UniqueViolation,
     ForeignKeyViolation,
     CheckViolation,
+    ExclusionViolation,
     PermissionDenied,
     QueryError,
     InvalidResult,
@@ -191,6 +192,11 @@ impl StatementError {
                 StatementErrorKind::CheckViolation,
                 Some(name.into_boxed_str()),
                 "check constraint violation",
+            ),
+            wire::PgError::ExclusionViolation(name) => (
+                StatementErrorKind::ExclusionViolation,
+                Some(name.into_boxed_str()),
+                "exclusion constraint violation",
             ),
             wire::PgError::PermissionDenied => (
                 StatementErrorKind::PermissionDenied,

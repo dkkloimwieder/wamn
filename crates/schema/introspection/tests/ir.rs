@@ -334,6 +334,9 @@ fn exclusion_ir(reverse_collections: bool) -> CatalogIr {
                     "&&",
                 ),
             ],
+            // The catalog reports the expression's columns as dependencies, so
+            // they are part of the set even though no key names them.
+            ["starts_at", "dock_id", "ends_at"],
         )
         .unwrap(),
         Exclusion::new(
@@ -343,6 +346,7 @@ fn exclusion_ir(reverse_collections: bool) -> CatalogIr {
                 ExclusionElement::column("carrier_id"),
                 "=",
             )],
+            ["carrier_id"],
         )
         .unwrap(),
     ];
@@ -370,9 +374,11 @@ fn canonical_bytes_freeze_an_exclusion_constraint() {
         r#""indexes":[],"#,
         r#""exclusions":[{"name":"dock_appointment_no_overlap","access_method":"gist","keys":["#,
         r#"{"element":"column","name":"dock_id","operator":"="},"#,
-        r#"{"element":"expression","expression":"tstzrange(starts_at, ends_at)","operator":"&&"}]},"#,
+        r#"{"element":"expression","expression":"tstzrange(starts_at, ends_at)","operator":"&&"}],"#,
+        r#""columns":["dock_id","ends_at","starts_at"]},"#,
         r#"{"name":"dock_appointment_one_carrier","access_method":"gist","keys":["#,
-        r#"{"element":"column","name":"carrier_id","operator":"="}]}]}]}"#,
+        r#"{"element":"column","name":"carrier_id","operator":"="}],"#,
+        r#""columns":["carrier_id"]}]}]}"#,
     )
     .as_bytes();
 
@@ -384,7 +390,8 @@ fn canonical_bytes_freeze_an_exclusion_constraint() {
         exclusion_ir(false).canonical_json_bytes()
     );
 
-    let name_error = Exclusion::new("", ExclusionAccessMethod::Gist, Vec::new()).unwrap_err();
+    let name_error =
+        Exclusion::new("", ExclusionAccessMethod::Gist, Vec::new(), [""; 0]).unwrap_err();
     assert_eq!(name_error.kind(), IrErrorKind::EmptyName);
     assert_eq!(
         name_error.to_string(),

@@ -711,6 +711,7 @@ pub enum WamnPgError {
     UniqueViolation(String),
     ForeignKeyViolation(String),
     CheckViolation(String),
+    ExclusionViolation(String),
     PermissionDenied,
     QueryError { sqlstate: String, message: String },
 }
@@ -736,6 +737,7 @@ impl WamnDatabaseError {
             wire::PgError::UniqueViolation(name) => WamnPgError::UniqueViolation(name),
             wire::PgError::ForeignKeyViolation(name) => WamnPgError::ForeignKeyViolation(name),
             wire::PgError::CheckViolation(name) => WamnPgError::CheckViolation(name),
+            wire::PgError::ExclusionViolation(name) => WamnPgError::ExclusionViolation(name),
             wire::PgError::PermissionDenied => WamnPgError::PermissionDenied,
             wire::PgError::QueryError((sqlstate, message)) => {
                 WamnPgError::QueryError { sqlstate, message }
@@ -755,6 +757,7 @@ impl WamnDatabaseError {
                 format!("foreign key violation ({name})")
             }
             WamnPgError::CheckViolation(name) => format!("check violation ({name})"),
+            WamnPgError::ExclusionViolation(name) => format!("exclusion violation ({name})"),
             WamnPgError::PermissionDenied => "permission denied".to_owned(),
             WamnPgError::QueryError { message, .. } => message.clone(),
         };
@@ -782,6 +785,7 @@ impl DatabaseError for WamnDatabaseError {
             WamnPgError::UniqueViolation(_) => Some(Cow::Borrowed("23505")),
             WamnPgError::ForeignKeyViolation(_) => Some(Cow::Borrowed("23503")),
             WamnPgError::CheckViolation(_) => Some(Cow::Borrowed("23514")),
+            WamnPgError::ExclusionViolation(_) => Some(Cow::Borrowed("23P01")),
             WamnPgError::PermissionDenied => Some(Cow::Borrowed("42501")),
             WamnPgError::QueryError { sqlstate, .. } => Some(Cow::Borrowed(sqlstate)),
             WamnPgError::ConnectionUnavailable | WamnPgError::RowLimitExceeded(_) => None,
@@ -808,7 +812,8 @@ impl DatabaseError for WamnDatabaseError {
         match &self.error {
             WamnPgError::UniqueViolation(name)
             | WamnPgError::ForeignKeyViolation(name)
-            | WamnPgError::CheckViolation(name) => Some(name),
+            | WamnPgError::CheckViolation(name)
+            | WamnPgError::ExclusionViolation(name) => Some(name),
             _ => None,
         }
     }

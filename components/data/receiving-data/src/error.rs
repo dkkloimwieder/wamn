@@ -245,9 +245,14 @@ fn classify(
         | StatementErrorKind::ForeignKeyViolation
         | StatementErrorKind::CheckViolation => (AccessErrorKind::InternalError, None),
         StatementErrorKind::PermissionDenied => (AccessErrorKind::PermissionDenied, None),
+        // This package declares no exclusion constraint, and `AccessErrorKind`
+        // carries no literal for one. Classifying it here exactly as the host
+        // classified it before 23P01 had a variant keeps this guest's behaviour
+        // unchanged; giving it a typed refusal is a package-level change.
         StatementErrorKind::UnknownStatement
         | StatementErrorKind::StatementContractMismatch
         | StatementErrorKind::RowLimitExceeded
+        | StatementErrorKind::ExclusionViolation
         | StatementErrorKind::QueryError
         | StatementErrorKind::InvalidResult => (AccessErrorKind::InternalError, None),
     }

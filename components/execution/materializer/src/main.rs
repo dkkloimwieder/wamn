@@ -154,6 +154,7 @@ fn pg_name(error: &PgError) -> String {
             format!("foreign-key-violation({constraint})")
         }
         PgError::CheckViolation(constraint) => format!("check-violation({constraint})"),
+        PgError::ExclusionViolation(constraint) => format!("exclusion-violation({constraint})"),
         PgError::PermissionDenied => "permission-denied".into(),
         PgError::QueryError((state, message)) => format!("query-error({state}: {message})"),
     }
