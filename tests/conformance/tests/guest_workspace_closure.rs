@@ -19,7 +19,15 @@
 //! The companion channel — absolute `file!()` strings that `include!`d package
 //! sources bake into the artifact — is closed by `--remap-path-prefix` in
 //! `tools/build-components`, asserted below so the two cannot drift apart.
+//!
+//! A THIRD axis is not the checkout at all: the same commit in the same
+//! directory produced different bytes under the `m1` and `proof` component
+//! profiles, because the two profiles select different `-p` sets and Cargo
+//! unifies features per invocation (`wamn-10yt.61`). Nothing here could see it,
+//! because the two-checkout arm builds `m1` on both sides. The cross-profile
+//! arm below is the one that can.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -158,5 +166,116 @@ fn one_commit_built_in_two_checkouts_yields_identical_guest_digests() {
         "the same commit produced different guest digests in two checkouts, so a component \
          digest is still a claim about the build directory rather than about the source \
          (wamn-10yt.10.29)"
+    );
+}
+
+/// Artifact plans printed by `tools/build-components build-only <profile>`.
+const PROFILE_M1_PLAN_ENV: &str = "WAMN_DIGEST_PROFILE_M1_PLAN";
+const PROFILE_PROOF_PLAN_ENV: &str = "WAMN_DIGEST_PROFILE_PROOF_PLAN";
+
+/// `package -> sha256` from one artifact plan, refusing a plan for another profile.
+///
+/// The plan is the build tool's own output and already carries the raw digest of
+/// every artifact it declares, so this reads the bytes the profile produced
+/// without re-hashing them and without a virtualization pass.
+fn artifact_plan_digests(path: &Path, expected_profile: &str) -> BTreeMap<String, String> {
+    let source =
+        fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    let plan: serde_json::Value = serde_json::from_str(&source)
+        .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+    assert_eq!(
+        plan.get("profile").and_then(serde_json::Value::as_str),
+        Some(expected_profile),
+        "{} is not the {expected_profile} artifact plan; comparing a profile against itself \
+         proves nothing, which is exactly how this defect stayed invisible (wamn-10yt.61)",
+        path.display()
+    );
+    let artifacts = plan
+        .pointer("/virtualization/artifacts")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{} carries no virtualization artifacts", path.display()));
+    let mut digests = BTreeMap::new();
+    for artifact in artifacts {
+        let package = artifact
+            .get("package")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("{} has an artifact with no package", path.display()));
+        let digest = artifact
+            .get("sha256")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("{} has no sha256 for {package}", path.display()));
+        assert!(
+            digests
+                .insert(package.to_owned(), digest.to_owned())
+                .is_none(),
+            "{} declares {package} twice",
+            path.display()
+        );
+    }
+    digests
+}
+
+/// THE PROPERTY THE FEATURE GOVERNANCE EXISTS FOR: one commit, two profiles, one digest.
+///
+/// Armed by `[GUEST-DIGEST-REPRODUCIBILITY]` in `docs/operations/build-and-test.md`,
+/// which builds the same tree under both component profiles into separate target
+/// directories and points this test at both artifact plans.
+///
+/// A component profile selects which packages one `cargo build` compiles. Cargo
+/// unifies features across everything in that one invocation, so a package the
+/// `proof` profile adds can turn on a feature in a crate the `m1` guests already
+/// link, and the resolved feature NAME LIST goes into `-C metadata` even when
+/// the feature itself compiles to nothing. That is a digest that depends on the
+/// PROFILE, and a pin minted under one profile is then unmintable under the
+/// other.
+///
+/// Measured at `wamn-10yt.61`, all four virtualized artifacts move. The carrier
+/// is `sqlx-core`, which the `proof` selection compiles and `m1` does not: its
+/// manifest asks for `futures-util` with `io`, `io` pulls `memchr`, and
+/// `serde_json` links `memchr` — so `blob-put` moves without going near sqlx.
+///
+/// The `m1` selection is a subset of `proof`'s, so the shared packages are what
+/// this compares; a package `m1` declares and `proof` does not is itself a
+/// failure, because `proof` is meant to be the wider net.
+#[test]
+#[ignore = "requires one commit built under both profiles by [GUEST-DIGEST-REPRODUCIBILITY]"]
+fn one_commit_built_under_two_profiles_yields_identical_guest_digests() {
+    let m1_plan = std::env::var(PROFILE_M1_PLAN_ENV)
+        .unwrap_or_else(|_| panic!("{PROFILE_M1_PLAN_ENV} must name the m1 artifact plan"));
+    let proof_plan = std::env::var(PROFILE_PROOF_PLAN_ENV)
+        .unwrap_or_else(|_| panic!("{PROFILE_PROOF_PLAN_ENV} must name the proof artifact plan"));
+    assert_ne!(
+        m1_plan, proof_plan,
+        "the two artifact plans must come from different profile builds"
+    );
+
+    let m1 = artifact_plan_digests(Path::new(&m1_plan), "m1");
+    let proof = artifact_plan_digests(Path::new(&proof_plan), "proof");
+    assert!(
+        !m1.is_empty(),
+        "{m1_plan} declares no artifacts, so this proves nothing"
+    );
+
+    let mut drifted = Vec::new();
+    for (package, digest) in &m1 {
+        let Some(other) = proof.get(package) else {
+            panic!(
+                "the proof profile does not declare {package}, which m1 does; the proof \
+                 selection is meant to be the wider one"
+            );
+        };
+        if other != digest {
+            drifted.push(format!("{package}: m1 {digest} != proof {other}"));
+        }
+    }
+    assert!(
+        drifted.is_empty(),
+        "the same commit produced different guest bytes under the m1 and proof component \
+         profiles, so a component digest is a claim about WHICH PROFILE built it and a pin \
+         minted under one profile cannot be reproduced under the other (wamn-10yt.61). The \
+         cause is a feature the two selections resolve differently: diff the `features` field \
+         of the two target directories' `.fingerprint/*/lib-*.json` to name the crate, then \
+         find which requester adds it, which may be a dependency's own manifest and not \
+         anything this repository declares: {drifted:#?}"
     );
 }
