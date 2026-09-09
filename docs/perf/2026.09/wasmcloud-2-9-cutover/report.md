@@ -509,3 +509,20 @@ The [scoped validation](scoped-validation-002/summary.json) records passing Clip
 Its source hashes include the separate memory test and WMS probe correction that await their own commits.
 Bead `wamn-0h0g.2.7.13` owns this query correction and remains open until the live proof passes.
 The operation projection from `wamn-0h0g.2.7.11` passes manifest decoding in this run, but the complete guest proof remains open.
+
+
+## Memory release after deadline expiry
+
+The [memory evidence map](memory-cancellation-map-001/evidence-map.json) identifies the executed accounting, limit, cancellation, trap, nested-call, and epoch tests.
+The two manual stores coexist, but their growth calls run in sequence.
+Native source ownership and cadence tests establish ticker ownership without counting process threads.
+The nested Receiving test exercises the actual application path and requires all guest charges to return after store removal.
+
+The earlier deadline test used a store without a guest-memory budget.
+The [new deadline proof](scoped-validation-002/deadline-memory.log) passes one test in 0.01 seconds, with no ignored cases.
+A real two-page guest spins until the native epoch deadline produces `Trap::Interrupt`.
+The test observes both pages before store removal and zero usage after removal.
+A fresh store then allocates and releases one page on the same engine.
+The [execution receipt](memory-cancellation-map-001/deadline-refund-execution.json) records the exact command and tested source hashes.
+This proof resolves the remaining deadline-refund requirement of `wamn-0h0g.2.7.2`.
+The final workspace sweep remains separate.

@@ -1,0 +1,11 @@
+{
+  "scope": "offline file/diff inspection only; no compiler, formatter, tests or live commands",
+  "one_added_test": true,
+  "production_source_unchanged": true,
+  "no_deleted_source_lines": true,
+  "test_lines_added": 53,
+  "source_sha256": "fd079a4876fc885c8c9602388c68e47c918f14d4708f421984319adc8ff8e19d",
+  "patch_sha256": "6c9f3347236213da91cc4e2277eb7f9a93914c42abd7b80b7777d0f109d2a20b",
+  "evidence_map_sha256": "2103935f4a994c08561826066e28679805a3203d281344f636e7983019498147",
+  "executed_test_count": 0
+}
