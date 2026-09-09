@@ -1,0 +1,1269 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:42:42Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "host-session-identity-64f7ffc549-g7tgr",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "702",
+                "uid": "80f5ba6f-e4cf-44f2-8b73-462c2d30a396"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:42:42Z",
+            "message": "Successfully assigned wamn-receiving-journey/host-session-identity-64f7ffc549-g7tgr to wamn-receiving-journey-worker",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:42:42Z",
+                "name": "host-session-identity-64f7ffc549-g7tgr.18d386dd7ed7a34f",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "707",
+                "uid": "4ab874ea-b140-4016-afd6-7954c4d9ca8f"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:42:43Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity}",
+                "kind": "Pod",
+                "name": "host-session-identity-64f7ffc549-g7tgr",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "703",
+                "uid": "80f5ba6f-e4cf-44f2-8b73-462c2d30a396"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:42:43Z",
+            "message": "Container image \"wamn-identity:receiving-44e1e91d9816-1395978-release\" already present on machine and can be accessed by the pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:42:43Z",
+                "name": "host-session-identity-64f7ffc549-g7tgr.18d386dd9a5d0c4b",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "715",
+                "uid": "663acd03-960c-4784-afed-39129236af97"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:42:43Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity}",
+                "kind": "Pod",
+                "name": "host-session-identity-64f7ffc549-g7tgr",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "703",
+                "uid": "80f5ba6f-e4cf-44f2-8b73-462c2d30a396"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:42:43Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:42:43Z",
+                "name": "host-session-identity-64f7ffc549-g7tgr.18d386dd9de5d9f9",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "718",
+                "uid": "e646fc3a-818d-4132-af37-eec59bd2700f"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:42:43Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity}",
+                "kind": "Pod",
+                "name": "host-session-identity-64f7ffc549-g7tgr",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "703",
+                "uid": "80f5ba6f-e4cf-44f2-8b73-462c2d30a396"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:42:43Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:42:43Z",
+                "name": "host-session-identity-64f7ffc549-g7tgr.18d386dda109f005",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "719",
+                "uid": "beed3674-ace3-42b4-a96b-af1df1bfd510"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:42:43Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{identity}",
+                "kind": "Pod",
+                "name": "host-session-identity-64f7ffc549-g7tgr",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "703",
+                "uid": "80f5ba6f-e4cf-44f2-8b73-462c2d30a396"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:42:43Z",
+            "message": "Readiness probe failed: Get \"https://10.244.2.2:8443/healthz\": dial tcp 10.244.2.2:8443: connect: connection refused",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:42:43Z",
+                "name": "host-session-identity-64f7ffc549-g7tgr.18d386dda12e298d",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "720",
+                "uid": "f1058b36-6e53-4ca1-9fa9-f0a72047f9b3"
+            },
+            "reason": "Unhealthy",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Warning"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:42:42Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "host-session-identity-64f7ffc549",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "699",
+                "uid": "8e2b3ac5-bcfb-4358-8e80-27026565bac6"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:42:42Z",
+            "message": "Created pod: host-session-identity-64f7ffc549-g7tgr",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:42:42Z",
+                "name": "host-session-identity-64f7ffc549.18d386dd7e38cc72",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "705",
+                "uid": "c328f50d-e0d1-4785-94f6-f90314568ea8"
+            },
+            "reason": "SuccessfulCreate",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:42:42Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "name": "host-session-identity",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "698",
+                "uid": "72171cea-cd9f-4bba-8d9a-d288eeb50971"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:42:42Z",
+            "message": "Scaled up replica set host-session-identity-64f7ffc549 from 0 to 1",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:42:42Z",
+                "name": "host-session-identity.18d386dd7ce65a6d",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "701",
+                "uid": "b6d42a55-7410-4a4f-a9f1-a16f229bc5f0"
+            },
+            "reason": "ScalingReplicaSet",
+            "reportingComponent": "deployment-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "deployment-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "hostgroup-default-596cb8446-77bc8",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1241",
+                "uid": "efeb2e42-9a5d-4d59-ac55-5fd29f2785b3"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Successfully assigned wamn-receiving-journey/hostgroup-default-596cb8446-77bc8 to wamn-receiving-journey-worker",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446-77bc8.18d386ea932fe396",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1246",
+                "uid": "d371c0b7-0b32-4570-b0dd-c1ad0fec9417"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{host}",
+                "kind": "Pod",
+                "name": "hostgroup-default-596cb8446-77bc8",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1242",
+                "uid": "efeb2e42-9a5d-4d59-ac55-5fd29f2785b3"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Container image \"wamn-host:receiving-44e1e91d9816-1395978-release\" already present on machine and can be accessed by the pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446-77bc8.18d386eab350b581",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1258",
+                "uid": "c333bb75-93f9-41d2-adb0-250dfe4e9f9f"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{host}",
+                "kind": "Pod",
+                "name": "hostgroup-default-596cb8446-77bc8",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1242",
+                "uid": "efeb2e42-9a5d-4d59-ac55-5fd29f2785b3"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446-77bc8.18d386eab8177d97",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1263",
+                "uid": "5c1ae3a5-f56a-4df1-952b-e8e039e43483"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{host}",
+                "kind": "Pod",
+                "name": "hostgroup-default-596cb8446-77bc8",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1242",
+                "uid": "efeb2e42-9a5d-4d59-ac55-5fd29f2785b3"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446-77bc8.18d386eabebc9e81",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1266",
+                "uid": "180d3b4e-10a1-4c6a-8e9e-390115910a45"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "kind": "Pod",
+                "name": "hostgroup-default-596cb8446-lr9fx",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1244",
+                "uid": "8a3118bc-9284-459f-a5b1-27fda935793b"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Successfully assigned wamn-receiving-journey/hostgroup-default-596cb8446-lr9fx to wamn-receiving-journey-worker2",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446-lr9fx.18d386ea94ae8ab9",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1251",
+                "uid": "93f4962c-ab26-4c39-9001-c6366e522b7a"
+            },
+            "reason": "Scheduled",
+            "reportingComponent": "default-scheduler",
+            "reportingInstance": "",
+            "source": {
+                "component": "default-scheduler"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{host}",
+                "kind": "Pod",
+                "name": "hostgroup-default-596cb8446-lr9fx",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1247",
+                "uid": "8a3118bc-9284-459f-a5b1-27fda935793b"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Container image \"wamn-host:receiving-44e1e91d9816-1395978-release\" already present on machine and can be accessed by the pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446-lr9fx.18d386eab450b287",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1260",
+                "uid": "87a73e22-99d3-470d-b2bc-c6b3ff82442f"
+            },
+            "reason": "Pulled",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker2",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker2"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{host}",
+                "kind": "Pod",
+                "name": "hostgroup-default-596cb8446-lr9fx",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1247",
+                "uid": "8a3118bc-9284-459f-a5b1-27fda935793b"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Container created",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446-lr9fx.18d386eab896fe04",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1264",
+                "uid": "79b8a27a-d7d7-4656-8363-c58f3dfe3255"
+            },
+            "reason": "Created",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker2",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker2"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "v1",
+                "fieldPath": "spec.containers{host}",
+                "kind": "Pod",
+                "name": "hostgroup-default-596cb8446-lr9fx",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1247",
+                "uid": "8a3118bc-9284-459f-a5b1-27fda935793b"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Container started",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446-lr9fx.18d386eabe5d3b4d",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1265",
+                "uid": "bca6c2ab-d6bb-4922-a5a7-ce307d798237"
+            },
+            "reason": "Started",
+            "reportingComponent": "kubelet",
+            "reportingInstance": "wamn-receiving-journey-worker2",
+            "source": {
+                "component": "kubelet",
+                "host": "wamn-receiving-journey-worker2"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "hostgroup-default-596cb8446",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1238",
+                "uid": "ec533732-2ae4-4b85-a654-389817de8c29"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Created pod: hostgroup-default-596cb8446-77bc8",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446.18d386ea92bfef0f",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1243",
+                "uid": "6245a689-6640-4f7f-803c-ead8c95659ea"
+            },
+            "reason": "SuccessfulCreate",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "hostgroup-default-596cb8446",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1238",
+                "uid": "ec533732-2ae4-4b85-a654-389817de8c29"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Created pod: hostgroup-default-596cb8446-lr9fx",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default-596cb8446.18d386ea93b8d798",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1248",
+                "uid": "57d80b26-e18b-4f28-9a1d-9a630f94b068"
+            },
+            "reason": "SuccessfulCreate",
+            "reportingComponent": "replicaset-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "replicaset-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:39Z",
+            "involvedObject": {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "name": "hostgroup-default",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1237",
+                "uid": "a70e2b09-8edf-465b-b763-9824e2e22638"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:39Z",
+            "message": "Scaled up replica set hostgroup-default-596cb8446 from 0 to 2",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:39Z",
+                "name": "hostgroup-default.18d386ea91295a7d",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1239",
+                "uid": "daa330ea-f905-43dc-8084-6be8d88c21c9"
+            },
+            "reason": "ScalingReplicaSet",
+            "reportingComponent": "deployment-controller",
+            "reportingInstance": "",
+            "source": {
+                "component": "deployment-controller"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-data-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1192",
+                "uid": "1dfca513-e423-4b2c-9920-4458beba71d4"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls-1.18d386ea45e635a1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1195",
+                "uid": "bf29b147-a12f-431d-8641-d31f43bc5a92"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-venafi",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-venafi"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-data-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1192",
+                "uid": "1dfca513-e423-4b2c-9920-4458beba71d4"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls-1.18d386ea45e8164c",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1194",
+                "uid": "c9abcc72-4216-468c-b557-b6d5c84e3d07"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-acme",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-acme"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-data-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1192",
+                "uid": "1dfca513-e423-4b2c-9920-4458beba71d4"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls-1.18d386ea45eb002f",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1197",
+                "uid": "fe378374-2c6b-49ae-a92e-8a5042f54205"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-vault",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-vault"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-data-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1192",
+                "uid": "1dfca513-e423-4b2c-9920-4458beba71d4"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls-1.18d386ea45efc26f",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1198",
+                "uid": "f07f0e28-ce79-4514-bc84-146e356f1ce0"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-ca",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-ca"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-data-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1192",
+                "uid": "1dfca513-e423-4b2c-9920-4458beba71d4"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls-1.18d386ea45f9dc63",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1196",
+                "uid": "2eebe63d-6012-4cc5-a09c-4f169edb3369"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-selfsigned",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-selfsigned"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-data-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1192",
+                "uid": "1dfca513-e423-4b2c-9920-4458beba71d4"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Certificate request has been approved by cert-manager.io",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls-1.18d386ea47c32384",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1202",
+                "uid": "891f50a7-22ea-4251-939e-c746e6427514"
+            },
+            "reason": "cert-manager.io",
+            "reportingComponent": "cert-manager-certificaterequests-approver",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-approver"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-data-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1200",
+                "uid": "1dfca513-e423-4b2c-9920-4458beba71d4"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Certificate fetched from issuer successfully",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls-1.18d386ea48aca853",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1204",
+                "uid": "e92f670f-ae8e-4f6e-b084-e035d758655e"
+            },
+            "reason": "CertificateIssued",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-ca",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-ca"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "Certificate",
+                "name": "wasmcloud-data-tls",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1184",
+                "uid": "a0151141-4eff-497b-82b2-1d5be873738a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Issuing certificate as Secret does not exist",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls.18d386ea403cd774",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1187",
+                "uid": "1fdd929e-5b44-4633-9077-f5de3761b972"
+            },
+            "reason": "Issuing",
+            "reportingComponent": "cert-manager-certificates-trigger",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificates-trigger"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "Certificate",
+                "name": "wasmcloud-data-tls",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1186",
+                "uid": "a0151141-4eff-497b-82b2-1d5be873738a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Stored new private key in temporary Secret resource \"wasmcloud-data-tls-vxwgj\"",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls.18d386ea430b62a2",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1190",
+                "uid": "e4b6afc3-7528-4402-ad64-ef47623b8d35"
+            },
+            "reason": "Generated",
+            "reportingComponent": "cert-manager-certificates-key-manager",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificates-key-manager"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "Certificate",
+                "name": "wasmcloud-data-tls",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1191",
+                "uid": "a0151141-4eff-497b-82b2-1d5be873738a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Created new CertificateRequest resource \"wasmcloud-data-tls-1\"",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls.18d386ea462a1323",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1199",
+                "uid": "28632589-7141-4889-baf6-85f275262a84"
+            },
+            "reason": "Requested",
+            "reportingComponent": "cert-manager-certificates-request-manager",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificates-request-manager"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "Certificate",
+                "name": "wasmcloud-data-tls",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1191",
+                "uid": "a0151141-4eff-497b-82b2-1d5be873738a"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "The certificate has been successfully issued",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-data-tls.18d386ea4b15b750",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1217",
+                "uid": "699a8b11-2880-4799-8dfb-c5992637f38d"
+            },
+            "reason": "Issuing",
+            "reportingComponent": "cert-manager-certificates-issuing",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificates-issuing"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-runtime-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1206",
+                "uid": "9e0d1f8a-8a49-4a5f-8965-e749f15da217"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls-1.18d386ea49e3dd24",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1208",
+                "uid": "4c738fc1-4a32-4e9b-a680-db67e2fc0b10"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-ca",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-ca"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-runtime-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1206",
+                "uid": "9e0d1f8a-8a49-4a5f-8965-e749f15da217"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls-1.18d386ea49e3e0c3",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1213",
+                "uid": "774f9167-267a-45d9-83c9-809431b0e517"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-selfsigned",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-selfsigned"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-runtime-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1206",
+                "uid": "9e0d1f8a-8a49-4a5f-8965-e749f15da217"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls-1.18d386ea49e4cdaf",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1211",
+                "uid": "73da07aa-7f05-432d-9ad9-95eea1bbda7f"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-vault",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-vault"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-runtime-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1206",
+                "uid": "9e0d1f8a-8a49-4a5f-8965-e749f15da217"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls-1.18d386ea49e4e911",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1212",
+                "uid": "27de16e8-4cd3-4a5f-9842-81c10354f269"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-venafi",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-venafi"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-runtime-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1206",
+                "uid": "9e0d1f8a-8a49-4a5f-8965-e749f15da217"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Not signing CertificateRequest until it is Approved",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls-1.18d386ea49e58601",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1209",
+                "uid": "e425977e-fadd-4169-af67-3c740083d553"
+            },
+            "reason": "WaitingForApproval",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-acme",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-acme"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-runtime-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1206",
+                "uid": "9e0d1f8a-8a49-4a5f-8965-e749f15da217"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Certificate request has been approved by cert-manager.io",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls-1.18d386ea4af87d41",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1216",
+                "uid": "f42c7e28-1018-4efa-a947-947ddfa1193a"
+            },
+            "reason": "cert-manager.io",
+            "reportingComponent": "cert-manager-certificaterequests-approver",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-approver"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "CertificateRequest",
+                "name": "wasmcloud-runtime-tls-1",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1214",
+                "uid": "9e0d1f8a-8a49-4a5f-8965-e749f15da217"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Certificate fetched from issuer successfully",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls-1.18d386ea4bdfe5c3",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1220",
+                "uid": "56751286-c758-489f-8864-93c6c5093d87"
+            },
+            "reason": "CertificateIssued",
+            "reportingComponent": "cert-manager-certificaterequests-issuer-ca",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificaterequests-issuer-ca"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "Certificate",
+                "name": "wasmcloud-runtime-tls",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1179",
+                "uid": "63c12b6c-ec07-4165-b84f-42c9a712c135"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Issuing certificate as Secret does not exist",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls.18d386ea3dc9df00",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1183",
+                "uid": "26f531ab-ffc1-4ddf-849a-c9cd5b158c4d"
+            },
+            "reason": "Issuing",
+            "reportingComponent": "cert-manager-certificates-trigger",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificates-trigger"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "Certificate",
+                "name": "wasmcloud-runtime-tls",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1180",
+                "uid": "63c12b6c-ec07-4165-b84f-42c9a712c135"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Stored new private key in temporary Secret resource \"wasmcloud-runtime-tls-j5m48\"",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls.18d386ea474eae39",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1201",
+                "uid": "4308b902-6a07-489e-91d5-f311f47ec33c"
+            },
+            "reason": "Generated",
+            "reportingComponent": "cert-manager-certificates-key-manager",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificates-key-manager"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "Certificate",
+                "name": "wasmcloud-runtime-tls",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1203",
+                "uid": "63c12b6c-ec07-4165-b84f-42c9a712c135"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "Created new CertificateRequest resource \"wasmcloud-runtime-tls-1\"",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls.18d386ea49e32a30",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1210",
+                "uid": "50b888c0-c647-4ed3-b8fd-d1e81efe7c58"
+            },
+            "reason": "Requested",
+            "reportingComponent": "cert-manager-certificates-request-manager",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificates-request-manager"
+            },
+            "type": "Normal"
+        },
+        {
+            "apiVersion": "v1",
+            "count": 1,
+            "eventTime": null,
+            "firstTimestamp": "2026-09-09T02:43:37Z",
+            "involvedObject": {
+                "apiVersion": "cert-manager.io/v1",
+                "kind": "Certificate",
+                "name": "wasmcloud-runtime-tls",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1203",
+                "uid": "63c12b6c-ec07-4165-b84f-42c9a712c135"
+            },
+            "kind": "Event",
+            "lastTimestamp": "2026-09-09T02:43:37Z",
+            "message": "The certificate has been successfully issued",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T02:43:37Z",
+                "name": "wasmcloud-runtime-tls.18d386ea4f31b956",
+                "namespace": "wamn-receiving-journey",
+                "resourceVersion": "1225",
+                "uid": "49b79b91-3549-4531-9689-5c59715aa630"
+            },
+            "reason": "Issuing",
+            "reportingComponent": "cert-manager-certificates-issuing",
+            "reportingInstance": "",
+            "source": {
+                "component": "cert-manager-certificates-issuing"
+            },
+            "type": "Normal"
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

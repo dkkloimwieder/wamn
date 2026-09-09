@@ -1,0 +1,16 @@
+[
+  {
+    "host_id": "6ceaa965-bc1c-485d-ac0e-bd207d782587",
+    "pod_uid": "2e70f8ad-7bd4-48a6-8eed-6259f1341415",
+    "pod_name": "hostgroup-default-578748f787-p6gtr",
+    "pod_ip": "10.244.1.5",
+    "deployment": "flow-http-session-a"
+  },
+  {
+    "host_id": "42156394-1d8c-470d-945e-86b9b5ada59c",
+    "pod_uid": "84c2a64b-3293-4c30-952d-991356e4e010",
+    "pod_name": "hostgroup-default-578748f787-shkc2",
+    "pod_ip": "10.244.2.7",
+    "deployment": "flow-http-session-b"
+  }
+]

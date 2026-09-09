@@ -1,0 +1,234 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T03:50:41Z",
+                "generateName": "host-session-unreachable-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "4d5f730c-9b8d-48cc-9a5e-f1634a2c176d",
+                    "batch.kubernetes.io/job-name": "host-session-unreachable",
+                    "controller-uid": "4d5f730c-9b8d-48cc-9a5e-f1634a2c176d",
+                    "job-name": "host-session-unreachable"
+                },
+                "name": "host-session-unreachable-gb4dr",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "host-session-unreachable",
+                        "uid": "4d5f730c-9b8d-48cc-9a5e-f1634a2c176d"
+                    }
+                ],
+                "resourceVersion": "3265",
+                "uid": "7a11a870-8917-4853-8ce9-28bea351fe5f"
+            },
+            "spec": {
+                "automountServiceAccountToken": false,
+                "containers": [
+                    {
+                        "command": [
+                            "/usr/local/bin/wamn-gates",
+                            "host-session-proof"
+                        ],
+                        "env": [
+                            {
+                                "name": "WAMN_IDENTITY_ISSUER",
+                                "value": "https://host-session-identity.wamn-receiving-journey.svc.cluster.local"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_CA_FILE",
+                                "value": "/etc/host-session-ca/ca.crt"
+                            },
+                            {
+                                "name": "WAMN_HOST_SESSION_FIXTURE_FILE",
+                                "value": "/etc/host-session-fixture/fixture.json"
+                            },
+                            {
+                                "name": "WAMN_HOST_SESSION_ENDPOINTS",
+                                "value": "http://10.244.1.6:80/purchase_order/get,http://10.244.2.9:80/purchase_order/get"
+                            },
+                            {
+                                "name": "WAMN_HOST_SESSION_JWKS_AVAILABLE",
+                                "value": "false"
+                            }
+                        ],
+                        "image": "wamn-gates:receiving-581016ee975d-1647734-release",
+                        "imagePullPolicy": "Never",
+                        "name": "host-session",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/etc/host-session-ca",
+                                "name": "ca",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/etc/host-session-fixture",
+                                "name": "fixture",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker2",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "configMap": {
+                            "defaultMode": 420,
+                            "name": "host-session-public-ca"
+                        },
+                        "name": "ca"
+                    },
+                    {
+                        "name": "fixture",
+                        "secret": {
+                            "defaultMode": 256,
+                            "secretName": "host-session-fixture"
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:56:04Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:50:41Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:56:03Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:56:03Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:50:41Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://2fea85a3b8f838843d5ab39697a0a901b38a7236cb4c54132f52d1ecef72f24b",
+                        "image": "docker.io/library/wamn-gates:receiving-581016ee975d-1647734-release",
+                        "imageID": "docker.io/library/import-2026-09-09@sha256:594ce74da2e48dc399967d512b5b4a06ccd0ea584f1c8d673f7d5ba1ed03407d",
+                        "lastState": {},
+                        "name": "host-session",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://2fea85a3b8f838843d5ab39697a0a901b38a7236cb4c54132f52d1ecef72f24b",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-09T03:56:02Z",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-09T03:50:41Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/etc/host-session-ca",
+                                "name": "ca",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/etc/host-session-fixture",
+                                "name": "fixture",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.5",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.5"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.2.10",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.10"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-09T03:50:41Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

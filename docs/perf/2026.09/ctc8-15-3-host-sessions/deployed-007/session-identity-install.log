@@ -1,0 +1,8 @@
+Release "host-session-identity" does not exist. Installing it now.
+NAME: host-session-identity
+LAST DEPLOYED: Tue Sep  8 23:43:39 2026
+NAMESPACE: wamn-receiving-journey
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None

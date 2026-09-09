@@ -1,0 +1,34 @@
+2026-09-09T01:16:43Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908/tools/build-components m1 
+2026-09-09T01:18:02Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker 
+2026-09-09T01:18:59Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908/Dockerfile --target host --tag wamn-host:receiving-f5a9cb29e1a6-1185866-release --label wamn.dev/source-head=f5a9cb29e1a616043abc9fcdf663990ac8a58d29 --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908 
+2026-09-09T01:24:46Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908/Dockerfile --target gates --tag wamn-gates:receiving-f5a9cb29e1a6-1185866-release --label wamn.dev/source-head=f5a9cb29e1a616043abc9fcdf663990ac8a58d29 --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908 
+2026-09-09T01:40:40Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908/Dockerfile --target identity --tag wamn-identity:receiving-f5a9cb29e1a6-1185866-release --label wamn.dev/source-head=f5a9cb29e1a616043abc9fcdf663990ac8a58d29 --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-15-3-host-sessions-20260908 
+2026-09-09T01:41:54Z docker image inspect wamn-identity:receiving-f5a9cb29e1a6-1185866-release 
+2026-09-09T01:41:54Z kind create cluster --name wamn-receiving-journey --config /tmp/tmp.F6cUu7C8Xz/kind-config.yaml --kubeconfig /tmp/tmp.F6cUu7C8Xz/kubeconfig 
+2026-09-09T01:42:23Z kubectl --kubeconfig /tmp/tmp.F6cUu7C8Xz/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-09T01:42:38Z kubectl --kubeconfig /tmp/tmp.F6cUu7C8Xz/kubeconfig --context kind-wamn-receiving-journey create namespace wamn-receiving-journey 
+2026-09-09T01:42:39Z kind load docker-image wamn-host:receiving-f5a9cb29e1a6-1185866-release --name wamn-receiving-journey 
+2026-09-09T01:42:47Z kind load docker-image wamn-gates:receiving-f5a9cb29e1a6-1185866-release --name wamn-receiving-journey 
+2026-09-09T01:43:00Z kind load docker-image wamn-identity:receiving-f5a9cb29e1a6-1185866-release --name wamn-receiving-journey 
+2026-09-09T01:43:07Z docker exec wamn-receiving-journey-control-plane crictl inspecti -o json wamn-identity:receiving-f5a9cb29e1a6-1185866-release 
+2026-09-09T01:43:07Z docker exec wamn-receiving-journey-worker crictl inspecti -o json wamn-identity:receiving-f5a9cb29e1a6-1185866-release 
+2026-09-09T01:43:07Z docker exec wamn-receiving-journey-worker2 crictl inspecti -o json wamn-identity:receiving-f5a9cb29e1a6-1185866-release 
+2026-09-09T01:43:07Z htpasswd \<credential-bearing\ arguments\ redacted\> 
+2026-09-09T01:43:08Z postgres \<credential-bearing\ arguments\ redacted\> 
+2026-09-09T01:43:09Z docker run --detach --name wamn-receiving-registry-f5a9cb29e1a6-1185866 --network kind --env REGISTRY_AUTH=htpasswd --env REGISTRY_AUTH_HTPASSWD_REALM=WAMN\ Receiving\ cluster\ journey --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd --volume /tmp/tmp.F6cUu7C8Xz/htpasswd:/auth/htpasswd:ro registry:2 
+2026-09-09T01:43:10Z docker run --detach --name wamn-receiving-nats-f5a9cb29e1a6-1185866 --network kind nats:2.10-alpine --jetstream --store_dir /data --http_port 8222 
+2026-09-09T01:43:16Z psql \<owned\ PostgreSQL\ administrator\> CREATE\ DATABASE\ wamn_system 
+2026-09-09T01:43:16Z cargo test production_two_package_release_serves_all_thirteen_pat_routes \<journey\ document\ with\ disposable\ PostgreSQL\ and\ OCI\ inputs\ redacted\> 
+2026-09-09T01:44:00Z kubectl --kubeconfig /tmp/tmp.F6cUu7C8Xz/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get deployment hostgroup-default -o json 
+2026-09-09T01:44:00Z kubectl --kubeconfig /tmp/tmp.F6cUu7C8Xz/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get pods -o json 
+2026-09-09T01:44:00Z kubectl --kubeconfig /tmp/tmp.F6cUu7C8Xz/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get events -o json 
+2026-09-09T01:44:00Z kubectl --kubeconfig /tmp/tmp.F6cUu7C8Xz/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get secrets -o name 
+2026-09-09T01:44:00Z kubectl --kubeconfig /tmp/tmp.F6cUu7C8Xz/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get jobs -o json 
+2026-09-09T01:44:00Z kind delete cluster --name wamn-receiving-journey 
+2026-09-09T01:44:02Z docker rm --force --volumes wamn-receiving-pg18-f5a9cb29e1a6-1185866 
+2026-09-09T01:44:02Z docker rm --force --volumes wamn-receiving-registry-f5a9cb29e1a6-1185866 
+2026-09-09T01:44:03Z docker rm --force --volumes wamn-receiving-nats-f5a9cb29e1a6-1185866 
+2026-09-09T01:44:03Z docker image rm wamn-gates:receiving-f5a9cb29e1a6-1185866-release 
+2026-09-09T01:44:03Z docker image rm wamn-host:receiving-f5a9cb29e1a6-1185866-release 
+2026-09-09T01:44:03Z docker image rm wamn-identity:receiving-f5a9cb29e1a6-1185866-release 
+2026-09-09T01:44:04Z rm -rf -- /tmp/tmp.F6cUu7C8Xz 

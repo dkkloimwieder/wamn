@@ -1,0 +1,24 @@
+[
+  {
+    "deployment": "flow-http-session-b",
+    "deployment_uid": "2d311c81-21d5-42c0-af52-e44a8338670c",
+    "replicaset_uid": "68e2a9de-36e7-443c-9ab1-a5f36e81ae19",
+    "workload_uid": "3b654171-4c19-4cd1-b41f-cc756e5c524e",
+    "host_id": "42156394-1d8c-470d-945e-86b9b5ada59c",
+    "pod_uid": "84c2a64b-3293-4c30-952d-991356e4e010",
+    "pod_name": "hostgroup-default-578748f787-shkc2",
+    "pod_ip": "10.244.2.7",
+    "endpoint": "http://10.244.2.7:80/purchase_order/get"
+  },
+  {
+    "deployment": "flow-http-session-a",
+    "deployment_uid": "bbcbf8e5-f901-4ca2-b6d2-562ccffa5d26",
+    "replicaset_uid": "adf8087e-9212-42b9-9389-039afa6bb0c4",
+    "workload_uid": "8d7febfe-2a5d-48cc-90e1-3aa7b2c05062",
+    "host_id": "6ceaa965-bc1c-485d-ac0e-bd207d782587",
+    "pod_uid": "2e70f8ad-7bd4-48a6-8eed-6259f1341415",
+    "pod_name": "hostgroup-default-578748f787-p6gtr",
+    "pod_ip": "10.244.1.5",
+    "endpoint": "http://10.244.1.5:80/purchase_order/get"
+  }
+]
