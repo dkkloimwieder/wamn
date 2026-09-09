@@ -1,0 +1,106 @@
+{
+  "ready": true,
+  "exit_code": 0,
+  "stdout": "pod/sampler condition met\npod/sampler condition met\n",
+  "stderr": "I0909 17:36:40.046230 4001351 reflector.go:664] \"Warning: watch ended with error\" reflector=\"k8s.io/client-go/tools/watch/informerwatcher.go:162\" type=\"*unstructured.Unstructured\" err=\"very short watch: k8s.io/client-go/tools/watch/informerwatcher.go:162: Unexpected watch close - watch lasted less than a second and no items received\"\n",
+  "command": [
+    "kubectl",
+    "--kubeconfig=/dev/null",
+    "--server=http://127.0.0.1:46371",
+    "--request-timeout=5s",
+    "-n",
+    "proof",
+    "wait",
+    "--for=create",
+    "--for=condition=Ready",
+    "pod",
+    "-l",
+    "job-name=sampler",
+    "--timeout=2s"
+  ],
+  "requests": [
+    {
+      "path": "/api",
+      "query": {
+        "timeout": [
+          "5s"
+        ]
+      }
+    },
+    {
+      "path": "/apis",
+      "query": {
+        "timeout": [
+          "5s"
+        ]
+      }
+    },
+    {
+      "path": "/api/v1",
+      "query": {
+        "timeout": [
+          "5s"
+        ]
+      }
+    },
+    {
+      "path": "/api/v1/namespaces/proof/pods",
+      "query": {
+        "labelSelector": [
+          "job-name=sampler"
+        ],
+        "timeout": [
+          "5s"
+        ]
+      }
+    },
+    {
+      "path": "/api/v1/namespaces/proof/pods",
+      "query": {
+        "labelSelector": [
+          "job-name=sampler"
+        ],
+        "timeout": [
+          "5s"
+        ]
+      }
+    },
+    {
+      "path": "/api/v1/namespaces/proof/pods",
+      "query": {
+        "labelSelector": [
+          "job-name=sampler"
+        ],
+        "timeout": [
+          "5s"
+        ]
+      }
+    },
+    {
+      "path": "/api/v1/namespaces/proof/pods",
+      "query": {
+        "allowWatchBookmarks": [
+          "true"
+        ],
+        "fieldSelector": [
+          "metadata.name=sampler"
+        ],
+        "resourceVersionMatch": [
+          "NotOlderThan"
+        ],
+        "sendInitialEvents": [
+          "true"
+        ],
+        "timeout": [
+          "5s"
+        ],
+        "timeoutSeconds": [
+          "422"
+        ],
+        "watch": [
+          "true"
+        ]
+      }
+    }
+  ]
+}

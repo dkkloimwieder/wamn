@@ -1,0 +1,1 @@
+Attempt002 records the actual client watch request with sendInitialEvents=true. The fixture omitted the required initial-events-end bookmark. This attempt supplies ADDED and BOOKMARK events. The named-Pod GET hypothesis from attempt001 did not explain the observed request trace. Production wait arguments and timeout are unchanged.

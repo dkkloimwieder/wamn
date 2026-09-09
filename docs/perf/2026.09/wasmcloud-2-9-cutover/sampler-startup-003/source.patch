@@ -1,0 +1,13 @@
+diff --git a/tools/receiving-operator-recovery-run b/tools/receiving-operator-recovery-run
+index e471a81b..5609a5ff 100755
+--- a/tools/receiving-operator-recovery-run
++++ b/tools/receiving-operator-recovery-run
+@@ -377,6 +377,8 @@ done
+     try:
+         run("create-sampler", kube + ["create", "-f", str(evidence / "probe-job.json")])
+         sampler_owned = True
++        run("wait-sampler-ready", kube + ["-n", NAMESPACE, "wait", "--for=create",
++            "--for=condition=Ready", "pod", "-l", f"job-name={JOB}", "--timeout=60s"], timeout=75)
+         recovered("initial", time.time(), True)
+         # Establish a full native fleet-witness window before interrupting NATS.
+         settling = time.monotonic()
