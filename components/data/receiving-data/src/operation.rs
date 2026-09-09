@@ -309,12 +309,13 @@ fn record_receipt_input(
     }
 }
 
+/// Parse any accepted int64 spelling and re-spell it as the canonical decimal.
+///
+/// Numerics stay strict on scale, because scale is value in PostgreSQL, where
+/// `12.3400` is not `12.34`; integers and UUIDs re-spell because their text is
+/// representation only. Same law, two facts about types.
 fn parse_int64(value: &str) -> Result<i64, ()> {
-    value
-        .parse::<i64>()
-        .ok()
-        .filter(|parsed| parsed.to_string() == value)
-        .ok_or(())
+    value.parse::<i64>().map_err(|_| ())
 }
 
 #[derive(Debug, Serialize)]
@@ -1075,7 +1076,7 @@ mod tests {
     }
 
     #[test]
-    fn dto_unknown_fields_and_noncanonical_int64_refuse_in_memory() {
+    fn dto_unknown_fields_and_non_int64_wire_scalars_refuse_in_memory() {
         assert!(
             serde_json::from_value::<GetInput>(serde_json::json!({
                 "id": "00000000-0000-0000-0000-000000000001",
@@ -1085,7 +1086,7 @@ mod tests {
         );
         assert_eq!(parse_int64("0"), Ok(0));
         assert_eq!(parse_int64("-42"), Ok(-42));
-        for value in ["", "01", "-0", "+1", "1.0"] {
+        for value in ["", "1.0", "9223372036854775808"] {
             assert_eq!(parse_int64(value), Err(()));
         }
         assert!(serde_json::from_value::<ListInput>(serde_json::json!({})).is_ok());
@@ -1093,6 +1094,27 @@ mod tests {
             serde_json::from_value::<ListInput>(serde_json::json!({"unexpected": true})).is_err()
         );
         assert!(parse_uuid("not-a-uuid", "id").is_err());
+    }
+
+    /// `record_receipt` is the only command this crate mints an idempotency key
+    /// for, and it ingests no integer, so the boundary this crate owns for an
+    /// int64 is the i64 that `purchase_order.update` binds to SQL. Two
+    /// spellings of one integer must reach it as one value, or a caller whose
+    /// retry infrastructure re-spells `1` gets a refusal for the same command.
+    #[test]
+    fn two_spellings_of_one_int64_make_one_command() {
+        let send = |expected_row_version: &str| {
+            let parsed: PurchaseOrderUpdateInput = serde_json::from_value(serde_json::json!({
+                "id": "00000000-0000-0000-0000-000000000001",
+                "expected_row_version": expected_row_version,
+                "change": {},
+            }))
+            .expect("the purchase_order.update contract accepts either spelling");
+            parse_int64(&parsed.expected_row_version)
+                .expect("either spelling of one integer is an int64")
+        };
+        assert_eq!(send("01"), send("1"));
+        assert_eq!(send("+1"), 1);
     }
 
     #[test]

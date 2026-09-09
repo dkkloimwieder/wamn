@@ -298,12 +298,15 @@ fn base_result_uuid(value: &str) -> Result<WamnUuid, AccessError> {
         })
 }
 
+/// Parse any accepted int64 spelling and re-spell it as the canonical decimal.
+///
+/// Numerics stay strict on scale, because scale is value in PostgreSQL, where
+/// `12.3400` is not `12.34`; integers and UUIDs re-spell because their text is
+/// representation only. Same law, two facts about types.
 fn parse_int64(value: &str, field: &'static str) -> Result<i64, AccessError> {
     value
         .parse::<i64>()
-        .ok()
-        .filter(|parsed| parsed.to_string() == value)
-        .ok_or_else(|| AccessError::invalid("input is not a canonical int64", field))
+        .map_err(|_| AccessError::invalid("input is not an int64", field))
 }
 
 fn nullable_value<T>(
@@ -908,11 +911,11 @@ mod tests {
     }
 
     #[test]
-    fn noncanonical_int64_and_non_uuid_wire_scalars_refuse() {
+    fn non_int64_and_non_uuid_wire_scalars_refuse() {
         assert!(parse_uuid(ID, "id").is_ok());
         assert!(parse_uuid("not-a-uuid", "id").is_err());
         assert_eq!(parse_int64("-42", "row_version").unwrap(), -42);
-        for value in ["", "01", "-0", "+1", "1.0"] {
+        for value in ["", "1.0", "9223372036854775808"] {
             assert_eq!(
                 parse_int64(value, "row_version").unwrap_err().kind(),
                 AccessErrorKind::InvalidInput
@@ -939,6 +942,24 @@ mod tests {
         let second = send(&ID.to_uppercase());
         assert_eq!(first, second);
         assert_eq!(second.0, ID);
+    }
+
+    /// Same boundary, same law, on the other type this overlay ingests. Two
+    /// spellings of one integer must arrive as one command rather than as an
+    /// `idempotency_conflict`.
+    #[test]
+    fn two_spellings_of_one_int64_make_one_command() {
+        let send = |expected_row_version: &str| {
+            let parsed: ApproveInspectionInput = serde_json::from_value(serde_json::json!({
+                "receipt_id": ID,
+                "expected_row_version": expected_row_version,
+            }))
+            .expect("the approve_inspection contract accepts either spelling");
+            parse_int64(&parsed.expected_row_version, "expected_row_version")
+                .expect("either spelling of one integer is an int64")
+        };
+        assert_eq!(send("01"), send("1"));
+        assert_eq!(send("+1"), 1);
     }
 
     #[test]
