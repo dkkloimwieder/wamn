@@ -1,0 +1,47 @@
+{
+  "bead": "wamn-b2m6.11",
+  "base_commit": "9d54245c",
+  "scope": "WMS evidence labels and the adjacent false materializer comment only",
+  "changed_file": "tools/wms-cluster-journey-run",
+  "removed_unexecuted_claims": [
+    "receipt-root-causation",
+    "inspection-derived-causation",
+    "exactly-one-pending-inspection",
+    "exact-materializer-durable-ack",
+    "zero-materializer-dead-letter"
+  ],
+  "claims": [
+    {
+      "label": "wms-composed-move-contention-and-replay",
+      "runner_anchor": "tools/wms-cluster-journey-run:2193",
+      "test_anchor": "tests/integration/src/wms_runtime_live.rs:132",
+      "assertions": "Two submitted moves return exactly one success and one concurrency_conflict, correct destination/version, and replayed movement identity/version."
+    },
+    {
+      "label": "wms-released-operations",
+      "runner_anchor": "tools/wms-cluster-journey-run:2217",
+      "test_anchor": "tests/integration/src/wms_runtime_live.rs:262",
+      "assertions": "pallet/get, inventory/aggregate, inventory/adjust, inventory/split, inventory/merge, and pallet/query execute with success, replay, refusal, and pagination checks."
+    },
+    {
+      "label": "one-label-object-for-winning-movement",
+      "runner_anchor": "tools/wms-cluster-journey-run:2233",
+      "assertions": "The object-store listing has exactly one object under wms/, named by the winning movement ID; object contents are not asserted."
+    },
+    {
+      "label": "idle-materializer-ready",
+      "runner_anchor": "tools/wms-cluster-journey-run:2353",
+      "additional_anchor": "tools/wms-cluster-journey-run:2373",
+      "assertions": "Ready native placement and no matched refusal/failure in the captured host logs; no causal event, ACK, or dead-letter count assertion."
+    },
+    {
+      "label": "composed-route=inventory_move_and_label",
+      "source_anchor": "packages/wms/publication/attachments.json:151",
+      "wiring_anchor": "packages/wms/publication/wirings/inventory_move_and_label.json:6",
+      "assertions": "The existing attachment selects WMS, label-render, and blob-put composition."
+    }
+  ],
+  "unchanged": "Application implementation, requests, assertions, admission, publication, thresholds, build profiles, cleanup behavior, startup mode, and historical RC citation.",
+  "future_run_evidence": "Use the main repository docs/perf/ tree, outside the clean cutover build worktree; preparation files remain under /tmp.",
+  "live_proof_status": "Not executed by this preparation; WMS live owner beads remain open."
+}

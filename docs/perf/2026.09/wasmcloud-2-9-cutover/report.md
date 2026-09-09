@@ -284,3 +284,13 @@ The [comparison plan](performance-plan-001/comparison.json) distinguishes retain
 The prepared host process test [compiles](host-lifecycle-build-001/exit-code.txt), and scoped [Clippy](host-lifecycle-build-001/clippy-exit-code.txt) exits 0 with existing dependency warnings.
 Neither result establishes its live process behavior.
 The [NATS extraction record](host-lifecycle-preflight-001/extraction.json) identifies the pinned executable and confirms removal of its stopped extraction container.
+
+
+## WMS receipt correction
+
+The WMS runner copied five Receiving causation and acknowledgment claims into its final receipt.
+Its actual materializer proof establishes ready placement and absence of captured refusal or failure logs.
+The [correction](wms-evidence-labels-001/wms-evidence-labels.patch) removes those unsupported claims under `wamn-b2m6.11`.
+It names the actual composed move, released operations, winning label object, and idle materializer scope.
+The [acceptance map](wms-evidence-labels-001/acceptance-map.json) cites the existing assertions for each replacement.
+Shell syntax passes, and no new WMS live result is claimed.

@@ -1,0 +1,9 @@
+{
+  "finding": "wamn-b2m6.11",
+  "base": "9d54245c0b0e7af43bfe43085378877a88bf62d0",
+  "source": "tools/wms-cluster-journey-run",
+  "source_sha256": "a82e4f9b63116e0908578bf2d2e9b1bf793fc0d3279d14963a5a19eb1cb5480b",
+  "validation": "bash -n tools/wms-cluster-journey-run",
+  "exit_code": 0,
+  "live_execution": false
+}

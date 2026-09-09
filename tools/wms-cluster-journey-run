@@ -544,7 +544,7 @@ DEMO
       printf 'WMS STARTUP MEASUREMENT PASS source=%s namespace=%s\n' \
         "$head" "$namespace" >"$evidence_dir/startup-measurement.receipt"
     else
-      printf 'WMS CLUSTER JOURNEY PASS source=%s namespace=%s host=%s minted=shell-through-wamn-ctl composed-route=plain-until-.26 rerun=native-scheduling,exact-cleanup\n' \
+      printf 'WMS CLUSTER JOURNEY PASS source=%s namespace=%s host=%s minted=shell-through-wamn-ctl composed-route=inventory_move_and_label label=one-winning-movement-object rerun=wms-runtime,idle-materializer,native-scheduling,exact-cleanup\n' \
         "$head" "$namespace" "$route_host" >"$evidence_dir/journey.receipt"
     fi
     (
@@ -2362,12 +2362,8 @@ jq -e --arg namespace "$namespace" \
     . as $type | any($conditions[]?; .type == $type and .status == "True"))
 ' >/dev/null "$evidence_dir/materializer-workload.json"
 
-# Both production consumers are resident before this HTTP commit. The first
-# request makes the untouched order inspection-bearing; the second creates the
-# receipt whose causal CDC event the materializer consumes.
-# WMS declares no events, so nothing is triggered through the materializer.
-# What is asserted below is that the idle workload neither refused nor
-# failed: the overlay mounts its family and the deployment proves it.
+# WMS declares no events. This arm checks the idle materializer's ready
+# placement above and the captured host logs for refusal or failure below.
 
 
 : >"$evidence_dir/materializer-host.log"
@@ -2472,14 +2468,12 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
       "operator-before-host-2.9.0",
       "three-ready-default-hosts",
       "flow-http-workload-ready",
-      "materializer-workload-ready",
+      "idle-materializer-ready",
       "operator-endpointslice",
       "exact-route-not-found-reachability",
-      "receipt-root-causation",
-      "inspection-derived-causation",
-      "exactly-one-pending-inspection",
-      "exact-materializer-durable-ack",
-      "zero-materializer-dead-letter",
+      "wms-composed-move-contention-and-replay",
+      "wms-released-operations",
+      "one-label-object-for-winning-movement",
       "cross-environment-scheduling-refusal"
     ],
     evidence_scope:{
@@ -2489,7 +2483,7 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
         arms:["bootstrap","M2-supersession","socketguard","traceproof",
               "scoped-RegistryReader"]
       },
-      rerun:["materializer-journey","native-scheduling","exact-cleanup"]
+      rerun:["wms-runtime","idle-materializer","native-scheduling","exact-cleanup"]
     },
     reachability_scope:"The exact 404 proves HTTP routing and guest execution only."
   }
