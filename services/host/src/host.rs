@@ -967,7 +967,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             error = wamn_runtime::lifecycle::watch_liveness(&liveness, &probe_state, silence_budget) => Err(error),
             () = ingress_stopped(ingress_connections.as_ref()) => anyhow::bail!("native HTTP ingress stopped unexpectedly"),
             task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
-                anyhow::bail!("native probe listener stopped unexpectedly: {task:?}")
+                Err(probe_listener_failure(task))
             }
         }
     };
@@ -994,6 +994,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     })
     .await;
     result.and(identity_result).and(probe_result)
+}
+
+fn probe_listener_failure(task: Option<Result<(), tokio::task::JoinError>>) -> anyhow::Error {
+    anyhow::anyhow!("native probe listener stopped unexpectedly: {task:?}")
 }
 
 // Native timeout accessors are private; this is the documented whole-seconds
@@ -1131,6 +1135,66 @@ mod tests {
         stop.send(()).unwrap();
         running.await.unwrap();
         assert!(cleanup_polled.load(Ordering::Relaxed));
+    }
+
+    #[tokio::test]
+    async fn native_probe_termination_triggers_failure_and_cleanup() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = probes::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let state = ProbeState::default();
+            state.started();
+            let mut tasks = tokio::task::JoinSet::new();
+            let probe = tasks.spawn(probes::serve(
+                listener,
+                state.clone(),
+                std::future::pending(),
+            ));
+            let mut client = tokio::net::TcpStream::connect(address).await.unwrap();
+            client
+                .write_all(b"GET /livez HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).await.unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+            let cleanup_polled = AtomicBool::new(false);
+            let running = stop_after(
+                async {
+                    let task = tasks.join_next().await;
+                    assert!(task.as_ref().unwrap().as_ref().unwrap_err().is_cancelled());
+                    Err(probe_listener_failure(task))
+                },
+                async {
+                    cleanup_polled.store(true, Ordering::Relaxed);
+                    Ok(())
+                },
+                &state,
+                Duration::from_secs(60),
+                Duration::from_secs(1),
+            );
+            tokio::pin!(running);
+            tokio::select! {
+                biased;
+                _ = &mut running => panic!("the live listener must not trigger cleanup"),
+                () = tokio::task::yield_now() => {}
+            }
+            assert!(!cleanup_polled.load(Ordering::Relaxed));
+            probe.abort();
+            let error = running.await.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("native probe listener stopped unexpectedly:")
+            );
+            assert!(cleanup_polled.load(Ordering::Relaxed));
+        })
+        .await
+        .expect("native listener failure must trigger cleanup without the traffic drain delay");
     }
 
     #[tokio::test]

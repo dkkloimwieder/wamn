@@ -1,0 +1,41 @@
+2026-09-09T17:51:45.914840Z  INFO connected to NATS
+2026-09-09T17:51:45.915704Z  INFO host memory resolved max_guest_memory=45.7GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-09T17:51:45.917872Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=false
+2026-09-09T17:51:45.917893Z  INFO wamn-host carries no release; no release-gated interface is served
+2026-09-09T17:51:45.917939Z  INFO probe server listening addr=127.0.0.1:36403
+2026-09-09T17:51:45.917958Z  INFO HTTP server listening addr=127.0.0.1:34067 protocol="HTTP"
+2026-09-09T17:51:45.917998Z  INFO Starting WASI OTel plugin endpoint=http://localhost:4317 protocol="grpc"
+2026-09-09T17:51:45.918735Z  INFO WASI OTel plugin started
+2026-09-09T17:51:45.918786Z  INFO Host started host_id="5de91160-6104-410e-8c31-b887ae9395fb" friendly_name="quickest-clock-8736" host_name="host-term" labels={"hostgroup": "lifecycle-proof"} version="2.9.0" max_concurrent_starts=1
+2026-09-09T17:51:45.919063Z  INFO Host provides interfaces count=10 interfaces=["wasi:cli/exit,stderr,terminal-stdout,terminal-stderr,terminal-stdin,terminal-input,terminal-output,stdin,environment,stdout@0.2.0", "wasi:clocks/monotonic-clock,wall-clock@0.2.0", "wasi:clocks/wall-time,monotonic-clock@0.2.0", "wasi:filesystem/preopens,types@0.2.0", "wasi:http/incoming-handler,outgoing-handler,types@0.2.0", "wasi:http/types,handler@0.3.0", "wasi:io/poll,error,streams@0.2.0", "wasi:random/random,insecure-seed,insecure@0.2.0", "wasi:random/random@0.2.0", "wasi:sockets/udp-create-socket,udp,instance-network,tcp-create-socket,network,tcp,ip-name-lookup@0.2.0"]
+2026-09-09T17:51:45.919102Z  INFO wamn-host runtime startup completed elapsed_ms=6 cleanup_budget_secs=45
+2026-09-09T17:51:45.934406Z  WARN disconnected from NATS; buffered operations will be retried
+2026-09-09T17:51:45.936024Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:45.939233Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:45.944425Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:45.953710Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:45.971049Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:46.004484Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:46.070036Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:46.199323Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:46.456801Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:46.969700Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:47.995057Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:50.043938Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:54.045073Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:51:58.046435Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:02.047844Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:06.049360Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:10.051268Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:14.051722Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:18.053534Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:22.055128Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:26.056071Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:30.057267Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:34.058114Z  WARN NATS client error err=nats: IO error
+2026-09-09T17:52:38.059915Z  INFO connected to NATS
+2026-09-09T17:52:43.092846Z  INFO shutting down wamn-host
+2026-09-09T17:52:43.093026Z  INFO HTTP server stopping addr=127.0.0.1:34067
+2026-09-09T17:52:43.093106Z  INFO Stopping WASI OTel plugin
+2026-09-09T17:52:43.093620Z  INFO WASI OTel plugin stopped
+2026-09-09T17:52:43.093736Z  INFO HTTP server received shutdown signal

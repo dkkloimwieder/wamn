@@ -1,0 +1,11 @@
+scope=native ClusterHost and WAMN lifecycle helpers in test process
+closed_client_subscription_failed=true
+heartbeat_interval_ms=100
+silence_budget_ms=300
+observation_ms=300
+never_beat=true
+cleanup_polled_after_observer=true
+native_subscription_error_retrieved=true
+cleanup_ms=0
+cleanup_budget_ms=1000
+full_process_unexpected_failure_proved=false

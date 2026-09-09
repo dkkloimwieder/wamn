@@ -1,0 +1,8 @@
+signal=SIGINT
+exit_success=true
+shutdown_ms=5005
+shutdown_budget_ms=70000
+startup_starting_observed=false
+saturation_probe_pass=true
+recovery_probe_pass=true
+nats_outage_seconds=0
