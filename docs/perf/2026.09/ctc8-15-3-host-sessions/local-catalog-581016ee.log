@@ -1,0 +1,97 @@
+SOURCE_HEAD=581016ee975d65ebaecd470619f8fae750a769ba
+COMMAND=env -u CARGO_TARGET_DIR RUSTC_WRAPPER= cargo test --locked --offline -p wamn-catalog --lib --test serving_manifest_digest -- --test-threads=1 
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+warning: `wamn-catalog` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running unittests src/lib.rs (target/debug/deps/wamn_catalog-f960800cb345038e)
+
+running 62 tests
+test component_library::tests::a_component_importing_no_authority_admits_as_pure ... ok
+test component_library::tests::a_migration_defaulted_effect_projection_is_refused ... ok
+test component_library::tests::a_stored_pure_projection_its_imports_derive_stays_readable ... ok
+test component_library::tests::admission_refuses_an_effect_projection_narrower_than_the_imports ... ok
+test component_library::tests::an_imported_effect_interface_absent_from_the_audited_imports_refuses ... ok
+test component_library::tests::an_inherited_effect_admits_naming_its_dependency_package_and_no_interfaces ... ok
+test component_library::tests::an_inherited_effect_that_carries_interfaces_is_refused ... ok
+test component_library::tests::connections_and_effect_imports_must_account_for_each_other ... ok
+test component_library::tests::declaration_document_is_exact_kebab_case_json ... ok
+test component_library::tests::exact_operation_dependency_is_preserved_without_becoming_an_effect ... ok
+test component_library::tests::generated_statement_facts_bind_to_exact_registered_export ... ok
+test component_library::tests::manifest_matched_private_operation_can_carry_sql_without_an_auth_token ... ok
+test component_library::tests::normalization_is_sorted_and_carries_every_component_owned_fact ... ok
+test component_library::tests::operation_dependency_must_be_exact_and_audited ... ok
+test component_library::tests::partial_or_ambiguous_component_facts_refuse ... ok
+test component_library::tests::persisted_component_scope_uses_the_package_coordinate_guard ... ok
+test component_library::tests::registered_operation_is_explicit_and_equals_the_export_token ... ok
+test component_library::tests::schema_identity_is_rfc_8785_and_compatibility_is_exact ... ok
+test component_library::tests::statement_authority_refuses_wrong_operation_digest_and_shape ... ok
+test component_library::tests::the_persisted_effect_fact_spells_both_provenance_classes ... ok
+test connection::tests::each_descriptor_has_its_own_identity ... ok
+test connection::tests::the_blobstore_author_may_name_an_object_but_never_a_container ... ok
+test connection::tests::the_blobstore_credential_is_host_signed_not_header_injected ... ok
+test connection::tests::the_new_wire_spellings_are_pinned ... ok
+test package::tests::operation_tokens_use_the_native_component_export_grammar ... ok
+test package::tests::persisted_coordinates_preserve_constructor_invariants ... ok
+test serving_manifest::tests::attachment_and_registration_targets_are_exact ... ok
+test serving_manifest::tests::attachment_auth_policy_modes_are_closed_and_required ... ok
+test serving_manifest::tests::attachment_operation_is_explicit_and_canonical ... ok
+test serving_manifest::tests::collection_insertion_order_cannot_reach_identity ... ok
+test serving_manifest::tests::component_dependency_closure_is_exact_and_acyclic ... ok
+test serving_manifest::tests::one_effective_release_selects_only_one_version_of_each_package ... ok
+test serving_manifest::tests::only_canonical_format_one_bytes_are_admitted ... ok
+test serving_manifest::tests::registered_operations_match_the_containing_package_coordinate ... ok
+test serving_manifest::tests::registration_identity_keeps_owner_and_emitter_distinct ... ok
+test serving_manifest::tests::registration_map_key_is_owner_qualified ... ok
+test serving_manifest::tests::removed_flow_and_plan_fields_are_refused ... ok
+test serving_manifest::tests::statement_lookup_is_operation_scoped_and_revalidates_exact_bytes ... ok
+test serving_manifest::tests::the_configmap_name_is_a_dns_1123_subdomain ... ok
+test serving_manifest::tests::the_delivery_ceiling_is_enforced_at_the_reader ... ok
+test serving_manifest::tests::unsupported_formats_are_typed_refusals_not_compatibility_arms ... ok
+test tests::a_manifest_digest_admits_exactly_the_run_plane_shape ... ok
+test tests::named_removal_and_reordering_mutants_change_every_hash_frame ... ok
+test wiring::tests::a_cross_package_node_carries_one_closed_alias_operation_coordinate ... ok
+test wiring::tests::a_node_declares_its_terminal_and_the_document_declares_its_entry ... ok
+test wiring::tests::an_edge_endpoint_must_name_a_declared_node ... ok
+test wiring::tests::an_emit_terminal_requires_a_complete_exact_selector ... ok
+test wiring::tests::the_cases_array_carries_the_flow_documents_bounds ... ok
+test wiring::tests::the_document_wire_shape_is_closed ... ok
+test wiring::tests::the_entry_must_name_a_declared_node ... ok
+test wiring::tests::the_wiring_hash_covers_the_graph_and_ignores_key_order ... ok
+test wiring_activation::tests::no_statement_lets_the_caller_choose_the_tenant ... ok
+test wiring_activation::tests::the_env_hot_read_requires_exact_package_membership ... ok
+test wiring_activation::tests::the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant ... ok
+test wiring_activation::tests::the_notice_shape_is_exactly_the_payload_the_ddl_builds ... ok
+test wiring_activation::tests::the_only_pointer_write_carries_both_the_hash_and_the_enabled_flag ... ok
+test wiring_compatibility::tests::either_endpoint_digest_or_port_drift_refuses ... ok
+test wiring_compatibility::tests::equality_has_no_structural_subtyping_fallback ... ok
+test wiring_compatibility::tests::error_edges_validate_the_target_without_fabricating_a_component_output_schema ... ok
+test wiring_compatibility::tests::exact_scoped_schema_and_parameter_facts_admit ... ok
+test wiring_compatibility::tests::resolved_cross_package_facts_keep_their_exact_target_scopes ... ok
+test wiring_compatibility::tests::stale_scope_and_invalid_parameter_refuse_before_publish ... ok
+
+test result: ok. 62 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/serving_manifest_digest.rs (target/debug/deps/serving_manifest_digest-df6d9249fbde574c)
+
+running 7 tests
+test all_four_collections_have_canonical_order ... ok
+test authentication_modes_are_shared_and_bound_into_canonical_bytes ... ok
+test each_exact_target_reaches_the_digest ... ok
+test every_manifest_field_is_pinned ... ok
+test every_manifest_hash_validates_during_deserialization ... ok
+test malformed_authentication_lists_are_refused_by_parser_and_release_reader ... ok
+test the_format_one_preimage_and_digest_are_pinned ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+COMMAND_EXIT=0
+SOURCE_HEAD_AFTER=581016ee975d65ebaecd470619f8fae750a769ba

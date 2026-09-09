@@ -34,12 +34,13 @@ pub use connection::{
 };
 pub use package::{EffectiveReleaseId, PackageCoordinate};
 pub use serving_manifest::{
-    INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES, NO_AUTHENTICATION_MODE,
-    PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
-    RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
-    ServingComponent, ServingComponentOperation, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingRelease, ServingWiring,
-    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, release_manifest_configmap_name,
+    AttachmentAuthPolicy, INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL, MAX_SERVING_MANIFEST_BYTES,
+    NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE, RELEASE_MANIFEST_CONFIGMAP_PREFIX,
+    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION,
+    SESSION_AUTHENTICATION_MODE, ServingAttachment, ServingComponent, ServingComponentOperation,
+    ServingManifest, ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
+    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, parse_attachment_auth_policy,
+    release_manifest_configmap_name,
 };
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
@@ -194,13 +195,13 @@ impl fmt::Display for CatalogIdentityError {
             Self::InvalidAttachmentAuthPolicy { attachment_id } => {
                 write!(
                     formatter,
-                    "{INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL}: attachment {attachment_id:?} must declare exactly one supported mode"
+                    "{INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL}: attachment {attachment_id:?} must declare one supported canonical modes list"
                 )
             }
             Self::UnauthenticatedRegisteredOperation { attachment_id } => {
                 write!(
                     formatter,
-                    "attachment {attachment_id:?} cannot combine auth-policy.mode=\"none\" with registered-operation; set auth-policy.mode=\"pat\""
+                    "attachment {attachment_id:?} cannot combine auth-policy.modes=[\"none\"] with registered-operation; set auth-policy.modes=[\"pat\"]"
                 )
             }
             Self::UnresolvableManifestWiring {

@@ -71,7 +71,7 @@ impl Drop for ScratchCredential {
 
 #[test]
 fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
-    let bytes = br#"{"format-version":3}"#;
+    let bytes = br#"{"format-version":1}"#;
     let (layer, _, manifest) = release_manifest_artifact_layout(bytes);
     let digest = layer.sha256_digest();
 
@@ -106,7 +106,7 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
 
 #[test]
 fn pulled_bytes_load_through_the_weld_naming_their_carrier() {
-    let canonical = br#"{"attachments":{},"components":[],"format-version":3,"registrations":{},"release":{"effective-release-id":7,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#;
+    let canonical = br#"{"attachments":{},"components":[],"format-version":1,"registrations":{},"release":{"effective-release-id":7,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#;
 
     let weld = ReleaseManifestWeld::load_canonical_bytes(canonical, ARTIFACT_BASE)
         .expect("verified canonical bytes load without a mount");
@@ -370,7 +370,7 @@ fn source_for(registry: &LyingRegistry, credential: &ScratchCredential) -> Relea
 
 #[tokio::test]
 async fn a_conforming_stub_returns_the_exact_published_bytes() {
-    let canonical = br#"{"format-version":3}"#;
+    let canonical = br#"{"format-version":1}"#;
     let (digest, wire) = published_artifact(canonical);
 
     let registry = lying_registry(
@@ -391,7 +391,7 @@ async fn a_conforming_stub_returns_the_exact_published_bytes() {
 
 #[tokio::test]
 async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
-    let canonical = br#"{"format-version":3}"#;
+    let canonical = br#"{"format-version":1}"#;
     let (digest, mut wire) = published_artifact(canonical);
     // The layer digest still names the exact bytes served, so the layout check
     // and `oci-client`'s own digest verification both pass. Only the declared
@@ -437,7 +437,7 @@ async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
 /// `release_manifest_source::tests::a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch`.
 #[tokio::test]
 async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
-    let canonical = br#"{"format-version":3}"#;
+    let canonical = br#"{"format-version":1}"#;
     let (digest, wire) = published_artifact(canonical);
     // Same length, different content, so the size check cannot be what fires.
     let mut lied = canonical.to_vec();

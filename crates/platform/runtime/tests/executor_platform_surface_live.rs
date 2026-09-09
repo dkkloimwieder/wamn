@@ -267,7 +267,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let definition_hash = digest("2");
     let validation_hash = digest("3");
     let manifest_body = concat!(
-        "{\"attachments\":{},\"components\":[],\"format-version\":3,",
+        "{\"attachments\":{},\"components\":[],\"format-version\":1,",
         "\"registrations\":{},\"release\":{\"effective-release-id\":1,",
         "\"environment\":\"prod\",\"packages\":[{\"package-id\":\"cat\",",
         "\"package-version\":\"1.0.0\",\"tenant-id\":\"t1\"}],",

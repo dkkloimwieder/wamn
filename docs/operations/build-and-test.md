@@ -332,13 +332,74 @@ sha256 lives in `generated/platform-policy/data-access.json`, and
 whole introspected catalog, so an introspection change moves it as well.
 Regenerate after either kind of edit.
 
-# Two independent derivations must each equal the exact shipped path/byte set.
-WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
-  cargo run -p wamn-schema-generator --example materialize_package \
-  --locked --offline -- check packages/receiving
-WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
-  cargo run -p wamn-schema-generator --example materialize_package \
-  --locked --offline -- check packages/receiving
+# EVERY package root under packages/, derived from the tree and never listed.
+# The list used to be the single literal `packages/receiving`, which is why
+# packages/wms/generated/client could go missing at 891aa296 and nothing went
+# red (wamn-10yt.57): no gate named wms. A hardcoded list makes the next package
+# added the next silent gap, so this one is found (wamn-10yt.58). Each root gets
+# its own database, for the reason the paragraph above gives, inside the
+# container this gate already runs. A root's base_dependencies are applied
+# first, resolved through `.package.id`, so an overlay never introspects without
+# its base. The CREATE SCHEMA list is the generator's own derivation
+# (`application_schemas` in crates/schema/generator/src/data_access.rs):
+# `wamn ctl apply-package` creates those schemas and the migrations assume them.
+mapfile -t MATERIALIZE_ROOTS < <(
+  find packages -mindepth 2 -maxdepth 2 -name wamn.json -printf '%h\n' | sort
+)
+declare -A MATERIALIZE_ROOT_BY_ID=()
+for MATERIALIZE_ROOT in "${MATERIALIZE_ROOTS[@]}"; do
+  MATERIALIZE_ROOT_BY_ID["$(
+    jq -r '.package.id' "$MATERIALIZE_ROOT/wamn.json"
+  )"]="$MATERIALIZE_ROOT"
+done
+FUNCNEST=32  # a base_dependencies cycle errors instead of recursing forever
+materialize_apply() {
+  local root="$1" base schema migration
+  for base in $(jq -r '(.base_dependencies // {})[] | .package' "$root/wamn.json"); do
+    materialize_apply "${MATERIALIZE_ROOT_BY_ID[$base]:?no package root declares $base}"
+  done
+  for schema in $(jq -r '[(.models // {})[].schema]
+      + [(.custom_operations // {})[].relations[]?.schema] | unique[]' \
+      "$root/wamn.json"); do
+    docker exec "$RECEIVING_PG_CONTAINER" psql -h 127.0.0.1 -U postgres \
+      -d "$MATERIALIZE_DATABASE" -v ON_ERROR_STOP=1 -q \
+      -c "CREATE SCHEMA IF NOT EXISTS \"$schema\""
+  done
+  for migration in "$root"/migrations/*.sql; do
+    docker exec -i "$RECEIVING_PG_CONTAINER" psql -h 127.0.0.1 -U postgres \
+      -d "$MATERIALIZE_DATABASE" -v ON_ERROR_STOP=1 -q -f - < "$migration"
+  done
+}
+MATERIALIZE_CHECKED=0
+for MATERIALIZE_ROOT in "${MATERIALIZE_ROOTS[@]}"; do
+  MATERIALIZE_DATABASE="wamn_materialize_$(basename "$MATERIALIZE_ROOT")"
+  docker exec "$RECEIVING_PG_CONTAINER" psql -h 127.0.0.1 -U postgres -d postgres \
+    -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE \"$MATERIALIZE_DATABASE\""
+  materialize_apply "$MATERIALIZE_ROOT"
+  MATERIALIZE_URL="postgresql://postgres:probe@127.0.0.1:${RECEIVING_PG_PORT}/$MATERIALIZE_DATABASE"
+  # Two independent derivations must each equal the exact shipped path/byte set.
+  WAMN_SCHEMA_INTROSPECTION_PG_URL="$MATERIALIZE_URL" \
+    cargo run -p wamn-schema-generator --example materialize_package \
+    --locked --offline -- check "$MATERIALIZE_ROOT"
+  WAMN_SCHEMA_INTROSPECTION_PG_URL="$MATERIALIZE_URL" \
+    cargo run -p wamn-schema-generator --example materialize_package \
+    --locked --offline -- check "$MATERIALIZE_ROOT"
+  MATERIALIZE_CHECKED=$((MATERIALIZE_CHECKED + 1))
+done
+# An empty roots array and a fully green run read identically otherwise. Assert
+# the count, the way "Live gates: arming" requires of anything a rename or a
+# moved directory can deselect.
+test "$MATERIALIZE_CHECKED" \
+  -eq "$(find packages -mindepth 2 -maxdepth 2 -name wamn.json | wc -l)"
+# Measured at `2a4cd288` on a fresh postgres:18, one root per database:
+# packages/wms passes; packages/receiving and packages/client_acme_receiving
+# each FAIL, on generated/source-map/purchase_order.json and
+# generated/wamn/purchase_order.rs. `4862faee` (wamn-10yt.54) taught the
+# generator to emit `UPDATE_EXCLUSION_CONSTRAINTS` and regenerated no package,
+# so no shipped artifact under packages/ carries that constant and a fresh
+# derivation emits it. The arm is red on arrival because the class of defect it
+# was written to find was already in the tree, unseen. Filed, not fixed here:
+# regenerating a package's artifacts is not this arm's change.
 
 # Normal builds consume the committed .sqlx evidence without a database.
 SQLX_OFFLINE=true cargo test -p wamn-proof-conformance \
@@ -433,7 +494,7 @@ trap - EXIT
 
 This proof applies both package migration streams to one fresh project
 database, admits the exact built components, authors every package wiring, and
-mints the same format-3 closure twice. It requires byte-identical canonical
+mints the same format-1 closure twice. It requires byte-identical canonical
 bytes and digest on replay, one stored snapshot, exact component dependencies
 and event ownership, plus typed refusals for manifest-hash drift and an
 unsatisfied generated package weld. The two databases are disposable siblings
@@ -1303,6 +1364,65 @@ It retains image identities, Job verdicts, Pod states, and public key receipts.
 It removes only its own cluster and temporary credentials.
 The two-host session-token proof remains mandatory in `wamn-ctc8.15.3`.
 Public-key cache tests do not establish host admission.
+
+### `[SESSION-ROUTE-LIVE]` scoped session permissions
+
+This local proof uses production route authentication with HTTPS keys and the provisioned `HttpAdmitter` credential.
+It measures one tenant permission query per warm request through PostgreSQL statistics.
+It covers role unions, tenant isolation, next-request permission removal, and evidence expiry during a blocked permission read.
+It does not replace the deployed two-host or nested fresh-only proofs.
+
+Use a fresh disposable PostgreSQL 18 server with the statistics extension loaded:
+
+```bash
+docker run -d --name wamn-session-route-pg -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5440:5432 postgres:18 \
+  -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
+psql postgres://postgres:probe@127.0.0.1:5440/postgres -Atqc 'select 1'
+WAMN_SESSION_ROUTE_PG18_URL=postgres://postgres:probe@127.0.0.1:5440/postgres \
+  cargo test --locked --offline -p wamn-runtime --features test-util \
+  --test session_route_authentication -- --include-ignored --nocapture --test-threads=1
+docker rm -f -v wamn-session-route-pg
+```
+
+Wait for the connection query to succeed before starting the test.
+The test refuses a populated server and requires its environment variable.
+The final command removes only the named test database and its temporary volume.
+
+### `[HOST-SESSION-HTTP]` sessions on two hosts
+
+This gate covers the two-host proof in `wamn-ctc8.15.3`.
+It sends the same session token to two distinct host processes and compares each complete response with the expected purchase order.
+The runner pins one workload to each ready host ID through the existing operator field.
+The proof refuses any host-container restart during either five-minute window.
+Each first host request has a 30-second allowance for cold compilation.
+Identity requests retain their five-second limit.
+Later host requests allow ten seconds, so a five-second key fetch can finish before the host returns its refusal.
+After both hosts accept the token, the runner removes its signing key.
+Both hosts must refuse it after the 300-second public-key window, while the token itself remains valid.
+The runner repeats the proof with JWKS unreachable and new host processes.
+
+The runner also traces a session call through the actual overlay and base components.
+Both invocations must retain the original human identity and session credential kind.
+This call uses disposable release 3 while the two hosts remain on release 2.
+Both releases use manifest format 1.
+
+Set `WAMN_SESSION_PROOF_EVIDENCE` to a new directory under the main checkout's `docs/perf/2026.09/ctc8-15-3-host-sessions/` directory.
+Run the gate from a clean source worktree:
+
+```bash
+tools/receiving-cluster-journey-run --session-host-proof --apply \
+  --evidence-dir "$WAMN_SESSION_PROOF_EVIDENCE"
+```
+
+Create the parent directory first.
+Use a new evidence directory for each run.
+Keep that directory outside the source worktree during the run.
+The runner builds the standard `host`, `gates`, and `identity` Dockerfile stages.
+It retains the host identities, image digests, Job results, and key-removal receipts.
+The private token fixture stays in disposable storage, not in the retained evidence.
+The runner removes its own cluster, database, images, and temporary credentials.
+Normal package routes remain PAT-only until this proof and the fresh-only proof pass.
 
 ### Identity foundation rollout
 
@@ -2355,6 +2475,21 @@ through `tools/agent-pilot-report`, which writes
 `docs/experiments/agent-authoring/<run>.md` and the raw directory beside it,
 minus the environment and the worktree.
 
+Reclaim the arm after you promote it:
+
+```bash
+tools/agent-pilot-report --run 030
+tools/agent-pilot-run down --run 030
+```
+
+The second `down` deletes the run directory and its per-commit target directory,
+which is where the storage is: twelve targets at roughly 11 GB each reached
+135 GB. It reclaims nothing until `agent-pilot-report` has written
+`docs/experiments/agent-authoring/<run>/run.json`, and it keeps a target that
+another surviving run still names. Running `down` inside `all` is therefore
+always a no-op for storage, and `down` on an already-reclaimed run is a no-op
+too.
+
 Rules the harness enforces rather than asks for:
 
 - One run per machine at a time, and never beside a cluster journey. It takes
@@ -2370,6 +2505,12 @@ Rules the harness enforces rather than asks for:
 - The grading fixture is harness state and lives outside the run directory,
   because the run directory is exported to the agent. `up` refuses the run when
   the fixture or a `grade` block is reachable from any path the agent is handed.
+  It also refuses when the grading root sits on the run directory's walk-up
+  path, which is why that root is
+  `${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading` and not a sibling of
+  `runs`. The walk stops at `$HOME`: one user on one filesystem cannot hide a
+  directory from itself, and the bar this sets is deliberately leaving the
+  sandbox rather than reading a path the layout hands over.
 - **The pilot builds its binaries from the main checkout, not from the run
   worktree.** An edit that lands in the main checkout while `up` is building
   goes into the binaries the measurement uses. `up` now hashes the tree before
@@ -2420,6 +2561,74 @@ rm -rf -- "$GUEST_REPRO_A" "$GUEST_REPRO_B"
 Run it whenever a guest workspace gains a member or a build flag changes. A
 failure means a component digest has started depending on the build directory
 again, and every pin minted since is a claim about a checkout.
+
+**Both sides of that arm run `build-only m1`, so it cannot see the third
+channel** (`wamn-10yt.61`). A component profile decides which packages one
+`cargo build` compiles, and Cargo unifies features across everything in that one
+invocation, so a package the `proof` profile adds can turn a feature on in a
+crate the `m1` guests already link. The resolved feature NAME LIST goes into
+`-C metadata` whether or not the feature compiles to anything, so the artifact
+moves. Measured at `2a4cd288` and again at `7b456f81`: all four virtualized
+artifacts differ between the two profiles. The three `components/no-std` guests
+are byte-identical, because that workspace is a separate invocation.
+
+The cross-profile arm builds ONE tree twice, once per profile, and compares the
+shared packages. It needs no worktrees; `build-only` already prints the raw
+digest of every artifact it declares, so no virtualization pass runs.
+
+```bash
+set -euo pipefail
+GUEST_PROFILE_SCRATCH="$(mktemp -d /tmp/wamn-guest-profile.XXXXXX)"
+for profile in m1 proof; do
+  CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/$profile" RUSTC_WRAPPER= \
+    ./tools/build-components build-only "$profile" \
+    > "$GUEST_PROFILE_SCRATCH/$profile.json"
+done
+WAMN_DIGEST_PROFILE_M1_PLAN="$GUEST_PROFILE_SCRATCH/m1.json" \
+WAMN_DIGEST_PROFILE_PROOF_PLAN="$GUEST_PROFILE_SCRATCH/proof.json" \
+  cargo test -p wamn-proof-conformance --test guest_workspace_closure \
+  one_commit_built_under_two_profiles_yields_identical_guest_digests \
+  -- --ignored --exact --nocapture
+rm -rf -- "$GUEST_PROFILE_SCRATCH"
+```
+
+Separate target directories are the point: one shared directory makes the second
+profile a rebuild of the first, and a rebuild that reuses cached artifacts hides
+the very difference this arm exists to find. `RUSTC_WRAPPER=` is emptied for the
+same reason a wrapper's cache would answer from the other profile's build.
+
+Run it whenever a Cargo dependency is added or its features change anywhere
+under `components/`. A failure names the packages that moved. To find the cause,
+diff the `features` field of every `.fingerprint/*/lib-*.json` in the two target
+directories; that names the crate whose resolved feature list differs, and
+`cargo tree -e features -i <crate>` names the requester.
+
+**THIS ARM IS RED ON ARRIVAL, and `wamn-10yt.61`'s stated cause is refuted.**
+Measured at `7b456f81` plus the `postgres-sqlx` fix, all four artifacts still
+differ. The bead attributed it to two ungoverned `default-features` declarations
+in `components/data/postgres-sqlx/Cargo.toml`, saying `futures-util`'s default
+set turns on `io`. It does not: `futures-util` 0.3.34 declares
+`default = ["std", "async-await", "async-await-macro"]`, and `io` is not in it.
+`io` comes from `sqlx-core` 0.9.0's own manifest, unconditionally —
+`[dependencies.futures-util] features = ["alloc", "sink", "io"]`, no
+`default-features = false` — and `io = ["std", "futures-io", "memchr"]` is what
+gives `memchr` its `default`, which `serde_json` links, which is how `blob-put`
+moves without going near sqlx. Governing the two declarations moved three of the
+four digests and converged none:
+
+| artifact | m1 | proof, before | proof, after |
+| --- | --- | --- | --- |
+| `blob-put` | `d7e0543a` | `ef5e4aa5` | `ef5e4aa5` |
+| `client-acme-receiving` | `8c2c63d8` | `72124342` | `4cb2fba6` |
+| `receiving` | `666745eb` | `b724c5c4` | `6ae3d667` |
+| `wms` | `e1e14ee6` | `f4e4a629` | `d3c17f29` |
+
+The residual channel is that the `proof` selection compiles `sqlx-core` and `m1`
+does not, so no declaration in this repository closes it. Closing it needs a
+ruling — one `cargo` invocation per guest (measured 116s against 47s and
+declined), or the same member set under both profiles, or a `sqlx-core` fork, or
+profile-scoped pins. Until then, mint every pin under `m1`, which is what
+`[EFFECTIVE-RELEASE-POC]` and `[RECEIVING-ROUTE-JOURNEY]` both build.
 
 ### `[RECEIVING-ROUTE-JOURNEY]` — published base + overlay routes and traces
 

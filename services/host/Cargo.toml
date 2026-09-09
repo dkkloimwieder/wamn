@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 wamn-execution-host = { workspace = true }
 wamn-control-provision = { workspace = true }
+wamn-control-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-otel", "wasm_component_model_implements"] }
@@ -24,6 +25,7 @@ opentelemetry = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tokio-postgres = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
 
 [lints]
 workspace = true

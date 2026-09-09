@@ -18,7 +18,9 @@ use wash_runtime::host::http::{DynamicRouter, Ingress};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
-use wamn_control_provision::{SystemReader, parse_system_reader_url};
+use wamn_control_provision::session_target::session_audience;
+use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
+use wamn_control_registry::Triple;
 use wamn_execution_host::{
     ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
     WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
@@ -32,13 +34,16 @@ use wamn_runtime::engine::{
     build_engine_with_host_memory_and_compilation_cache,
 };
 use wamn_runtime::plugins::flow_http_routing::{
-    FlowHttpRouting, RouteAuthentication, requires_pat_route_authentication,
+    FlowHttpRouting, RouteAuthentication, SessionRouteAuthentication,
+    requires_pat_route_authentication, requires_session_route_authentication,
 };
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
+use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
+use wamn_runtime::session_verifier::SessionVerifier;
 
 #[derive(Debug, Args)]
 pub struct HostArgs {
@@ -227,6 +232,22 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
 
+    /// Trusted HTTPS issuer for session routes, never discovered from a token.
+    #[arg(long, env = "WAMN_SESSION_ISSUER", requires_all = ["session_jwks_ca", "session_instance_suffix"])]
+    pub session_issuer: Option<String>,
+
+    /// Public CA bundle for the configured identity service.
+    #[arg(long, env = "WAMN_SESSION_JWKS_CA", requires = "session_issuer")]
+    pub session_jwks_ca: Option<PathBuf>,
+
+    /// Provisioned database instance suffix for the exact session audience.
+    #[arg(
+        long,
+        env = "WAMN_SESSION_INSTANCE_SUFFIX",
+        requires = "session_issuer"
+    )]
+    pub session_instance_suffix: Option<String>,
+
     /// Optional database search path installed at node checkout.
     #[arg(long, env = "WAMN_SCHEMA")]
     pub schema: Option<String>,
@@ -404,6 +425,46 @@ fn demanded_http_admitter_url(pat_routes: bool, configured_url: Option<String>) 
     if pat_routes { configured_url } else { None }
 }
 
+fn session_verifier(
+    args: &HostArgs,
+    environment: &str,
+    http_admitter_url: &str,
+) -> anyhow::Result<SessionVerifier> {
+    let org = args
+        .org
+        .as_deref()
+        .context("a session route requires --org/WAMN_ORG")?;
+    let issuer = args
+        .session_issuer
+        .as_deref()
+        .context("a session route requires --session-issuer")?;
+    let suffix = args
+        .session_instance_suffix
+        .as_deref()
+        .context("a session route requires --session-instance-suffix")?;
+    let audience = session_audience(&Triple::new(org, &args.project, environment), suffix)?;
+    let database = project_env_database_name(org, &args.project, environment, suffix);
+    // Compare trusted deployment coordinates, not anything carried by a token.
+    // Parsing failures never attach the credential-bearing URL to diagnostics.
+    let connection = http_admitter_url
+        .parse::<tokio_postgres::Config>()
+        .map_err(|_| anyhow::anyhow!("session permission reader URL is invalid"))?;
+    anyhow::ensure!(
+        connection.get_dbname() == Some(database.as_str()),
+        "session audience and permission database differ"
+    );
+    let ca_path = args
+        .session_jwks_ca
+        .as_deref()
+        .context("a session route requires --session-jwks-ca")?;
+    let ca = std::fs::read(ca_path).context("read the session issuer public CA bundle")?;
+    let mut endpoint = url::Url::parse(issuer).context("parse the configured session issuer")?;
+    endpoint.set_path("/.well-known/jwks.json");
+    endpoint.set_query(None);
+    let keys = IssuerKeys::new(IssuerKeysConfig::new(issuer, endpoint.as_str(), &ca)?)?;
+    SessionVerifier::new(keys, org, &audience).context("configure the host session verifier")
+}
+
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let startup_started = Instant::now();
     wash_runtime::init_crypto();
@@ -443,9 +504,26 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let pat_routes = release
         .as_ref()
         .is_some_and(|weld| requires_pat_route_authentication(weld.manifest()));
+    let session_routes = release
+        .as_ref()
+        .is_some_and(|weld| requires_session_route_authentication(weld.manifest()));
     let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
+    let session_verifier = if session_routes {
+        let weld = release
+            .as_ref()
+            .expect("a session route belongs to a loaded release");
+        Some(session_verifier(
+            &args,
+            &weld.manifest().release.environment,
+            http_admitter_url
+                .as_deref()
+                .context("a session route requires WAMN_HTTP_ADMITTER_PG_URL")?,
+        )?)
+    } else {
+        None
+    };
 
     // The release pull above is what makes the PAT requirement knowable. Once
     // it is known, settle every scoped input before opening the identity, NATS,
@@ -567,7 +645,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let event_materializer_url = std::env::var("WAMN_EVENT_MATERIALIZER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
-    let http_admitter_url = demanded_http_admitter_url(pat_routes, http_admitter_url);
+    let http_admitter_url =
+        demanded_http_admitter_url(pat_routes || session_routes, http_admitter_url);
     let guest_url = std::env::var("WAMN_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
@@ -690,6 +769,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         )),
         (None, None) => flow_http,
         _ => unreachable!("route authentication inputs are constructed together"),
+    };
+    let flow_http = match session_verifier {
+        Some(verifier) => flow_http.with_session_authentication(Arc::new(
+            SessionRouteAuthentication::new(verifier, Arc::clone(&postgres), args.project.clone()),
+        )),
+        None => flow_http,
     };
 
     let mut builder = ClusterHostBuilder::default()
@@ -953,6 +1038,50 @@ mod tests {
             Some(MATERIALIZER)
         );
         assert_eq!(materializer_only.url(AuthorityClass::GuestSql), None);
+    }
+
+    #[test]
+    fn session_configuration_requires_the_complete_public_trust_binding() {
+        assert!(TestCli::try_parse_from(["host"]).is_ok());
+        for arguments in [
+            vec!["host", "--session-issuer", "https://identity.invalid"],
+            vec!["host", "--session-jwks-ca", "/ca.pem"],
+            vec!["host", "--session-instance-suffix", "k3m9x2p7"],
+        ] {
+            assert!(TestCli::try_parse_from(arguments).is_err());
+        }
+        let cli = TestCli::try_parse_from([
+            "host",
+            "--org",
+            "acme",
+            "--project",
+            "receiving",
+            "--session-issuer",
+            "https://identity.invalid",
+            "--session-jwks-ca",
+            "/nonexistent/session-public-ca.pem",
+            "--session-instance-suffix",
+            "k3m9x2p7",
+        ])
+        .expect("complete session trust configuration");
+        for database in [
+            "wamn-db-other--receiving--dev--k3m9x2p7",
+            "wamn-db-acme--other--dev--k3m9x2p7",
+            "wamn-db-acme--receiving--prod--k3m9x2p7",
+            "wamn-db-acme--receiving--dev--a1b2c3d4",
+        ] {
+            let error = session_verifier(
+                &cli.args,
+                "dev",
+                &format!("postgres://reader:secret@localhost/{database}"),
+            )
+            .expect_err("the permission reader must target the exact audience database");
+            assert_eq!(
+                error.to_string(),
+                "session audience and permission database differ"
+            );
+            assert!(!format!("{error:?}").contains("secret"));
+        }
     }
 
     #[test]

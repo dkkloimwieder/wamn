@@ -366,13 +366,15 @@ mod tests {
     }
 
     #[test]
-    fn a_format_one_manifest_refuses_with_the_frozen_literal() {
-        let mounts = Mounts::new("format-one");
+    fn an_unsupported_format_refuses_with_the_frozen_literal() {
+        let mounts = Mounts::new("unsupported-format");
         mounts.write_manifest_bytes(
-            br#"{"attachments":{},"components":[],"format-version":1,"registrations":{},"release":{"effective-release-id":1,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#,
+            br#"{"attachments":{},"components":[],"format-version":0,"registrations":{},"release":{"effective-release-id":1,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#,
         );
 
-        let error = mounts.load().expect_err("format one refuses at the weld");
+        let error = mounts
+            .load()
+            .expect_err("unsupported format refuses at the weld");
         assert_eq!(error.kind(), WeldErrorKind::ManifestRejected);
         assert!(
             error

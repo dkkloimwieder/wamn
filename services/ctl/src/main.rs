@@ -49,15 +49,15 @@ enum Command {
     /// Bind one admitted component's declared connection alias to an
     /// environment-owned instance carrying a host-held credential handle.
     BindConnection(bind_connection::BindConnectionArgs),
-    /// Mint one immutable format-3 effective release from exact package-owned facts.
+    /// Mint one immutable format-1 effective release from exact package-owned facts.
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(publish_release::PublishReleaseArgs),
-    /// Publish canonical format-3 serving-manifest bytes as an immutable OCI artifact
+    /// Publish canonical format-1 serving-manifest bytes as an immutable OCI artifact
     PushReleaseManifest(push_release_manifest::PushReleaseManifestArgs),
     /// Print the release lines a pod template carries for one minted release (wamn-duyl)
     PrintReleaseEnv(print_release_env::PrintReleaseEnvArgs),
-    /// Promote one verified format-3 release into a target environment
+    /// Promote one verified format-1 release into a target environment
     Promote(promote::PromoteArgs),
     /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),

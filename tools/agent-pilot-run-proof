@@ -27,9 +27,9 @@ cutter() {
 eval "$(cutter)"
 [[ -n "$(fence)" ]] || { echo "assert_rubric_unreachable not found in the runner" >&2; exit 2; }
 
-# <dir> <what to plant: none|root|fixture|worktree|grade-manifest>
+# <dir> <what to plant: none|root|fixture|worktree|grade-manifest|walkup>
 run_fence() {
-  local d="$work/$2" plant="$3"
+  local d="$work/$2" plant="$3" grading_home="$HOME/.local/state/wamn-pilot-grading"
   rm -rf "$d"; mkdir -p "$d"/{fixture,bin,env,worktree,grade}
   echo '{"identity":{},"overlay_root":"p"}' > "$d/task.json"
   echo '{"identity":{},"overlay_root":"p"}' > "$d/fixture/task.json"
@@ -45,9 +45,14 @@ run_fence() {
     fixture)  echo '[]' > "$d/fixture/steps.json" ;;
     worktree) echo '[]' > "$d/worktree/steps.json" ;;
     grade-manifest) echo '{"identity":{},"grade":{"steps":"steps.json"}}' > "$d/fixture/task.json" ;;
+    # wamn-nvbd.21. The grading root as a sibling on the run directory's
+    # walk-up path, which is where it used to sit.
+    walkup) strip_document_section "$d/worktree/docs/operations/build-and-test.md" '[AGENT-PILOT]'
+            grading_home="$work/grading"; mkdir -p "$grading_home" ;;
   esac
   ( set +e
     DIR="$d" TARGET="$work/target" EX_ENV=10
+    GRADING_HOME="$grading_home"
     GATE_DOCUMENT="docs/operations/build-and-test.md"
     PILOT_SECTION='[AGENT-PILOT]'
     die() { printf 'agent-pilot-run: %s\n' "$1" >&2; exit "${2:-2}"; }
@@ -74,6 +79,7 @@ refuses "the rubric inside the worktree is refused"                     atworktr
 refuses "a task manifest that still carries the grade block is refused" atgrade    grade-manifest
 refuses "a gate document that still names the pilot section is refused"  atsection  section
 refuses "the grader left in the worktree is refused"                     atgrader   grader
+refuses "a grading root on the run directory's walk-up path is refused"  atwalkup   walkup
 
 # The section fence cuts one section and leaves its neighbours alone.
 cut="$work/doc.md"

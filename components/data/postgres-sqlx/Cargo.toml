@@ -6,8 +6,33 @@ description = "SQLx driver for the wamn:postgres capability"
 license = "Apache-2.0"
 
 [dependencies]
-futures-core = "0.3"
-futures-util = "0.3"
+# DEFAULT FEATURES OFF, and only `alloc` back. `alloc` is what the source
+# actually needs: `BoxFuture`/`BoxStream` from `futures-core`, and
+# `FutureExt::boxed`/`StreamExt::boxed` from `futures-util`, are all
+# `#[cfg(feature = "alloc")]`; `stream::iter` and `stream::once` need no feature
+# at all. `std` arrives anyway through `sqlx-core`, so it is not requested here:
+# what this file asks for stays a subset of what every profile already resolves.
+# What the defaults were adding was `async-await`, `async-await-macro` and the
+# `futures-macro` proc-macro crate, for macros this crate never writes.
+#
+# THIS DOES NOT CONVERGE THE PROFILES, and wamn-10yt.61 says otherwise on a
+# premise that measurement refutes. `io` is NOT in `futures-util`'s default set
+# (`default = ["std", "async-await", "async-await-macro"]`). `io` comes from
+# `sqlx-core` 0.9.0's own manifest, unconditionally and with no
+# `default-features = false`:
+#
+#     [dependencies.futures-util]
+#     version = "0.3.32"
+#     features = ["alloc", "sink", "io"]
+#
+# and `io = ["std", "futures-io", "memchr"]` is what gives `memchr` its
+# `default`, which `serde_json` links, which is how guests that never mention
+# sqlx move. So the channel is the PRESENCE of `sqlx-core` in the proof
+# selection and absent from m1, not any declaration in this file. Removing
+# these defaults moved three of the four virtualized digests and converged
+# none. See `[GUEST-DIGEST-REPRODUCIBILITY]`.
+futures-core = { version = "0.3", default-features = false, features = ["alloc"] }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 log = "0.4"
 sqlx-core.workspace = true
 wit-bindgen.workspace = true

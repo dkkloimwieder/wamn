@@ -1,4 +1,4 @@
-//! Promote one immutable format-3 release without applying package migrations.
+//! Promote one immutable format-1 release without applying package migrations.
 //!
 //! `apply-package` is the sole applier. Promotion proves every source package
 //! coordinate, raw manifest hash, and complete ordered migration ledger already
@@ -364,7 +364,7 @@ async fn load_source_release(
     let row = tx
         .query_opt(SELECT_SOURCE_SNAPSHOT_SQL, &[&args.tenant, &release_id])
         .await
-        .context("read source format-3 release snapshot")?
+        .context("read source format-1 release snapshot")?
         .with_context(|| {
             format!(
                 "source-release-missing: tenant {:?} effective release {}",
@@ -374,7 +374,7 @@ async fn load_source_release(
     let stored_digest: String = row.get(0);
     let canonical_bytes: Vec<u8> = row.get(1);
     let (manifest, derived_digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)
-        .context("source snapshot is not a canonical format-3 serving manifest")?;
+        .context("source snapshot is not a canonical format-1 serving manifest")?;
     ensure!(
         stored_digest == derived_digest.as_str(),
         "source snapshot digest mismatch"
@@ -707,7 +707,7 @@ async fn promote_target(
         &source.manifest.registrations,
     )
     .await
-    .context("mint target format-3 release snapshot")?;
+    .context("mint target format-1 release snapshot")?;
     let expected = read_expected_environment(&tx, run_schema, &args.tenant).await?;
     verify_provisioned_environment(expected.as_deref(), &minted.manifest.release, run_schema)?;
     tx.execute(

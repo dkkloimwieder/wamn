@@ -1,0 +1,101 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "443155e1-547e-4b44-9121-b3d7f99e4e6d",
+            "hostname": "10.244.1.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T03:50:29Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "rabid-wave-8814",
+                "namespace": "wamn-system",
+                "resourceVersion": "2365",
+                "uid": "a7515e9d-cc1e-445d-81f7-7e7e29364f2f"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-09T03:50:29Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-09T03:50:30Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-09T03:50:31Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "4.8655567",
+                "systemMemoryFree": 4070899712,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.8.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-journey",
+            "hostId": "70f376dc-6029-4ac0-a6fa-d02a33c5ccaf",
+            "hostname": "10.244.2.9",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T03:50:19Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "reflective-daughter-1723",
+                "namespace": "wamn-system",
+                "resourceVersion": "2370",
+                "uid": "05f5226e-75bd-4a38-84a9-ed3c7f0e6d74"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-09T03:50:19Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-09T03:50:20Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-09T03:50:34Z",
+                "osArch": "unknown",
+                "osKernel": "unknown",
+                "osName": "unknown",
+                "systemCPUUsage": "0",
+                "systemMemoryFree": 0,
+                "systemMemoryTotal": 0,
+                "version": "unknown"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

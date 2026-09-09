@@ -274,14 +274,16 @@ DO $projection_conflict$ BEGIN
 END
 $projection_conflict$;
 
--- wamn-10yt.38. The admitted component fact is frozen for a DURABLE
--- environment and replaceable for a disposable one, decided by the projected
--- environment row and by nothing the caller says. Both directions, one store.
+-- wamn-10yt.52. The admitted component fact is frozen for EVERY environment,
+-- and a RECREATED environment writes its own row under its own creation rather
+-- than editing the one whose database was dropped. This replaces the
+-- wamn-10yt.38 proof that the disposable marker made the fact replaceable in
+-- place; that overwrite is retired and the marker decides nothing here.
 INSERT INTO catalog.component_library
-  (tenant_id, package_id, package_version, component, interface_version,
-   operations, component_digest, projection_hash, imports,
+  (tenant_id, environment_instance, package_id, package_version, component,
+   interface_version, operations, component_digest, projection_hash, imports,
    imports_fingerprint, effects)
-VALUES ('tenant-a', 'receiving', '1.0.0', 'receiving', '0.1.0',
+VALUES ('tenant-a', '', 'receiving', '1.0.0', 'receiving', '0.1.0',
         '{"wamn-receiving:purchase-order/get@1.0.0": {}}'::jsonb,
         'sha256:' || repeat('1', 64), 'sha256:' || repeat('2', 64),
         '[]'::jsonb, 'sha256:' || repeat('3', 64), '[]'::jsonb);
@@ -304,6 +306,9 @@ $unprojected_is_frozen$;
 SELECT catalog.project_tenant_environment(
   'tenant-a', 'acme', 'receiving', 'dev', 'abcd1234', false);
 DO $durable_is_frozen$ BEGIN
+  ASSERT (SELECT environment_instance FROM catalog.tenant_environments
+           WHERE tenant_id = 'tenant-a') = '',
+    'provisioning claimed a database creation it did not make';
   BEGIN
     UPDATE catalog.component_library
        SET component_digest = 'sha256:' || repeat('4', 64)
@@ -319,18 +324,57 @@ $durable_is_frozen$;
 -- marker: the projection follows its authority rather than pinning a copy.
 SELECT catalog.project_tenant_environment(
   'tenant-a', 'acme', 'receiving', 'dev', 'efgh5678', true);
-UPDATE catalog.component_library
-   SET component_digest = 'sha256:' || repeat('4', 64)
- WHERE tenant_id = 'tenant-a';
-DO $disposable_replaces$ BEGIN
-  ASSERT (SELECT component_digest FROM catalog.component_library
-           WHERE tenant_id = 'tenant-a') = 'sha256:' || repeat('4', 64),
-    'the disposable environment did not carry the new digest';
+DO $the_marker_alone_unlocks_nothing$ BEGIN
+  BEGIN
+    UPDATE catalog.component_library
+       SET component_digest = 'sha256:' || repeat('4', 64)
+     WHERE tenant_id = 'tenant-a';
+    ASSERT false, 'the disposable marker alone still replaces a frozen fact';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    ASSERT SQLERRM = 'catalog.component_library is immutable';
+  END;
   ASSERT (SELECT instance_suffix FROM catalog.tenant_environments
            WHERE tenant_id = 'tenant-a') = 'efgh5678',
     'the projection pinned a superseded instance identity';
 END
-$disposable_replaces$;
+$the_marker_alone_unlocks_nothing$;
+
+-- The recreate claims a creation, and the SAME coordinate then admits its own
+-- bytes BESIDE the previous creation's fact rather than over it.
+SELECT catalog.claim_environment_instance('tenant-a', '16384');
+INSERT INTO catalog.component_library
+  (tenant_id, environment_instance, package_id, package_version, component,
+   interface_version, operations, component_digest, projection_hash, imports,
+   imports_fingerprint, effects)
+VALUES ('tenant-a', '16384', 'receiving', '1.0.0', 'receiving', '0.1.0',
+        '{"wamn-receiving:purchase-order/get@1.0.0": {}}'::jsonb,
+        'sha256:' || repeat('4', 64), 'sha256:' || repeat('5', 64),
+        '[]'::jsonb, 'sha256:' || repeat('3', 64), '[]'::jsonb);
+DO $each_creation_keeps_its_own_fact$ BEGIN
+  ASSERT (SELECT component_digest FROM catalog.component_library
+           WHERE tenant_id = 'tenant-a' AND environment_instance = '16384')
+         = 'sha256:' || repeat('4', 64),
+    'the new creation did not carry the bytes it admitted';
+  ASSERT (SELECT component_digest FROM catalog.component_library
+           WHERE tenant_id = 'tenant-a' AND environment_instance = '')
+         = 'sha256:' || repeat('1', 64),
+    'the previous creation stopped resolving to the run that owns it';
+END
+$each_creation_keeps_its_own_fact$;
+
+DO $claim_needs_a_projection$ BEGIN
+  BEGIN
+    PERFORM catalog.claim_environment_instance('tenant-unprojected', '16384');
+    ASSERT false, 'an unprojected tenant claimed a database creation';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    ASSERT SQLERRM = 'environment-instance-claim-without-projection';
+  END;
+END
+$claim_needs_a_projection$;
+
+-- Back to the empty instance, so the coordinates the remaining legs write are
+-- the ones they were before this claim.
+SELECT catalog.claim_environment_instance('tenant-a', '');
 
 DO $identity_conflict$ BEGIN
   BEGIN
@@ -414,17 +458,19 @@ DO $seed$ DECLARE tenant text; package text; release int; BEGIN
       (tenant_id, environment, effective_release_id)
     VALUES (tenant, 'dev', release);
     INSERT INTO catalog.component_library
-      (tenant_id, package_id, package_version, component, interface_version,
-       operations, component_digest, projection_hash, imports, imports_fingerprint, effects)
+      (tenant_id, environment_instance, package_id, package_version, component,
+       interface_version, operations, component_digest, projection_hash, imports,
+       imports_fingerprint, effects)
     VALUES
-      (tenant, package, '1.0.0', 'worker', '0.1.0',
+      (tenant, '', package, '1.0.0', 'worker', '0.1.0',
        '{{"run":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}',
        'sha256:' || repeat('b', 64), 'sha256:' || repeat('c', 64), '[]',
        'sha256:' || repeat('d', 64), '[]');
     INSERT INTO catalog.connection_requirements
-      (tenant_id, component_digest, store_alias, requirement_json, requirement_hash)
+      (tenant_id, environment_instance, component_digest, store_alias,
+       requirement_json, requirement_hash)
     VALUES
-      (tenant, 'sha256:' || repeat('b', 64), 'db', '{{}}',
+      (tenant, '', 'sha256:' || repeat('b', 64), 'db', '{{}}',
        'sha256:' || repeat('e', 64));
   END LOOP;
 END
@@ -639,34 +685,55 @@ DO $source_refusal$ BEGIN
 END
 $source_refusal$;
 
--- wamn-10yt.51. A DISPOSABLE environment attests what it deployed THIS run.
--- Its effective release id never moves, so a second dev run mints a different
--- manifest under the same coordinate and the frozen row would refuse forever.
--- The condition is provisioning's projection, never anything the caller says.
+-- wamn-10yt.52. A recreated environment attests what it deployed THIS run, and
+-- it does so under its OWN creation. Its effective release id never moves, so
+-- keyed by name alone a second dev run would collide with a row whose database
+-- is gone; keyed by the creation it is a different coordinate. The marker alone
+-- unlocks nothing — this replaces the wamn-10yt.51 overwrite.
 SELECT catalog.project_tenant_environment(
   'tenant-a', 'acme', 'billing', 'prod', 'abcd1234', true);
-DO $disposable_reattests$ BEGIN
-  PERFORM ({conflicting});
-  ASSERT (SELECT count(*) FROM catalog.deployment_attestations) = 1,
-    'the disposable re-attestation inserted a second row';
+DO $the_marker_alone_unlocks_nothing$ BEGIN
+  BEGIN
+    PERFORM ({conflicting});
+    ASSERT false, 'the disposable marker alone still overwrote an attestation';
+  EXCEPTION WHEN unique_violation THEN
+    ASSERT SQLERRM = 'deployment-attestation-content-conflict';
+  END;
   ASSERT (SELECT deployed_manifest_hash FROM catalog.deployment_attestations
-           WHERE tenant_id = 'tenant-a') = '{other_hash}',
-    'the disposable environment kept the superseded manifest';
+           WHERE tenant_id = 'tenant-a') = '{hash}',
+    'the frozen attestation moved without a new creation';
 END
-$disposable_reattests$;
+$the_marker_alone_unlocks_nothing$;
 
--- And the same store refreezes the moment the marker says durable.
-SELECT catalog.project_tenant_environment(
-  'tenant-a', 'acme', 'billing', 'prod', 'abcd1234', false);
-DO $durable_refreezes$ BEGIN
+-- The recreate claims a creation, and the second run's manifest lands beside
+-- the first run's rather than over it.
+SELECT catalog.claim_environment_instance('tenant-a', '16384');
+DO $each_creation_keeps_its_own_attestation$ BEGIN
+  PERFORM ({conflicting});
+  ASSERT (SELECT count(*) FROM catalog.deployment_attestations) = 2,
+    'the recreated environment did not record its own attestation';
+  ASSERT (SELECT deployed_manifest_hash FROM catalog.deployment_attestations
+           WHERE tenant_id = 'tenant-a' AND environment_instance = '16384')
+         = '{other_hash}',
+    'the new creation did not carry the manifest it deployed';
+  ASSERT (SELECT deployed_manifest_hash FROM catalog.deployment_attestations
+           WHERE tenant_id = 'tenant-a' AND environment_instance = '')
+         = '{hash}',
+    'the previous creation stopped resolving to the run that owns it';
+END
+$each_creation_keeps_its_own_attestation$;
+
+-- And within that creation the attestation is frozen again, so the instance
+-- buys exactly one attestation per creation and no more.
+DO $one_attestation_per_creation$ BEGIN
   BEGIN
     PERFORM ({write});
-    ASSERT false, 'a durable environment replaced its own attestation';
+    ASSERT false, 'a second manifest landed inside one creation';
   EXCEPTION WHEN unique_violation THEN
     RAISE NOTICE 'WAMN-RUST-DURABLE-REFREEZE % %', SQLSTATE, SQLERRM;
   END;
 END
-$durable_refreezes$;
+$one_attestation_per_creation$;
 RESET ROLE;
 "#,
             project = render(&project),

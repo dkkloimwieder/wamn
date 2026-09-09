@@ -11,6 +11,7 @@ pub mod cdcbench;
 #[cfg(test)]
 mod claim_law_live;
 pub mod dashproof;
+pub mod host_session_proof;
 mod hot_route_trace;
 pub mod identity_keys_proof;
 pub mod identity_session_proof;

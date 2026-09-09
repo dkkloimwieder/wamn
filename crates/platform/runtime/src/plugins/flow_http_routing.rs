@@ -28,11 +28,13 @@ use boon::{Compiler, Draft, SchemaIndex, Schemas};
 use opentelemetry::KeyValue;
 use serde_json::Value;
 use tracing::Instrument as _;
+#[cfg(test)]
+use wamn_catalog::PAT_AUTHENTICATION_MODE;
 use wamn_catalog::{
-    AttachmentKind, NO_AUTHENTICATION_MODE, PAT_AUTHENTICATION_MODE, ServingAttachment,
-    ServingManifest,
+    AttachmentAuthPolicy, AttachmentKind, ServingAttachment, ServingManifest,
+    parse_attachment_auth_policy,
 };
-use wamn_platform_identity::{PreparedIdentityReads, PrincipalKind};
+use wamn_platform_identity::{PAT_TOKEN_PREFIX, PreparedIdentityReads, PrincipalKind};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -40,6 +42,7 @@ use wash_runtime::wasmtime::component::Resource;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::release_manifest::ReleaseManifestWeld;
+use crate::session_verifier::SessionVerifier;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -350,7 +353,17 @@ fn compile_input_schema(hash: &str, schema: Value) -> InputSchemaValidator {
 pub struct AuthenticatedCaller {
     attachment_id: Box<str>,
     principal_id: Box<str>,
+    credential_kind: CredentialKind,
     permissions: Arc<HashSet<String>>,
+}
+
+/// The credential that authenticated the original request, owned by the host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialKind {
+    /// A freshly authenticated platform access token.
+    Pat,
+    /// Signed identity and roles within the approved session lifetime.
+    Session,
 }
 
 impl std::fmt::Debug for AuthenticatedCaller {
@@ -359,6 +372,7 @@ impl std::fmt::Debug for AuthenticatedCaller {
             .debug_struct("AuthenticatedCaller")
             .field("attachment_id", &self.attachment_id)
             .field("principal_id", &self.principal_id)
+            .field("credential_kind", &self.credential_kind)
             .field("permission_count", &self.permissions.len())
             .finish_non_exhaustive()
     }
@@ -373,6 +387,11 @@ impl AuthenticatedCaller {
     /// Return the opaque platform principal used by router traces and refusals.
     pub fn principal_id(&self) -> &str {
         &self.principal_id
+    }
+
+    /// Return the original credential kind, unchanged across nested calls.
+    pub fn credential_kind(&self) -> CredentialKind {
+        self.credential_kind
     }
 
     /// Check one exact registered-operation token.
@@ -430,6 +449,37 @@ impl RouteAuthentication {
     }
 }
 
+/// Session authentication with public keys and the tenant permission reader only.
+pub struct SessionRouteAuthentication {
+    verifier: SessionVerifier,
+    postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+    project: Box<str>,
+}
+
+impl std::fmt::Debug for SessionRouteAuthentication {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SessionRouteAuthentication")
+            .field("project", &self.project)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SessionRouteAuthentication {
+    /// Bind the configured verifier to the host's existing permission authority.
+    pub fn new(
+        verifier: SessionVerifier,
+        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+        project: impl Into<Box<str>>,
+    ) -> Self {
+        Self {
+            verifier,
+            postgres,
+            project: project.into(),
+        }
+    }
+}
+
 /// This process was given no release, so it can answer no route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NoRelease;
@@ -454,6 +504,7 @@ pub struct FlowHttpRouting {
     release: Option<Arc<ReleaseManifestWeld>>,
     input_schemas: InputSchemaValidators,
     authentication: Option<Arc<RouteAuthentication>>,
+    session_authentication: Option<Arc<SessionRouteAuthentication>>,
     limiter: Arc<RouteLimiter>,
 }
 
@@ -477,6 +528,10 @@ impl std::fmt::Debug for FlowHttpRouting {
             )
             .field("route_in_flight_limit", &self.limiter.limit)
             .field("authentication_configured", &self.authentication.is_some())
+            .field(
+                "session_authentication_configured",
+                &self.session_authentication.is_some(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -492,6 +547,7 @@ impl FlowHttpRouting {
             release,
             input_schemas,
             authentication: None,
+            session_authentication: None,
             limiter: RouteLimiter::new(route_in_flight_limit),
         }
     }
@@ -500,6 +556,16 @@ impl FlowHttpRouting {
     #[must_use]
     pub fn with_authentication(mut self, authentication: Arc<RouteAuthentication>) -> Self {
         self.authentication = Some(authentication);
+        self
+    }
+
+    /// Supply public verification keys and the scoped tenant permission reader.
+    #[must_use]
+    pub fn with_session_authentication(
+        mut self,
+        authentication: Arc<SessionRouteAuthentication>,
+    ) -> Self {
+        self.session_authentication = Some(authentication);
         self
     }
 
@@ -548,15 +614,24 @@ impl FlowHttpRouting {
             .get(attachment_id)
             .filter(|attachment| carries_http_route(attachment.kind))
             .ok_or_else(authentication_unavailable)?;
-        let mode = attachment.auth_policy.get("mode").and_then(Value::as_str);
-        if mode == Some(NO_AUTHENTICATION_MODE) {
-            return Ok(None);
-        }
-        if mode != Some(PAT_AUTHENTICATION_MODE) {
-            return Err(AuthRejection {
+        let policy =
+            parse_attachment_auth_policy(&attachment.auth_policy).ok_or_else(|| AuthRejection {
                 status: UNSUPPORTED_POLICY_STATUS,
                 code: UNSUPPORTED_POLICY_CODE.to_string(),
-            });
+            })?;
+        if policy == AttachmentAuthPolicy::None {
+            return Ok(None);
+        }
+        // The wire shape selects one mechanism; failed authentication never
+        // falls back to another credential or repeats an executed operation.
+        let session = policy.allows_session()
+            && (!policy.allows_pat()
+                || bearer_token(headers).is_some_and(|token| !token.starts_with(PAT_TOKEN_PREFIX)));
+        if session {
+            return self
+                .authenticate_session(attachment_id, headers, &manifest.release.tenant_id)
+                .await
+                .map(Some);
         }
         let span = tracing::info_span!(
             target: "wamn::route",
@@ -621,11 +696,48 @@ impl FlowHttpRouting {
             Ok(Some(AuthenticatedCaller {
                 attachment_id: attachment_id.into(),
                 principal_id: principal.id().as_str().into(),
+                credential_kind: CredentialKind::Pat,
                 permissions: Arc::new(permissions.into_iter().collect()),
             }))
         }
         .instrument(span)
         .await
+    }
+
+    async fn authenticate_session(
+        &self,
+        attachment_id: &str,
+        headers: &[Header],
+        tenant: &str,
+    ) -> Result<AuthenticatedCaller, AuthRejection> {
+        let token = required_bearer_token(headers)?;
+        let authentication = self
+            .session_authentication
+            .as_ref()
+            .ok_or_else(unauthorized)?;
+        let session = authentication
+            .verifier
+            .verify(token)
+            .await
+            .map_err(|_| unauthorized())?;
+        let permissions = authentication
+            .postgres
+            .session_operation_permissions(&authentication.project, tenant, &session.claims().roles)
+            .instrument(tracing::info_span!("wamn.auth.permissions"))
+            .await
+            .map_err(|error| {
+                tracing::warn!(error = %error, "route operation grants unavailable");
+                authentication_unavailable()
+            })?;
+        // Permission I/O cannot extend the evidence that admitted this request.
+        // Once returned, nested work retains this caller without reauthentication.
+        session.check_admission().map_err(|_| unauthorized())?;
+        Ok(AuthenticatedCaller {
+            attachment_id: attachment_id.into(),
+            principal_id: session.claims().sub.as_str().into(),
+            credential_kind: CredentialKind::Session,
+            permissions: Arc::new(permissions.into_iter().collect()),
+        })
     }
 
     /// Exercise production route authentication from an integration proof.
@@ -696,8 +808,21 @@ pub fn requires_pat_route_authentication(manifest: &ServingManifest) -> bool {
         .filter(|(_, attachment)| carries_http_route(attachment.kind))
         .any(|(attachment_id, attachment)| {
             route_definition(attachment_id, attachment).is_some()
-                && attachment.auth_policy.get("mode").and_then(Value::as_str)
-                    == Some(PAT_AUTHENTICATION_MODE)
+                && parse_attachment_auth_policy(&attachment.auth_policy)
+                    .is_some_and(|policy| policy.allows_pat())
+        })
+}
+
+/// Return whether the release contains an externally selectable session route.
+pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool {
+    manifest
+        .attachments
+        .iter()
+        .filter(|(_, attachment)| carries_http_route(attachment.kind))
+        .any(|(id, attachment)| {
+            route_definition(id, attachment).is_some()
+                && parse_attachment_auth_policy(&attachment.auth_policy)
+                    .is_some_and(|policy| policy.allows_session())
         })
 }
 
@@ -1006,7 +1131,7 @@ mod tests {
             definition_hash: DefinitionHash::parse(DEFINITION_HASH)
                 .expect("fixture definition hash is canonical"),
             definition,
-            auth_policy: json!({"mode": "none"}),
+            auth_policy: json!({"modes": ["none"]}),
             registered_operation: None,
         }
     }
@@ -1368,21 +1493,50 @@ mod tests {
     #[test]
     fn only_an_externally_selectable_pat_attachment_requires_route_authentication() {
         let mut internal = attachment(AttachmentKind::Internal, orders_definition());
-        internal.auth_policy = json!({"mode": PAT_AUTHENTICATION_MODE});
+        internal.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let internal_only = release_manifest(BTreeMap::from([("internal".to_string(), internal)]));
         assert!(!requires_pat_route_authentication(&internal_only));
 
         let mut malformed = attachment(AttachmentKind::Http, json!({"route": {}}));
-        malformed.auth_policy = json!({"mode": PAT_AUTHENTICATION_MODE});
+        malformed.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let malformed_only =
             release_manifest(BTreeMap::from([("malformed".to_string(), malformed)]));
         assert!(!requires_pat_route_authentication(&malformed_only));
 
         let mut http = attachment(AttachmentKind::Http, orders_definition());
-        http.auth_policy = json!({"mode": PAT_AUTHENTICATION_MODE});
+        http.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let protected = release_manifest(BTreeMap::from([("orders".to_string(), http)]));
         assert!(requires_pat_route_authentication(&protected));
         assert!(!requires_pat_route_authentication(&one_http_route()));
+    }
+
+    #[test]
+    fn session_and_pat_authorities_follow_only_the_released_modes() {
+        for (modes, pat, session) in [
+            (json!(["none"]), false, false),
+            (json!(["pat"]), true, false),
+            (json!(["session"]), false, true),
+            (json!(["pat", "session"]), true, true),
+        ] {
+            for kind in [
+                AttachmentKind::Http,
+                AttachmentKind::Studio,
+                AttachmentKind::Internal,
+            ] {
+                let mut route = attachment(kind, orders_definition());
+                route.auth_policy = json!({"modes": modes});
+                let manifest = release_manifest(BTreeMap::from([("orders".to_string(), route)]));
+                let external = kind != AttachmentKind::Internal;
+                assert_eq!(
+                    requires_pat_route_authentication(&manifest),
+                    pat && external
+                );
+                assert_eq!(
+                    requires_session_route_authentication(&manifest),
+                    session && external
+                );
+            }
+        }
     }
 
     #[test]
@@ -1459,7 +1613,7 @@ mod tests {
     #[tokio::test]
     async fn pat_mode_is_recognized_and_an_absent_backend_is_one_generic_outage() {
         let mut protected = attachment(AttachmentKind::Http, orders_definition());
-        protected.auth_policy = json!({"mode": PAT_AUTHENTICATION_MODE});
+        protected.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let manifest = release_manifest(BTreeMap::from([("orders".to_string(), protected)]));
         let mount = Mount::holding(&manifest, "pat-backend");
         let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
@@ -1505,6 +1659,7 @@ mod tests {
         let caller = AuthenticatedCaller {
             attachment_id: "receiving-http".into(),
             principal_id: "11111111-1111-4111-8111-111111111111".into(),
+            credential_kind: CredentialKind::Pat,
             permissions: Arc::new(HashSet::from([
                 "wamn-receiving:receipt/get@1.0.0".to_string()
             ])),
@@ -1517,6 +1672,17 @@ mod tests {
         assert!(caller.permits("wamn-receiving:receipt/get@1.0.0"));
         assert!(!caller.permits("wamn-receiving:receipt/query@1.0.0"));
         assert!(!caller.permits("receipt.get"));
+        assert_eq!(caller.credential_kind(), CredentialKind::Pat);
+        for kind in [CredentialKind::Pat, CredentialKind::Session] {
+            let caller = AuthenticatedCaller {
+                credential_kind: kind,
+                ..caller.clone()
+            };
+            let nested = caller.clone();
+            assert_eq!(nested.credential_kind(), kind);
+            assert_eq!(nested.principal_id(), caller.principal_id());
+            assert!(nested.permits("wamn-receiving:receipt/get@1.0.0"));
+        }
     }
 
     #[test]

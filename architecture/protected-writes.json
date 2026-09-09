@@ -600,22 +600,22 @@
       "guards": [
         "constraint:component_library_component_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component <> ''::text)",
         "constraint:component_library_component_digest_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
-        "constraint:component_library_digest_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, component_digest)",
+        "constraint:component_library_digest_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, environment_instance, component_digest)",
         "constraint:component_library_effects_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(effects) = 'array'::text)",
         "constraint:component_library_imports_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(imports) = 'array'::text)",
         "constraint:component_library_imports_fingerprint_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:component_library_interface_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (interface_version <> ''::text)",
         "constraint:component_library_operations_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(operations) = 'object'::text AND operations <> '{}'::jsonb)",
-        "constraint:component_library_package_digest_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, package_id, package_version, component_digest)",
+        "constraint:component_library_package_digest_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, environment_instance, package_id, package_version, component_digest)",
         "constraint:component_library_package_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, package_id, package_version) REFERENCES catalog.packages(tenant_id, package_id, package_version)",
         "constraint:component_library_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_id <> ''::text)",
         "constraint:component_library_package_version_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_version <> ''::text)",
-        "constraint:component_library_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, package_id, package_version, component, interface_version)",
+        "constraint:component_library_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, environment_instance, package_id, package_version, component, interface_version)",
         "constraint:component_library_projection_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (projection_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:component_library_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:component_library_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:component_library_immutable;mode=origin;function=catalog.reject_durable_environment_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER component_library_immutable BEFORE DELETE OR UPDATE ON catalog.component_library FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_environment_fact_change()"
+        "trigger:component_library_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER component_library_immutable BEFORE DELETE OR UPDATE ON catalog.component_library FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
       ]
     },
     {
@@ -642,8 +642,8 @@
       "author-reachable": "no",
       "guards": [
         "constraint:connection_requirements_component_digest_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
-        "constraint:connection_requirements_component_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, component_digest) REFERENCES catalog.component_library(tenant_id, component_digest)",
-        "constraint:connection_requirements_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, component_digest, store_alias)",
+        "constraint:connection_requirements_component_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, environment_instance, component_digest) REFERENCES catalog.component_library(tenant_id, environment_instance, component_digest)",
+        "constraint:connection_requirements_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, environment_instance, component_digest, store_alias)",
         "constraint:connection_requirements_requirement_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (requirement_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:connection_requirements_requirement_json_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(requirement_json) = 'object'::text)",
         "constraint:connection_requirements_store_alias_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (store_alias <> ''::text)",
@@ -651,7 +651,7 @@
         "policy:connection_requirements_author_tenant;command=all;permissive=false;roles=wamn_control_author;using=tenant_id = wamn_authority.session_author_tenant();check=tenant_id = wamn_authority.session_author_tenant()",
         "policy:connection_requirements_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:connection_requirements_immutable;mode=origin;function=catalog.reject_durable_environment_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER connection_requirements_immutable BEFORE DELETE OR UPDATE ON catalog.connection_requirements FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_environment_fact_change()"
+        "trigger:connection_requirements_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER connection_requirements_immutable BEFORE DELETE OR UPDATE ON catalog.connection_requirements FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
       ]
     },
     {
@@ -677,7 +677,7 @@
       ],
       "author-reachable": "no",
       "guards": [
-        "constraint:deployment_attestations_coordinate;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, effective_release_id, org_id, project_id, environment)",
+        "constraint:deployment_attestations_coordinate;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, environment_instance, effective_release_id, org_id, project_id, environment)",
         "constraint:deployment_attestations_deployed_manifest_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (deployed_manifest_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:deployment_attestations_effective_release_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (effective_release_id > 0)",
         "constraint:deployment_attestations_environment_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (environment <> ''::text)",
@@ -688,7 +688,7 @@
         "constraint:deployment_attestations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:deployment_attestations_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",
-        "trigger:deployment_attestations_immutable;mode=origin;function=catalog.reject_durable_environment_fact_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER deployment_attestations_immutable BEFORE DELETE OR UPDATE ON catalog.deployment_attestations FOR EACH ROW EXECUTE FUNCTION catalog.reject_durable_environment_fact_change()"
+        "trigger:deployment_attestations_immutable;mode=origin;function=catalog.reject_immutable_row_change();function-owner=wamn_system;security-definer=false;config=;definition=CREATE TRIGGER deployment_attestations_immutable BEFORE DELETE OR UPDATE ON catalog.deployment_attestations FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()"
       ]
     },
     {

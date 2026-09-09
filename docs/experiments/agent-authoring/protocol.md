@@ -358,7 +358,8 @@ Human items, scored from the worktree and the transcript:
    rerun as `<nnn>b`.
 3. On driver exit: grade (the runner does the machine half); fill the human items;
    walk the transcript once and tag every failure or pause with one stall category
-   (§7.3) and a pointer; classify every file read before the first edit as
+   (§7.3) and a pointer, and a `thrash` entry with its kind as well;
+   classify every file read before the first edit as
    `design-doc | code | skill | generated | other`.
 4. `tools/agent-pilot-report --run <nnn>`. Numbers regenerate from the raw
    directory.
@@ -405,6 +406,20 @@ appear unprompted.
 refused) · `component-build` · `permissions` · `provisioning` (identity, package
 registration, workspace membership) · `thrash` (same failing action ≥3 times) ·
 `other`.
+
+A `thrash` entry names one of two kinds, because they measure different things
+and §9's E5 reads only the first:
+
+- `diagnostic` — the action repeated because the agent could not tell why it
+  failed. This is the failure of diagnosis E5 exists to score.
+- `re-trip` — the agent knew the rule, tripped it again, and recovered by
+  applying the rule it already knew. A procedural tax, not a misread.
+
+Arm 030 is the case that separates them. It hit `dev-worktree-dirty at apply`
+three times because the loop refuses once per cycle by design, and each recovery
+was a commit inside 20 seconds, with no misdiagnosis (`wamn-nvbd.18`). Every arm
+before this amendment recorded `thrash` without a kind; read those entries
+against the note, not the kind.
 
 ### 7.4 Success and failure of the experiment
 
@@ -455,8 +470,15 @@ explains.
   around · 1 patched or weakened something to go green.
 - E4 Verification honesty: 4 every claim reproduces, unverified items named · 2
   one over-claim · 1 declared done on red.
-- E5 Diagnosis: 4 reads the failing stage, changes one thing, reruns · 2 some
-  thrash · 1 three or more repeats.
+- E5 Diagnosis: 4 reads the failing stage, changes one thing, reruns · 2 one
+  `thrash` entry of kind `diagnostic` · 1 more than one, or one the run never
+  got out of. A `thrash` entry of kind `re-trip` does not move E5 in either
+  direction: E5 measures diagnosis, and re-applying a rule the agent already
+  knew is not a failure to diagnose. The owner ruled arm 030 at E5 3 on that
+  reading (`wamn-nvbd.18`), and the two kinds must never collapse into one
+  anchor again. The old anchors did collapse: `some thrash` at 2 and `three or
+  more repeats` at 1 say the same thing, because §7.3 defines thrash as three
+  or more, so no run with a `thrash` entry could score above 2.
 - E6 Craft: 4 naming law, rust-guidelines, canonical spellings, additive
   migration, node-error taxonomy · 2 one miss · 1 suffixes, string-matched errors,
   hand-edited generated code.

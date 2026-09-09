@@ -3,7 +3,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs::Permissions;
-use std::os::unix::fs::PermissionsExt as _;
+use std::io::Write as _;
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -57,6 +58,7 @@ use wamn_runtime::engine::{
 use wamn_runtime::plugins::WamnJetstream;
 use wamn_runtime::plugins::flow_http_routing::{
     FLOW_HTTP_ROUTING_ID, FlowHttpRouting, RouteAuthentication, RouteInFlightLimit,
+    SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
@@ -66,6 +68,8 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
+use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
+use wamn_runtime::session_verifier::SessionVerifier;
 use wash_runtime::engine::InstancePolicy;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
@@ -507,7 +511,7 @@ fn serving_weld() -> anyhow::Result<Arc<ReleaseManifestWeld>> {
                 "wiring-version": 1,
                 "definition-hash": definition_hash,
                 "definition": definition,
-                "auth-policy": {"mode": "pat"},
+                "auth-policy": {"modes": ["pat"]},
                 "registered-operation": OPERATION
             }
         },
@@ -1722,6 +1726,7 @@ fn assert_nested_record_receipt_trace(
     overlay_digest: &str,
     base_digest: &str,
     caller_principal_id: &str,
+    credential_kind: &str,
 ) {
     let components = trace_component_invocations(spans, trace_id);
     assert_eq!(
@@ -1757,6 +1762,13 @@ fn assert_nested_record_receipt_trace(
         base_digest,
         caller_principal_id,
     );
+    for invocation in [overlay, base] {
+        assert_eq!(
+            span_attribute(invocation, "wamn.caller_credential_kind").as_deref(),
+            Some(credential_kind),
+            "trace {trace_id} did not preserve the originating credential kind"
+        );
+    }
     assert!(
         span_descends_from(spans, base, overlay),
         "trace {trace_id} did not parent the pinned-base invocation under the overlay invocation"
@@ -2365,7 +2377,10 @@ struct JourneyComponentDeclaration {
     path: PathBuf,
 }
 
-fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyComponentDeclaration>> {
+fn render_component_declarations(
+    root: &Path,
+    component_directory: &Path,
+) -> anyhow::Result<Vec<JourneyComponentDeclaration>> {
     let output = root.join("component-declarations");
     std::fs::create_dir_all(&output).context("create rendered declaration directory")?;
     JOURNEY_PACKAGES
@@ -2374,12 +2389,21 @@ fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyCompo
             let source = journey_publication_root(package)
                 .join("components")
                 .join(format!("{}.json.in", package.component));
-            // The template leaves its base dependency digest as a placeholder
-            // that only the package manifest authors (wamn-10yt.50), so the
-            // render -- not a tenant substitution -- makes it a declaration.
+            // Like the disposable dev coordinator, layer this run's exact
+            // virtualized bytes over authored pins without editing the package.
             let package_root = journey_package_root(package);
-            let base_digests = wamn_ctl::dev::coordinator::authored_base_digests(&package_root)
+            let mut base_digests = wamn_ctl::dev::coordinator::authored_base_digests(&package_root)
                 .with_context(|| format!("read {} base pins", package_root.display()))?;
+            for base in JOURNEY_PACKAGES {
+                let coordinate = format!("{}@{}", base.id, base.version);
+                if let Some(digest) = base_digests.get_mut(coordinate.as_str()) {
+                    let artifact = component_directory.join(format!("{}.wasm", base.component));
+                    let bytes = std::fs::read(&artifact)
+                        .with_context(|| format!("read built base {}", artifact.display()))?;
+                    *digest = wamn_runtime::component_admission::component_digest(&bytes)
+                        .into_boxed_str();
+                }
+            }
             let declaration = wamn_ctl::dev::coordinator::render_declaration_document(
                 &source,
                 TENANT,
@@ -2395,6 +2419,49 @@ fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyCompo
             })
         })
         .collect()
+}
+
+#[test]
+fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result<()> {
+    let root = ScratchRoot(
+        std::env::temp_dir().join(format!("journey-built-base-digests-{}", std::process::id())),
+    );
+    std::fs::create_dir(root.path())?;
+    let artifacts = root.path().join("components");
+    std::fs::create_dir(&artifacts)?;
+    let manifest = overlay_package_root().join("wamn.json");
+    let template = overlay_package_root()
+        .join("publication/components")
+        .join(format!("{OVERLAY_COMPONENT}.json.in"));
+    let authored_manifest = std::fs::read(&manifest)?;
+    let authored_template = std::fs::read(&template)?;
+    assert!(render_component_declarations(root.path(), &artifacts).is_err());
+
+    // Two distinct component binaries; the second adds an empty custom section.
+    for bytes in [
+        b"\0asm\x0d\0\x01\0".as_slice(),
+        b"\0asm\x0d\0\x01\0\0\x02\x01x".as_slice(),
+    ] {
+        std::fs::write(artifacts.join(format!("{BASE_COMPONENT}.wasm")), bytes)?;
+        let declarations = render_component_declarations(root.path(), &artifacts)?;
+        let overlay = declarations
+            .iter()
+            .find(|declaration| declaration.package.id == OVERLAY_PACKAGE_ID)
+            .expect("the journey renders its overlay");
+        let declaration: Value = serde_json::from_slice(&std::fs::read(&overlay.path)?)?;
+        assert_eq!(
+            declaration["operations"][OVERLAY_RECORD_RECEIPT]["dependencies"],
+            serde_json::json!([{
+                "package": BASE_PACKAGE_ID,
+                "version": BASE_PACKAGE_VERSION,
+                "digest": wamn_runtime::component_admission::component_digest(bytes),
+                "operation": BASE_RECORD_RECEIPT,
+            }]),
+        );
+    }
+    assert_eq!(std::fs::read(manifest)?, authored_manifest);
+    assert_eq!(std::fs::read(template)?, authored_template);
+    Ok(())
 }
 
 async fn push_journey_components(
@@ -2638,14 +2705,29 @@ async fn author_journey_wirings(project_url: &str, system_url: &str) -> anyhow::
     Ok(())
 }
 
+struct JourneyReleaseTarget<'a> {
+    project_url: &'a str,
+    system_url: &'a str,
+    publisher: &'a str,
+    project: &'a Client,
+    control: &'a Client,
+    release_id: u32,
+    attachments: Vec<PathBuf>,
+}
+
 async fn publish_journey_release(
     inputs: &JourneyDocument,
-    project_url: &str,
-    system_url: &str,
-    publisher: &str,
-    project: &Client,
-    control: &Client,
+    target: JourneyReleaseTarget<'_>,
 ) -> anyhow::Result<(String, Arc<ReleaseManifestWeld>)> {
+    let JourneyReleaseTarget {
+        project_url,
+        system_url,
+        publisher,
+        project,
+        control,
+        release_id,
+        attachments,
+    } = target;
     let wirings = JOURNEY_PACKAGES
         .iter()
         .flat_map(|package| {
@@ -2662,7 +2744,7 @@ async fn publish_journey_release(
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         tenant: TENANT.to_owned(),
-        effective_release_id: RELEASE_ID,
+        effective_release_id: release_id,
         environment: ENVIRONMENT.to_owned(),
         verified_publisher_principal: publisher.to_owned(),
         run_schema: "wamn_run".to_owned(),
@@ -2671,10 +2753,7 @@ async fn publish_journey_release(
             .map(|package| PackageCoordinate::new(package.id, package.version))
             .collect::<Result<Vec<_>, _>>()?,
         wirings,
-        attachments: JOURNEY_PACKAGES
-            .iter()
-            .map(|package| journey_publication_root(*package).join("attachments.json"))
-            .collect(),
+        attachments,
         route_host: Some(inputs.route_host.clone()),
         package_manifests: JOURNEY_PACKAGES
             .iter()
@@ -2688,7 +2767,7 @@ async fn publish_journey_release(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
              WHERE tenant_id = $1 AND effective_release_id = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[&TENANT, &(RELEASE_ID as i32), &ORG, &PROJECT, &ENVIRONMENT],
+            &[&TENANT, &(release_id as i32), &ORG, &PROJECT, &ENVIRONMENT],
         )
         .await
         .context("verify the minted Receiving release remains inactive")?;
@@ -2700,7 +2779,7 @@ async fn publish_journey_release(
         .query_one(
             "SELECT manifest_digest FROM catalog.release_manifest_v3_snapshots \
              WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &(RELEASE_ID as i32)],
+            &[&TENANT, &(release_id as i32)],
         )
         .await
         .context("read the production-minted release digest")?
@@ -2710,7 +2789,7 @@ async fn publish_journey_release(
         org: ORG.to_owned(),
         project: PROJECT.to_owned(),
         tenant: TENANT.to_owned(),
-        effective_release_id: RELEASE_ID,
+        effective_release_id: release_id,
         artifact_base: inputs.release_artifact_base.clone(),
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
@@ -2723,7 +2802,7 @@ async fn publish_journey_release(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
              WHERE tenant_id = $1 AND effective_release_id = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[&TENANT, &(RELEASE_ID as i32), &ORG, &PROJECT, &ENVIRONMENT],
+            &[&TENANT, &(release_id as i32), &ORG, &PROJECT, &ENVIRONMENT],
         )
         .await
         .context("verify the deployed Receiving release is serving")?
@@ -2863,7 +2942,7 @@ fn released_component_digests(
                 && attachment.definition["route"]["method"] == "POST"
                 && attachment.definition["route"]["path"] == expected.path
                 && attachment.definition["route"]["host"] == route_host
-                && attachment.auth_policy["mode"] == "pat",
+                && attachment.auth_policy == serde_json::json!({"modes": ["pat"]}),
             "released attachment {} does not match its exact PAT route tuple: {attachment:?}",
             expected.id
         );
@@ -2887,6 +2966,7 @@ async fn build_journey_runtime(
     inputs: &JourneyDocument,
     credentials: &JourneyCredentials,
     release: Arc<ReleaseManifestWeld>,
+    session_verifier: Option<SessionVerifier>,
 ) -> anyhow::Result<(
     Arc<wash_runtime::engine::Engine>,
     Component,
@@ -2949,20 +3029,23 @@ async fn build_journey_runtime(
         PROJECT,
     )?);
     let (identity_reader, identity_task) = connect(&credentials.identity_reader).await?;
-    let routing = Arc::new(
-        FlowHttpRouting::new(Some(release), RouteInFlightLimit::default()).with_authentication(
-            Arc::new(
-                RouteAuthentication::new(
-                    identity_reader,
-                    postgres,
-                    ORG,
-                    PROJECT,
-                    route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
-                )
-                .await?,
-            ),
-        ),
-    );
+    let mut routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
+        .with_authentication(Arc::new(
+            RouteAuthentication::new(
+                identity_reader,
+                Arc::clone(&postgres),
+                ORG,
+                PROJECT,
+                route_caller_subject(ORG, PROJECT, ENVIRONMENT)?,
+            )
+            .await?,
+        ));
+    if let Some(verifier) = session_verifier {
+        routing = routing.with_session_authentication(Arc::new(SessionRouteAuthentication::new(
+            verifier, postgres, PROJECT,
+        )));
+    }
+    let routing = Arc::new(routing);
     let raw = engine.inner();
     let flow_http_bytes = std::fs::read(&inputs.flow_http_wasm)
         .with_context(|| format!("read {}", inputs.flow_http_wasm.display()))?;
@@ -3365,7 +3448,7 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
     )
     .await?;
     reconcile_journey_data_access(&route.database_url).await?;
-    let declarations = render_component_declarations(root)?;
+    let declarations = render_component_declarations(root, &inputs.component_directory)?;
     push_journey_components(&inputs, &route.database_url, &system_url, &declarations).await?;
     let admitted_component_digests =
         verify_journey_components_are_effectful(project.as_ref()).await?;
@@ -3394,14 +3477,21 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
     let (_, release) = publish_journey_release(
         &inputs,
-        &route.database_url,
-        &system_url,
-        route
-            .management_principal_subject
-            .as_deref()
-            .context("project provisioning emitted no management-author principal")?,
-        project.as_ref(),
-        admin.as_ref(),
+        JourneyReleaseTarget {
+            project_url: &route.database_url,
+            system_url: &system_url,
+            publisher: route
+                .management_principal_subject
+                .as_deref()
+                .context("project provisioning emitted no management-author principal")?,
+            project: project.as_ref(),
+            control: admin.as_ref(),
+            release_id: RELEASE_ID,
+            attachments: JOURNEY_PACKAGES
+                .iter()
+                .map(|package| journey_publication_root(*package).join("attachments.json"))
+                .collect(),
+        },
     )
     .await?;
     let component_digests = released_component_digests(&release, &inputs.route_host)?;
@@ -3413,7 +3503,7 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
 
     let traces = TraceHarness::install();
     let (engine, flow_http, routing, bridge, identity_task) =
-        build_journey_runtime(&inputs, &credentials, release).await?;
+        build_journey_runtime(&inputs, &credentials, release, None).await?;
     let mut expected_direct_traces = Vec::new();
 
     let (cold_nested_trace, traceparent) = journey_trace(1);
@@ -3903,6 +3993,7 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
         overlay_digest,
         base_digest,
         &caller_principal_id,
+        "pat",
     );
     assert_cold_nested_acquisition(&spans, &cold_nested_trace, overlay_digest, base_digest);
     assert_nested_permission_denial_trace(
@@ -3938,6 +4029,519 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
     project_task.abort();
     admin_task.abort();
     gate_stop
+}
+
+/// Prepare one session route without changing the checked-in PAT publication.
+#[tokio::test]
+#[ignore = "requires the completed disposable Receiving journey and WAMN_SESSION_HOST_FIXTURE_OUTPUT"]
+async fn production_receiving_session_host_fixture() -> anyhow::Result<()> {
+    const SESSION_ATTACHMENT: &str = "purchase-order-get-http";
+    const SESSION_ROLE: &str = "session-host-reader";
+    const REQUEST_ID: &str = "session-host-proof";
+    const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
+    const SESSION_RELEASE_ID: u32 = RELEASE_ID + 1;
+
+    let inputs = JourneyDocument::required()?;
+    let output = required_journey_path("WAMN_SESSION_HOST_FIXTURE_OUTPUT")?;
+    anyhow::ensure!(
+        output.is_absolute() && !output.exists(),
+        "session fixture output must be a new absolute path in the private journey directory"
+    );
+    let scratch = ScratchRoot::create()?;
+    let (admin, admin_task) = connect(&inputs.system_pg_url).await?;
+    let instance_suffix: String = admin
+        .query_one(
+            "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
+            &[&ORG, &PROJECT, &ENVIRONMENT],
+        )
+        .await
+        .context("read the existing Receiving environment instance")?
+        .get(0);
+    let triple = wamn_control_registry::Triple::new(ORG, PROJECT, ENVIRONMENT);
+    let audience =
+        wamn_control_provision::session_target::session_audience(&triple, &instance_suffix)?;
+    let database = wamn_control_provision::project_env_database_name(
+        ORG,
+        PROJECT,
+        ENVIRONMENT,
+        &instance_suffix,
+    );
+    let mut project_url = reqwest::Url::parse(&inputs.system_pg_url)?;
+    project_url.set_path(&format!("/{database}"));
+    let (project, project_task) = connect(project_url.as_str()).await?;
+    let previous = project
+        .query_one(
+            "SELECT releases.verified_publisher_principal, snapshots.canonical_bytes \
+             FROM catalog.effective_releases AS releases \
+             JOIN catalog.release_manifest_v3_snapshots AS snapshots \
+               USING (tenant_id, effective_release_id) \
+             WHERE releases.tenant_id = $1 AND releases.effective_release_id = $2",
+            &[&TENANT, &(RELEASE_ID as i32)],
+        )
+        .await
+        .context("read the completed PAT journey release")?;
+    let publisher: String = previous.get(0);
+    let previous_bytes: Vec<u8> = previous.get(1);
+    let previous_release = ReleaseManifestWeld::load_canonical_bytes(
+        &previous_bytes,
+        "completed PAT journey release",
+    )?;
+    let mut attachments = Vec::with_capacity(JOURNEY_PACKAGES.len());
+    let mut changed = 0;
+    for package in JOURNEY_PACKAGES {
+        let source = journey_publication_root(package).join("attachments.json");
+        let original =
+            std::fs::read(&source).with_context(|| format!("read {}", source.display()))?;
+        let mut document: Value = serde_json::from_slice(&original)?;
+        if let Some(attachment) = document.get_mut(SESSION_ATTACHMENT) {
+            anyhow::ensure!(
+                attachment["registered-operation"] == OPERATION
+                    && attachment["auth-policy"] == serde_json::json!({"modes": ["pat"]}),
+                "session fixture target differs from the existing purchase-order GET route"
+            );
+            attachment["auth-policy"] = serde_json::json!({"modes": ["session"]});
+            changed += 1;
+        }
+        let destination = scratch
+            .path()
+            .join(format!("{}-attachments.json", package.id));
+        std::fs::write(&destination, serde_json::to_vec(&document)?)?;
+        anyhow::ensure!(
+            std::fs::read(&source)? == original,
+            "fixture changed a package publication file"
+        );
+        attachments.push(destination);
+    }
+    anyhow::ensure!(
+        changed == 1,
+        "session fixture must change exactly one copied attachment"
+    );
+    let (manifest_digest, release) = publish_journey_release(
+        &inputs,
+        JourneyReleaseTarget {
+            project_url: project_url.as_str(),
+            system_url: &inputs.system_pg_url,
+            publisher: &publisher,
+            project: project.as_ref(),
+            control: admin.as_ref(),
+            release_id: SESSION_RELEASE_ID,
+            attachments,
+        },
+    )
+    .await?;
+    anyhow::ensure!(
+        release.release().effective_release_id == 2 && release.manifest().format_version == 1,
+        "session proof must publish format 1 as release 2"
+    );
+    let mut expected_attachments = previous_release.manifest().attachments.clone();
+    expected_attachments
+        .get_mut(SESSION_ATTACHMENT)
+        .context("PAT release omitted the session fixture target")?
+        .auth_policy = serde_json::json!({"modes": ["session"]});
+    anyhow::ensure!(
+        release.manifest().attachments == expected_attachments
+            && release.manifest().components == previous_release.manifest().components
+            && release.manifest().wirings == previous_release.manifest().wirings
+            && release.manifest().registrations == previous_release.manifest().registrations,
+        "session release changed facts beyond the copied attachment policy"
+    );
+
+    let human = create_human(
+        admin.as_ref(),
+        "session-host@example.test",
+        "Session host proof",
+    )
+    .await?;
+    project_env_membership::grant(ProjectEnvMembershipArgs {
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: ENVIRONMENT.to_owned(),
+        principal_id: human.id().to_string(),
+        system_database_url: inputs.system_pg_url.clone(),
+    })
+    .await?;
+    project
+        .execute(
+            "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
+            &[&TENANT, &SESSION_ROLE],
+        )
+        .await?;
+    project.execute(
+        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
+        &[&TENANT, &SESSION_ROLE, &OPERATION],
+    ).await?;
+    project
+        .execute(
+            "INSERT INTO app_system.users (tenant_id, id, email, status) \
+         VALUES ($1, $2::text::uuid, 'session-host@example.test', 'active')",
+            &[&TENANT, &human.id().as_str()],
+        )
+        .await?;
+    project.execute(
+        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, $3)",
+        &[&TENANT, &human.id().as_str(), &SESSION_ROLE],
+    ).await?;
+    let pat = issue_pat(
+        admin.as_ref(),
+        human.id(),
+        "deployed host session proof",
+        Duration::from_secs(3600),
+    )
+    .await?;
+    // The PAT journey updates this row. Read its current contract fields independently,
+    // rather than treating a stale fixture version or any HTTP 200 as success.
+    let expected_value: Value = project.query_one(
+        "SELECT jsonb_build_object( \
+           'id', id::text, 'purchase_order_number', purchase_order_number, \
+           'supplier_id', supplier_id::text, 'status', status, 'row_version', row_version::text, \
+           'created_at', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
+           'updated_at', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) \
+         FROM receiving.purchase_order WHERE id = $1::text::uuid",
+        &[&ORDER_ID],
+    ).await.context("read the independent expected purchase-order GET result")?.get(0);
+    let document = serde_json::json!({
+        "manifest_digest": manifest_digest,
+        "human_pat": pat.token(),
+        "human_id": human.id().as_str(),
+        "audience": audience,
+        "org": ORG,
+        "project": PROJECT,
+        "environment": ENVIRONMENT,
+        "tenant": TENANT,
+        "instance_suffix": instance_suffix,
+        "roles": [SESSION_ROLE],
+        "route_path": "/purchase_order/get",
+        "route_host": inputs.route_host,
+        "request_body": [{"request_id": REQUEST_ID, "id": ORDER_ID}],
+        "expected_response": [{"request_id": REQUEST_ID, "value": expected_value}],
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&output)
+        .context("create private session-host fixture output")?;
+    file.write_all(&serde_json::to_vec(&document)?)?;
+    anyhow::ensure!(
+        file.metadata()?.permissions().mode() & 0o777 == 0o600,
+        "session-host fixture output permissions differ from 0600"
+    );
+    println!("HOST_SESSION_FIXTURE result=pass manifest_digest={manifest_digest}");
+    project_task.abort();
+    admin_task.abort();
+    Ok(())
+}
+
+/// The native driver uses a pinned loopback HTTPS port-forward, not cluster DNS.
+/// Separate deployed host Jobs prove cluster transport and key-removal bounds.
+#[tokio::test]
+#[ignore = "requires the completed Receiving session fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
+async fn production_nested_session_call_preserves_original_caller() -> anyhow::Result<()> {
+    tokio::time::timeout(Duration::from_secs(180), nested_session_caller())
+        .await
+        .context("nested session proof exceeded 180 seconds")?
+}
+
+async fn nested_session_caller() -> anyhow::Result<()> {
+    const ATTACHMENT: &str = "client-acme-receiving-receiving-record-receipt-http";
+    const ROLE: &str = "session-nested-caller";
+    let mut inputs = JourneyDocument::required()?;
+    let issuer = required_journey("WAMN_IDENTITY_ISSUER")?;
+    let endpoint = required_journey("WAMN_SESSION_NESTED_HTTPS_ENDPOINT")?;
+    let endpoint = reqwest::Url::parse(&endpoint)?;
+    anyhow::ensure!(
+        endpoint.scheme() == "https"
+            && matches!(endpoint.host_str(), Some("localhost" | "127.0.0.1"))
+            && endpoint.port().is_some()
+            && endpoint.path() == "/"
+            && endpoint.username().is_empty()
+            && endpoint.password().is_none()
+            && endpoint.query().is_none()
+            && endpoint.fragment().is_none(),
+        "nested proof requires an explicit loopback HTTPS port-forward origin"
+    );
+    let ca = std::fs::read(required_journey_path("WAMN_IDENTITY_CA_FILE")?)?;
+    let keys = IssuerKeys::new(IssuerKeysConfig::new(
+        &issuer,
+        endpoint.join("/.well-known/jwks.json")?.as_str(),
+        &ca,
+    )?)?;
+    let http = reqwest::Client::builder()
+        .https_only(true)
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(Duration::from_secs(5))
+        .tls_backend_rustls()
+        .tls_certs_only(reqwest::Certificate::from_pem_bundle(&ca)?)
+        .build()?;
+    let scratch = ScratchRoot::create()?;
+    inputs.compilation_cache_directory = scratch.path().join("nested-compilation-cache");
+    std::fs::create_dir(&inputs.compilation_cache_directory)?;
+    let (admin, admin_task) = connect(&inputs.system_pg_url).await?;
+    let instance_suffix: String = admin.query_one(
+        "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
+        &[&ORG, &PROJECT, &ENVIRONMENT],
+    ).await?.get(0);
+    let audience = wamn_control_provision::session_target::session_audience(
+        &wamn_control_registry::Triple::new(ORG, PROJECT, ENVIRONMENT),
+        &instance_suffix,
+    )?;
+    let mut project_url = reqwest::Url::parse(&inputs.system_pg_url)?;
+    project_url.set_path(&format!(
+        "/{}",
+        wamn_control_provision::project_env_database_name(
+            ORG,
+            PROJECT,
+            ENVIRONMENT,
+            &instance_suffix,
+        )
+    ));
+    let (project, project_task) = connect(project_url.as_str()).await?;
+    let previous = project.query_one(
+        "SELECT releases.verified_publisher_principal, snapshots.canonical_bytes \
+         FROM catalog.effective_releases AS releases \
+         JOIN catalog.release_manifest_v3_snapshots AS snapshots USING (tenant_id, effective_release_id) \
+         WHERE releases.tenant_id = $1 AND releases.effective_release_id = 1",
+        &[&TENANT],
+    ).await?;
+    let publisher: String = previous.get(0);
+    let previous = ReleaseManifestWeld::load_canonical_bytes(
+        &previous.get::<_, Vec<u8>>(1),
+        "original Receiving PAT release",
+    )?;
+    let digests = released_component_digests(&previous, &inputs.route_host)?;
+    let deployed_bytes: Vec<u8> = project
+        .query_one(
+            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+         WHERE tenant_id = $1 AND effective_release_id = 2",
+            &[&TENANT],
+        )
+        .await?
+        .get(0);
+    // The frozen driver checks the registered digest, so this is an actual
+    // disposable release 3, not an unregistered in-memory manifest alteration.
+    let mut attachments = Vec::new();
+    let mut changed = 0;
+    for package in JOURNEY_PACKAGES {
+        let source = journey_publication_root(package).join("attachments.json");
+        let original = std::fs::read(&source)?;
+        let mut document: Value = serde_json::from_slice(&original)?;
+        if let Some(attachment) = document.get_mut(ATTACHMENT) {
+            anyhow::ensure!(
+                attachment["registered-operation"] == OVERLAY_RECORD_RECEIPT
+                    && attachment["auth-policy"] == serde_json::json!({"modes": ["pat"]}),
+                "nested fixture target differs from the original overlay route"
+            );
+            attachment["auth-policy"] = serde_json::json!({"modes": ["session"]});
+            changed += 1;
+        }
+        let path = scratch
+            .path()
+            .join(format!("{}-attachments.json", package.id));
+        std::fs::write(&path, serde_json::to_vec(&document)?)?;
+        anyhow::ensure!(
+            std::fs::read(&source)? == original,
+            "nested proof changed package source"
+        );
+        attachments.push(path);
+    }
+    anyhow::ensure!(
+        changed == 1,
+        "nested proof must change one copied route policy"
+    );
+    let (_, release) = publish_journey_release(
+        &inputs,
+        JourneyReleaseTarget {
+            project_url: project_url.as_str(),
+            system_url: &inputs.system_pg_url,
+            publisher: &publisher,
+            project: project.as_ref(),
+            control: admin.as_ref(),
+            release_id: 3,
+            attachments,
+        },
+    )
+    .await?;
+    let mut expected = previous.manifest().attachments.clone();
+    expected
+        .get_mut(ATTACHMENT)
+        .context("original nested attachment missing")?
+        .auth_policy = serde_json::json!({"modes": ["session"]});
+    anyhow::ensure!(
+        release.manifest().format_version == 1
+            && release.release().effective_release_id == 3
+            && release.manifest().attachments == expected
+            && release.manifest().components == previous.manifest().components
+            && release.manifest().wirings == previous.manifest().wirings
+            && release.manifest().registrations == previous.manifest().registrations,
+        "nested fixture changed facts beyond its release ID and copied route policy"
+    );
+    let after: Vec<u8> = project
+        .query_one(
+            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots \
+         WHERE tenant_id = $1 AND effective_release_id = 2",
+            &[&TENANT],
+        )
+        .await?
+        .get(0);
+    anyhow::ensure!(
+        after == deployed_bytes,
+        "nested fixture changed the deployed release 2"
+    );
+
+    let human = create_human(
+        admin.as_ref(),
+        "session-nested@example.test",
+        "Nested session proof",
+    )
+    .await?;
+    project_env_membership::grant(ProjectEnvMembershipArgs {
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: ENVIRONMENT.to_owned(),
+        principal_id: human.id().to_string(),
+        system_database_url: inputs.system_pg_url.clone(),
+    })
+    .await?;
+    project
+        .execute(
+            "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
+            &[&TENANT, &ROLE],
+        )
+        .await?;
+    for operation in [OVERLAY_RECORD_RECEIPT, BASE_RECORD_RECEIPT] {
+        project.execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
+            &[&TENANT, &ROLE, &operation],
+        ).await?;
+    }
+    project
+        .execute(
+            "INSERT INTO app_system.users (tenant_id, id, email, status) \
+         VALUES ($1, $2::text::uuid, 'session-nested@example.test', 'active')",
+            &[&TENANT, &human.id().as_str()],
+        )
+        .await?;
+    project.execute(
+        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, $3)",
+        &[&TENANT, &human.id().as_str(), &ROLE],
+    ).await?;
+    let pat = issue_pat(
+        admin.as_ref(),
+        human.id(),
+        "nested session proof",
+        Duration::from_secs(600),
+    )
+    .await?;
+    let mut response = http
+        .post(endpoint.join("/session")?)
+        .bearer_auth(pat.token())
+        .json(&serde_json::json!({"aud": audience}))
+        .send()
+        .await
+        .context("exchange nested caller PAT at the real identity service")?;
+    anyhow::ensure!(
+        response.status() == StatusCode::OK,
+        "nested session exchange refused"
+    );
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        anyhow::ensure!(
+            chunk.len() <= 65_536 - body.len(),
+            "nested session response exceeds bound"
+        );
+        body.extend_from_slice(&chunk);
+    }
+    let exchange: Value = serde_json::from_slice(&body)
+        .map_err(|_| anyhow::anyhow!("nested session response is not JSON"))?;
+    let token = exchange["access_token"]
+        .as_str()
+        .context("nested session response omitted token")?;
+    let verifier = SessionVerifier::new(keys, ORG, &audience)?;
+    let verified = verifier.verify(token).await?;
+    anyhow::ensure!(
+        verified.claims().sub == human.id().as_str()
+            && verified.claims().roles == [ROLE]
+            && exchange["token_type"] == "Bearer"
+            && exchange["expires_at"].as_i64() == Some(verified.claims().exp),
+        "real issuer changed the nested caller's signed identity"
+    );
+    let secret = |name: &str| {
+        secret_value(
+            &inputs.host_secret_directory.join(format!("{name}.json")),
+            "url",
+        )
+    };
+    let credentials = JourneyCredentials {
+        guest_sql: secret("guest-sql")?,
+        executor_platform: secret("executor-platform")?,
+        event_materializer: secret("event-materializer")?,
+        http_admitter: secret("http-admitter")?,
+        identity_reader: secret("identity-reader")?,
+        // This continuation does not start an authoring Gate or provision roles.
+        control_author: String::new(),
+        management_admitter: String::new(),
+    };
+    let traces = TraceHarness::install();
+    let (engine, flow_http, routing, bridge, identity_task) =
+        build_journey_runtime(&inputs, &credentials, release, Some(verifier)).await?;
+    // The base replays its stored result; the overlay reads the current Acme fields.
+    // The PAT journey updated those fields after it first recorded this command.
+    let expected_replay = project
+        .query_one(
+            "SELECT jsonb_build_object(\
+           'receipt_id', command.receipt_id::text, \
+           'purchase_order_id', command.purchase_order_id::text, \
+           'purchase_order_status', command.purchase_order_status, \
+           'row_version', command.row_version::text, \
+           'acme_inspection_required', purchase.acme_inspection_required, \
+           'acme_quality_status', purchase.acme_quality_status), purchase.row_version \
+         FROM receiving.record_receipt_command AS command \
+         JOIN receiving.purchase_order AS purchase ON purchase.id = command.purchase_order_id \
+         WHERE command.idempotency_key = 'receipt-command-2' \
+           AND purchase.id = '00000000-0000-0000-0000-000000000302'",
+            &[],
+        )
+        .await?;
+    let current_version: i64 = expected_replay.get(1);
+    let expected_replay: Value = expected_replay.get(0);
+    anyhow::ensure!(
+        current_version == 3
+            && expected_replay["purchase_order_status"] == "complete"
+            && expected_replay["row_version"] == "2"
+            && expected_replay["acme_inspection_required"] == true
+            && expected_replay["acme_quality_status"] == "pending",
+        "nested replay requires the completed PAT journey state"
+    );
+    let (trace_id, traceparent) = journey_trace(31);
+    // Replay the real journey command so this proof does not change the two-host
+    // GET fixture or create another materializer event. Both actual guests run.
+    let response = invoke_journey_route(
+        &engine, &flow_http, routing, bridge, &inputs.route_host,
+        overlay_route_path("receiving_record_receipt"), Some(token), &traceparent,
+        Bytes::from_static(br#"[{"request_id":"session-nested-replay","value":{"idempotency_key":"receipt-command-2","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-2","occurred_at":"2026-08-31T12:31:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"7.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#),
+    ).await?;
+    let value = successful_value(&response, "session-nested-replay")?;
+    anyhow::ensure!(
+        value == expected_replay,
+        "nested session replay returned the wrong operation result"
+    );
+    assert_nested_record_receipt_trace(
+        &traces.spans(),
+        &trace_id,
+        &digests[OVERLAY_PACKAGE_ID],
+        &digests[BASE_PACKAGE_ID],
+        human.id().as_str(),
+        "session",
+    );
+    identity_task.abort();
+    project_task.abort();
+    admin_task.abort();
+    println!(
+        "HOST_SESSION_NESTED result=pass credential_kind=session invocations=2 fixture_release=3 manifest_format=1"
+    );
+    Ok(())
 }
 
 #[tokio::test]

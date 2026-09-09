@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
-use wamn_catalog::{NO_AUTHENTICATION_MODE, ServingManifest};
+use wamn_catalog::{AttachmentAuthPolicy, ServingManifest, parse_attachment_auth_policy};
 use wamn_event_wire::Causation;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 pub use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
@@ -444,11 +444,8 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                     wiring_version: attachment.wiring_version,
                     caller_attached: true,
                     anonymous_caller_permitted: Some(
-                        attachment
-                            .auth_policy
-                            .get("mode")
-                            .and_then(serde_json::Value::as_str)
-                            == Some(NO_AUTHENTICATION_MODE),
+                        parse_attachment_auth_policy(&attachment.auth_policy)
+                            == Some(AttachmentAuthPolicy::None),
                     ),
                     registered_operation: attachment.registered_operation.clone(),
                     resolution: WiringResolution::Frozen,
@@ -732,11 +729,11 @@ mod tests {
 
     use super::*;
 
-    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"mode":"none"},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":3,"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
+    const MANIFEST: &[u8] = br#"{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","kind":"http","run-deadline-ms":30000},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","kind":"http","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1}},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"component":"transform","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":1,"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}],"tenant-id":"manifest-mint-tenant"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"manifest_mint","wiring-id":"orders","wiring-version":1},{"graph-hash":"sha256:4444444444444444444444444444444444444444444444444444444444444444","package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}]}"#;
 
     fn manifest() -> ServingManifest {
         ServingManifest::from_canonical_bytes(MANIFEST)
-            .expect("format-3 fixture is canonical")
+            .expect("format-1 fixture is canonical")
             .0
     }
 
@@ -791,7 +788,7 @@ mod tests {
             .attachments
             .get_mut("orders-http")
             .expect("the fixture names the protected attachment")
-            .auth_policy = serde_json::json!({"mode": "pat"});
+            .auth_policy = serde_json::json!({"modes": ["pat"]});
         let protected = resolve_target(&protected_manifest, SourceRef::Attachment("orders-http"))
             .expect("the protected attachment still resolves");
         assert!(!caller_matches_source(

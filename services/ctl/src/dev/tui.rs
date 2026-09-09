@@ -993,7 +993,7 @@ mod tests {
             wiring_version: 1,
             definition_hash,
             definition,
-            auth_policy: json!({"mode": "pat"}),
+            auth_policy: json!({"modes": ["pat"]}),
             registered_operation: Some("receiving:purchase-order/get@1.0.0".to_owned()),
         }
     }

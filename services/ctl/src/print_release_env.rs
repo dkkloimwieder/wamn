@@ -121,7 +121,7 @@ pub async fn lookup_release_snapshot(
     // The digest is re-derived from the bytes rather than read from a second
     // column, exactly as the publisher does: one carrier of release identity.
     let (manifest, manifest_digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)
-        .context("the frozen release snapshot is not a canonical format-3 manifest")?;
+        .context("the frozen release snapshot is not a canonical format-1 manifest")?;
 
     Ok(ReleaseSnapshot {
         manifest,

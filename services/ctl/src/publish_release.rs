@@ -1,4 +1,4 @@
-//! Mint one immutable format-3 effective-release closure.
+//! Mint one immutable format-1 effective-release closure.
 //!
 //! A release is an independent integer identity plus exact package membership.
 //! The publisher resolves every wiring and component from those package pairs,
@@ -1122,7 +1122,7 @@ async fn mint_release_manifest_from_sources(
             MintManifestError::with_source(
                 MintManifestErrorKind::Document,
                 format!(
-                    "effective release {} does not project a deliverable format-3 manifest",
+                    "effective release {} does not project a deliverable format-1 manifest",
                     request.effective_release_id
                 ),
                 error,
@@ -2127,11 +2127,8 @@ fn validate_anonymous_wiring_closure(
         attachment.package_id == target.package_id
             && attachment.wiring_id == target.wiring_id
             && attachment.wiring_version == target.wiring_version
-            && attachment
-                .auth_policy
-                .get("mode")
-                .and_then(serde_json::Value::as_str)
-                == Some(wamn_catalog::NO_AUTHENTICATION_MODE)
+            && wamn_catalog::parse_attachment_auth_policy(&attachment.auth_policy)
+                == Some(wamn_catalog::AttachmentAuthPolicy::None)
     });
     let reachable = reachable_nodes(document);
     for (attachment_id, _) in anonymous_attachments {
@@ -2151,8 +2148,8 @@ fn validate_anonymous_wiring_closure(
                     MintManifestErrorKind::UnauthenticatedRegisteredOperation,
                     format!(
                         "attachment {attachment_id:?} reaches registered operation \
-                         {operation:?} at node {node_id:?}; set auth-policy mode = \
-                         {mode:?}",
+                         {operation:?} at node {node_id:?}; set auth-policy modes = \
+                         [{mode:?}]",
                         mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
                     ),
                 ));
@@ -2163,7 +2160,7 @@ fn validate_anonymous_wiring_closure(
                     format!(
                         "attachment {attachment_id:?} reaches registered operation \
                          {:?} through component dependency at node {node_id:?}; set \
-                         auth-policy mode = {mode:?}",
+                         auth-policy modes = [{mode:?}]",
                         dependency.operation,
                         mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
                     ),
@@ -2227,7 +2224,7 @@ async fn freeze_release(
             &[&request.tenant_id, &request.effective_release_id],
         )
         .await
-        .map_err(|error| storage("read the frozen format-3 snapshot", error))?;
+        .map_err(|error| storage("read the frozen format-1 snapshot", error))?;
 
     match (observed.is_empty(), snapshot) {
         (false, Some(snapshot)) => {
@@ -2248,7 +2245,7 @@ async fn freeze_release(
         _ => {
             return Err(MintManifestError::new(
                 MintManifestErrorKind::ClosureConflict,
-                "release membership and format-3 snapshot are partially frozen",
+                "release membership and format-1 snapshot are partially frozen",
             ));
         }
     }
@@ -2286,7 +2283,7 @@ async fn freeze_release(
             ],
         )
         .await
-        .map_err(|error| storage("freeze the format-3 manifest", error))?;
+        .map_err(|error| storage("freeze the format-1 manifest", error))?;
     Ok(())
 }
 
@@ -2306,7 +2303,7 @@ pub async fn read_release_snapshot(
         )
         .await
         .map(|row| row.map(|row| row.get(0)))
-        .map_err(|error| storage("read the frozen format-3 snapshot", error))
+        .map_err(|error| storage("read the frozen format-1 snapshot", error))
 }
 
 fn positive_u32(value: i32, field: &'static str) -> Result<u32, MintManifestError> {
@@ -2367,7 +2364,7 @@ mod tests {
             definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
-            auth_policy: serde_json::json!({"mode": "pat"}),
+            auth_policy: serde_json::json!({"modes": ["pat"]}),
             registered_operation: Some(operation.to_owned()),
         }
     }
@@ -2503,7 +2500,7 @@ mod tests {
             definition_hash: wamn_catalog::DefinitionHash::parse(definition_hash)
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
-            auth_policy: serde_json::json!({"mode": "pat"}),
+            auth_policy: serde_json::json!({"modes": ["pat"]}),
             registered_operation: Some("wamn-receiving:receipt/get@1.0.0".to_owned()),
         };
         let attachments = BTreeMap::from([("receiving-http".to_owned(), attachment.clone())]);
@@ -2536,7 +2533,7 @@ mod tests {
             definition_hash: wamn_catalog::DefinitionHash::parse(authored_hash.clone())
                 .expect("the canonicalizer emits a valid definition hash"),
             definition,
-            auth_policy: serde_json::json!({"mode": "pat"}),
+            auth_policy: serde_json::json!({"modes": ["pat"]}),
             registered_operation: Some("wamn-receiving:receipt/get@1.0.0".to_owned()),
         };
         let authored = BTreeMap::from([("receiving-http".to_owned(), attachment)]);
@@ -2706,7 +2703,7 @@ mod tests {
             definition_hash: wamn_catalog::DefinitionHash::parse(DIGEST)
                 .expect("fixture definition hash is canonical"),
             definition: serde_json::json!({"route": {}}),
-            auth_policy: serde_json::json!({"mode": mode}),
+            auth_policy: serde_json::json!({"modes": [mode]}),
             registered_operation: None,
         }
     }
@@ -3358,7 +3355,7 @@ mod tests {
             error.detail(),
             "attachment \"receiving-http\" reaches registered operation \
              \"base:purchase-order/get@1.0.0\" at node \"registered\"; set \
-             auth-policy mode = \"pat\""
+             auth-policy modes = [\"pat\"]"
         );
 
         let mut dependency_facts = facts.clone();
@@ -3397,20 +3394,25 @@ mod tests {
             .is_ok(),
             "a disconnected registered component is not a reachable path"
         );
-        let protected = BTreeMap::from([(
-            "receiving-http".to_owned(),
-            closure_attachment(wamn_catalog::PAT_AUTHENTICATION_MODE),
-        )]);
-        assert!(
-            validate_anonymous_wiring_closure(
-                &protected,
-                &target,
-                &closure_document(true),
-                &facts,
-            )
-            .is_ok(),
-            "PAT mode is the declared remedy"
-        );
+        for modes in [
+            serde_json::json!(["pat"]),
+            serde_json::json!(["session"]),
+            serde_json::json!(["pat", "session"]),
+        ] {
+            let mut attachment = closure_attachment(wamn_catalog::PAT_AUTHENTICATION_MODE);
+            attachment.auth_policy = serde_json::json!({"modes": modes});
+            let protected = BTreeMap::from([("receiving-http".to_owned(), attachment)]);
+            assert!(
+                validate_anonymous_wiring_closure(
+                    &protected,
+                    &target,
+                    &closure_document(true),
+                    &facts,
+                )
+                .is_ok(),
+                "authenticated modes satisfy the anonymous-closure guard"
+            );
+        }
     }
 
     #[test]

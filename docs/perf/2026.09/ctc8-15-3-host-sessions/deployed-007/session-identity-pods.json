@@ -1,0 +1,301 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-09T03:43:39Z",
+                "generateName": "host-session-identity-667bb8b574-",
+                "generation": 1,
+                "labels": {
+                    "app.kubernetes.io/instance": "host-session-identity",
+                    "app.kubernetes.io/name": "wamn-identity",
+                    "pod-template-hash": "667bb8b574"
+                },
+                "name": "host-session-identity-667bb8b574-l56lg",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "ReplicaSet",
+                        "name": "host-session-identity-667bb8b574",
+                        "uid": "79eeabc3-bd4c-4fad-8a12-ae5f0210965b"
+                    }
+                ],
+                "resourceVersion": "757",
+                "uid": "b2d9661c-524b-49b8-8001-a21e13231939"
+            },
+            "spec": {
+                "automountServiceAccountToken": false,
+                "containers": [
+                    {
+                        "args": [
+                            "serve",
+                            "--session-target",
+                            "/var/run/wamn-identity/targets/0/target.json"
+                        ],
+                        "env": [
+                            {
+                                "name": "WAMN_IDENTITY_BIND",
+                                "value": "0.0.0.0:8443"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_ISSUER",
+                                "value": "https://host-session-identity.wamn-receiving-journey.svc.cluster.local"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_DATABASE_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "host-session-identity-db",
+                                        "optional": false
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_TLS_CERT",
+                                "value": "/var/run/wamn-identity/tls/tls.crt"
+                            },
+                            {
+                                "name": "WAMN_IDENTITY_TLS_KEY",
+                                "value": "/var/run/wamn-identity/tls/tls.key"
+                            }
+                        ],
+                        "image": "wamn-identity:receiving-581016ee975d-1647734-release",
+                        "imagePullPolicy": "Never",
+                        "name": "identity",
+                        "ports": [
+                            {
+                                "containerPort": 8443,
+                                "name": "https",
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "readinessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                                "path": "/healthz",
+                                "port": "https",
+                                "scheme": "HTTPS"
+                            },
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "resources": {
+                            "limits": {
+                                "memory": "512Mi"
+                            },
+                            "requests": {
+                                "cpu": "100m",
+                                "memory": "128Mi"
+                            }
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/wamn-identity/tls",
+                                "name": "serving-tls",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/var/run/wamn-identity/targets/0",
+                                "name": "session-target-0",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker2",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Always",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "serving-tls",
+                        "secret": {
+                            "defaultMode": 256,
+                            "items": [
+                                {
+                                    "key": "tls.crt",
+                                    "path": "tls.crt"
+                                },
+                                {
+                                    "key": "tls.key",
+                                    "path": "tls.key"
+                                }
+                            ],
+                            "optional": false,
+                            "secretName": "host-session-identity-tls"
+                        }
+                    },
+                    {
+                        "name": "session-target-0",
+                        "secret": {
+                            "defaultMode": 256,
+                            "items": [
+                                {
+                                    "key": "target.json",
+                                    "path": "target.json"
+                                }
+                            ],
+                            "optional": false,
+                            "secretName": "wamn-session-role-reader-acme--receiving--dev"
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "allocatedResources": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                },
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:43:40Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:43:39Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:43:40Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:43:40Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-09T03:43:39Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "allocatedResources": {
+                            "cpu": "100m",
+                            "memory": "128Mi"
+                        },
+                        "containerID": "containerd://ff6d9c4343418471dc4c1edc9f4e19abfe6c08d79ed1ffc7fae751a9107dd311",
+                        "image": "docker.io/library/wamn-identity:receiving-581016ee975d-1647734-release",
+                        "imageID": "docker.io/library/import-2026-09-09@sha256:d7c999624ba3dba48bf5fda700c7797a0f864407b3177f9aec2d1997268154c4",
+                        "lastState": {},
+                        "name": "identity",
+                        "ready": true,
+                        "resources": {
+                            "limits": {
+                                "memory": "512Mi"
+                            },
+                            "requests": {
+                                "cpu": "100m",
+                                "memory": "128Mi"
+                            }
+                        },
+                        "restartCount": 0,
+                        "started": true,
+                        "state": {
+                            "running": {
+                                "startedAt": "2026-09-09T03:43:40Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/wamn-identity/tls",
+                                "name": "serving-tls",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/var/run/wamn-identity/targets/0",
+                                "name": "session-target-0",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.5",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.5"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Running",
+                "podIP": "10.244.2.2",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.2"
+                    }
+                ],
+                "qosClass": "Burstable",
+                "resources": {
+                    "limits": {
+                        "memory": "512Mi"
+                    },
+                    "requests": {
+                        "cpu": "100m",
+                        "memory": "128Mi"
+                    }
+                },
+                "startTime": "2026-09-09T03:43:39Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

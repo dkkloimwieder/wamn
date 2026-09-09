@@ -1,4 +1,4 @@
-//! Publish canonical format-3 serving-manifest bytes as one OCI data artifact.
+//! Publish canonical format-1 serving-manifest bytes as one OCI data artifact.
 //!
 //! The manifest's RFC 8785 SHA-256 identity derives its immutable OCI tag. An
 //! exact retry pulls and verifies the existing artifact and performs no push.
@@ -292,12 +292,12 @@ pub(crate) async fn select_snapshot(
     snapshot.with_context(|| {
         format!(
             "tenant {tenant:?} effective release {effective_release_id} \
-             has no minted format-3 release snapshot"
+             has no minted format-1 release snapshot"
         )
     })
 }
 
-/// Publish canonical format-3 bytes or prove their exact artifact already exists.
+/// Publish canonical format-1 bytes or prove their exact artifact already exists.
 pub async fn publish_release_manifest(
     canonical_bytes: &[u8],
     artifact_base: &str,
@@ -309,7 +309,7 @@ pub async fn publish_release_manifest(
             ReleaseManifestPublishError::with_source(
                 ReleaseManifestPublishErrorKind::Document,
                 "release-manifest-document-refused",
-                "input is not canonical format-3 ServingManifest JSON",
+                "input is not canonical format-1 ServingManifest JSON",
                 source,
             )
         })?;
@@ -552,7 +552,7 @@ mod tests {
         PushProbe::try_parse_from(argv).map(|probe| probe.args)
     }
 
-    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":3,"registrations":{},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"orders","package-version":"1.0.0"}],"tenant-id":"tenant-a"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}"#;
+    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":1,"registrations":{},"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"orders","package-version":"1.0.0"}],"tenant-id":"tenant-a"},"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}"#;
 
     fn fixture_reference() -> Reference {
         Reference::with_tag(
@@ -565,7 +565,7 @@ mod tests {
     #[test]
     fn published_bytes_carry_their_own_half_of_the_attestation_key() {
         let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-3 bytes");
+            .expect("the fixture is canonical format-1 bytes");
         let coordinate = DeploymentCoordinate::new("acme", "billing", &manifest.release);
 
         // The environment is whatever the pushed bytes were projected for, read
@@ -635,7 +635,7 @@ mod tests {
         ])
         .expect("the minted snapshot source parses");
         let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-3 bytes");
+            .expect("the fixture is canonical format-1 bytes");
         let coordinate = args.deployment_coordinate(&manifest.release);
 
         assert_eq!(coordinate.triple.org, "acme");
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn exact_layout_carries_only_canonical_manifest_bytes() {
         let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("fixture is a canonical format-3 manifest");
+            .expect("fixture is a canonical format-1 manifest");
         let (layer, config, manifest) = release_manifest_artifact_layout(CANONICAL_MANIFEST);
         let verified = verify_manifest_layout(
             &manifest,
@@ -702,13 +702,13 @@ mod tests {
     }
 
     #[test]
-    fn format_one_and_noncanonical_documents_refuse_before_transport() {
-        let legacy = std::str::from_utf8(CANONICAL_MANIFEST)
+    fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
+        let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
             .expect("fixture is UTF-8")
-            .replacen("\"format-version\":3", "\"format-version\":2", 1);
-        let legacy = ServingManifest::from_canonical_bytes(legacy.as_bytes())
-            .expect_err("format one refuses");
-        assert!(format!("{legacy}").contains("unsupported-serving-manifest-version"));
+            .replacen("\"format-version\":1", "\"format-version\":2", 1);
+        let unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
+            .expect_err("format two refuses");
+        assert!(format!("{unsupported}").contains("unsupported-serving-manifest-version"));
 
         let mut indented = CANONICAL_MANIFEST.to_vec();
         indented.insert(1, b' ');
@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn wrong_or_multi_layer_layout_refuses_as_conflict() {
         let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("fixture is a canonical format-3 manifest");
+            .expect("fixture is a canonical format-1 manifest");
         let (_, _, mut manifest) = release_manifest_artifact_layout(CANONICAL_MANIFEST);
         manifest.layers[0].media_type = "application/octet-stream".to_owned();
         let error = verify_manifest_layout(

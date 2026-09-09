@@ -9,7 +9,8 @@
 # WHERE THINGS LIVE. The run directory is working state under the cache and any
 # tool may delete it. Evidence is promoted into the repository by
 # tools/agent-pilot-report, which writes docs/experiments/agent-authoring/. Do
-# not treat a run directory as an archive.
+# not treat a run directory as an archive: `down` deletes it, and the per-commit
+# target directory with it, once that promotion has happened (wamn-nvbd.20).
 #
 #   agent-pilot-run up     --run <nnn> --agent claude|codex|stub --task <dir>
 #                          [--standup dev-env|dev-up] [--commit <rev>]
@@ -26,6 +27,13 @@ umask 077
 readonly EX_USAGE=2 EX_ENV=10 EX_DRIVER=20 EX_GRADE=30 EX_RESIDUE=40
 
 readonly PILOT_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot"
+# wamn-nvbd.21. NOT UNDER $PILOT_HOME. The agent holds WAMN_PILOT_RUN_DIR, which
+# is $PILOT_HOME/runs/<run>, so a grading directory beside `runs` sat two `cd ..`
+# away and chmod 700 bought nothing -- the agent runs as the same user. A
+# different root is not isolation: one user on one filesystem, and the run
+# worktree's .git file names the main checkout anyway. It raises the bar from one
+# `cat` of a path the walk-up hands you to deliberately leaving the sandbox.
+readonly GRADING_HOME="${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading"
 readonly PG_PORT=54332
 readonly REGISTRY_PORT=5004
 readonly NATS_PORT=4224
@@ -87,6 +95,11 @@ resolve_run_directory() {
     for candidate in "$PILOT_HOME"/runs/"$RUN"-*; do
       [[ -d "$candidate" ]] && matches+=("$candidate")
     done
+    # A reclaimed run has no directory left (wamn-nvbd.20). `down` on it is a
+    # no-op, not an error: teardown has to stay safe to repeat.
+    if [[ ${#matches[@]} -eq 0 && "$VERB" == "down" ]]; then
+      RUN_ID="$RUN"; DIR="$PILOT_HOME/runs/$RUN_ID"; return 0
+    fi
     [[ ${#matches[@]} -ge 1 ]] || die "no run directory for --run $RUN; run up first" "$EX_ENV"
     [[ ${#matches[@]} -eq 1 ]] || die "more than one run directory for --run $RUN" "$EX_ENV"
     RUN_ID="$(basename "${matches[0]}")"
@@ -241,7 +254,7 @@ build_binaries() {
   # exactly like a spurious failure.
   if true; then
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
-      cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-ctl --bin wamn --locked --offline
+      cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-ctl --bin wamn --bin wamn-ctl --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
       cargo build --manifest-path "$build_root/Cargo.toml" -p wamn-host --locked --offline
     RUSTC_WRAPPER= CARGO_TARGET_DIR="$TARGET" \
@@ -259,7 +272,7 @@ build_binaries() {
   BUILD_SECONDS=$(( $(date +%s) - started ))
   # "Cached" is now a measurement, not a guess: cargo had nothing to do.
   BUILD_CACHED=$([[ $BUILD_SECONDS -lt 30 ]] && echo true || echo false)
-  for artifact in debug/wamn debug/wamn-host debug/wamn-scenario-worker debug/wamn-dev-env; do
+  for artifact in debug/wamn debug/wamn-ctl debug/wamn-host debug/wamn-scenario-worker debug/wamn-dev-env; do
     [[ -x "$TARGET/$artifact" ]] || die "$TARGET/$artifact was not built" "$EX_ENV"
   done
   [[ -s "$TARGET/wasm32-wasip2/debug/http_route.wasm" ]] \
@@ -485,6 +498,17 @@ assert_rubric_unreachable() {
   while IFS= read -r tool; do
     [[ -n "$tool" ]] && found="$found $tool"
   done < <(find "$DIR/worktree/tools" -maxdepth 1 -name 'agent-pilot-*' 2>/dev/null)
+  # wamn-nvbd.21. Not reachable by walking up, either: `cd ..` from the run
+  # directory is free, and it used to arrive at a sibling named `grading`. The
+  # walk stops at $HOME, which is conceded -- one user on one filesystem cannot
+  # hide a directory from itself, and the bar this sets is leaving the sandbox
+  # rather than reading a path the layout hands over.
+  local up="$DIR"
+  while :; do
+    up="$(dirname "$up")"
+    [[ "$up" == "$HOME" || "$up" == "/" ]] && break
+    [[ "$GRADING_HOME" == "$up"/* ]] && found="$found $GRADING_HOME(walk-up from $up)"
+  done
   if [[ -n "$found" ]]; then
     die "the grading rubric is reachable from a path the agent is handed:$found" "$EX_ENV"
   fi
@@ -516,8 +540,10 @@ verb_up() {
   # run directory is exported to the agent as WAMN_PILOT_RUN_DIR. Run 020 read
   # the whole rubric with one cat. The fixture is harness state now: nothing the
   # agent is handed names the directory it sits in, and only the grader reads it.
-  local grading="$PILOT_HOME/grading/$RUN"
-  rm -rf "$grading"; mkdir -p "$grading"; chmod 700 "$grading"
+  # It sits under $GRADING_HOME rather than $PILOT_HOME because a sibling of
+  # `runs` is still two `cd ..` from the path the agent holds (wamn-nvbd.21).
+  local grading="$GRADING_HOME/$RUN"
+  rm -rf "$grading"; mkdir -p "$grading"; chmod 700 "$GRADING_HOME" "$grading"
   cp -a "$task_dir/." "$DIR/fixture/"
   local steps_name; steps_name="$(jq -r '.grade.steps // "steps.json"' "$task_dir/task.json")"
   cp "$task_dir/$steps_name" "$grading/$steps_name"
@@ -527,7 +553,8 @@ verb_up() {
   jq 'del(.grade)' "$task_dir/task.json" > "$DIR/fixture/task.json"
   jq 'del(.grade)' "$task_dir/task.json" > "$DIR/task.json"
   read_manifest
-  : > "$DIR/verbs.jsonl"; : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
+  : > "$DIR/verbs.jsonl"; : > "$DIR/verbs-started.jsonl"
+  : > "$DIR/verbs.lock"; echo 0 > "$DIR/verbs.counter"
   : > "$DIR/env.log"
 
   # A2, the worktree contract: detached at the pinned commit, clean, and unable
@@ -606,7 +633,14 @@ verb_up() {
   fi
 
   install -m 755 "$TREE/tools/agent-pilot-wamn-shim" "$DIR/bin/wamn"
-  ln -sf "$TARGET/debug/wamn-ctl" "$DIR/bin/wamn-ctl" 2>/dev/null || true
+  # `wamn-ctl` is src/main.rs of the wamn-ctl package, auto-discovered under the
+  # package name; it is the operator CLI the brief promises. The build once asked
+  # for `--bin wamn` alone, so this link dangled in every arm 030..032 and an
+  # agent spent a stall on it. `ln` was `|| true`, which is what hid it: the link
+  # is now strict, and build_binaries asserts the target it points at.
+  ln -sfn "$TARGET/debug/wamn-ctl" "$DIR/bin/wamn-ctl" \
+    || die "could not link wamn-ctl into the run bin directory" "$EX_ENV"
+  [[ -x "$DIR/bin/wamn-ctl" ]] || die "$DIR/bin/wamn-ctl does not resolve" "$EX_ENV"
 
   start_infrastructure
   run_standup
@@ -795,12 +829,17 @@ stop_tree() {
   kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
 }
 
+# COUNT A RUN WHEN IT STARTS. A `wamn dev --hold` does not exit -- teardown kills
+# it -- so it never reaches verbs.jsonl, and arm 030 reported wamn_dev_hold_runs 0
+# for the held run that carried its whole verification pass. Every count of runs
+# ATTEMPTED reads the start ledger the shim writes; only `failed` reads the
+# completion ledger, because a run that never exited did not fail.
 summarize_verbs() {
   local started="$1"
   local runs failed hold first_green
-  runs="$(jq -s '[.[] | select(.argv[0] == "dev")] | length' "$DIR/verbs.jsonl")"
+  runs="$(jq -s '[.[] | select(.argv[0] == "dev")] | length' "$DIR/verbs-started.jsonl")"
   failed="$(jq -s '[.[] | select(.argv[0] == "dev" and .exit != 0)] | length' "$DIR/verbs.jsonl")"
-  hold="$(jq -s '[.[] | select(.argv[0] == "dev" and (.argv | index("--hold")))] | length' "$DIR/verbs.jsonl")"
+  hold="$(jq -s '[.[] | select(.argv[0] == "dev" and (.argv | index("--hold")))] | length' "$DIR/verbs-started.jsonl")"
   first_green="$(first_green_minutes "$started")"
   local tmp; tmp="$(mktemp "$DIR/run.json.XXXXXX")"
   jq --argjson runs "$runs" --argjson failed "$failed" --argjson hold "$hold" \
@@ -813,7 +852,11 @@ summarize_verbs() {
 
 # The first green is the first invocation whose own stdout carried a completed
 # receipt with twelve stages. Reading the log rather than the exit code is
-# deliberate: a zero exit from a partial run is not a green loop.
+# deliberate: a zero exit from a partial run is not a green loop -- and a held
+# run has no exit code at all, which is why the walk is over the start ledger.
+# Arm 030's held run printed the twelve-stage receipt and was invisible here.
+# The row's `ts` is already the moment the call started, so the arithmetic is
+# unchanged.
 first_green_minutes() {
   local started="$1" row n log stages
   while read -r row; do
@@ -827,7 +870,7 @@ first_green_minutes() {
         return
       fi
     done
-  done < <(jq -c '.' "$DIR/verbs.jsonl")
+  done < <(jq -c '.' "$DIR/verbs-started.jsonl")
   echo 0
 }
 
@@ -912,7 +955,52 @@ verb_down() {
     printf 'agent-pilot-run: teardown residue: %s\n' "${residue[*]}" >&2
     return "$EX_RESIDUE"
   fi
+  reclaim_run_storage
   note "down ok"
+}
+
+# The storage a run leaves behind. Twelve per-commit target directories at
+# roughly 11 GB each reached 135 GB, nine spent run directories held another
+# 18 GB, and the cache hit 185 GB with the disk at 83 percent (wamn-nvbd.20).
+# Isolated target directories are per-issue build state and go as soon as the
+# issue is done; nothing was doing that here.
+#
+# ONLY ONCE THE EVIDENCE IS PROMOTED. Until tools/agent-pilot-report has written
+# docs/experiments/agent-authoring/<run>/, the run directory is the only copy of
+# the measurement. So `all` reclaims nothing -- its `down` runs before a human
+# has graded anything -- and the operator runs `down` again after the report.
+# That second `down` is the one that reclaims, which is why teardown is safe to
+# repeat and why a reclaimed run answers `down` with a no-op.
+reclaim_run_storage() {
+  local promoted="$TREE/docs/experiments/agent-authoring/$RUN_ID/run.json"
+  if [[ ! -s "$promoted" ]]; then
+    note "keeping $DIR and its build target: no promoted evidence at $promoted"
+    return 0
+  fi
+  [[ "$DIR" == "$PILOT_HOME/runs/"?* ]] || die "refusing to reclaim $DIR" "$EX_ENV"
+
+  local target=""
+  [[ -s "$DIR/run.json" ]] && target="$(jq -r '.build.target // ""' "$DIR/run.json")"
+
+  [[ ! -d "$DIR/worktree" ]] \
+    || git -C "$TREE" worktree remove --force "$DIR/worktree" >> "$DIR/env.log" 2>&1 || true
+  rm -rf -- "$DIR"
+  git -C "$TREE" worktree prune 2>/dev/null || true
+  note "reclaimed $DIR"
+
+  # A target directory is shared per commit, so it goes only when no surviving
+  # run still names it.
+  [[ "$target" == "$PILOT_HOME/target-"?* && -d "$target" ]] || return 0
+  local other
+  for other in "$PILOT_HOME"/runs/*/run.json; do
+    [[ -s "$other" ]] || continue
+    if [[ "$(jq -r '.build.target // ""' "$other")" == "$target" ]]; then
+      note "keeping $target: $(basename "$(dirname "$other")") still names it"
+      return 0
+    fi
+  done
+  rm -rf -- "$target"
+  note "reclaimed $target"
 }
 
 # ---------------------------------------------------------------- grade and all

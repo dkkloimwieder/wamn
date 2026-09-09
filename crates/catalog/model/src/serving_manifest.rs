@@ -1,10 +1,11 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 3 closes over exact package membership, component digests, wiring
+//! Format 1 closes over exact package membership, component digests, wiring
 //! definitions, exact component-operation dependencies and SQL statements,
 //! attachments, and registrations. It contains no flow or execution-plan
 //! identity. Producers must source every member from current catalog records;
-//! this model intentionally provides no legacy-plan conversion.
+//! this model intentionally provides no legacy-plan conversion. Attachment
+//! authentication uses a closed modes list, without a scalar-mode fallback.
 //!
 //! The document identity is the SHA-256 of its RFC 8785 canonical JSON. Sets and
 //! maps make each collection's order deterministic, while
@@ -24,13 +25,68 @@ use crate::{
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 3;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 1;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
 
 /// The attachment auth-policy mode that requires a platform access token.
 pub const PAT_AUTHENTICATION_MODE: &str = "pat";
+
+/// The attachment auth-policy mode that permits a verified session token.
+pub const SESSION_AUTHENTICATION_MODE: &str = "session";
+
+/// The admitted authentication modes for one release attachment.
+///
+/// This parsed view is not a second wire representation. The manifest retains
+/// the original JSON, including the canonical order of a combined modes list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentAuthPolicy {
+    None,
+    Pat,
+    Session,
+    PatAndSession,
+}
+
+impl AttachmentAuthPolicy {
+    /// Whether this attachment admits a platform access token.
+    pub fn allows_pat(self) -> bool {
+        matches!(self, Self::Pat | Self::PatAndSession)
+    }
+
+    /// Whether this attachment admits a verified session token.
+    pub fn allows_session(self) -> bool {
+        matches!(self, Self::Session | Self::PatAndSession)
+    }
+}
+
+/// Parse the exact format-1 attachment authentication policy.
+///
+/// The only shapes are `{"modes":["none"]}`, `{"modes":["pat"]}`,
+/// `{"modes":["session"]}`, and `{"modes":["pat","session"]}`. Unknown
+/// fields, scalar modes, duplicates, and other list orders are refused.
+pub fn parse_attachment_auth_policy(policy: &Value) -> Option<AttachmentAuthPolicy> {
+    let object = policy.as_object()?;
+    if object.len() != 1 {
+        return None;
+    }
+    let modes = object.get("modes")?.as_array()?;
+    match modes.as_slice() {
+        [mode] => match mode.as_str()? {
+            NO_AUTHENTICATION_MODE => Some(AttachmentAuthPolicy::None),
+            PAT_AUTHENTICATION_MODE => Some(AttachmentAuthPolicy::Pat),
+            SESSION_AUTHENTICATION_MODE => Some(AttachmentAuthPolicy::Session),
+            _ => None,
+        },
+        [pat, session]
+            if pat.as_str() == Some(PAT_AUTHENTICATION_MODE)
+                && session.as_str() == Some(SESSION_AUTHENTICATION_MODE) =>
+        {
+            Some(AttachmentAuthPolicy::PatAndSession)
+        }
+        _ => None,
+    }
+}
 
 /// Stable refusal literal for malformed or unsupported attachment auth policy.
 pub const INVALID_ATTACHMENT_AUTH_POLICY_REFUSAL: &str = "invalid-attachment-auth-policy";
@@ -215,10 +271,10 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-3 bytes.
+    /// Parse, validate, and admit only canonical format-1 bytes.
     ///
-    /// The version is classified before the format-3 schema is decoded. This is
-    /// what makes an older mount an explicit typed refusal rather than a
+    /// The version is classified before the format-1 schema is decoded. This is
+    /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
     pub fn from_canonical_bytes(
@@ -336,23 +392,16 @@ impl ServingManifest {
                 &attachment.wiring_id,
                 attachment.wiring_version,
             )?;
-            if !attachment.definition.is_object() || !attachment.auth_policy.is_object() {
-                return invalid("attachment definition and resolved source must be JSON objects");
+            if !attachment.definition.is_object() {
+                return invalid("attachment definition must be a JSON object");
             }
-            let auth_mode = attachment
-                .auth_policy
-                .as_object()
-                .and_then(|policy| policy.get("mode"))
-                .and_then(Value::as_str);
-            if !matches!(
-                auth_mode,
-                Some(NO_AUTHENTICATION_MODE | PAT_AUTHENTICATION_MODE)
-            ) {
-                return Err(CatalogIdentityError::InvalidAttachmentAuthPolicy {
-                    attachment_id: attachment_id.clone(),
-                });
-            }
-            if auth_mode == Some(NO_AUTHENTICATION_MODE)
+            let auth_policy =
+                parse_attachment_auth_policy(&attachment.auth_policy).ok_or_else(|| {
+                    CatalogIdentityError::InvalidAttachmentAuthPolicy {
+                        attachment_id: attachment_id.clone(),
+                    }
+                })?;
+            if auth_policy == AttachmentAuthPolicy::None
                 && attachment.registered_operation.is_some()
             {
                 return Err(CatalogIdentityError::UnauthenticatedRegisteredOperation {
@@ -710,7 +759,7 @@ mod tests {
                 "kind": "http",
                 "route": {"host": "*", "path": "/orders", "method": "POST"}
             }),
-            auth_policy: serde_json::json!({"mode": "pat"}),
+            auth_policy: serde_json::json!({"modes": ["pat"]}),
             registered_operation: Some("base:purchase-order/get@1.0.0".into()),
         }
     }
@@ -807,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn only_canonical_format_three_bytes_are_admitted() {
+    fn only_canonical_format_one_bytes_are_admitted() {
         let manifest = manifest();
         let bytes = manifest.canonical_bytes();
         assert_eq!(
@@ -909,21 +958,27 @@ mod tests {
     }
 
     #[test]
-    fn format_two_is_a_typed_refusal_not_a_compatibility_arm() {
-        let legacy = br#"{"attachments":{},"components":[],"format-version":2,"registrations":{},"release":{},"wirings":[]}"#;
-        let error = ServingManifest::from_canonical_bytes(legacy)
-            .expect_err("format two must never enter the format-three decoder");
-        assert_eq!(
-            error,
-            CatalogIdentityError::UnsupportedServingManifestVersion {
-                requested: "2".into()
-            }
-        );
-        assert!(
-            error
-                .to_string()
-                .starts_with(UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL)
-        );
+    fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
+        for version in [0, 2, 3, 4] {
+            let unsupported = serde_json::to_vec(&serde_json::json!({
+                "format-version": version,
+                "release": {}
+            }))
+            .unwrap();
+            let error = ServingManifest::from_canonical_bytes(&unsupported)
+                .expect_err("only format one may enter the decoder");
+            assert_eq!(
+                error,
+                CatalogIdentityError::UnsupportedServingManifestVersion {
+                    requested: version.to_string()
+                }
+            );
+            assert!(
+                error
+                    .to_string()
+                    .starts_with(UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL)
+            );
+        }
     }
 
     #[test]
@@ -987,11 +1042,20 @@ mod tests {
     }
 
     #[test]
-    fn attachment_auth_policy_mode_is_closed_and_required() {
+    fn attachment_auth_policy_modes_are_closed_and_required() {
         for policy in [
+            serde_json::json!(null),
             serde_json::json!({}),
             serde_json::json!({"mode": 7}),
             serde_json::json!({"mode": "invented"}),
+            serde_json::json!({"mode": "pat"}),
+            serde_json::json!({"modes": []}),
+            serde_json::json!({"modes": "pat"}),
+            serde_json::json!({"modes": ["pat", "pat"]}),
+            serde_json::json!({"modes": ["none", "pat"]}),
+            serde_json::json!({"modes": ["session", "pat"]}),
+            serde_json::json!({"modes": ["invented"]}),
+            serde_json::json!({"modes": ["pat"], "mode": "pat"}),
         ] {
             let mut malformed = attachment();
             malformed.auth_policy = policy;
@@ -1009,19 +1073,25 @@ mod tests {
             );
         }
 
-        let mut pat = attachment();
-        pat.auth_policy = serde_json::json!({"mode": PAT_AUTHENTICATION_MODE});
-        ServingManifest::new(
-            release(),
-            components(),
-            wirings(),
-            BTreeMap::from([("orders".to_string(), pat)]),
-            BTreeMap::new(),
-        )
-        .expect("PAT is the other supported attachment auth mode");
+        for modes in [
+            serde_json::json!([PAT_AUTHENTICATION_MODE]),
+            serde_json::json!([SESSION_AUTHENTICATION_MODE]),
+            serde_json::json!([PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE]),
+        ] {
+            let mut authenticated = attachment();
+            authenticated.auth_policy = serde_json::json!({"modes": modes});
+            ServingManifest::new(
+                release(),
+                components(),
+                wirings(),
+                BTreeMap::from([("orders".to_string(), authenticated)]),
+                BTreeMap::new(),
+            )
+            .expect("authenticated modes admit a registered operation");
+        }
 
         let mut anonymous = attachment();
-        anonymous.auth_policy = serde_json::json!({"mode": NO_AUTHENTICATION_MODE});
+        anonymous.auth_policy = serde_json::json!({"modes": [NO_AUTHENTICATION_MODE]});
         assert_eq!(
             ServingManifest::new(
                 release(),
