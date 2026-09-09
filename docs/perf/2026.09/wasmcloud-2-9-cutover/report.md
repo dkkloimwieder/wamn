@@ -414,3 +414,25 @@ Bead `wamn-0h0g.2.7.9` owns diagnosis of these three assertions.
 A live baseline comparison and governing contract review remain pending.
 No permission changes or passing authority-gate claim follow from this failed run.
 Public logs retain Rust test results, while private diagnostics remain outside this branch.
+
+
+## Authority contract correction
+
+The [live baseline comparison](authority-baseline-001/comparison.json) reproduces all three authority failures at clean `dfa1c318`.
+Both groups report 21 passes and three failures, with identical actual and expected values.
+The [contract review](authority-contract-fix-001/diagnosis.json) traces each difference to its governing source and commit.
+
+The current schema contains 34 governed relations after one relation addition and three fixture removals.
+The tenant-floor test now pins 34 and retains its policy, index, and tenant-refusal assertions.
+Commit `46514ab9` removed six management-admitter reads under `wamn-10yt.10.14`.
+The denial matrix now excludes those positive expectations while keeping all six relations in its refusal universe.
+
+The guest UPDATE privilege served a callable-admission lock that commit `b1d42599` removed under `wamn-0h0g.22.7`.
+Current registration writers use an owner connection, and the materializer only reads registrations.
+The correction removes the obsolete column grant and comment while preserving the guest denial assertion.
+This deletion controls fresh catalogs and does not revoke an existing database ACL.
+The greenfield cutover adds no migration for existing database permissions.
+
+The [static results](authority-contract-fix-001/static-validation.json) pass formatting, source hashes, patch application, and unchanged denial-surface assertions.
+The two live authority groups still require a new run on the corrected source.
+The protected-write inventory also requires the measured grant removal before `wamn-0h0g.2.7.9` closes.

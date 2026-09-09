@@ -1,0 +1,77 @@
+{
+  "id": "authority-denial-matrix",
+  "group": "authority-denial-matrix",
+  "expected_tests": 20,
+  "verdict": "fail",
+  "stage": "complete",
+  "arming": {
+    "WAMN_DENIAL_MATRIX_PG_URL": {
+      "set": true,
+      "database": "postgres",
+      "owned_container": "a9d1ffa89eeab9f7627c4d289556a4ca8b9c9bce57c0a471a4eb292316c4f8db",
+      "host": "127.0.0.1",
+      "port": 32862
+    }
+  },
+  "cleanup": {
+    "owned_id": "a9d1ffa89eeab9f7627c4d289556a4ca8b9c9bce57c0a471a4eb292316c4f8db",
+    "attempted": true,
+    "exit_code": 0,
+    "timeout": false,
+    "success": true
+  },
+  "source": {
+    "commit": "dfa1c3187fe8cd671688a442b23106046e502cb6",
+    "clean": true
+  },
+  "fixture": {
+    "container_id": "a9d1ffa89eeab9f7627c4d289556a4ca8b9c9bce57c0a471a4eb292316c4f8db",
+    "image_id": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14",
+    "server_version_num": 180006,
+    "host": "127.0.0.1",
+    "port": 32862
+  },
+  "fallbacks_unset": [
+    "WAMN_PG_URL",
+    "DATABASE_URL"
+  ],
+  "test_command": {
+    "label": "authority-denial-matrix-test",
+    "argv": [
+      "cargo",
+      "test",
+      "-p",
+      "wamn-control-provision",
+      "--locked",
+      "--offline",
+      "--test",
+      "family_denial_matrix",
+      "--",
+      "--include-ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-8-baseline-20260909",
+    "started_unix_ns": 1788971059117042246,
+    "exit_code": 101,
+    "timeout": false,
+    "interrupted": false,
+    "raw_private_log": "private/015-authority-denial-matrix-test.log",
+    "redacted_log": "015-authority-denial-matrix-test.redacted.log",
+    "owned_group_cleanup": false,
+    "finished_unix_ns": 1788971065143268871,
+    "raw_sha256": "3428f9f7efb69a0fc7448d1ecee3a4e803d5f2120e77a28e7c22d086869923b9",
+    "redacted_sha256": "f10f75fa7f6fee7d11f102d926df455e4ddebcd8e09b5925c2079d8ebebe2333"
+  },
+  "test_summaries": [
+    {
+      "result": "FAILED",
+      "passed": 18,
+      "failed": 2,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    }
+  ],
+  "explicit_skip_detected": false
+}

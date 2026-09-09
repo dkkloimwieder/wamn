@@ -1,0 +1,42 @@
+{
+  "scope": "Static /tmp preparation only. No Cargo, SQL execution, Docker, live proof, source/git/Beads mutations.",
+  "checks": [
+    {
+      "name": "rustfmt deploy_sql_authority.rs",
+      "command": "/home/kaalin/.rustup/toolchains/1.98.0-x86_64-unknown-linux-gnu/bin/rustfmt --edition 2024 --check proposed/crates/control/provision/tests/deploy_sql_authority.rs",
+      "exit": 0
+    },
+    {
+      "name": "rustfmt family_denial_matrix.rs",
+      "command": "/home/kaalin/.rustup/toolchains/1.98.0-x86_64-unknown-linux-gnu/bin/rustfmt --edition 2024 --check proposed/crates/control/provision/tests/family_denial_matrix.rs",
+      "exit": 0
+    },
+    {
+      "name": "patch applies to inspected source",
+      "command": "git apply --check /tmp/wamn-cutover-authority-contract-review/wamn-0h0g.2.7.9.patch",
+      "exit": 0
+    },
+    {
+      "name": "source and proposed file hashes match patch-inputs.json",
+      "passed": true
+    },
+    {
+      "name": "guest matrix row unchanged byte for byte",
+      "passed": true
+    },
+    {
+      "name": "matrix relation universe unchanged byte for byte",
+      "passed": true
+    },
+    {
+      "name": "SQL change is exact obsolete comment and column grant removal only",
+      "passed": true
+    },
+    {
+      "name": "source HEAD unchanged",
+      "passed": true
+    }
+  ],
+  "observed_repo_status": " M tests/integration/src/trusted_http_route.rs\n",
+  "status_note": "Tree was clean at initial read. At final validation another agent had changed trusted_http_route.rs; this reviewer made no source edits and the three authority inputs remain exact."
+}
