@@ -1,0 +1,447 @@
+[
+  [
+    "kubectl",
+    "--kubeconfig",
+    "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+    "--context",
+    "kind-wamn-receiving-journey",
+    "-n",
+    "wamn-system",
+    "port-forward",
+    "deployment/otel-collector",
+    ":4317",
+    "--address=127.0.0.1"
+  ],
+  [
+    "cargo",
+    "test",
+    "-p",
+    "wamn-proof-integration",
+    "--locked",
+    "--offline",
+    "--test",
+    "startup_burst_live",
+    "--",
+    "--ignored",
+    "--exact",
+    "production_http_start_burst_keeps_native_host_progress",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-001.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.046735618030652404,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-002.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.0418004629900679,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-003.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04591238702414557,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-004.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04422329197404906,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-005.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04290075704921037,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-006.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.03881153202382848,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-007.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.051779458997771144,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-008.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.043797816964797676,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-009.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04294128797482699,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/search?q=%7B+resource.wamn.startup.proof+%3D+%22startup-9e465adef125-3974453%22+%26%26+name+%3D+%22workload_start%22+%7D&limit=1000"
+    ],
+    "output": "trace-search-010.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.047447152028325945,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/4642800e801d1f11284e0b0cb5b1c7b6"
+    ],
+    "output": "native-trace-010-4642800e801d1f11284e0b0cb5b1c7b6.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.0486750389682129,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/3bd4b0fdecaba6b47db2df42407441b8"
+    ],
+    "output": "native-trace-010-3bd4b0fdecaba6b47db2df42407441b8.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04543277696939185,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/f628055d473e76044dbee56a569cda12"
+    ],
+    "output": "native-trace-010-f628055d473e76044dbee56a569cda12.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04700115497689694,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/58447fb894d8b58ca5a87f569b5aa795"
+    ],
+    "output": "native-trace-010-58447fb894d8b58ca5a87f569b5aa795.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.05296138598350808,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/6a8561c30cfbf54b07e2ff62c5337ddd"
+    ],
+    "output": "native-trace-010-6a8561c30cfbf54b07e2ff62c5337ddd.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04690088698407635,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/2d426df34a2029cf1b7b818efa58ec6d"
+    ],
+    "output": "native-trace-010-2d426df34a2029cf1b7b818efa58ec6d.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04473304998828098,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/23654af796fecff5afd404fa7ab7c3cb"
+    ],
+    "output": "native-trace-010-23654af796fecff5afd404fa7ab7c3cb.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04504620796069503,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/ee3d22a41f639d9a2cb1c91328701031"
+    ],
+    "output": "native-trace-010-ee3d22a41f639d9a2cb1c91328701031.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04716717702103779,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/9eaf8d27dac64ee363e562b81f43f933"
+    ],
+    "output": "native-trace-010-9eaf8d27dac64ee363e562b81f43f933.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.045983037969563156,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/4f471fc4d697913eb91f1256495d1861"
+    ],
+    "output": "native-trace-010-4f471fc4d697913eb91f1256495d1861.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04596999799832702,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/b3c0f83a7f0998a8bc54270aacc3730f"
+    ],
+    "output": "native-trace-010-b3c0f83a7f0998a8bc54270aacc3730f.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.04443730798084289,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/4fca6b9c354b4fc59b2a4ab31511d5df"
+    ],
+    "output": "native-trace-010-4fca6b9c354b4fc59b2a4ab31511d5df.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.054948842036537826,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/0444bc086583138a460e5472a62e484e"
+    ],
+    "output": "native-trace-010-0444bc086583138a460e5472a62e484e.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.05078623798908666,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/dbe1013de91954c112c0423f9330de41"
+    ],
+    "output": "native-trace-010-dbe1013de91954c112c0423f9330de41.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.049315486976411194,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/02012278665dc0612d6c741aea160f8e"
+    ],
+    "output": "native-trace-010-02012278665dc0612d6c741aea160f8e.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.052015313995070755,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "kubectl",
+      "--kubeconfig",
+      "/tmp/tmp.s56DoJ7Y5E/kubeconfig",
+      "--context",
+      "kind-wamn-receiving-journey",
+      "get",
+      "--raw",
+      "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/227e7af290ec2e7d91ba21e6260a119b"
+    ],
+    "output": "native-trace-010-227e7af290ec2e7d91ba21e6260a119b.json",
+    "budget_seconds": 30,
+    "elapsed_seconds": 0.0464554310310632,
+    "exit_code": 0
+  }
+]

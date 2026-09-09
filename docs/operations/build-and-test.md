@@ -3011,14 +3011,15 @@ and matching native Warning Event. The 404 proves only HTTP routing and guest
 execution; the Kubernetes objects independently prove the other arms.
 The [first 2.9.0 full journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/verdict.json) passes at `7798190c`.
 The later idle executor, telemetry, and startup-burst cases have executed evidence.
-Complete operator recovery still requires the accepted proof rerun.
+Complete operator recovery still requires the corrected proof rerun.
+Receiving007 stops before any NATS fault while its sampler Pod is `ContainerCreating`. `wamn-0h0g.2.7.16` owns the bounded creation/readiness wait.
 Run the full mode from the next clean source commit, after its build preparation finishes.
 Keep new evidence in the main repository's `docs/perf`, outside the isolated build worktree.
 Select a fresh directory. The runner must not overwrite an earlier receipt.
 
 ```bash
 tools/receiving-cluster-journey-run --apply \
-  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-007/journey
+  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-008/journey
 ```
 
 The runner supplies the existing private kubeconfig, authorities, release, and fixture inputs to the helpers.

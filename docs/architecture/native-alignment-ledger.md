@@ -148,7 +148,8 @@ Namespace scopes, the disabled gateway, and row 8's modern Event overlay remain 
 The render and [public operator image metadata](../perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json) prove configuration and distributed artifact identity only.
 The owning Rust render test executes but fails during Kubernetes API discovery because `127.0.0.1:8080` refuses the connection.
 Installed CRD identity, local startup exposure, and the separate WMS startup/cache proof now pass.
-Complete operator recovery awaits the accepted proof rerun.
+The [seventh run](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-007/exit-code.txt) stops before any NATS fault because the sampler Pod is still `ContainerCreating`.
+Bead `wamn-0h0g.2.7.16` owns bounded sampler creation/readiness waits. Complete operator recovery still requires the corrected proof rerun.
 The [repeated performance comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) is complete. It does not establish a general improvement.
 The [direct stop/start runbook](../../deploy/README.md#wasmcloud-29-cutover) keeps one active runtime version per environment without a maintenance window or compatibility period.
 

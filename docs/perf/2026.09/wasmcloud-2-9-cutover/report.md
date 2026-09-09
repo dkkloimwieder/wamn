@@ -25,7 +25,9 @@ Its service ratio median is 8.8608 against the unchanged ceiling of 12.
 The [completed comparison](performance-comparison-001/tables.md) retains the measured spread and separate deadline cutoffs. It does not establish a general performance improvement.
 The later [host proof](probe-listener-lifecycle-001/summary.json) passes all 15 unit tests, including actual native probe termination, and host Clippy exits 0.
 That run tests the recorded patch above `b8e9881d`, with unchanged source-file hashes during execution.
-The owner accepts the documented supervised restart path under `wamn-0h0g.2.7.10`. Complete operator recovery still needs execution.
+The owner accepts the documented supervised restart path under `wamn-0h0g.2.7.10`.
+The [seventh run](live-receiving-007/exit-code.txt) stops before any NATS fault because sampler logs are requested before its Pod starts.
+Bead `wamn-0h0g.2.7.16` owns the sampler readiness correction. Complete operator recovery remains unproved.
 The accepted `wamn-0h0g.2.7.12` scope excludes the missing production automation producer and its dependent queued-execution and active-work drain proofs.
 The unproved producer belongs to `wamn-10yt.74`, and dependent active-work shutdown belongs to `wamn-10yt.75`.
 No retired grant or substitute admission path is introduced.
@@ -709,3 +711,19 @@ The recorded scope and inherited test failures do not establish release readines
 
 The [cleanup receipt](cache-cleanup-001/receipt.json) records removal of the clean 2.8 baseline and upstream test checkouts at the owner's request.
 The migration lane and retained evidence remain available. No further measurements are implied by that cleanup.
+
+
+## Receiving007 sampler startup failure (2026-09-09)
+
+The [seventh Receiving run](live-receiving-007/source.txt) uses clean `9e465adef125c31c072db6d4e56b137cfd05b0bd` and [exits 1](live-receiving-007/exit-code.txt) at 21:30:44 UTC.
+Its [idle executor](live-receiving-007/journey/executor-lifecycle.json), [telemetry](live-receiving-007/journey/telemetry/receipt.json), and [cold/warm startup-burst](live-receiving-007/journey/startup-burst/result.json) receipts pass.
+The operator helper also completes the [five installed CRD checks](live-receiving-007/journey/operator-recovery/installed-crd-identity.json) and [operator image identity](live-receiving-007/journey/operator-recovery/operator-image-identity.json) before creating its sampler Job.
+
+The [command record](live-receiving-007/journey/operator-recovery/commands.jsonl) requests sampler logs about 0.28 seconds after Job creation completes.
+Kubernetes [refuses that request](live-receiving-007/journey/operator-recovery/0019-route-samples.stderr) because the probe container is still `ContainerCreating`.
+No deliberate scheduler NATS fault or operator replacement occurs, so this run supplies no recovery verdict.
+The helper captures final logs and Events, and [owned cleanup](live-receiving-007/journey/cleanup.receipt) passes.
+
+Bead `wamn-0h0g.2.7.16` owns bounded waits for sampler Pod creation and readiness before initial sampling.
+The correction still requires a complete run. Receiving007 remains failed, and the next evidence directory is `live-receiving-008`.
+Host continuity, fresh status, exact HTTP 200, and both original 120-second recovery ceilings remain unchanged.

@@ -1,0 +1,66 @@
+{
+  "source": "9e465adef125c31c072db6d4e56b137cfd05b0bd",
+  "manifest_digest": "sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+  "binary": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/target/debug/wamn-run-worker",
+  "scope": "Real idle executor probes and signal shutdown; no queued-delivery claim.",
+  "startup_budget_seconds": 45,
+  "deployment_grace_seconds": 15,
+  "verdict": "pass",
+  "cases": [
+    {
+      "signal": "SIGTERM",
+      "verdict": "pass",
+      "ready_attempts": 127,
+      "cleanup_killed": false,
+      "probe_bind": "127.0.0.1:34123",
+      "pid": 3983256,
+      "last_probe_error_type": "ConnectionRefusedError",
+      "ready": {
+        "path": "/readyz",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.0007448329706676304
+      },
+      "ready_seconds": 6.64332585799275,
+      "live": {
+        "path": "/livez",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.00044184300350025296
+      },
+      "signal_sent": true,
+      "exit_code": 0,
+      "shutdown_seconds": 0.015337163000367582,
+      "log": "executor-SIGTERM.log",
+      "case_seconds": 6.659340837970376
+    },
+    {
+      "signal": "SIGINT",
+      "verdict": "pass",
+      "ready_attempts": 130,
+      "cleanup_killed": false,
+      "probe_bind": "127.0.0.1:54691",
+      "pid": 3983348,
+      "last_probe_error_type": "ConnectionRefusedError",
+      "ready": {
+        "path": "/readyz",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.0007159429951570928
+      },
+      "ready_seconds": 6.848178214975633,
+      "live": {
+        "path": "/livez",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.00032132596243172884
+      },
+      "signal_sent": true,
+      "exit_code": 0,
+      "shutdown_seconds": 0.01532850501826033,
+      "log": "executor-SIGINT.log",
+      "case_seconds": 6.864044708025176
+    }
+  ],
+  "binary_sha256": "7c5fdc630f9ec9064fadfa50a6af4a3ca248911e3411b18de335ad2e4811ce70"
+}

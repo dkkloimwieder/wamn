@@ -1,0 +1,32 @@
+1. byte identity, both arms
+  ok    arms differ only in replicas: host-base.yaml
+  ok    arms differ only in replicas: host-overlay.yaml
+  ok    normal arm renders 3
+  ok    measure arm renders 0
+  ok    bytes match reviewed template baseline: normal/host-overlay.yaml
+  ok    bytes match reviewed template baseline: measure/host-overlay.yaml
+  ok    bytes match reviewed template baseline: normal/host-base.yaml
+  ok    bytes match reviewed template baseline: measure/host-base.yaml
+  ok    every derived secret anchor fired (no template name survives)
+2. second consumer
+  ok    WMS overlay carries its own identity
+  ok    every WMS-derived anchor fired
+  ok    the object-store credentials Secret is the declared one
+  ok    control: the WMS overlay rendered for an application declaring none is refused, naming it
+  ok    control: the Receiving overlay rendered for an application declaring one is refused
+  ok    the two applications render differently
+3. the guards themselves
+  ok    a duplicated anchor is refused (exactly-once, not at-least-once)
+  ok    a missing required key is refused before any work
+  ok    a declared family with no secret name is refused
+4. nameref binding
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'values' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    a caller array named 'opts' binds to the caller
+  ok    a caller array named 'host_values_spec' binds to the caller
+  ok    a caller array named 'render_spec' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-host-values: all properties hold
