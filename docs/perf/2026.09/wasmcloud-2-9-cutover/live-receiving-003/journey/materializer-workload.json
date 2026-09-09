@@ -1,0 +1,132 @@
+{
+  "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+  "kind": "Workload",
+  "metadata": {
+    "annotations": {
+      "runtime.wasmcloud.dev/workload-replica-set-generation": "75dbd4d7f"
+    },
+    "creationTimestamp": "2026-09-09T16:04:27Z",
+    "finalizers": [
+      "runtime.wasmcloud.dev/workload-finalizer"
+    ],
+    "generation": 1,
+    "name": "receiving-materializer-5946dc4d59-5c4db86968",
+    "namespace": "wamn-receiving-journey",
+    "ownerReferences": [
+      {
+        "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+        "blockOwnerDeletion": true,
+        "controller": true,
+        "kind": "WorkloadReplicaSet",
+        "name": "receiving-materializer-5946dc4d59",
+        "uid": "c5ffa700-d147-4405-ac7e-924b4bbb4ae1"
+      }
+    ],
+    "resourceVersion": "1487",
+    "uid": "0b100131-e2f3-4d63-8238-58c29561174a"
+  },
+  "spec": {
+    "environment": "wamn-receiving-journey",
+    "hostInterfaces": [
+      {
+        "interfaces": [
+          "types",
+          "client"
+        ],
+        "namespace": "wamn",
+        "package": "postgres",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "types",
+          "consumer"
+        ],
+        "namespace": "wamn",
+        "package": "jetstream",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "routing"
+        ],
+        "namespace": "wamn",
+        "package": "flow-http-routing",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "delivery"
+        ],
+        "namespace": "wamn",
+        "package": "router-delivery",
+        "version": "0.1.0"
+      }
+    ],
+    "hostSelector": {
+      "hostgroup": "default"
+    },
+    "service": {
+      "image": "172.28.0.9:5000/wamn/materializer@sha256:e7fce1a63fb28765f561b496ab7f4d610f1dbe38bbec6cf5b072f658a18a9e9c",
+      "imagePullPolicy": "Always",
+      "localResources": {
+        "config": {
+          "wamn.environment": "dev",
+          "wamn.postgres.authority": "event-materializer",
+          "wamn.project": "receiving",
+          "wamn.tenant": "receiving-route-auth"
+        },
+        "environment": {
+          "config": {
+            "WAMN_MAT_ENV": "dev",
+            "WAMN_MAT_FETCH_MS": "500",
+            "WAMN_MAT_MAX_DELIVER": "5",
+            "WAMN_MAT_ORG": "acme",
+            "WAMN_MAT_PROJECT": "receiving",
+            "WAMN_MAT_STREAM": "EVT_acme_dev",
+            "WAMN_MAT_SWEEP_MS": "500",
+            "WAMN_MAT_TENANT": "receiving-route-auth"
+          }
+        }
+      },
+      "maxRestarts": 5
+    }
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-09-09T16:04:27Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Config"
+      },
+      {
+        "lastTransitionTime": "2026-09-09T16:04:27Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "HostSelection"
+      },
+      {
+        "lastTransitionTime": "2026-09-09T16:04:27Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Placement"
+      },
+      {
+        "lastTransitionTime": "2026-09-09T16:04:27Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Sync"
+      },
+      {
+        "lastTransitionTime": "2026-09-09T16:04:27Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Ready"
+      }
+    ],
+    "environment": "wamn-receiving-journey",
+    "hostId": "1dfae514-cd9f-4759-a9bd-624be37945ec",
+    "workloadId": "0b100131-e2f3-4d63-8238-58c29561174a"
+  }
+}

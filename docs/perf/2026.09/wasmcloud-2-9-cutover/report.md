@@ -339,3 +339,34 @@ The [existing project tests](executor-project-fix-001/declared-project-tests.log
 Scoped [Clippy](executor-project-fix-001/clippy-exit-code.txt) exits 0 with warnings.
 The real executor signal cases still require a new live run.
 The failed run does not reach current telemetry, startup bursts, installed CRDs, or operator recovery.
+
+
+## Current telemetry and startup protocol
+
+The [third full Receiving run](live-receiving-003/exit-code.txt) exits 1 at clean source `a40d1c18`.
+The [executor receipt](live-receiving-003/journey/executor-lifecycle.json) passes both real signal cases and closes `wamn-0h0g.2.7.6`.
+Both probes return exact `200` with `ok\n`.
+SIGTERM and SIGINT exits succeed in 15.4 ms and 31.5 ms after readiness, without forced termination.
+These are idle executor cases, with no queued-delivery drain claim.
+The production route and exact materializer acknowledgment tests also pass.
+
+The [current telemetry receipt](live-receiving-003/journey/telemetry/receipt.json) passes for two real PAT requests.
+Both traces contain completed WAMN invocations and descendant PostgreSQL effects with the expected identity.
+The collector exposes native HTTP duration counts plus WAMN PostgreSQL and JetStream histogram counts.
+These metrics do not measure guest CPU or identify individual requests.
+HTTP egress injection and retired private runtime phases remain outside this proof.
+
+The [startup test](live-receiving-003/journey/startup-burst/test.log) passes once, with no ignored or filtered cases.
+Its [protocol receipt](live-receiving-003/journey/startup-burst/protocol.json) records eight cold starts and eight warm starts with native control, probe, and application observations.
+Every owned workload stops, the final workload count is zero, and the host exits successfully.
+The helper then fails before it can establish native start overlap from all server traces.
+The [Tempo search response](live-receiving-003/journey/startup-burst/trace-search-008.json) contains two 31-digit trace IDs among its 16 results.
+The helper incorrectly requires 32 digits, which `wamn-0h0g.2.7.7` owns.
+
+The fix accepts nonzero hexadecimal search IDs up to 128 bits and restores leading zeros for lookup and comparison.
+It also checks that each returned span belongs to the requested trace.
+Current [Tempo documentation](https://grafana.com/docs/tempo/latest/configuration/) describes optional leading-zero padding in search responses.
+The [offline replay](startup-trace-fix-001/replay.json) accepts all 16 retained IDs and checks 42 retained span identities.
+It rejects ten malformed or invalid inputs.
+A new live run must still establish complete startup trace exposure and operator recovery.
+The [owned cleanup receipt](live-receiving-003/journey/cleanup.receipt) passes.

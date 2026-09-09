@@ -1,0 +1,66 @@
+{
+  "source": "a40d1c18729fa6194c49380a807c0e683da7ff8f",
+  "manifest_digest": "sha256:e633957452b28418875cdc69a5574d078da95daf94aa9fda76c5ad84cc3dee94",
+  "binary": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/target/debug/wamn-run-worker",
+  "scope": "Real idle executor probes and signal shutdown; no queued-delivery claim.",
+  "startup_budget_seconds": 45,
+  "deployment_grace_seconds": 15,
+  "verdict": "pass",
+  "cases": [
+    {
+      "signal": "SIGTERM",
+      "verdict": "pass",
+      "ready_attempts": 151,
+      "cleanup_killed": false,
+      "probe_bind": "127.0.0.1:60923",
+      "pid": 3391704,
+      "last_probe_error_type": "ConnectionRefusedError",
+      "ready": {
+        "path": "/readyz",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.001022166048642248
+      },
+      "ready_seconds": 8.025185222039,
+      "live": {
+        "path": "/livez",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.000645156018435955
+      },
+      "signal_sent": true,
+      "exit_code": 0,
+      "shutdown_seconds": 0.01540364301763475,
+      "log": "executor-SIGTERM.log",
+      "case_seconds": 8.041588558000512
+    },
+    {
+      "signal": "SIGINT",
+      "verdict": "pass",
+      "ready_attempts": 148,
+      "cleanup_killed": false,
+      "probe_bind": "127.0.0.1:60921",
+      "pid": 3391849,
+      "last_probe_error_type": "ConnectionRefusedError",
+      "ready": {
+        "path": "/readyz",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.0008008790318854153
+      },
+      "ready_seconds": 7.973131206992548,
+      "live": {
+        "path": "/livez",
+        "status": 200,
+        "body": "ok\n",
+        "elapsed_seconds": 0.00046386203030124307
+      },
+      "signal_sent": true,
+      "exit_code": 0,
+      "shutdown_seconds": 0.03150766697945073,
+      "log": "executor-SIGINT.log",
+      "case_seconds": 8.005358470021747
+    }
+  ],
+  "binary_sha256": "2cb2bf9b377d524fc2895045d5c03521338e3d184e7d58d2598bc4f408f430de"
+}

@@ -13,6 +13,13 @@ import time
 from urllib.parse import unquote, urlencode, urlsplit
 
 
+def tempo_trace_id(value):
+    # Tempo search omits leading zeros from otherwise valid 128-bit identifiers.
+    if not isinstance(value, str) or not re.fullmatch('[0-9a-fA-F]{1,32}', value) or int(value, 16) == 0:
+        raise ValueError('Tempo returned an invalid trace identity')
+    return value.lower().zfill(32)
+
+
 def main():
     document = json.loads(Path(sys.argv[1]).read_text())
     fixture = document['fixture']
@@ -170,15 +177,18 @@ def main():
             search = json.loads(capture(kube + ['get', '--raw', search_path],
                                         f'trace-search-{attempt:03}.json'))
             for trace in search.get('traces', []):
-                trace_id = trace['traceID']
-                if not re.fullmatch('[0-9a-fA-F]{32}', trace_id):
-                    raise RuntimeError('Tempo returned a malformed trace identity')
+                trace_id = tempo_trace_id(trace['traceID'])
                 trace_file = f'native-trace-{attempt:03}-{trace_id}.json'
                 raw = capture(kube + ['get', '--raw', proxy + '/api/traces/' + trace_id], trace_file)
                 value = json.loads(raw)
                 for batch in value.get('batches', []):
                     for scope in batch.get('scopeSpans', []):
                         for span in scope.get('spans', []):
+                            actual = span['traceId']
+                            if not re.fullmatch('[0-9a-fA-F]{32}', actual):
+                                actual = base64.b64decode(actual, validate=True).hex()
+                            if actual.lower() != trace_id:
+                                raise RuntimeError('Tempo returned a span from another trace')
                             key = (trace_id, span['spanId'])
                             spans[key] = span
                             span_sources[key] = trace_file

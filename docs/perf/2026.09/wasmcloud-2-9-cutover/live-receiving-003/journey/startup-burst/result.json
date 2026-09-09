@@ -1,0 +1,47 @@
+{
+  "source": "a40d1c18729fa6194c49380a807c0e683da7ff8f",
+  "verdict": "fail",
+  "cleanup": [
+    {
+      "pid": 3397213,
+      "exit_code": 0,
+      "wait_exceeded_host_grace": false
+    },
+    {
+      "pid": 3397199,
+      "exit_code": -15,
+      "wait_exceeded_host_grace": false
+    }
+  ],
+  "deployment_resources": {
+    "limits": {
+      "cpu": "6",
+      "memory": "4Gi"
+    },
+    "requests": {
+      "cpu": "2",
+      "memory": "256Mi"
+    }
+  },
+  "local_process_resource_limit": "inherits runner cgroup; not the Kubernetes 6-CPU quota",
+  "host_binary_sha256": "501bddc80db7d74404e309002a392b8c484b62dbdbcbd7c114be3a676f0f1c88",
+  "profile": "release",
+  "source_requirements": {
+    "wasmtime_parallel_compilation": "Cargo.toml workspace Wasmtime features, captured by source SHA",
+    "guest_memory_mode": "count",
+    "meter_mode": "duration",
+    "start_limit": 4
+  },
+  "input_sha256": {
+    "Cargo.toml": "60ed3fa20c4b104ab03be599a97946df16187974c1d4ef490e31022ad04edb69",
+    "Cargo.lock": "55faac1a84a11c8feac91948a04f71ba71033f4e6a41172532539ff35ff6a40d",
+    "host-deployment.json": "075666613a1270e0437c4ce7e5e781432b0588fa3fc93bf8a0882118f9839852",
+    "production-workload.json": "bad2854813d55eae7213d39d902c9b9912b8d146e0bee35ac5fcb6905ce4c991"
+  },
+  "test_exit_code": 0,
+  "failure": {
+    "stage": "native trace collection",
+    "error_type": "RuntimeError",
+    "message": "Tempo returned a malformed trace identity"
+  }
+}

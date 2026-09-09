@@ -53,7 +53,8 @@ After two lifecycle lint cleanups, all four [focused lifecycle tests](../perf/20
 The [scoped runtime Clippy](../perf/2026.09/wasmcloud-2-9-cutover/validation-003/runtime-clippy-exit-code.txt) also exits 0 with warnings.
 The final lifecycle module emits neither of its two corrected warnings.
 The first [full Receiving journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/verdict.json) passes at clean `7798190c`, covering the released application, materializer, native scheduling, and cleanup.
-The later telemetry, startup, and operator-recovery helpers still require live evidence.
+Current [telemetry](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-003/journey/telemetry/receipt.json) passes at `a40d1c18`.
+Startup trace exposure and operator recovery still require complete live evidence.
 
 The prepared [engine](../../crates/platform/runtime/src/engine.rs) and [manual stores](../../crates/execution/host/src/router_driver.rs) share the native guest-memory budget in `Count` mode.
 Production rejects `enforce` and `off` through the native memory-mode flag and environment name.
@@ -96,7 +97,7 @@ Namespace scopes, the disabled gateway, and row 8's modern Event overlay remain 
 
 The render and [public operator image metadata](../perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json) prove configuration and distributed artifact identity only.
 The owning Rust render test executes but fails during Kubernetes API discovery because `127.0.0.1:8080` refuses the connection.
-Installed CRD identity, operator recovery, startup measurements, current telemetry delivery, and comparable performance proofs remain pending.
+Installed CRD identity, operator recovery, startup measurements, and comparable performance proofs remain pending.
 The [direct stop/start runbook](../../deploy/README.md#wasmcloud-29-cutover) keeps one active runtime version per environment without a maintenance window or compatibility period.
 
 The [distributed CRD capture](../perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/crd-inventory.json) confirms that all five 2.9 schema files match the pinned source.

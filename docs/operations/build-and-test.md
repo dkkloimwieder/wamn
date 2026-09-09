@@ -3019,7 +3019,9 @@ tools/receiving-cluster-journey-run --apply \
 
 The runner supplies the existing private kubeconfig, authorities, release, and fixture inputs to the helpers.
 No extra production flag or manually copied credential is needed.
-Each helper must pass before the runner writes the full verdict. All three remain unexecuted at this documentation update.
+Each helper must pass before the runner writes the full verdict.
+Current [telemetry](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-003/journey/telemetry/receipt.json) passes at `a40d1c18`.
+Startup trace exposure and operator recovery remain pending.
 
 | Helper and receipt | Required proof and limit |
 |---|---|

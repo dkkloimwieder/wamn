@@ -1,0 +1,78 @@
+{
+  "source_sha256": "28907311bda27ec7ef2fbd5bbfad0da8358e48ca74f7e9363ad4287583c6cffe",
+  "real_search_response": "docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-003/journey/startup-burst/trace-search-008.json",
+  "real_search_sha256": "ea297d6933f334ba25cd3b080449040f6956c3e0b50812475b6d8f2d390a1d4c",
+  "accepted_real_ids": [
+    {
+      "input": "7b45ec5dcb21aabfd0d6a566b8a2a9c1",
+      "output": "7b45ec5dcb21aabfd0d6a566b8a2a9c1"
+    },
+    {
+      "input": "414e0c0f8a67b1b881f9c000e54d96f8",
+      "output": "414e0c0f8a67b1b881f9c000e54d96f8"
+    },
+    {
+      "input": "3b25c9b8116cb8fbf6d02a53bc2fc89b",
+      "output": "3b25c9b8116cb8fbf6d02a53bc2fc89b"
+    },
+    {
+      "input": "28a3caa44161c6e6cb2f4aba77e22e5",
+      "output": "028a3caa44161c6e6cb2f4aba77e22e5"
+    },
+    {
+      "input": "eadba929ab58c3438663577822b81cf2",
+      "output": "eadba929ab58c3438663577822b81cf2"
+    },
+    {
+      "input": "801c9e53f187c4958cc9fa344a306681",
+      "output": "801c9e53f187c4958cc9fa344a306681"
+    },
+    {
+      "input": "611cbcb0f4fd0c664e4db433da99abc6",
+      "output": "611cbcb0f4fd0c664e4db433da99abc6"
+    },
+    {
+      "input": "f87120809c0df4fabaf91d0cc2f4ffab",
+      "output": "f87120809c0df4fabaf91d0cc2f4ffab"
+    },
+    {
+      "input": "3e8d7b5039afdc53041dab75565a89b",
+      "output": "03e8d7b5039afdc53041dab75565a89b"
+    },
+    {
+      "input": "68e05fbf2ea97aa2f3217c18971ff0a2",
+      "output": "68e05fbf2ea97aa2f3217c18971ff0a2"
+    },
+    {
+      "input": "24410a1af193a6697ec5036e7a0f6d46",
+      "output": "24410a1af193a6697ec5036e7a0f6d46"
+    },
+    {
+      "input": "eb9a49324dffbe0629c5b70307ad5593",
+      "output": "eb9a49324dffbe0629c5b70307ad5593"
+    },
+    {
+      "input": "b81fc2a46743536902b35eb61035570b",
+      "output": "b81fc2a46743536902b35eb61035570b"
+    },
+    {
+      "input": "6b6ba95cf65b5fe94e67b216c1d56df9",
+      "output": "6b6ba95cf65b5fe94e67b216c1d56df9"
+    },
+    {
+      "input": "c112d9b625d05bf54e1c8bdadfdc0681",
+      "output": "c112d9b625d05bf54e1c8bdadfdc0681"
+    },
+    {
+      "input": "713f0b69d15e042048b506827d204546",
+      "output": "713f0b69d15e042048b506827d204546"
+    }
+  ],
+  "invalid_controls_rejected": 10,
+  "case_and_padding_control": "pass",
+  "retained_span_identity_checks": 42,
+  "syntax": "pass",
+  "live_lookup_rerun": "pending",
+  "documentation": "https://grafana.com/docs/tempo/latest/configuration/",
+  "documentation_scope": "Current official documentation describes left_pad_trace_ids=false. The failed run itself supplies the observed Tempo 2.6.1 response."
+}
