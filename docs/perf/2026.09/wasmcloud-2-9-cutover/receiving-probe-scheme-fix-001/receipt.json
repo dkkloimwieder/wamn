@@ -1,0 +1,131 @@
+{
+  "bead": "wamn-0h0g.2.7.15",
+  "base_source": "b8e9881dc8afb94971d6f63bdaa844ea9f29c045",
+  "captured_deployment": "performance-2-9-001/journey/host-measurement-deployment.json",
+  "captured_sha256": "c422f80202fc60e00b62cae9bc7d4a9a0dd4e28155fbf7d5c8235960f7e27ce7",
+  "corrected_source_sha256": "04ae152156ab0a7a80d78105eeeaa80b41e11fec7c5ece711703eab310bf02c7",
+  "cases": [
+    {
+      "name": "original_assertion",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "corrected_assertion",
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "stdout": "true\n",
+      "stderr": ""
+    },
+    {
+      "name": "livenessProbe_path_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "livenessProbe_port_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "livenessProbe_scheme_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "livenessProbe_missing_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "readinessProbe_path_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "readinessProbe_port_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "readinessProbe_scheme_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "readinessProbe_missing_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "startupProbe_path_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "startupProbe_port_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "startupProbe_scheme_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    },
+    {
+      "name": "startupProbe_missing_refused",
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "stdout": "false\n",
+      "stderr": ""
+    }
+  ],
+  "checks": [
+    {
+      "command": [
+        "bash",
+        "-n",
+        "tools/receiving-cluster-journey-run"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "scope": "Offline replay of the owning assertion against the actual failed-run deployment.",
+  "limits": "No timed traffic ran. Deployment probes, resources, and benchmark limits remain unchanged."
+}
