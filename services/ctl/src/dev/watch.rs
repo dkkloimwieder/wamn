@@ -278,14 +278,23 @@ impl DevSourceStateProvider for GitSource {
 /// `--no-optional-locks` and never wrote it, so watching the refs instead
 /// loses no invalidation the loop was acting on.
 ///
-/// Anything OUTSIDE the worktree is dropped as well. In a LINKED worktree
-/// every one of these resolves into the main checkout: `--git-path
-/// packed-refs` and `--git-path refs/<branch>` reach the common directory
-/// that every sibling worktree writes, and even `HEAD` sits under
-/// `.git/worktrees/<name>` out there. Watching them let one checkout's Git
-/// activity invalidate an unrelated session's loop. A linked worktree
-/// therefore holds no commit-metadata watch at all, and reruns on authored
-/// edits alone.
+/// The other absence is the SHARED Git directory, and this is where the rule
+/// changed (wamn-10yt.71, superseding wamn-10yt.60). A path is kept when it
+/// is inside the worktree root OR inside this worktree's own Git directory,
+/// the one `--absolute-git-dir` names, and dropped otherwise. That directory
+/// is safe precisely because it is private: in a LINKED worktree it is
+/// `.git/worktrees/<name>`, which no sibling checkout writes, while the
+/// common directory it sits under — `--git-common-dir`, where `--git-path
+/// packed-refs` and `--git-path refs/<branch>` land — is written by every
+/// sibling, and watching it let one checkout's rebase invalidate an unrelated
+/// session's loop. In a normal checkout the two directories are the same path
+/// inside the worktree, so the added arm admits nothing new there.
+///
+/// What a linked worktree recovers is therefore `HEAD` alone: a branch switch
+/// or a commit on a DETACHED `HEAD` rewrites it and reruns the loop, but a
+/// commit on an attached branch moves only the shared branch ref, so it is
+/// still not seen. The index is inside the private directory too, so the rule
+/// names and drops it for the reason above.
 async fn discover_metadata_paths(
     repository_root: &Path,
     git_dir: &Path,
@@ -345,7 +354,10 @@ async fn discover_metadata_paths(
             .await?,
         );
     }
-    paths.retain(|path| path.starts_with(repository_root));
+    let index = git_dir.join("index");
+    paths.retain(|path| {
+        *path != index && (path.starts_with(repository_root) || path.starts_with(git_dir))
+    });
     Ok(paths.into_iter().collect())
 }
 
@@ -1583,16 +1595,17 @@ mod tests {
         ));
     }
 
-    /// Every watch a loop registers sits inside the worktree it runs in.
+    /// Every watch a loop registers sits inside the worktree it runs in or
+    /// inside that worktree's own Git directory, and nowhere else.
     ///
     /// In a LINKED worktree `--git-path` answers with the MAIN checkout:
-    /// `packed-refs` and the branch ref land in the common directory every
-    /// sibling worktree writes, `HEAD` and the index under
-    /// `.git/worktrees/<name>` beside it. Watching out there let an unrelated
-    /// checkout's Git activity invalidate this session's loop, so a linked
-    /// worktree now carries no commit-metadata watch at all.
+    /// `packed-refs` and the branch ref land in the COMMON directory every
+    /// sibling worktree writes, `HEAD` and the index in the private
+    /// `.git/worktrees/<name>` beside it. Watching the common directory let an
+    /// unrelated checkout's rebase invalidate this session's loop; watching
+    /// the private one cannot, and is what brings `HEAD` back (wamn-10yt.71).
     #[tokio::test]
-    async fn a_linked_worktree_registers_no_watch_outside_itself() {
+    async fn a_linked_worktree_watches_its_own_git_directory_and_not_the_shared_one() {
         let repository = TempRepository::new();
         repository.write_fixture();
         let linked = repository.root.with_extension("linked");
@@ -1620,12 +1633,28 @@ mod tests {
         )
         .await
         .expect("construct filesystem invalidation source");
+        let own_git_dir = source.git.git_dir.clone();
+        let shared_git_dir = repository.root.join(".git");
         let outside = source
             .watched_directories
             .values()
-            .filter(|directory| !directory.starts_with(&worktree_root))
+            .filter(|directory| {
+                !directory.starts_with(&worktree_root) && !directory.starts_with(&own_git_dir)
+            })
             .cloned()
             .collect::<Vec<_>>();
+        let shared = source
+            .watched_directories
+            .values()
+            .filter(|directory| {
+                directory.starts_with(&shared_git_dir) && !directory.starts_with(&own_git_dir)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let watches_own_git_dir = source
+            .watched_directories
+            .values()
+            .any(|directory| directory.starts_with(&own_git_dir));
         let metadata = source.git.metadata_paths().to_vec();
 
         // The exact shape that killed a session: a rebase in the OTHER
@@ -1645,6 +1674,34 @@ mod tests {
             .await
             .is_err();
 
+        // A commit this worktree makes must reach it. Detaching is what puts
+        // the commit in the private directory: on an attached branch the
+        // commit moves only the SHARED branch ref, which is unwatched by
+        // design, so `HEAD` is the whole of what a linked worktree recovers.
+        git(&linked, &["checkout", "--detach", "--quiet"]);
+        while tokio::time::timeout(Duration::from_millis(500), source.next())
+            .await
+            .is_ok()
+        {}
+        git(
+            &linked,
+            &["commit", "--quiet", "--allow-empty", "-m", "head"],
+        );
+        let committed = tokio::time::timeout(Duration::from_secs(2), source.next()).await;
+        let committed = match committed {
+            Ok(event) => {
+                let event = event
+                    .expect("read commit event")
+                    .expect("source remains open");
+                has_rerun(
+                    &collect_batch(event, &mut source),
+                    DevStage::Migrate,
+                    DevSourceState::Clean,
+                )
+            }
+            Err(_elapsed) => false,
+        };
+
         drop(source);
         git(
             &repository.root,
@@ -1652,18 +1709,34 @@ mod tests {
         );
 
         assert!(
-            outside.is_empty(),
-            "a linked worktree watched {outside:?}, outside {}",
-            worktree_root.display()
+            shared.is_empty(),
+            "a linked worktree watched {shared:?} under the shared {}",
+            shared_git_dir.display()
         );
         assert!(
-            metadata.is_empty(),
-            "a linked worktree's commit metadata is all in the main checkout, \
-             so none of it is watchable from here: {metadata:?}"
+            outside.is_empty(),
+            "a linked worktree watched {outside:?}, outside both {} and {}",
+            worktree_root.display(),
+            own_git_dir.display()
+        );
+        assert!(
+            watches_own_git_dir,
+            "a linked worktree must watch its own {}",
+            own_git_dir.display()
+        );
+        assert_eq!(
+            metadata,
+            vec![own_git_dir.join("HEAD")],
+            "only `HEAD` in the private Git directory is watchable from a \
+             linked worktree; the shared refs and the private index are not"
         );
         assert!(
             quiet,
             "an unrelated checkout's Git activity must not reach this loop"
+        );
+        assert!(
+            committed,
+            "a commit that changed no working-tree file must rerun the loop"
         );
     }
 
