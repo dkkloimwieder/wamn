@@ -47,6 +47,8 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+wamn-schema-generator = { workspace = true }
+wat = "=1.252.0"
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 uuid = { workspace = true }

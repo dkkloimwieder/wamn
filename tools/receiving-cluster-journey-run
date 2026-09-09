@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] --evidence-dir DIR
+usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] [--fresh-only-proof] --evidence-dir DIR
 
 Without --apply, print the immutable plan and exit.
 
@@ -18,6 +18,8 @@ Without --apply, print the immutable plan and exit.
                        cannot combine with startup or throughput measurement
   --session-host-proof Prove session-key removal on two deployed hosts, with
                        reachable and unavailable JWKS; cannot combine modes
+  --fresh-only-proof   Prove direct/nested session refusal, same-human PAT success, and
+                       next-request revocation, plus the session-host proof
   --fresh-auth-bench    Repeat the existing throughput sweep three times for each
                        of service and human PATs; implies --throughput
   --evidence-dir DIR   New directory retaining commands and machine evidence
@@ -33,6 +35,8 @@ measure_startup=false
 throughput=false
 membershipproof=false
 session_host_proof=false
+fresh_only_proof=false
+session_host_requested=false
 standard_images=false
 fresh_auth_bench=false
 evidence_dir=
@@ -42,13 +46,18 @@ while (($#)); do
     --measure-startup) measure_startup=true; shift ;;
     --throughput) throughput=true; measure_startup=true; shift ;;
     --membershipproof) membershipproof=true; shift ;;
-    --session-host-proof) session_host_proof=true; shift ;;
+    --session-host-proof) session_host_proof=true; session_host_requested=true; shift ;;
+    --fresh-only-proof) fresh_only_proof=true; session_host_proof=true; shift ;;
     --fresh-auth-bench) fresh_auth_bench=true; throughput=true; measure_startup=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+if [[ "$fresh_only_proof" == true && "$session_host_requested" == true ]]; then
+  echo "--fresh-only-proof cannot combine with --session-host-proof" >&2
+  exit 2
+fi
 if [[ "$membershipproof" == true && "$measure_startup" == true ]]; then
   echo "--membershipproof cannot combine with --measure-startup or --throughput" >&2
   exit 2
@@ -185,7 +194,9 @@ if [[ "$apply" != true ]]; then
   printf '  cluster/context: %s / %s\n' "$cluster" "$context"
   printf '  namespace: %s\n' "$namespace"
   printf '  route host: %s (setup overlay only)\n' "$route_host"
-  if [[ "$session_host_proof" == true ]]; then
+  if [[ "$fresh_only_proof" == true ]]; then
+    printf '  order: Dockerfile host + gates + identity -> copied authored fresh-only base -> production admission + v1 release -> direct/nested session refusal + same-human PAT success + role/membership revocation -> two-host session proof -> exact teardown\n'
+  elif [[ "$session_host_proof" == true ]]; then
     printf '  order: Dockerfile host + gates + identity -> disposable v1 session release -> two distinct deployed hosts -> reachable/unavailable JWKS removal Jobs (300 seconds each) -> exact teardown\n'
   elif [[ "$membershipproof" == true ]]; then
     printf '  order: Dockerfile host + gates -> production mint/attest -> operator 2.9.0 -> deployed HTTP membershipproof Job -> exact teardown\n'
@@ -485,7 +496,10 @@ cleanup() {
   fi
 
   if [[ $status -eq 0 && "$run_complete" == true && "$cleanup_failed" == false ]]; then
-    if [[ "$session_host_proof" == true ]]; then
+    if [[ "$fresh_only_proof" == true ]]; then
+      printf 'RECEIVING FRESH ONLY PROOF PASS source=%s namespace=%s direct=pass nested=pass role_revocation=pass membership_revocation=pass hosts=2 reachable=pass unreachable=pass cleanup=pass\n' \
+        "$head" "$namespace" >"$evidence_dir/fresh-only-proof-journey.receipt"
+    elif [[ "$session_host_proof" == true ]]; then
       printf 'RECEIVING HOST SESSION PROOF PASS source=%s namespace=%s hosts=2 reachable=pass unreachable=pass cleanup=pass\n' \
         "$head" "$namespace" >"$evidence_dir/session-host-proof-journey.receipt"
     elif [[ "$membershipproof" == true ]]; then
@@ -925,19 +939,24 @@ declare -A journey_spec=(
   [host_secret_namespace]=$namespace
   [route_caller_secret_output]=$route_caller_secret
 )
+route_phase_test=production_two_package_release_serves_all_thirteen_pat_routes
+if [[ "$fresh_only_proof" == true ]]; then
+  journey_spec[fresh_only_packages]=$work_dir/fresh-only-packages
+  route_phase_test=production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes
+fi
 write_journey_document journey_spec "$journey_schema" "$journey_document"
-record_command cargo test production_two_package_release_serves_all_thirteen_pat_routes \
+record_command cargo test "$route_phase_test" \
   '<journey document with disposable PostgreSQL and OCI inputs redacted>'
 WAMN_JOURNEY_DOCUMENT="$journey_document" \
 WAMN_JOURNEY_SCENARIO_WORKER_BIN="$cargo_target_dir/debug/wamn-scenario-worker" \
 CARGO_TARGET_DIR="$cargo_target_dir" \
 RUSTC_WRAPPER= \
   cargo test -p wamn-proof-integration --lib --locked --offline \
-  route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes \
+  "route_authentication_live::$route_phase_test" \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/production-route.log"
 assert_one_test_ran "$evidence_dir/production-route.log" \
-  production_two_package_release_serves_all_thirteen_pat_routes
+  "$route_phase_test"
 
 journey_release_id=1
 if [[ "$session_host_proof" == true ]]; then
@@ -1959,22 +1978,33 @@ if [[ "$session_host_proof" == true ]]; then
         echo "nested session port-forward reported an unexpected endpoint" >&2; exit 1;
       }
       session_nested_endpoint=https://localhost:${BASH_REMATCH[1]}
+      session_nested_test=production_nested_session_call_preserves_original_caller
+      session_nested_receipt='HOST_SESSION_NESTED result=pass credential_kind=session invocations=2 fixture_release=3 manifest_format=1'
+      if [[ "$fresh_only_proof" == true ]]; then
+        session_nested_test=production_nested_fresh_only_requires_pat_and_observes_revocation
+        session_nested_receipt='HOST_FRESH_ONLY_NESTED result=pass session=refused pat=accepted direct_session=refused direct_pat=accepted role_revocation=refused membership_revocation=refused committed_state=unchanged fixture_release=3 manifest_format=1'
+      fi
       record_command timeout 240s cargo test \
-        route_authentication_live::production_nested_session_call_preserves_original_caller \
+        "route_authentication_live::$session_nested_test" \
         '<private journey document; original issuer and explicit fixture HTTPS endpoint>'
       WAMN_JOURNEY_DOCUMENT="$journey_document" WAMN_IDENTITY_ISSUER="$session_issuer" \
+      WAMN_JOURNEY_SCENARIO_WORKER_BIN="$cargo_target_dir/debug/wamn-scenario-worker" \
       WAMN_IDENTITY_CA_FILE="$work_dir/session-ca.crt" \
       WAMN_SESSION_NESTED_HTTPS_ENDPOINT="$session_nested_endpoint" \
       CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
         timeout 240s cargo test -p wamn-proof-integration --lib --locked --offline \
-        route_authentication_live::production_nested_session_call_preserves_original_caller \
+        "route_authentication_live::$session_nested_test" \
         -- --ignored --exact --nocapture --test-threads=1 \
         2>&1 | tee "$evidence_dir/session-nested.log"
       assert_one_test_ran "$evidence_dir/session-nested.log" \
-        production_nested_session_call_preserves_original_caller
-      session_nested_receipt='HOST_SESSION_NESTED result=pass credential_kind=session invocations=2 fixture_release=3 manifest_format=1'
+        "$session_nested_test"
       [[ $(grep -Fxc -- "$session_nested_receipt" "$evidence_dir/session-nested.log") == 1 ]] || exit 1
       printf '%s\n' "$session_nested_receipt" >"$evidence_dir/session-nested.receipt"
+      if [[ "$fresh_only_proof" == true ]]; then
+        fresh_only_commit_receipt='FRESH_ONLY_PRIOR_COMMIT result=pass session_counter=1 pat_counter=2 fixture_release=4'
+        [[ $(grep -Fxc -- "$fresh_only_commit_receipt" "$evidence_dir/session-nested.log") == 1 ]] || exit 1
+        printf '%s\n' "$fresh_only_commit_receipt" >"$evidence_dir/fresh-only-prior-commit.receipt"
+      fi
       kill -TERM "$session_forward_pid"
       wait "$session_forward_pid" || true
       if kill -0 "$session_forward_pid" >/dev/null 2>&1; then exit 1; fi

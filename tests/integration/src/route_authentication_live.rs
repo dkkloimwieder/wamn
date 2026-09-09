@@ -1,6 +1,8 @@
 //! Production route authentication and exact-operation authorization on one
 //! fresh disposable PostgreSQL 18 server.
 
+mod fresh_only;
+
 use std::collections::{BTreeSet, HashMap};
 use std::fs::Permissions;
 use std::io::Write as _;
@@ -373,6 +375,13 @@ fn overlay_package_root() -> PathBuf {
 }
 
 fn journey_package_root(package: JourneyPackage) -> PathBuf {
+    if std::env::var_os(JOURNEY_DOCUMENT_ENV).is_some()
+        && let Some(root) = JourneyDocument::required()
+            .expect("the journey package source requires a valid input document")
+            .fresh_only_packages
+    {
+        return root.join(package.id);
+    }
     if package.id == BASE_PACKAGE_ID {
         package_root()
     } else {
@@ -1210,6 +1219,9 @@ pub(crate) struct JourneyDocument {
     host_secret_directory: PathBuf,
     host_secret_namespace: String,
     pub(crate) route_caller_secret_output: PathBuf,
+    /// Copied package sources for the dedicated fresh-only proof.
+    /// The initial phase creates this directory before any package admission.
+    fresh_only_packages: Option<PathBuf>,
     /// Known only after the route phase has provisioned the project
     /// environment and the materializer trigger has produced a receipt. The
     /// shell amends the document with it then; before that it is absent, and
@@ -1295,6 +1307,15 @@ fn parse_journey_document(bytes: &[u8]) -> anyhow::Result<JourneyDocument> {
     for (field, value) in document.scalars() {
         anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
     }
+    if let Some(root) = &document.fresh_only_packages {
+        anyhow::ensure!(
+            root.is_absolute()
+                && root.file_name().is_some()
+                && root.parent() == document.host_secret_directory.parent()
+                && root != &document.host_secret_directory,
+            "fresh_only_packages must name a separate directory beside the private host secrets"
+        );
+    }
     if let Some(materializer) = &document.materializer {
         for (field, value) in [
             ("materializer.project_pg_url", &materializer.project_pg_url),
@@ -1365,8 +1386,8 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
         assert!(properties.contains_key(field), "schema lacks {field}");
         assert!(required.contains(&field), "schema does not require {field}");
     }
-    assert_eq!(properties.len(), example.scalars().len() + 2);
-    for phase in ["materializer", "runtime"] {
+    assert_eq!(properties.len(), example.scalars().len() + 3);
+    for phase in ["materializer", "runtime", "fresh_only_packages"] {
         assert!(properties.contains_key(phase));
         assert!(!required.contains(&phase));
     }
@@ -1867,7 +1888,11 @@ fn assert_no_component_trace(spans: &[SpanData], trace_id: &str) {
     );
 }
 
-async fn install_journey_project(project: &Client, project_url: &str) -> anyhow::Result<()> {
+async fn install_journey_project(
+    project: &Client,
+    project_url: &str,
+    fresh_only: bool,
+) -> anyhow::Result<()> {
     install_journey_platform_floor(project).await?;
     for package in JOURNEY_PACKAGES {
         apply_package::run(ApplyPackageArgs {
@@ -1882,6 +1907,15 @@ async fn install_journey_project(project: &Client, project_url: &str) -> anyhow:
                 package.id, package.version
             )
         })?;
+        if fresh_only && package.id == BASE_PACKAGE_ID {
+            wamn_schema_generator::materialize_package_verified(
+                wamn_schema_generator::MaterializeMode::Write,
+                project_url,
+                &journey_package_root(package),
+            )
+            .await
+            .context("generate the copied fresh-only base before overlay migrations")?;
+        }
     }
     Ok(())
 }
@@ -3416,7 +3450,102 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
 #[tokio::test]
 #[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts"]
 async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {
+    receiving_pat_journey(false).await
+}
+
+#[tokio::test]
+#[ignore = "requires the dedicated fresh-only disposable journey and copied package directory"]
+async fn production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes()
+-> anyhow::Result<()> {
+    receiving_pat_journey(true).await
+}
+
+fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let target = destination.join(entry.file_name());
+        if kind.is_dir() {
+            copy_fresh_only_package(&entry.path(), &target)?;
+        } else {
+            anyhow::ensure!(
+                kind.is_file(),
+                "fresh-only package sources must be regular files"
+            );
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
+fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
+    anyhow::ensure!(!root.exists(), "fresh-only package directory must be new");
+    std::fs::create_dir(root)?;
+    for (id, source) in [
+        (BASE_PACKAGE_ID, package_root()),
+        (OVERLAY_PACKAGE_ID, overlay_package_root()),
+    ] {
+        copy_fresh_only_package(&source, &root.join(id))?;
+    }
+    let base = root.join(BASE_PACKAGE_ID);
+    let manifest_path = base.join("wamn.json");
+    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
+    let operation = manifest["custom_operations"]
+        .get_mut("receiving.record_receipt")
+        .context("the base manifest must declare record_receipt")?;
+    operation["fresh_only"] = Value::Bool(true);
+    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    let declaration_path = base.join("publication/components/receiving.json.in");
+    let mut declaration: Value = serde_json::from_slice(&std::fs::read(&declaration_path)?)?;
+    declaration["operations"]
+        .get_mut(BASE_RECORD_RECEIPT)
+        .context("the base declaration must name the registered operation")?["fresh-only"] =
+        Value::Bool(true);
+    std::fs::write(declaration_path, serde_json::to_vec(&declaration)?)?;
+    Ok(())
+}
+
+#[test]
+fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyhow::Result<()> {
+    let source_manifest = package_root().join("wamn.json");
+    let source_declaration = package_root().join("publication/components/receiving.json.in");
+    let manifest_before = std::fs::read(&source_manifest)?;
+    let declaration_before = std::fs::read(&source_declaration)?;
+    let scratch = ScratchRoot::create()?;
+    let copies = scratch.path().join("packages");
+    prepare_fresh_only_packages(&copies)?;
+    let base = copies.join(BASE_PACKAGE_ID);
+    let manifest: Value = serde_json::from_slice(&std::fs::read(base.join("wamn.json"))?)?;
+    let declaration: Value = serde_json::from_slice(&std::fs::read(
+        base.join("publication/components/receiving.json.in"),
+    )?)?;
+    assert_eq!(
+        manifest["custom_operations"]["receiving.record_receipt"]["fresh_only"],
+        true
+    );
+    assert_eq!(
+        declaration["operations"][BASE_RECORD_RECEIPT]["fresh-only"],
+        true
+    );
+    assert_eq!(std::fs::read(source_manifest)?, manifest_before);
+    assert_eq!(std::fs::read(source_declaration)?, declaration_before);
+    assert!(
+        prepare_fresh_only_packages(&copies).is_err(),
+        "an existing fixture is never overwritten"
+    );
+    Ok(())
+}
+
+async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
     let inputs = JourneyDocument::required()?;
+    anyhow::ensure!(
+        inputs.fresh_only_packages.is_some() == fresh_only,
+        "the selected journey must match its fresh-only package fixture"
+    );
+    if let Some(root) = &inputs.fresh_only_packages {
+        prepare_fresh_only_packages(root)?;
+    }
     let system_url = inputs.system_pg_url.clone();
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
@@ -3466,7 +3595,7 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
         )
     })?;
     let (project, project_task) = connect(&route.database_url).await?;
-    install_journey_project(project.as_ref(), &route.database_url).await?;
+    install_journey_project(project.as_ref(), &route.database_url, fresh_only).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
     let credentials = prepare_journey_credentials(
@@ -3477,6 +3606,14 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
         &inputs.host_secret_namespace,
     )
     .await?;
+    if let Some(copies) = &inputs.fresh_only_packages {
+        for name in ["control-author", "management-admitter"] {
+            let destination = copies.join(format!("{name}.json"));
+            anyhow::ensure!(!destination.exists(), "fresh-only authority copy must be new");
+            std::fs::copy(root.join(format!("{name}.json")), &destination)?;
+            std::fs::set_permissions(&destination, Permissions::from_mode(0o600))?;
+        }
+    }
     reconcile_journey_data_access(&route.database_url).await?;
     let declarations = render_component_declarations(root, &inputs.component_directory)?;
     push_journey_components(&inputs, &route.database_url, &system_url, &declarations).await?;
@@ -4275,14 +4412,33 @@ async fn production_receiving_session_host_fixture() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires the completed Receiving session fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
 async fn production_nested_session_call_preserves_original_caller() -> anyhow::Result<()> {
-    tokio::time::timeout(Duration::from_secs(180), nested_session_caller())
+    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(false))
         .await
         .context("nested session proof exceeded 180 seconds")?
 }
 
-async fn nested_session_caller() -> anyhow::Result<()> {
-    const ATTACHMENT: &str = "client-acme-receiving-receiving-record-receipt-http";
+#[tokio::test]
+#[ignore = "requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
+async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> anyhow::Result<()> {
+    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true))
+        .await
+        .context("nested fresh-only proof exceeded 180 seconds")?
+}
+
+async fn nested_session_caller(fresh_only: bool) -> anyhow::Result<()> {
     const ROLE: &str = "session-nested-caller";
+    let overlay_attachment = JOURNEY_ATTACHMENTS
+        .iter()
+        .find(|attachment| attachment.operation == OVERLAY_RECORD_RECEIPT)
+        .context("the journey omitted the overlay Receipt route")?;
+    let direct_attachment = JOURNEY_ATTACHMENTS
+        .iter()
+        .find(|attachment| attachment.operation == BASE_RECORD_RECEIPT)
+        .context("the journey omitted the direct Receipt route")?;
+    let mut selected_attachments = vec![overlay_attachment];
+    if fresh_only {
+        selected_attachments.push(direct_attachment);
+    }
     let mut inputs = JourneyDocument::required()?;
     let issuer = required_journey("WAMN_IDENTITY_ISSUER")?;
     let endpoint = required_journey("WAMN_SESSION_NESTED_HTTPS_ENDPOINT")?;
@@ -4348,6 +4504,19 @@ async fn nested_session_caller() -> anyhow::Result<()> {
         &previous.get::<_, Vec<u8>>(1),
         "original Receiving PAT release",
     )?;
+    let operation_freshness = |operation: &str| {
+        previous
+            .manifest()
+            .components
+            .iter()
+            .find_map(|component| component.operations.get(operation))
+            .map(|operation| operation.fresh_only)
+    };
+    anyhow::ensure!(
+        operation_freshness(BASE_RECORD_RECEIPT) == Some(fresh_only)
+            && operation_freshness(OVERLAY_RECORD_RECEIPT) == Some(false),
+        "nested proof requires the admitted base freshness and an ordinary overlay"
+    );
     let digests = released_component_digests(&previous, &inputs.route_host)?;
     let deployed_bytes: Vec<u8> = project
         .query_one(
@@ -4359,20 +4528,27 @@ async fn nested_session_caller() -> anyhow::Result<()> {
         .get(0);
     // The frozen driver checks the registered digest, so this is an actual
     // disposable release 3, not an unregistered in-memory manifest alteration.
+    let auth_policy = if fresh_only {
+        serde_json::json!({"modes": ["pat", "session"]})
+    } else {
+        serde_json::json!({"modes": ["session"]})
+    };
     let mut attachments = Vec::new();
     let mut changed = 0;
     for package in JOURNEY_PACKAGES {
         let source = journey_publication_root(package).join("attachments.json");
         let original = std::fs::read(&source)?;
         let mut document: Value = serde_json::from_slice(&original)?;
-        if let Some(attachment) = document.get_mut(ATTACHMENT) {
-            anyhow::ensure!(
-                attachment["registered-operation"] == OVERLAY_RECORD_RECEIPT
-                    && attachment["auth-policy"] == serde_json::json!({"modes": ["pat"]}),
-                "nested fixture target differs from the original overlay route"
-            );
-            attachment["auth-policy"] = serde_json::json!({"modes": ["session"]});
-            changed += 1;
+        for selected in &selected_attachments {
+            if let Some(attachment) = document.get_mut(selected.id) {
+                anyhow::ensure!(
+                    attachment["registered-operation"] == selected.operation
+                        && attachment["auth-policy"] == serde_json::json!({"modes": ["pat"]}),
+                    "caller proof route differs from the authored PAT attachment"
+                );
+                attachment["auth-policy"] = auth_policy.clone();
+                changed += 1;
+            }
         }
         let path = scratch
             .path()
@@ -4385,8 +4561,8 @@ async fn nested_session_caller() -> anyhow::Result<()> {
         attachments.push(path);
     }
     anyhow::ensure!(
-        changed == 1,
-        "nested proof must change one copied route policy"
+        changed == selected_attachments.len(),
+        "caller proof must change exactly the selected copied route policies"
     );
     let (_, release) = publish_journey_release(
         &inputs,
@@ -4402,10 +4578,12 @@ async fn nested_session_caller() -> anyhow::Result<()> {
     )
     .await?;
     let mut expected = previous.manifest().attachments.clone();
-    expected
-        .get_mut(ATTACHMENT)
-        .context("original nested attachment missing")?
-        .auth_policy = serde_json::json!({"modes": ["session"]});
+    for selected in selected_attachments {
+        expected
+            .get_mut(selected.id)
+            .context("original caller proof attachment missing")?
+            .auth_policy = auth_policy.clone();
+    }
     anyhow::ensure!(
         release.manifest().format_version == 1
             && release.release().effective_release_id == 3
@@ -4413,7 +4591,7 @@ async fn nested_session_caller() -> anyhow::Result<()> {
             && release.manifest().components == previous.manifest().components
             && release.manifest().wirings == previous.manifest().wirings
             && release.manifest().registrations == previous.manifest().registrations,
-        "nested fixture changed facts beyond its release ID and copied route policy"
+        "caller proof changed facts beyond its release ID and selected route policies"
     );
     let after: Vec<u8> = project
         .query_one(
@@ -4523,7 +4701,7 @@ async fn nested_session_caller() -> anyhow::Result<()> {
     };
     let traces = TraceHarness::install();
     let (engine, flow_http, routing, bridge, identity_task) =
-        build_journey_runtime(&inputs, &credentials, release, Some(verifier)).await?;
+        build_journey_runtime(&inputs, &credentials, release, Some(verifier.clone())).await?;
     // The base replays its stored result; the overlay reads the current Acme fields.
     // The PAT journey updated those fields after it first recorded this command.
     let expected_replay = project
@@ -4552,34 +4730,274 @@ async fn nested_session_caller() -> anyhow::Result<()> {
             && expected_replay["acme_quality_status"] == "pending",
         "nested replay requires the completed PAT journey state"
     );
+    let before = nested_receipt_state(project.as_ref()).await?;
+    let request_body = Bytes::from_static(br#"[{"request_id":"session-nested-replay","value":{"idempotency_key":"receipt-command-2","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-2","occurred_at":"2026-08-31T12:31:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"7.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#);
     let (trace_id, traceparent) = journey_trace(31);
-    // Replay the real journey command so this proof does not change the two-host
-    // GET fixture or create another materializer event. Both actual guests run.
+    // The existing command keeps the two-host GET fixture and event set unchanged.
+    // A fresh-only refusal must stop before the base guest runs.
     let response = invoke_journey_route(
-        &engine, &flow_http, routing, bridge, &inputs.route_host,
-        overlay_route_path("receiving_record_receipt"), Some(token), &traceparent,
-        Bytes::from_static(br#"[{"request_id":"session-nested-replay","value":{"idempotency_key":"receipt-command-2","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-2","occurred_at":"2026-08-31T12:31:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"7.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#),
-    ).await?;
-    let value = successful_value(&response, "session-nested-replay")?;
-    anyhow::ensure!(
-        value == expected_replay,
-        "nested session replay returned the wrong operation result"
-    );
-    assert_nested_record_receipt_trace(
-        &traces.spans(),
-        &trace_id,
-        &digests[OVERLAY_PACKAGE_ID],
-        &digests[BASE_PACKAGE_ID],
-        human.id().as_str(),
-        "session",
-    );
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        overlay_route_path("receiving_record_receipt"),
+        Some(token),
+        &traceparent,
+        request_body.clone(),
+    )
+    .await?;
+    if fresh_only {
+        assert_operation_refusal(&response, "fresh-credential-required", BASE_RECORD_RECEIPT)?;
+        let spans = traces.spans();
+        assert_nested_permission_denial_trace(
+            &spans,
+            &trace_id,
+            &digests[OVERLAY_PACKAGE_ID],
+            &digests[BASE_PACKAGE_ID],
+            human.id().as_str(),
+        );
+        let invoked = trace_component_invocations(&spans, &trace_id);
+        anyhow::ensure!(
+            span_attribute(invoked[0], "wamn.caller_credential_kind").as_deref() == Some("session"),
+            "nested fresh-only refusal changed the originating credential"
+        );
+        anyhow::ensure!(
+            nested_receipt_state(project.as_ref()).await? == before,
+            "session refusal changed committed Receipt state"
+        );
+
+        // This is an explicit new request from the same human, not a host retry.
+        let (pat_trace, pat_parent) = journey_trace(32);
+        let response = invoke_journey_route(
+            &engine,
+            &flow_http,
+            Arc::clone(&routing),
+            Arc::clone(&bridge),
+            &inputs.route_host,
+            overlay_route_path("receiving_record_receipt"),
+            Some(pat.token()),
+            &pat_parent,
+            request_body.clone(),
+        )
+        .await?;
+        anyhow::ensure!(
+            successful_value(&response, "session-nested-replay")? == expected_replay,
+            "the same human's valid PAT failed the fresh-only operation"
+        );
+        assert_nested_record_receipt_trace(
+            &traces.spans(),
+            &pat_trace,
+            &digests[OVERLAY_PACKAGE_ID],
+            &digests[BASE_PACKAGE_ID],
+            human.id().as_str(),
+            "pat",
+        );
+        anyhow::ensure!(
+            nested_receipt_state(project.as_ref()).await? == before,
+            "the explicit PAT replay changed the original committed result"
+        );
+
+        let (direct_session_trace, direct_session_parent) = journey_trace(35);
+        let response = invoke_journey_route(
+            &engine,
+            &flow_http,
+            Arc::clone(&routing),
+            Arc::clone(&bridge),
+            &inputs.route_host,
+            direct_attachment.path,
+            Some(token),
+            &direct_session_parent,
+            request_body.clone(),
+        )
+        .await?;
+        assert_operation_refusal(&response, "fresh-credential-required", BASE_RECORD_RECEIPT)?;
+        assert_no_component_trace(&traces.spans(), &direct_session_trace);
+        anyhow::ensure!(
+            nested_receipt_state(project.as_ref()).await? == before,
+            "direct session refusal changed committed Receipt state"
+        );
+
+        let (direct_pat_trace, direct_pat_parent) = journey_trace(36);
+        let response = invoke_journey_route(
+            &engine,
+            &flow_http,
+            Arc::clone(&routing),
+            Arc::clone(&bridge),
+            &inputs.route_host,
+            direct_attachment.path,
+            Some(pat.token()),
+            &direct_pat_parent,
+            request_body.clone(),
+        )
+        .await?;
+        let expected_base = serde_json::json!({
+            "receipt_id": expected_replay["receipt_id"],
+            "purchase_order_id": expected_replay["purchase_order_id"],
+            "purchase_order_status": expected_replay["purchase_order_status"],
+            "row_version": expected_replay["row_version"],
+        });
+        anyhow::ensure!(
+            successful_value(&response, "session-nested-replay")? == expected_base,
+            "the same human's PAT failed the direct fresh-only operation"
+        );
+        let direct_spans = traces.spans();
+        assert_direct_route_trace(
+            &direct_spans,
+            &direct_pat_trace,
+            direct_attachment.wiring_id,
+            BASE_RECORD_RECEIPT,
+            &digests[BASE_PACKAGE_ID],
+            human.id().as_str(),
+        );
+        let direct_invocations = trace_component_invocations(&direct_spans, &direct_pat_trace);
+        anyhow::ensure!(
+            span_attribute(direct_invocations[0], "wamn.caller_credential_kind").as_deref()
+                == Some("pat"),
+            "the direct fresh-only operation lost the originating PAT kind"
+        );
+        anyhow::ensure!(
+            nested_receipt_state(project.as_ref()).await? == before,
+            "the direct PAT replay changed the original committed result"
+        );
+
+        fresh_only::prove_prior_commit(fresh_only::Proof {
+            inputs: &inputs,
+            credentials: &credentials,
+            project_url: project_url.as_str(),
+            project: project.as_ref(),
+            control: admin.as_ref(),
+            publisher: &publisher,
+            verifier: verifier.clone(),
+            session: token,
+            pat: pat.token(),
+            body: request_body.clone(),
+            expected_base: &expected_base,
+            human_id: human.id().as_str(),
+            traces: &traces,
+        })
+        .await?;
+
+        let removed = project
+            .execute(
+                "DELETE FROM app_system.user_roles \
+             WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3",
+                &[&TENANT, &human.id().as_str(), &ROLE],
+            )
+            .await?;
+        anyhow::ensure!(
+            removed == 1,
+            "role removal must remove the human's one assignment"
+        );
+        let (role_trace, role_parent) = journey_trace(33);
+        let response = invoke_journey_route(
+            &engine,
+            &flow_http,
+            Arc::clone(&routing),
+            Arc::clone(&bridge),
+            &inputs.route_host,
+            overlay_route_path("receiving_record_receipt"),
+            Some(pat.token()),
+            &role_parent,
+            request_body.clone(),
+        )
+        .await?;
+        assert_operation_refusal(&response, "permission-denied", OVERLAY_RECORD_RECEIPT)?;
+        assert_no_component_trace(&traces.spans(), &role_trace);
+        project
+            .execute(
+                "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
+             VALUES ($1, $2::text::uuid, $3)",
+                &[&TENANT, &human.id().as_str(), &ROLE],
+            )
+            .await?;
+        project_env_membership::revoke(ProjectEnvMembershipArgs {
+            org: ORG.to_owned(),
+            project: PROJECT.to_owned(),
+            env: ENVIRONMENT.to_owned(),
+            principal_id: human.id().to_string(),
+            system_database_url: inputs.system_pg_url.clone(),
+        })
+        .await?;
+        let (membership_trace, membership_parent) = journey_trace(34);
+        let response = invoke_journey_route(
+            &engine,
+            &flow_http,
+            Arc::clone(&routing),
+            Arc::clone(&bridge),
+            &inputs.route_host,
+            overlay_route_path("receiving_record_receipt"),
+            Some(pat.token()),
+            &membership_parent,
+            request_body,
+        )
+        .await?;
+        anyhow::ensure!(
+            response.status() == StatusCode::UNAUTHORIZED
+                && response.body().as_ref() == br#"{"error":{"code":"unauthorized"}}"#,
+            "the next PAT request did not refuse revoked environment membership"
+        );
+        assert_no_component_trace(&traces.spans(), &membership_trace);
+        anyhow::ensure!(
+            nested_receipt_state(project.as_ref()).await? == before,
+            "revocation refusals changed committed Receipt state"
+        );
+    } else {
+        let value = successful_value(&response, "session-nested-replay")?;
+        anyhow::ensure!(
+            value == expected_replay,
+            "nested session replay returned the wrong operation result"
+        );
+        assert_nested_record_receipt_trace(
+            &traces.spans(),
+            &trace_id,
+            &digests[OVERLAY_PACKAGE_ID],
+            &digests[BASE_PACKAGE_ID],
+            human.id().as_str(),
+            "session",
+        );
+    }
     identity_task.abort();
     project_task.abort();
     admin_task.abort();
-    println!(
-        "HOST_SESSION_NESTED result=pass credential_kind=session invocations=2 fixture_release=3 manifest_format=1"
+    if fresh_only {
+        println!(
+            "HOST_FRESH_ONLY_NESTED result=pass session=refused pat=accepted direct_session=refused direct_pat=accepted role_revocation=refused membership_revocation=refused committed_state=unchanged fixture_release=3 manifest_format=1"
+        );
+    } else {
+        println!(
+            "HOST_SESSION_NESTED result=pass credential_kind=session invocations=2 fixture_release=3 manifest_format=1"
+        );
+    }
+    Ok(())
+}
+
+fn assert_operation_refusal(
+    response: &hyper::Response<Bytes>,
+    code: &str,
+    operation: &str,
+) -> anyhow::Result<()> {
+    let body: Value = serde_json::from_slice(response.body())?;
+    anyhow::ensure!(
+        response.status() == StatusCode::FORBIDDEN
+            && body == serde_json::json!({"error": {"code": code, "operation": operation}}),
+        "operation refusal differs from its exact HTTP contract: status={} body={body}",
+        response.status()
     );
     Ok(())
+}
+
+async fn nested_receipt_state(project: &Client) -> anyhow::Result<Value> {
+    Ok(project.query_one(
+        "SELECT jsonb_build_object(\
+           'commands', (SELECT jsonb_agg(to_jsonb(row) ORDER BY idempotency_key) \
+             FROM receiving.record_receipt_command AS row), \
+           'receipts', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.receipt AS row), \
+           'receipt_lines', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.receipt_line AS row), \
+           'orders', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.purchase_order AS row), \
+           'order_lines', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.purchase_order_line AS row))",
+        &[],
+    ).await.context("read committed Receipt state independently")?.get(0))
 }
 
 #[tokio::test]
