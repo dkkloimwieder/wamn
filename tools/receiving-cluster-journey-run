@@ -1556,13 +1556,13 @@ if [[ "$session_host_proof" == true ]]; then
   # The native scheduler does not spread replicas. Each arm pins two
   # one-replica deployments to its two observed production host processes.
   run "${kube[@]}" create --dry-run=client -f "$workload_manifest" -o json \
-    >"$work_dir/session-workload-source.json"
-  jq -e 'if .kind == "List" and (.items | length) == 2 and
-    ([.items[] | select(.kind == "Service" and .metadata.name == "flow-http")] | length) == 1 and
-    ([.items[] | select(.kind == "WorkloadDeployment" and .metadata.name == "flow-http")] | length) == 1
-    then .
+    >"$evidence_dir/session-workload-objects.json"
+  jq -se 'if length == 2 and
+    ([.[] | select(.kind == "Service" and .metadata.name == "flow-http")] | length) == 1 and
+    ([.[] | select(.kind == "WorkloadDeployment" and .metadata.name == "flow-http")] | length) == 1
+    then {apiVersion:"v1",kind:"List",items:.}
     else error("session workload render must contain exactly its Service and WorkloadDeployment") end' \
-    "$work_dir/session-workload-source.json" >"$evidence_dir/session-workload-source.json"
+    "$evidence_dir/session-workload-objects.json" >"$evidence_dir/session-workload-source.json"
   printf '%s\n' "$head" >"$evidence_dir/session-source-head.txt"
   sha256sum Cargo.lock Dockerfile tools/receiving-cluster-journey-run \
     tests/integration/src/host_session_proof.rs tests/integration/src/route_authentication_live.rs \
