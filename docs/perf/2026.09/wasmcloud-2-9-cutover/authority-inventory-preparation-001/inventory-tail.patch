@@ -1,0 +1,22 @@
+--- a/architecture/protected-writes.json
++++ b/architecture/protected-writes.json
+@@ -1588,16 +1588,9 @@
+             "truncate",
+             "update"
+           ]
+-        },
+-        {
+-          "role": "wamn_app",
+-          "basis": "grant",
+-          "operations": [
+-            "update(tenant_id)"
+-          ]
+-        }
+-      ],
+-      "author-reachable": "author SQL, RLS-bounded",
++        }
++      ],
++      "author-reachable": "no",
+       "guards": [
+         "constraint:event_registrations_entity_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (entity_id <> ''::text)",
+         "constraint:event_registrations_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_id <> ''::text)",

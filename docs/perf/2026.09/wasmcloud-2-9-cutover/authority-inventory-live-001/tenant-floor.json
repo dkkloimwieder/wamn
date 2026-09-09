@@ -1,0 +1,77 @@
+{
+  "id": "tenant-floor",
+  "group": "tenant-floor",
+  "expected_tests": 4,
+  "verdict": "pass",
+  "stage": "complete",
+  "arming": {
+    "WAMN_TENANT_FLOOR_PG_URL": {
+      "set": true,
+      "database": "postgres",
+      "owned_container": "ec4a0cf5417827902cf8a5ddcd9825e0585eb780a7efd9328114affdfea2162f",
+      "host": "127.0.0.1",
+      "port": 32865
+    }
+  },
+  "cleanup": {
+    "owned_id": "ec4a0cf5417827902cf8a5ddcd9825e0585eb780a7efd9328114affdfea2162f",
+    "attempted": true,
+    "exit_code": 0,
+    "timeout": false,
+    "success": true
+  },
+  "source": {
+    "commit": "379faef6351f053927ae392245cdad72d28255e4",
+    "clean": true
+  },
+  "fixture": {
+    "container_id": "ec4a0cf5417827902cf8a5ddcd9825e0585eb780a7efd9328114affdfea2162f",
+    "image_id": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14",
+    "server_version_num": 180006,
+    "host": "127.0.0.1",
+    "port": 32865
+  },
+  "fallbacks_unset": [
+    "WAMN_PG_URL",
+    "DATABASE_URL"
+  ],
+  "test_command": {
+    "label": "tenant-floor-test",
+    "argv": [
+      "cargo",
+      "test",
+      "-p",
+      "wamn-control-provision",
+      "--locked",
+      "--offline",
+      "--test",
+      "deploy_sql_authority",
+      "--",
+      "--include-ignored",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started_unix_ns": 1788973218756441637,
+    "exit_code": 0,
+    "timeout": false,
+    "interrupted": false,
+    "raw_private_log": "private/007-tenant-floor-test.log",
+    "redacted_log": "007-tenant-floor-test.redacted.log",
+    "owned_group_cleanup": false,
+    "finished_unix_ns": 1788973226936533074,
+    "raw_sha256": "8237d90f1f9b1887f298b53f59be34a17f9ffaf6279a29e98616b5647d552d99",
+    "redacted_sha256": "d7ffe69971d336527621283fd044faca88781c04e433be6b3e6d9fdad673aaa6"
+  },
+  "test_summaries": [
+    {
+      "result": "ok",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    }
+  ],
+  "explicit_skip_detected": false
+}

@@ -1,0 +1,37 @@
+{
+  "schema": "wamn-cutover-authority-evidence/v1",
+  "source": "379faef6351f053927ae392245cdad72d28255e4",
+  "selection_source": "c28f651bfb557922b979ce6525dd83586cfa844d",
+  "selection_sha256": "4f76b9974ef57ee4ac897205eb318ecbe7f96bbe419026d4bd47ca9893df94ef",
+  "wrapper_sha256": "b7d4531b2a156d86a21c61ed61384351c7749baba2287be595cdf636cd95ac32",
+  "started_unix_ns": 1788973216284355492,
+  "verdict": "pass",
+  "limitations": [
+    "The unchanged tenant_key_live, deploy_sql_authority, and family_denial_matrix tests launch psql internally with disposable credential URLs in child arguments. New wrapper Docker, psql, and Cargo arguments contain no credentials.",
+    "Only tenant-floor and authority-denial-matrix reruns are included. The one-relation read-only capture is a scoped inventory-tail measurement, not a full protected-relations generator rerun."
+  ],
+  "redaction": "Public logs preserve only Rust test protocol lines. All other diagnostics remain in private/ with mode 0600; never publish private/.",
+  "cases": [
+    {
+      "id": "tenant-floor",
+      "verdict": "pass",
+      "stage": "complete",
+      "receipt": "tenant-floor.json"
+    },
+    {
+      "id": "authority-denial-matrix",
+      "verdict": "pass",
+      "stage": "complete",
+      "receipt": "authority-denial-matrix.json"
+    }
+  ],
+  "expected_cases": 2,
+  "expected_groups": 2,
+  "expected_tests": 24,
+  "final_source": {
+    "commit": "379faef6351f053927ae392245cdad72d28255e4",
+    "clean": true
+  },
+  "finished_unix_ns": 1788973236013830741,
+  "not_run": []
+}

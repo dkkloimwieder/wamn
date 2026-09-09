@@ -476,3 +476,19 @@ It preserves Host process identity, operator Pod and image identity, exact respo
 It requires fresh Host status after a supervised transition and records original and replacement operator diagnostics.
 The [offline controls](operator-supervision-fix-001/offline-validation.json) preserve refusal of the unexplained fifth-run restart.
 Bead `wamn-0h0g.2.7.10` remains open for the next live run and the actual restart cause.
+
+
+## Measured authority correction
+
+The [fresh authority rerun](authority-inventory-live-001/summary.json) passes all 24 tests at clean source `379faef6`.
+The tenant-floor group passes four tests, and the denial matrix passes 20 tests.
+Both PostgreSQL 18 fixtures receive explicit inputs, execute without skips, and pass cleanup.
+
+The [read-only capture](authority-inventory-live-001/event-registration-protected-write-capture.json) confirms the event-registration permissions before fixture cleanup.
+Guests retain SELECT, but no non-owner holds a table or column write grant.
+Row security remains enabled and forced.
+The protected-write inventory now records the measured grant removal and marks this relation as unavailable for author writes.
+Only these two fields change in this one inventory row.
+This capture does not regenerate the full inventory or measure an existing deployment.
+Source correction `55481ea1` and this measured inventory change resolve `wamn-0h0g.2.7.9`.
+The [inventory conformance run](authority-inventory-preparation-001/conformance.log) passes both tests with zero ignored cases.

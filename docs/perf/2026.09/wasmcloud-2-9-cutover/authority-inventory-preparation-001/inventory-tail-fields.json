@@ -1,0 +1,99 @@
+{
+  "source_path": "architecture/protected-writes.json",
+  "source_sha256": "ae70e8d6db3c293ed90f876184eef32f57b23aeb82df55aa086ecbf83e4d2f12",
+  "proposed_sha256": "033f4b4376a3f3603f1d4addf4ef8270ce79c4d065e35770720f224770af8006",
+  "scope": "production-project-database",
+  "relation": "catalog.event_registrations",
+  "before": {
+    "scope": "production-project-database",
+    "relation": "catalog.event_registrations",
+    "ops": false,
+    "installer": "schema-control",
+    "owner": "event-registration-model",
+    "mechanisms": [
+      "direct-dml"
+    ],
+    "roles": [
+      {
+        "role": "postgres",
+        "basis": "owner",
+        "operations": [
+          "delete",
+          "insert",
+          "truncate",
+          "update"
+        ]
+      },
+      {
+        "role": "wamn_app",
+        "basis": "grant",
+        "operations": [
+          "update(tenant_id)"
+        ]
+      }
+    ],
+    "author-reachable": "author SQL, RLS-bounded",
+    "guards": [
+      "constraint:event_registrations_entity_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (entity_id <> ''::text)",
+      "constraint:event_registrations_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_id <> ''::text)",
+      "constraint:event_registrations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, package_id, registration_id)",
+      "constraint:event_registrations_registration_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (registration_id <> ''::text)",
+      "constraint:event_registrations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+      "policy:event_registrations_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
+      "policy:event_registrations_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
+      "row-security:enabled=true;forced=true"
+    ]
+  },
+  "after": {
+    "scope": "production-project-database",
+    "relation": "catalog.event_registrations",
+    "ops": false,
+    "installer": "schema-control",
+    "owner": "event-registration-model",
+    "mechanisms": [
+      "direct-dml"
+    ],
+    "roles": [
+      {
+        "role": "postgres",
+        "basis": "owner",
+        "operations": [
+          "delete",
+          "insert",
+          "truncate",
+          "update"
+        ]
+      }
+    ],
+    "author-reachable": "no",
+    "guards": [
+      "constraint:event_registrations_entity_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (entity_id <> ''::text)",
+      "constraint:event_registrations_package_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (package_id <> ''::text)",
+      "constraint:event_registrations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, package_id, registration_id)",
+      "constraint:event_registrations_registration_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (registration_id <> ''::text)",
+      "constraint:event_registrations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+      "policy:event_registrations_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
+      "policy:event_registrations_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
+      "row-security:enabled=true;forced=true"
+    ]
+  },
+  "changed_fields": [
+    "roles",
+    "author-reachable"
+  ],
+  "apply_only_after": "The fresh matrix actually passes all20 tests, the read-only capture passes, and exact-owned cleanup succeeds. Keep wamn-0h0g.2.7.9 open until this evidence and inventory tail are committed.",
+  "generator_citations": [
+    "services/ctl/tests/protected_relations_live.rs:696",
+    "services/ctl/tests/protected_relations_live.rs:710",
+    "services/ctl/tests/protected_relations_live.rs:742",
+    "services/ctl/tests/protected_relations_live.rs:1004",
+    "services/ctl/tests/protected_relations_live.rs:1129"
+  ],
+  "owner_citations": [
+    "architecture/state-owners.json catalog.event_registrations",
+    "tests/conformance/tests/protected_relations.rs:277",
+    "wamn-0h0g.12.29 closed at e2b2d90c; historical grant kept author-reachable then",
+    "wamn-0h0g.22.7 at b1d42599 removed its callable lock consumer"
+  ],
+  "scope_limit": "No full inventory regeneration; all other rows, fields and existing historical drift stay byte-identical."
+}

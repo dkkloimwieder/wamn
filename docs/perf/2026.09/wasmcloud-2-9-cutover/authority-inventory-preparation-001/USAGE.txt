@@ -1,0 +1,59 @@
+Prepared only; the primary agent owns all real execution.
+
+Run the two fresh PostgreSQL 18 groups from the clean implementation commit:
+
+cutover_repo=/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909
+cutover_source=$(git -C "$cutover_repo" rev-parse HEAD)
+python3 /tmp/wamn-cutover-inventory-prepared/run-authority.py \
+  --repo "$cutover_repo" \
+  --source "$cutover_source" \
+  --evidence-dir /tmp/wamn-authority-inventory-live-001
+
+The existing wrapper creates fresh owned PG18 containers serially, invokes the
+unchanged tenant-floor (4 tests) and denial-matrix (20 tests) suites, captures one
+relation's ACL after the matrix, and removes each exact owned container ID.
+Source must stay clean for the whole wrapper run. Do not apply inventory-tail.patch
+until the run and cleanup finish. The evidence directory must not already exist.
+
+The only added database command is:
+psql --no-psqlrc --quiet --set ON_ERROR_STOP=1 --tuples-only --no-align \
+  --file /tmp/wamn-cutover-inventory-prepared/capture-event-registration.sql
+
+The wrapper passes its existing fresh-fixture credentials through PG environment
+variables and changes PGDATABASE from postgres to wamn for this read. No credential
+enters the command arguments or public evidence. The SQL uses a read-only,
+repeatable-read transaction and selects catalog facts for one relation. It does
+not create, revoke, alter, or update any database object or role. Raw output stays
+in private/ at mode 0600; public command logs redact all non-test-protocol lines.
+The structured public capture includes only strictly validated expected facts.
+
+Acceptance before applying inventory-tail.patch:
+1. summary.json reports pass, 2 selected groups, 24 expected and actual passes.
+2. authority-denial-matrix.json reports 20 actual passes, no skipped/ignored tests,
+   and successful exact-owned cleanup; its source matches the final clean commit.
+3. event-registration-protected-write-capture.json reports pass from the same
+   fixture ID: database wamn, one catalog.event_registrations relation owned by
+   postgres, RLS enabled/forced, no non-owner table or column mutation grants,
+   guest SELECT true, and guest table/any-column/tenant_id UPDATE false.
+4. Preserve SQL, wrapper/helper hashes, command receipts and the structured capture
+   together. Preserve private logs locally without committing or publishing them.
+
+Then apply only inventory-tail.patch and verify the diff. The patch removes the
+wamn_app grant role object and changes author-reachable to no in exactly the
+production-project-database/catalog.event_registrations row. Every other row and
+field remains byte-identical. Keep wamn-0h0g.2.7.9 open until measured evidence and
+this inventory tail are both complete; an earlier implementation commit alone
+does not close the finding.
+
+Authority: services/ctl/tests/protected_relations_live.rs derives owner mutation
+rows at 696, table grant rows at 710, column grant rows at 742, and author exposure
+at 1004. architecture/state-owners.json assigns this relation to schema-control
+installation and event-registration-model semantics. tests/conformance/tests/
+protected_relations.rs:277 checks that author exposure agrees with those role rows.
+The historical retained grant and inventory flag were intentional in e2b2d90c /
+wamn-0h0g.12.29; b1d42599 / wamn-0h0g.22.7 later removed its callable lock caller.
+
+Scope: this is a fresh-only, one-relation inventory correction. It is not a full
+protected_relations_live generator rerun, a database migration, or a new claim
+about unrelated recorded inventory drift. Existing test-internal psql URL
+arguments remain the previously recorded disposable-fixture limitation.
