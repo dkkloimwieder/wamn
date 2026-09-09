@@ -118,17 +118,26 @@ async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
 async fn provision_project(project: &Client) {
     project
         .batch_execute(
+            // `apply_package` narrows migration authority to `wamn_db_owner`
+            // (48367402), so that role must exist and must own this database
+            // or the migrations are refused for want of CREATE on it. The test
+            // creates every role it needs; it takes no out-of-band setup.
             "DROP SCHEMA IF EXISTS receiving CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
                PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_scenario_author'] LOOP \
+               FOREACH role_name IN ARRAY \
+                   ARRAY['wamn_app', 'wamn_scenario_author', 'wamn_db_owner'] LOOP \
                  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
                    EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                                    NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
                  END IF; \
                END LOOP; \
+             END $$; \
+             DO $$ BEGIN \
+               EXECUTE format('ALTER DATABASE %I OWNER TO wamn_db_owner', \
+                              pg_catalog.current_database()); \
              END $$;",
         )
         .await

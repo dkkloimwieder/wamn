@@ -432,8 +432,16 @@ the production journey remains the proof that the gate writes its first report.
 set -euo pipefail
 EFFECTIVE_RELEASE_CONTAINER=wamn-effective-release-pg18
 EFFECTIVE_RELEASE_PORT=54334
-EFFECTIVE_RELEASE_BASE_COMPONENT=components/target/virtualized/std-empty-environment/receiving.wasm
-EFFECTIVE_RELEASE_BASE_DIGEST=498894030af16b22edaf7f0b2104b90673efdc0e32d2a85459368fa308ad8296
+EFFECTIVE_RELEASE_ROOT="$(pwd -P)"
+# `cargo test -p wamn-ctl --lib` runs with the working directory
+# `services/ctl`, so the path the test opens must be absolute.
+EFFECTIVE_RELEASE_BASE_COMPONENT="$EFFECTIVE_RELEASE_ROOT/components/target/virtualized/std-empty-environment/receiving.wasm"
+# The base component digest is authored EXACTLY ONCE, in the package manifest
+# (wamn-10yt.50). Derive it here; never restate it. The guard below compares a
+# bare sha256sum, so the `sha256:` prefix comes off.
+EFFECTIVE_RELEASE_BASE_DIGEST="$(jq -r '.base_dependencies[].digest' \
+  "$EFFECTIVE_RELEASE_ROOT/packages/client_acme_receiving/wamn.json" \
+  | sed 's/^sha256://')"
 if docker container inspect "$EFFECTIVE_RELEASE_CONTAINER" >/dev/null 2>&1; then
   echo "$EFFECTIVE_RELEASE_CONTAINER already exists" >&2
   exit 1
@@ -455,6 +463,9 @@ effective_release_cleanup() {
 }
 trap effective_release_cleanup EXIT
 
+# The pinned digest is the `m1` profile's virtualized output. Another profile
+# builds other bytes and fails the guard below (wamn-10yt.61), so name it.
+tools/build-components m1
 test "$(sha256sum "$EFFECTIVE_RELEASE_BASE_COMPONENT" | cut -d ' ' -f 1)" = \
   "$EFFECTIVE_RELEASE_BASE_DIGEST"
 cargo build --manifest-path components/Cargo.toml --locked --offline \
@@ -2459,7 +2470,9 @@ trap receiving_route_cleanup EXIT
 CARGO_TARGET_DIR="$RECEIVING_ROUTE_SCRATCH/target" \
   "$RECEIVING_ROUTE_ROOT/tools/build-components" m1
 RECEIVING_ROUTE_COMPONENTS="$RECEIVING_ROUTE_SCRATCH/target/virtualized/std-empty-environment"
-RECEIVING_ROUTE_FLOW_HTTP="$RECEIVING_ROUTE_SCRATCH/target/wasm32-wasip2/debug/http_route.wasm"
+# `cc4b407f` moved every guest to the release profile. It left this path
+# behind, so the `test -s` below has refused since 2026-09-04.
+RECEIVING_ROUTE_FLOW_HTTP="$RECEIVING_ROUTE_SCRATCH/target/wasm32-wasip2/release/http_route.wasm"
 test -s "$RECEIVING_ROUTE_COMPONENTS/receiving.wasm"
 test -s "$RECEIVING_ROUTE_COMPONENTS/client_acme_receiving.wasm"
 test -s "$RECEIVING_ROUTE_FLOW_HTTP"
