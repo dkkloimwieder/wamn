@@ -1,0 +1,978 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/crates/schema/generator)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:51:7
+   |
+51 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:111:1
+    |
+111 | / pub struct ConnectionHttp {
+112 | |     postgres: Arc<WamnPostgres>,
+113 | |     vault: Arc<WamnCredentials>,
+114 | |     tenant: Box<str>,
+...   |
+130 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+131 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:55:1
+    |
+ 55 | / pub struct WamnPostgres {
+ 56 | |     /// Resolves a project id → its database connection + policy.
+ 57 | |     provider: Arc<dyn CredentialProvider>,
+ 58 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+121 | |     pub(super) bind_counters: super::BindCounters,
+122 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib) generated 16 warnings
+warning: the item `AdmittedComponentOperation` is imported redundantly
+    --> crates/execution/host/src/router_driver.rs:2892:34
+     |
+2892 |         AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope,
+     |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+2898 |     use super::*;
+     |         -------- the item `AdmittedComponentOperation` is already imported here
+     |
+     = note: requested on the command line with `-W redundant-imports`
+
+warning: `wamn-execution-host` (lib test) generated 1 warning
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/crates/control/provision)
+   Compiling wamn-schema-control v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/crates/schema/control)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/crates/catalog/model)
+   Compiling wamn-ctl v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/services/ctl)
+warning: `wamn-catalog` (lib test) generated 1 warning (1 duplicate)
+warning: function `run_once_stages` is never used
+   --> services/ctl/src/dev.rs:603:10
+    |
+603 | async fn run_once_stages<R>(
+    |          ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `verify_source_package_with_client` is never used
+    --> services/ctl/src/push_component.rs:1301:10
+     |
+1301 | async fn verify_source_package_with_client(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `wamn-ctl` (lib) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 18.71s
+     Running unittests src/lib.rs (target/debug/deps/wamn_catalog-4683f5ec28e3eb98)
+
+running 64 tests
+test component_library::tests::a_stored_pure_projection_its_imports_derive_stays_readable ... ok
+test component_library::tests::a_migration_defaulted_effect_projection_is_refused ... ok
+test component_library::tests::declaration_document_is_exact_kebab_case_json ... ok
+test component_library::tests::fresh_only_component_metadata_requires_a_boolean ... ok
+test component_library::tests::admission_refuses_an_effect_projection_narrower_than_the_imports ... ok
+test component_library::tests::an_inherited_effect_admits_naming_its_dependency_package_and_no_interfaces ... ok
+test component_library::tests::an_imported_effect_interface_absent_from_the_audited_imports_refuses ... ok
+test component_library::tests::an_inherited_effect_that_carries_interfaces_is_refused ... ok
+test component_library::tests::fresh_only_is_preserved_only_for_registered_operations ... ok
+test component_library::tests::a_component_importing_no_authority_admits_as_pure ... ok
+test component_library::tests::exact_operation_dependency_is_preserved_without_becoming_an_effect ... ok
+test component_library::tests::manifest_matched_private_operation_can_carry_sql_without_an_auth_token ... ok
+test component_library::tests::persisted_component_scope_uses_the_package_coordinate_guard ... ok
+test component_library::tests::statement_authority_refuses_wrong_operation_digest_and_shape ... ok
+test component_library::tests::the_persisted_effect_fact_spells_both_provenance_classes ... ok
+test connection::tests::each_descriptor_has_its_own_identity ... ok
+test connection::tests::the_blobstore_author_may_name_an_object_but_never_a_container ... ok
+test component_library::tests::generated_statement_facts_bind_to_exact_registered_export ... ok
+test component_library::tests::normalization_is_sorted_and_carries_every_component_owned_fact ... ok
+test connection::tests::the_blobstore_credential_is_host_signed_not_header_injected ... ok
+test connection::tests::the_new_wire_spellings_are_pinned ... ok
+test component_library::tests::registered_operation_is_explicit_and_equals_the_export_token ... ok
+test package::tests::operation_tokens_use_the_native_component_export_grammar ... ok
+test component_library::tests::partial_or_ambiguous_component_facts_refuse ... ok
+test package::tests::persisted_coordinates_preserve_constructor_invariants ... ok
+test serving_manifest::tests::attachment_operation_is_explicit_and_canonical ... ok
+test serving_manifest::tests::attachment_and_registration_targets_are_exact ... ok
+test component_library::tests::connections_and_effect_imports_must_account_for_each_other ... ok
+test component_library::tests::schema_identity_is_rfc_8785_and_compatibility_is_exact ... ok
+test serving_manifest::tests::one_effective_release_selects_only_one_version_of_each_package ... ok
+test component_library::tests::operation_dependency_must_be_exact_and_audited ... ok
+test serving_manifest::tests::component_dependency_closure_is_exact_and_acyclic ... ok
+test serving_manifest::tests::registered_operations_match_the_containing_package_coordinate ... ok
+test serving_manifest::tests::registration_map_key_is_owner_qualified ... ok
+test serving_manifest::tests::the_configmap_name_is_a_dns_1123_subdomain ... ok
+test serving_manifest::tests::registration_identity_keeps_owner_and_emitter_distinct ... ok
+test tests::a_manifest_digest_admits_exactly_the_run_plane_shape ... ok
+test serving_manifest::tests::unsupported_formats_are_typed_refusals_not_compatibility_arms ... ok
+test serving_manifest::tests::removed_flow_and_plan_fields_are_refused ... ok
+test wiring::tests::a_node_declares_its_terminal_and_the_document_declares_its_entry ... ok
+test tests::named_removal_and_reordering_mutants_change_every_hash_frame ... ok
+test serving_manifest::tests::statement_lookup_is_operation_scoped_and_revalidates_exact_bytes ... ok
+test wiring::tests::a_cross_package_node_carries_one_closed_alias_operation_coordinate ... ok
+test serving_manifest::tests::the_delivery_ceiling_is_enforced_at_the_reader ... ok
+test serving_manifest::tests::attachment_auth_policy_modes_are_closed_and_required ... ok
+test wiring::tests::an_edge_endpoint_must_name_a_declared_node ... ok
+test wiring_activation::tests::no_statement_lets_the_caller_choose_the_tenant ... ok
+test wiring::tests::the_document_wire_shape_is_closed ... ok
+test wiring_activation::tests::the_env_hot_read_requires_exact_package_membership ... ok
+test wiring::tests::the_entry_must_name_a_declared_node ... ok
+test wiring::tests::an_emit_terminal_requires_a_complete_exact_selector ... ok
+test wiring_activation::tests::the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant ... ok
+test wiring_activation::tests::the_notice_shape_is_exactly_the_payload_the_ddl_builds ... ok
+test wiring_activation::tests::the_only_pointer_write_carries_both_the_hash_and_the_enabled_flag ... ok
+test serving_manifest::tests::collection_insertion_order_cannot_reach_identity ... ok
+test wiring_compatibility::tests::equality_has_no_structural_subtyping_fallback ... ok
+test wiring_compatibility::tests::error_edges_validate_the_target_without_fabricating_a_component_output_schema ... ok
+test wiring::tests::the_wiring_hash_covers_the_graph_and_ignores_key_order ... ok
+test serving_manifest::tests::only_canonical_format_one_bytes_are_admitted ... ok
+test wiring_compatibility::tests::either_endpoint_digest_or_port_drift_refuses ... ok
+test wiring_compatibility::tests::exact_scoped_schema_and_parameter_facts_admit ... ok
+test wiring_compatibility::tests::resolved_cross_package_facts_keep_their_exact_target_scopes ... ok
+test wiring_compatibility::tests::stale_scope_and_invalid_parameter_refuse_before_publish ... ok
+test wiring::tests::the_cases_array_carries_the_flow_documents_bounds ... ok
+
+test result: ok. 64 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/identity.rs (target/debug/deps/identity-fecb524f4e85cba0)
+
+running 3 tests
+test hash_parser_preserves_canonical_digest_invariant ... ok
+test omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected ... ok
+test definition_hash_pins_attachment_artifact_and_complete_resolved_sources ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/serving_manifest_digest.rs (target/debug/deps/serving_manifest_digest-8a6fc1bd4a46a233)
+
+running 9 tests
+test every_manifest_field_is_pinned ... ok
+test every_manifest_hash_validates_during_deserialization ... ok
+test all_four_collections_have_canonical_order ... ok
+test fresh_only_is_digest_bound_without_changing_format_one_default_bytes ... ok
+test each_exact_target_reaches_the_digest ... ok
+test the_format_one_preimage_and_digest_are_pinned ... ok
+test fresh_only_release_reader_refuses_unregistered_exports_and_non_boolean_flags ... ok
+test authentication_modes_are_shared_and_bound_into_canonical_bytes ... ok
+test malformed_authentication_lists_are_refused_by_parser_and_release_reader ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/wiring_activation_live.rs (target/debug/deps/wiring_activation_live-c0d7ea2c845ad22a)
+
+running 2 tests
+test the_terminal_document_reaches_a_converged_database_and_survives_the_column ... ignored, requires WAMN_CATALOG_PG_URL and a throwaway PostgreSQL database
+test wiring_activation_live ... ignored, requires WAMN_CATALOG_PG_URL and a throwaway PostgreSQL database
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/wamn_ctl-318c60b5f5b35e9a)
+
+running 264 tests
+test author_wiring::tests::an_unreadable_document_refuses_before_any_connection ... ok
+test author_wiring::tests::the_report_is_read_under_the_hash_the_gate_produced ... ok
+test bind_connection::tests::a_blobstore_definition_needs_exactly_the_coordinates_the_plugin_reads ... ok
+test bind_connection::tests::a_coordinate_nobody_reads_is_refused_by_name ... ok
+test author_wiring::tests::only_a_green_report_for_this_document_authorizes_authorship ... ok
+test bind_connection::tests::a_missing_coordinate_is_refused_by_name ... ok
+test author_wiring::tests::the_written_row_is_the_documents_own_identity ... ok
+test bind_connection::tests::a_non_object_definition_is_refused ... ok
+test author_wiring::tests::the_gate_is_the_only_producer_of_the_stored_hash ... ok
+test bind_connection::tests::an_empty_coordinate_is_refused_by_name ... ok
+test bind_connection::tests::the_http_shape_is_not_a_blobstore_definition ... ok
+test author_wiring::tests::an_invalid_document_refuses_in_the_document_validators_own_words ... ok
+test bind_connection::tests::the_validation_subject_names_everything_that_was_validated ... ok
+test dev::activation::tests::each_identity_claim_carries_its_own_field ... ok
+test dev::activation::tests::shutdown_accepts_sigterm_exit_without_kill_fallback ... ok
+test dev::activation::tests::host_output_log_refuses_existing_files_and_symlinks_without_clobbering ... ok
+test dev::activation::tests::a_heartbeat_without_a_usable_http_port_refuses_the_activation ... ok
+test dev::command::tests::an_initial_full_run_precedes_queued_watch_events ... ok
+test dev::activation::tests::the_workload_template_declares_exactly_the_claims_activation_sets ... ok
+test author_wiring::tests::the_document_is_the_whole_artifact_and_argv_restates_nothing ... ok
+test dev::command::tests::an_interactive_stop_closes_the_watch_source_without_dropping_cleanup ... ok
+test dev::config::tests::a_disposable_target_carries_the_observed_digest_and_records_the_drift ... ok
+test dev::config::tests::a_durable_target_refuses_a_base_component_digest_that_moved ... ok
+test dev::config::tests::an_unmoved_digest_records_no_drift_for_either_durability ... ok
+test dev::activation::tests::host_output_log_retains_both_process_streams_in_a_private_regular_file ... ok
+test dev::command::tests::command_arguments_require_explicit_deployment_and_package_inputs ... ok
+test dev::command::tests::hold_is_a_session_mode_that_neither_renderer_flag_conflicts_with ... ok
+test apply_package::tests::overlay_registration_projection_does_not_require_redeclaring_the_base_entity ... ok
+test dev::config::tests::malformed_json_refuses_without_inspecting_partial_credentials ... ok
+test dev::config::tests::checked_in_dev_config_schema_matches_generated_bytes ... ok
+test dev::config::tests::malformed_unknown_and_missing_inputs_refuse_at_their_exact_key ... ok
+test dev::activation::tests::invalid_identity_refuses_before_subscription_or_process_spawn ... ok
+test dev::activation::tests::activation_uses_exact_native_sequence_and_bounded_cleanup ... ok
+test dev::config::tests::complete_config_reaches_every_declared_endpoint_once ... ok
+test dev::config::tests::generated_schema_and_strict_parser_share_one_field_authority ... ok
+test dev::config::tests::regenerate_checked_in_dev_config_schema ... ignored, schema regeneration command only
+test dev::config::tests::operator_token_is_optional_redacted_and_separate_from_gate_authority ... ok
+test dev::config::tests::runtime_database_roles_refuse_privileged_or_sibling_credentials ... ok
+test dev::activation::tests::terminal_start_states_fail_before_status_and_still_cleanup ... ok
+test dev::config::tests::unreachable_endpoint_names_only_its_key_and_sanitized_endpoint ... ok
+test dev::config::tests::postgres_identity_routing_query_overrides_refuse_without_leaking_values ... ok
+test dev::coordinator::tests::a_recreated_target_is_a_different_command_and_a_durable_one_is_unchanged ... ok
+test dev::config::tests::verification_database_name_collision_refuses_across_distinct_host_labels ... ok
+test dev::config::tests::overlay_manifest_is_parsed_through_the_strict_package_parser ... ok
+test dev::coordinator::tests::canonical_component_name_selects_one_artifact_per_package ... ok
+test dev::coordinator::tests::command_identity_is_stable_and_publish_separates_source_commits ... ok
+test dev::config::tests::overlay_dependencies_resolve_by_coordinate_and_report_ignored_sources ... ok
+test dev::native_tui::tests::artifacts_use_cargo_paths_and_require_every_selected_binary ... ok
+test dev::native_tui::tests::invalid_names_and_colliding_generated_names_refuse ... ok
+test dev::native_tui::tests::a_missing_selection_or_incomplete_resolved_graph_refuses ... ok
+test dev::native_tui::tests::missing_relative_and_conflicting_executables_refuse ... ok
+test dev::native_tui::tests::selection_uses_the_declared_directory_and_emitter_spelling ... ok
+test dev::native_tui::tests::watch_graph_follows_normal_and_build_dependencies_inside_the_repository ... ok
+test dev::observations::tests::tempo_cursor_retains_the_declared_settlement_window ... ok
+test dev::observations::tests::tempo_reader_returns_oldest_first_typed_summaries ... ok
+test dev::coordinator::tests::a_disposable_target_renders_the_base_digest_it_built_into_the_declaration ... ok
+test dev::observations::tests::typed_tap_reader_requires_subject_and_body_to_name_the_same_delivery ... ok
+test dev::coordinator::tests::the_shipped_template_carries_no_second_copy_of_the_base_digest ... ok
+test dev::coordinator::tests::package_catalog_projection_keeps_base_contract_additive ... ok
+test dev::operator::tests::launch_debug_redacts_the_operator_credential ... ok
+test dev::config::tests::verification_database_refuses_postgres_system_names_and_encoded_aliases ... ok
+test dev::observations::tests::tempo_reader_refuses_unrepresentable_durations ... ok
+test dev::config::tests::verification_database_cannot_alias_a_protected_database ... ok
+test dev::config::tests::missing_and_ambiguous_dependencies_name_the_complete_search ... ok
+test dev::operator::tests::an_abnormal_exit_stops_the_session_and_reaches_cleanup ... ok
+test dev::operator::tests::launch_supplies_exact_bound_facts_without_command_arguments ... ok
+test dev::operator::tests::launch_failure_acknowledges_cleanup_and_allows_a_later_watch_activation ... ok
+test dev::operator::tests::stop_status_preserves_natural_exits_even_after_forced_cleanup ... ok
+test dev::read::tests::initial_snapshot_has_the_exact_stage_order ... ok
+test dev::read::tests::observation_buffers_retain_the_newest_bounded_suffix ... ok
+test dev::read::tests::release_views_are_derived_from_the_exact_manifest ... ok
+test dev::read::tests::reset_invalidates_only_suffix_owned_release_facts ... ok
+test dev::read::tests::subscriber_observes_typed_stage_and_gate_changes ... ok
+test dev::tests::a_disposable_target_reaches_every_stage_from_dirty_bytes ... ok
+test dev::tests::a_refused_preparation_stops_the_run_at_its_first_stage ... ok
+test dev::tests::a_run_that_proceeds_past_a_stale_pin_reports_it_on_the_receipt ... ok
+test dev::tests::a_run_with_nothing_to_report_carries_no_notices ... ok
+test dev::tests::a_run_with_nothing_unchanged_reports_no_skips ... ok
+test dev::tests::an_unchanged_stage_is_not_run_and_is_reported_as_skipped ... ok
+test dev::tests::changes_during_a_run_form_one_serialized_next_suffix ... ok
+test dev::tests::clean_source_completes_the_exact_stage_order ... ok
+test dev::tests::dirty_source_runs_the_disposable_stages_then_refuses_before_the_first_durable_one ... ok
+test dev::tests::dirty_watch_suffix_refuses_before_its_first_provenance_stage ... ok
+test dev::tests::every_reached_committed_stage_rechecks_source_state ... ok
+test dev::tests::one_condition_decides_the_refusal_for_every_stage_and_both_targets ... ok
+test dev::tests::runner_lifecycle_reports_the_exact_suffix_and_failure ... ok
+test dev::tests::source_state_is_re_read_after_generate_before_the_first_durable_stage ... ok
+test dev::tests::stage_failure_stops_before_every_later_side_effect ... ok
+test dev::tests::watch_accepts_a_new_invalidation_after_stage_failure ... ok
+test dev::tests::watch_coalesces_to_earliest_stage_with_latest_source_state ... ok
+test dev::tui::tests::keys_navigate_and_only_the_quit_keys_ask_for_shutdown ... ok
+test dev::tui::tests::observations_render_exact_trace_and_tap_facts ... ok
+test dev::tui::tests::page_navigation_resets_and_vertical_scrolling_reveals_later_rows ... ok
+test dev::tui::tests::pipeline_renders_all_stages_and_typed_gate_verdicts ... ok
+test dev::tui::tests::release_renders_exact_carrier_memberships_operations_and_routes ... ok
+test dev::tui::tests::the_release_page_and_status_line_name_the_held_environment ... ok
+test dev::tui::tests::the_status_line_survives_a_viewport_too_short_to_hold_content ... ok
+test dev::verification_database::tests::cleanup_is_idempotent ... ok
+test dev::verification_database::tests::contended_database_refuses_before_destructive_work ... ok
+test dev::verification_database::tests::disposable_postgres_proves_freshness_cleanup_and_confinement ... ignored, requires disposable PostgreSQL through WAMN_DEV_VERIFICATION_PG_URL
+test dev::verification_database::tests::fresh_database_surrounds_success_and_failure_in_exact_order ... ok
+test dev::verification_database::tests::invalid_maintenance_authority_refuses_before_the_operation_and_cleans_up ... ok
+test dev::verification_database::tests::invalid_maintenance_target_names_key_and_secret_free_remedy ... ok
+test dev::verification_database::tests::one_shot_stage_loop_runs_inside_one_database_lifecycle ... ok
+test dev::verification_database::tests::public_connect_revoke_failure_refuses_before_the_operation_and_cleans_up ... ok
+test dev::verification_database::tests::watch_suffixes_share_one_database_lifecycle ... ok
+test dev::verification_world::tests::lifecycle_bootstraps_then_accepts_packages_and_one_exact_admission ... ignored, requires disposable PostgreSQL 18 through WAMN_DEV_VERIFICATION_PG_URL
+test dev::operator::tests::queued_replacement_reports_abnormal_exit_and_keeps_cleanup_safe ... ok
+test dev::operator::tests::queued_stop_observes_natural_exit_instead_of_restarting_after_quit ... ok
+test dev::operator::tests::closing_the_control_channel_stops_the_owned_process ... ok
+test dev::operator::tests::natural_exit_after_stop_begins_cannot_launch_a_replacement ... ok
+test dev::watch::tests::a_directory_outside_the_worktree_is_watched_without_asking_git ... ok
+test dev::watch::tests::a_refreshed_index_is_not_commit_metadata ... ok
+test dev::operator::tests::replacement_reaps_the_old_child_without_ending_the_session ... ok
+test dev::operator::tests::stop_acknowledges_terminal_cleanup_before_the_caller_continues ... ok
+test dev::watch::tests::acknowledged_own_emission_and_identical_external_bytes_do_not_rerun ... ok
+test dev::watch::tests::an_absent_cargo_configuration_parent_is_watched_when_created ... ok
+test dev::watch::tests::exact_native_files_do_not_recursively_watch_the_repository ... ok
+test dev::watch::tests::clean_commit_metadata_reruns_without_another_package_edit ... ok
+test dev::watch::tests::filesystem_events_map_owned_inputs_and_ignore_generated_outputs ... ok
+test dev::watch::tests::external_changes_after_emission_survive_queued_events_and_metadata_refresh ... ok
+test dev::watch::tests::git_snapshot_covers_the_whole_worktree_and_excludes_ignored_files ... ok
+test dev::watch::tests::package_artifacts_map_to_their_first_semantic_owner ... ok
+test dev::watch::tests::external_native_emission_edits_and_deletions_require_build ... ok
+test dev::watch::tests::refreshed_native_dependencies_replace_ownership_and_retain_component_roots ... ok
+test dev::watch::tests::watch_mode_refuses_a_repository_with_the_reflog_turned_off ... ok
+test dev::operator::tests::an_unresponsive_terminal_is_killed_and_reaped_before_acknowledgement ... ok
+test dev_gate::tests::keeps_a_pre_dispatch_http_refusal_distinct_from_a_gate_judgment ... ok
+test dev::watch::tests::source_removal_still_reruns_when_the_destination_is_ignored_output ... ok
+test dev_gate::tests::posts_the_exact_gate_contract_with_bearer_auth ... ok
+test dev_gate::tests::publishes_the_exact_gated_document_through_the_same_authenticated_endpoint ... ok
+test dev_gate::tests::rejects_a_malformed_gate_response ... ok
+test enable_cdc_project_env::tests::cdc_names_are_validated_before_any_effect ... ok
+test enable_cdc_project_env::tests::cdc_sql_bundle_orders_schema_publication_slot_map_grants ... ok
+test enable_cdc_project_env::tests::the_replication_password_has_no_default ... ok
+test env_policies::tests::durability_schema_ensure_is_additive_exact_and_idempotent_sql ... ok
+test dev_gate::tests::one_deadline_bounds_the_whole_http_exchange ... ok
+test identity_issuer::tests::actions_and_secret_output_are_not_ambiguous ... ok
+test identity_issuer::tests::scoped_prepare_arguments_parse_and_redact_admin_credentials ... ok
+test print_release_env::tests::one_release_prints_both_carriers_and_nothing_else ... ok
+test identity_issuer::tests::wrong_admin_database_and_issuer_are_refused_before_io ... ok
+test project_env_membership::tests::every_membership_argument_is_required ... ok
+test project_env_membership::tests::exact_membership_arguments_parse ... ok
+test print_release_env::tests::the_release_coordinate_and_its_repository_are_all_required ... ok
+test promote::tests::absent_target_package_refuses_with_apply_package_remedy ... ok
+test project_env_membership::tests::malformed_scope_or_principal_is_refused_before_connecting ... ok
+test promote::tests::exact_target_proof_unlocks_only_portable_fact_copy ... ok
+test promote::tests::manifest_and_predecessor_identity_must_both_match ... ok
+test promote::tests::missing_extra_and_divergent_ordered_ledgers_refuse ... ok
+test provision::tests::host_port_derives_from_the_admin_url ... ok
+test provision_org::tests::every_template_arg_stamps_a_valid_org ... ok
+test provision_org::tests::reserved_org_id_is_rejected ... ok
+test provision::tests::the_app_password_has_no_default ... ok
+test provision_project_env::tests::a_reserved_or_bad_project_id_is_rejected_before_any_effect ... ok
+test provision_org::tests::templates_drive_placement_and_cluster_shape ... ok
+test provision_project_env::tests::clap_guards_the_three_infallible_provisioning_identity_accesses ... ok
+test provision_project_env::tests::cluster_is_derived_by_placement_and_policy ... ok
+test provision_project_env::tests::every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family ... ok
+test provision_project_env::tests::every_family_derives_its_credential_secret_name ... ok
+test provision_project_env::tests::every_family_gets_its_flags_from_the_one_derivation ... ok
+test dev_gate::tests::transport_diagnostics_sanitize_the_url_and_never_leak_the_token ... ok
+test dev_gate::tests::returns_the_contracts_gate_refusal_without_redefining_it ... ok
+test provision_project_env::tests::every_workload_family_carries_a_distinct_frozen_label ... ok
+test provision_project_env::tests::management_acl_inventory_is_exact_and_required_in_the_target_database ... ok
+test provision_project_env::tests::materializer_acl_inventory_is_exactly_the_two_production_reads ... ok
+test provision_project_env::tests::every_secret_output_rejects_stdout_and_prefix_is_strict ... ok
+test dev_gate::tests::rejects_a_wrong_command_echo_or_non_gate_outcome ... ok
+test provision_project_env::tests::no_flag_exclusion_list_names_a_family_and_none_can ... ok
+test provision_project_env::tests::parsed_credential_outputs_must_name_distinct_files ... ok
+test provision_project_env::tests::pat_literals_and_secret_documents_are_exact ... ok
+test provision_project_env::tests::provisioning_mints_no_dispatch_reader_credential ... ok
+test provision_project_env::tests::provisioning_summary_contains_no_database_credentials ... ok
+test provision_project_env::tests::secret_files_are_plain_json_and_mode_0600 ... ok
+test provision_project_env::tests::secret_writes_replace_links_without_following_or_sharing_them ... ok
+test provision_project_env::tests::session_reader_acl_inventory_refuses_missing_and_wider_grants ... ok
+test provision_project_env::tests::stable_acl_inventory_accepts_only_the_complete_writer_schema_set ... ok
+test provision_project_env::tests::stable_acl_inventory_refuses_an_object_kind_outside_the_writer_set ... ok
+test provision_project_env::tests::stable_acl_role_members_are_only_scoped_generation_roles ... ok
+test provision_project_env::tests::the_app_password_has_no_default ... ok
+test provision_project_env::tests::pat_issue_flags_select_independently_and_revoke_conflicts ... ok
+test provision_project_env::tests::the_http_admitter_permission_inventory_requires_fresh_reads_and_refuses_writes ... ok
+test provision_project_env::tests::the_identity_reader_acl_inventory_is_exact_and_never_grants_a_write ... ok
+test provision_project_env::tests::the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle ... ok
+test provision_project_env::tests::the_minted_instance_suffix_is_a_fresh_valid_dns_label_tail ... ok
+test provision_project_env::tests::the_privilege_batch_never_grants_the_stable_guest_acl_role_connect ... ok
+test provision_project_env::tests::the_privilege_batch_revokes_every_stable_role_connect_after_the_owner_statement ... ok
+test provision_project_env::tests::the_registry_reader_acl_inventory_is_exact_and_never_reaches_identity ... ok
+test provision_project_env::tests::the_role_batch_creates_passwordless_nologin_acl_roles ... ok
+test publish_release::effective_release_live::fresh_base_and_overlay_mint_byte_identically_and_refuse_drift ... ignored, requires two disposable PostgreSQL 18 databases and exact built base/overlay component paths
+test publish_release::tests::a_dependency_admitted_with_no_effects_is_proven_pure_and_keeps_the_effect_free_case_path ... ok
+test publish_release::tests::a_dependency_admitted_with_one_effect_is_not_proven_pure_and_loses_that_path ... ok
+test publish_release::tests::a_disposable_target_expands_a_closure_whose_declared_dependency_digest_moved ... ok
+test publish_release::tests::a_disposable_target_resolves_a_moved_base_digest_and_still_demands_membership ... ok
+test publish_release::tests::component_dependencies_expand_the_exact_release_closure_and_refuse_cycles ... ok
+test publish_release::tests::environment_policy_refusals_remain_distinct ... ok
+test publish_release::tests::fresh_only_component_policy_survives_release_projection ... ok
+test publish_release::tests::operation_dependency_refuses_digest_and_release_membership_drift ... ok
+test publish_release::tests::operation_dependency_resolves_the_exact_release_tuple_without_relabeling ... ok
+test publish_release::tests::package_and_wiring_coordinates_are_exact ... ok
+test publish_release::tests::package_attachment_documents_refuse_duplicate_identity ... ok
+test publish_release::tests::package_attachment_route_collisions_use_the_existing_governor ... ok
+test publish_release::tests::real_package_attachment_documents_merge_into_one_release ... ok
+test publish_release::tests::release_mint_binds_each_attachment_hash_to_its_definition ... ok
+test publish_release::tests::release_mint_consumes_the_package_owned_weld_and_refuses_unsatisfied_policy ... ok
+test publish_release::tests::release_mint_refuses_an_anonymous_path_to_a_registered_operation ... ok
+test publish_release::tests::release_mint_requires_and_applies_the_deployment_route_host ... ok
+test publish_release::tests::release_projection_preserves_operation_scoped_statement_facts ... ok
+test publish_release::tests::serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring ... ok
+test publish_release::tests::the_projected_environment_marker_selects_the_dependency_rule ... ok
+test push_component::tests::admission_receipt_debug_exposes_identity_without_saved_bytes_or_paths ... ok
+test push_component::tests::fresh_only_generated_contract_requires_a_boolean ... ok
+test push_component::tests::fresh_only_requires_authored_component_and_generated_contract_agreement ... ok
+test push_component::tests::package_evidence_binds_exact_sql_to_each_manifest_operation ... ok
+test push_component::tests::palette_node_absent_from_the_manifest_serves_no_manifest_operation ... ok
+test push_component::tests::private_manifest_operation_cannot_cross_component_ownership ... ok
+test push_component::tests::production_publisher_and_puller_round_trip_exact_bytes ... ignored, requires a disposable registry in WAMN_COMPONENT_ARTIFACT_BASE
+test push_component::tests::production_publisher_layout_matches_the_puller_contract ... ok
+test push_component::tests::projection_hash_is_complete_and_requirement_order_independent ... ok
+test push_component::tests::retired_sql_file_lists_are_not_an_alternate_statement_contract ... ok
+test push_component::tests::stranger_registering_a_manifest_operation_is_refused_on_membership ... ok
+test push_component::tests::the_environment_instance_decides_which_run_owns_a_component_fact ... ok
+test push_component::tests::the_minted_portable_requirement_document_is_frozen ... ok
+test push_component::tests::unsafe_paths_and_digest_drift_are_typed_statement_refusals ... ok
+test push_component::tests::verification_projection_replays_refuses_drift_and_leaves_publish_project_noop ... ok
+test push_release_manifest::tests::a_complete_minted_snapshot_coordinate_is_required ... ok
+test push_release_manifest::tests::a_release_publishes_only_from_its_minted_snapshot ... ok
+test push_release_manifest::tests::exact_layout_carries_only_canonical_manifest_bytes ... ok
+test push_release_manifest::tests::minted_snapshot_does_not_publish_without_its_control_plane_placement ... ok
+test push_release_manifest::tests::production_publisher_exact_retry_is_a_no_push ... ignored, requires a disposable authenticated registry
+test push_release_manifest::tests::published_bytes_carry_their_own_half_of_the_attestation_key ... ok
+test push_release_manifest::tests::the_parsed_placement_reaches_the_attestation_key ... ok
+test provision_project_env::tests::the_credential_free_modes_parse_without_a_password ... ok
+test push_release_manifest::tests::unsupported_format_and_noncanonical_documents_refuse_before_transport ... ok
+test reconcile_package_data_access::tests::a_presented_coordinate_that_never_reached_apply_refuses ... ok
+test reconcile_package_data_access::tests::a_presented_root_whose_bytes_moved_under_a_published_version_still_refuses ... ok
+test reconcile_package_data_access::tests::a_residual_column_privilege_revokes_beside_the_relation_it_sits_on ... ok
+test reconcile_package_data_access::tests::a_residual_sequence_privilege_revokes_through_the_sequence_carrier ... ok
+test push_release_manifest::tests::wrong_or_multi_layer_layout_refuses_as_conflict ... ok
+test reconcile_package_data_access::tests::a_tree_carrying_only_the_earlier_version_reconciles_beside_the_applied_bump ... ok
+test reconcile_package_data_access::tests::a_tree_carrying_only_the_newer_version_reconciles_beside_the_applied_predecessor ... ok
+test reconcile_package_data_access::tests::an_applied_package_with_no_presented_root_still_refuses_with_a_remedy_the_author_can_run ... ok
+test reconcile_package_data_access::tests::an_empty_residue_read_renders_no_revocation_at_all ... ok
+test reconcile_run_plane::tests::a_converged_dispatch_reader_plans_no_repair ... ok
+test reconcile_run_plane::tests::an_absent_dispatch_reader_role_plans_no_repair ... ok
+test reconcile_run_plane::tests::a_widened_or_missing_dispatch_reader_surface_plans_the_repair ... ok
+test reconcile_run_plane::tests::an_acting_plan_carries_the_reader_repair_along ... ok
+test reconcile_run_plane::tests::execution_bundle_retirement_leads_the_pre_bootstrap_prefix ... ok
+test reconcile_run_plane::tests::pre_role_bootstrap_allowlist_is_exact ... ok
+test reconcile_run_plane::tests::the_planned_repair_sql_is_exact ... ok
+test reconcile_run_plane::tests::the_reader_repair_is_not_a_pre_role_bootstrap_action ... ok
+test terminalize_effect_uncertain::tests::exact_input_rejects_only_empty_opaque_values ... ok
+test ui::tests::a_model_named_generated_cannot_shadow_the_generated_dependency ... ok
+test ui::tests::all_screen_scaffolding_copies_every_function_without_frozen_metadata ... ok
+test ui::tests::one_screen_scaffold_keeps_explicit_generated_fallbacks_and_live_specs ... ok
+test ui::tests::an_existing_custom_crate_is_never_overwritten ... ok
+test ui::tests::stale_generated_source_refuses_before_creating_custom_files ... ok
+test verification_policy::tests::source_hash_covers_policy_fields_outside_the_projected_subset ... ok
+test provision_project_env::tests::clap_guards_the_workload_identity_accesses_in_every_action_mode ... ok
+test ui::tests::package_and_screen_selection_refuse_traversal_and_missing_names ... ok
+test dev::watch::tests::a_linked_worktree_watches_its_own_git_directory_and_not_the_shared_one ... ok
+test dev::watch::tests::first_build_outputs_in_overlapping_component_roots_do_not_rerun ... ok
+test provision_project_env::tests::every_family_secret_is_bound_to_its_own_prepare ... ok
+test dev::watch::tests::ignored_build_output_inside_a_component_root_never_reruns_the_loop ... ok
+test provision_project_env::tests::one_action_group_excludes_every_pair_across_every_family ... ok
+
+test result: ok. 258 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 1.71s
+
+     Running unittests src/bin/wamn.rs (target/debug/deps/wamn-8bea8cbf546b4adc)
+
+running 1 test
+test tests::scaffold_parses_without_development_loop_flags ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/wamn_ctl-ccf52a93c669863e)
+
+running 1 test
+test tests::project_environment_membership_verbs_parse_exact_scope ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/apply_package_live.rs (target/debug/deps/apply_package_live-5c134729ea602f63)
+
+running 1 test
+test exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/author_wiring_gate_report_live.rs (target/debug/deps/author_wiring_gate_report_live-4ad612e2760ce714)
+
+running 1 test
+test a_wiring_is_authored_only_under_a_green_report_for_its_own_hash ... ignored, requires two disposable PostgreSQL 18 databases in WAMN_AUTHOR_WIRING_PROJECT_PG_URL and WAMN_AUTHOR_WIRING_CONTROL_PG_URL
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bind_connection_live.rs (target/debug/deps/bind_connection_live-ef8dad0c9fb49be5)
+
+running 1 test
+test bind_connection_round_trips_through_the_plugins_own_resolution ... ignored, requires two disposable PostgreSQL 18 databases named by WAMN_BIND_CONNECTION_{PROJECT,CONTROL}_PG_URL
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/dev_command.rs (target/debug/deps/dev_command-0eea1267cb891c09)
+
+running 7 tests
+test unreadable_configuration_refuses_before_any_stage_runs ... ok
+test development_command_requires_its_two_explicit_inputs_and_offers_watch ... ok
+test the_bare_development_command_still_requires_its_configuration ... ok
+test dev_up_names_the_scenario_worker_binary_and_its_fixed_port ... ok
+test dev_up_refuses_an_ephemeral_gate_port_and_names_it ... ok
+test product_binary_exposes_only_the_development_command ... ok
+test a_gate_that_dies_before_listening_is_reported_against_its_port ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/dispatch_reader_provisioning_live.rs (target/debug/deps/dispatch_reader_provisioning_live-78f11c39aa8148ff)
+
+running 1 test
+test dispatch_reader_provisioning_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/effect_writer_generation_live.rs (target/debug/deps/effect_writer_generation_live-b49b882fb0ccbd69)
+
+running 1 test
+test effect_writer_generation_lifecycle_is_exact_and_fail_closed ... ignored, requires disposable PostgreSQL 18 via WAMN_EFFECT_WRITER_PG18_URL
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/guest_generation_live.rs (target/debug/deps/guest_generation_live-5c15f8fa930812cb)
+
+running 1 test
+test guest_generations_are_per_tenant_and_carry_the_predicate_key ... ignored, requires a disposable PG18 named by WAMN_GUEST_GENERATION_PG18_URL
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/identity_issuer_live.rs (target/debug/deps/identity_issuer_live-bac385425cae62ee)
+
+running 2 tests
+test compiled_cli_publishes_rolls_back_and_retires_identity_generations ... ignored, requires an explicitly armed disposable PostgreSQL 18 cluster
+test compiled_identity_help_hides_administrator_environment_values ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/management_admitter_generation_live.rs (target/debug/deps/management_admitter_generation_live-2aff1544d2aa0a65)
+
+running 1 test
+test management_admitter_generation_lifecycle_converges_and_rotates ... ignored, requires disposable PostgreSQL 18 via WAMN_MANAGEMENT_ADMITTER_PG18_URL
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/package_data_access_live.rs (target/debug/deps/package_data_access_live-0e424accb7853586)
+
+running 3 tests
+test an_author_recovers_from_a_failed_version_bump_in_either_direction ... ignored, requires disposable PG18 named by WAMN_CTL_PG_URL
+test installed_package_set_unions_a_real_app_generation_and_replays_noop ... ignored, requires disposable PG18 named by WAMN_CTL_PG_URL
+test reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing ... ignored, requires disposable PG18 named by WAMN_CTL_PG_URL
+
+test result: ok. 0 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/provisioning_order_live.rs (target/debug/deps/provisioning_order_live-9384e442a48cb489)
+
+running 2 tests
+test a_refused_prepare_leaves_the_state_its_documentation_promises ... ignored, requires a disposable PG18 named by WAMN_PROVISIONING_ORDER_PG18_URL
+test the_documented_provisioning_order_completes_end_to_end ... ignored, requires a disposable PG18 named by WAMN_PROVISIONING_ORDER_PG18_URL
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/publish_release_live.rs (target/debug/deps/publish_release_live-fa6e8b48db50e86d)
+
+running 1 test
+test package_seal_and_attestation_winner_are_server_enforced ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/replica_identity_live.rs (target/debug/deps/replica_identity_live-e1585d5e182fae04)
+
+running 1 test
+test package_registration_union_flips_exact_tables_and_unreadable_state_refuses ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/run_plane_live.rs (target/debug/deps/run_plane_live-e1ffb2482fa3b3b3)
+
+running 17 tests
+test effect_writer_cutover_live ... ignored, requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL
+test failure_detail_cutover_live ... ignored, requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL
+test frame_identity_cutover_live ... ignored, requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL
+test partition_plane_active_lease_refusal_live ... ignored, requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL
+test partition_plane_cutover_live ... ignored, requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL
+test provisioner_minted_generation_live ... ignored, requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL
+test environment_policy_row_security_live ... ok
+test child_run_cutover_live ... ok
+test authoring_privileges_at_record_plan_no_repair_live ... ok
+test dispatch_reader_read_surface_live ... ok
+test reconcile_target_identity_guard_live ... ok
+test rerun_lineage_cutover_live ... ok
+test registry_durability_schema_ensure_live ... ok
+test retired_effect_disposition_cutover_live ... ok
+test two_plane_residency_live ... ignored, requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL
+test stored_suite_cutover_live ... ok
+test run_plane_reconcile_live ... ok
+
+test result: ok. 10 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/session_audience_live.rs (target/debug/deps/session_audience_live-372124fe5fc82397)
+
+running 2 tests
+test compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations ... ignored, requires explicitly armed disposable PostgreSQL 18
+test compiled_session_reader_refuses_invalid_tenants_before_io ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/terminalize_effect_uncertain_live.rs (target/debug/deps/terminalize_effect_uncertain_live-a6627f5c1c1bbbb5)
+
+running 1 test
+test terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/verb_surface.rs (target/debug/deps/verb_surface-ae661dc872092be7)
+
+running 9 tests
+test ctl_live_database_lock_child_observes_parent ... ignored, child process for ctl_live_database_lock_excludes_another_process
+test ctl_live_database_lock_excludes_another_process ... ok
+test package_apply_has_one_exact_directory_and_no_destructive_override ... ok
+test mvp_provision_org_has_no_backup_surface ... ok
+test replica_identity_repair_is_an_explicit_one_shot_operator_surface ... ok
+test mvp_binary_exposes_only_mvp_verbs ... ok
+test terminalize_surface_accepts_no_asserted_effect_identity_or_outcome ... ok
+test run_plane_reconcile_requires_the_project_target_key ... ok
+test mvp_dependency_tree_does_not_enable_ops ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.59s
+
+     Running unittests src/lib.rs (target/debug/deps/wamn_execution_host-3d77f97b158f358d)
+
+running 31 tests
+test readiness::tests::failure_stays_not_ready_and_success_advances_the_same_generation ... ok
+test readiness::tests::invalidation_fences_an_older_in_flight_success ... ok
+test router_delivery::tests::a_first_verdict_stands_when_later_frontier_work_fails ... ok
+test router_delivery::tests::a_settled_preview_never_contradicts_what_the_caller_received ... ok
+test router_delivery::tests::host_mints_current_causation_and_only_inherits_parent_root_depth ... ok
+test router_delivery::tests::permission_denial_lowers_the_exact_registered_operation ... ok
+test router_delivery::tests::terminal_mapping_preserves_each_router_class_without_node_coordinates ... ok
+test router_delivery::tests::each_driver_refusal_counts_as_an_attempt_and_a_named_error ... ok
+test router_driver::tests::admitted_statement_types_lower_exhaustively_to_the_runtime_vocabulary ... ok
+test router_driver::tests::candidate_refusal_preserves_class_and_frozen_literal ... ok
+test router_driver::tests::every_registered_invocation_requires_the_exact_operation_grant ... ok
+test router_delivery::tests::caller_handle_must_match_the_welded_attachment_identity ... ok
+test router_driver::tests::component_span_adopts_remote_traceparent_and_host_identity ... ok
+test router_driver::tests::nested_acquisition_preserves_causation_without_minting_a_caller ... ok
+test router_driver::tests::malformed_traceparent_is_ignored_without_suppressing_the_span ... ok
+test router_driver::tests::nested_target_resolution_requires_the_exact_released_coordinate ... ok
+test router_driver::tests::node_deadline_is_nonzero_and_host_bounded ... ok
+test router_delivery::tests::a_delivered_run_counts_once_and_raises_no_error_series ... ok
+test router_driver::tests::node_context_carries_the_component_span_not_the_ingress_header ... ok
+test router_delivery::tests::a_delivery_is_labelled_by_its_source_kind_id_and_wiring_release ... ok
+test router_driver::tests::partial_statement_binding_failure_cleans_earlier_operations ... ok
+test router_delivery::tests::source_ids_resolve_only_the_manifest_target_and_derive_caller_attachment ... ok
+test router_driver::tests::readiness_closure_contains_only_distinct_request_attachment_targets ... ok
+test router_driver::tests::without_an_otel_layer_the_ingress_header_passes_through ... ok
+test router_driver::tests::statement_scope_binds_empty_operations_and_cleans_on_drop ... ok
+test router_driver::tests::queue_component_span_inherits_the_host_created_root ... ok
+test router_driver::tests::queue_node_context_derives_a_traceparent_from_the_host_scoped_root ... ok
+test router_driver::tests::nested_permission_denial_survives_the_real_component_boundary ... ok
+test router_delivery::tests::nested_fresh_only_refusal_retains_its_exact_wire_contract ... ok
+test router_delivery::tests::nested_permission_denial_uses_the_direct_call_wire_contract ... ok
+test router_driver::tests::plugin_bind_registers_per_request_and_links_per_digest ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/wamn_schema_generator-181480412044028a)
+
+running 49 tests
+test client_fields::tests::omission_does_not_permit_a_null_writable_value ... ok
+test client_fields::tests::unsupported_unions_do_not_silently_select_a_text_editor ... ok
+test client_fields::tests::presence_and_null_are_independent_in_the_served_schema ... ok
+test client_fields::tests::typed_contract_constraints_remain_stricter_than_the_transport_schema ... ok
+test client_fields::tests::repeated_inputs_keep_children_bounds_and_typed_hints ... ok
+test client_ir::tests::a_closed_value_domain_reaches_the_descriptor ... ok
+test client_ir::tests::a_generated_crud_contract_yields_its_scalar_inputs ... ok
+test client_ir::tests::a_package_with_no_release_carries_no_routes ... ok
+test client_ir::tests::a_public_operation_missing_its_grant_still_refuses ... ok
+test client_ir::tests::a_command_contract_still_reads_its_fields_array ... ok
+test client_ir::tests::a_private_operation_is_not_a_client_operation ... ok
+test client_ir::tests::a_parameterized_template_keeps_its_parameter_name ... ok
+test client_ir::tests::an_operation_published_twice_refuses ... ok
+test client_ir::tests::an_unnormalized_route_refuses_and_names_the_form_publication_would_use ... ok
+test client_ir::tests::fresh_only_client_ir_refuses_private_and_malformed_contracts ... ok
+test client_ir::tests::fresh_only_contract_policy_is_preserved_in_the_client_ir ... ok
+test client_ir::tests::operations_carry_their_permission_and_identity ... ok
+test client_ir::tests::paging_is_present_only_where_the_contract_declares_it ... ok
+test client_ir::tests::every_result_class_is_typed_by_its_result_contract ... ok
+test client_ir::tests::every_projected_operation_has_input_fields ... ok
+test client_ir::tests::a_contract_change_surfaces_without_hand_edits ... ok
+test client_route::tests::malformed_schema_and_wiring_are_contextual_refusals ... ok
+test client_route::tests::missing_wiring_preserves_input_without_inventing_response_evidence ... ok
+test client_ir::tests::the_ir_carries_the_shipped_projection ... ok
+test client_ir::tests::an_operation_carries_the_route_its_release_publishes ... ok
+test client_route::tests::response_selection_follows_reachability_and_refuses_ambiguous_terminals ... ok
+test client_route::tests::response_schema_requires_matching_publication_identity_and_preserves_opaque_arrays ... ok
+test client_route::tests::receiving_claim_route_has_a_direct_declared_response ... ok
+test client_rust::tests::an_unknown_contract_type_refuses_by_name ... ok
+test client_rust::tests::every_contract_type_has_its_exact_rust_spelling ... ok
+test client_route::tests::wiring_selection_uses_declared_identity_and_version ... ok
+test manifest::tests::rust_2024_names_have_one_lossless_spelling_authority ... ok
+test client_route::tests::wms_move_response_belongs_to_the_terminal_store ... ok
+test sql_lex::tests::access_is_derived_by_database_verb ... ok
+test client_ir::tests::a_studio_attachment_publishes_no_client_route ... ok
+test sql_lex::tests::every_known_bad_shape_is_refused ... ok
+test materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection ... ok
+test client_ir::tests::every_shipped_operation_carries_its_published_route ... ok
+test client_ir::tests::the_ir_is_byte_identical_when_the_contract_members_are_reordered ... ok
+test client_ir::tests::the_overlay_publishes_its_own_path_for_its_own_operation ... ok
+test sql_lex::tests::schema_qualification_reads_tokens_not_text ... ok
+test sql_lex::tests::unsupported_effect_and_opaque_returning_refuse ... ok
+test client_ir::tests::regeneration_is_byte_identical_on_an_unchanged_release ... ok
+test client_rust::tests::every_type_the_shipped_releases_use_is_mapped ... ok
+test sql_lex::tests::the_parser_recovers_the_authored_access ... ok
+test sql_lex::tests::known_bad_statements_are_refused_under_every_rendering ... ok
+test sql_lex::tests::schema_qualification_ignores_inert_text ... ok
+test sql_lex::tests::derived_access_names_only_declared_relations_and_fields ... ok
+test sql_lex::tests::inert_text_and_rendering_style_never_change_authority ... ok
+
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+     Running tests/client_contract_metadata.rs (target/debug/deps/client_contract_metadata-47361928b003b776)
+
+running 2 tests
+test crud_record_links_use_the_declared_relation_and_revision ... ok
+test custom_state_metadata_preserves_the_guard_without_inventing_a_record_link ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/client_emitter.rs (target/debug/deps/client_emitter-7aa11e8f7ba4b64b)
+
+running 7 tests
+test a_field_added_to_a_contract_appears_without_a_hand_edit ... ok
+test emission_is_byte_stable ... ok
+test an_error_added_to_a_contract_appears_without_a_hand_edit ... ok
+test generated_code_carries_release_facts_and_no_deployment_facts ... ok
+test the_emitted_overlay_client_compiles ... ok
+test valid_operations_cannot_collide_with_route_helpers_or_their_fallbacks ... ok
+test the_emitted_receiving_client_compiles ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.83s
+
+     Running tests/client_projection.rs (target/debug/deps/client_projection-01ff13c0d52e2442)
+
+running 13 tests
+test query_columns_remain_specific_to_each_result_contract ... ok
+test custom_state_and_claim_declarations_do_not_invent_input_key_links ... ok
+test declared_kind_and_record_mappings_bind_operations_with_unrelated_names ... ok
+test a_record_read_keeps_its_other_required_inputs ... ok
+test composed_record_read_uses_the_served_terminal_response_for_revision_binding ... ok
+test declared_delete_needs_a_compatible_exposed_read_for_its_revision ... ok
+test missing_or_unexposed_record_read_requires_composition ... ok
+test revision_roles_use_declared_paths_and_platform_fields_only ... ok
+test incompatible_record_relation_key_or_revision_requires_composition ... ok
+test revision_binding_requires_one_served_record_even_when_terminal_fields_match ... ok
+test receiving_update_preserves_writable_type_presence_and_null_refusal ... ok
+test receiving_query_closed_string_domains_remain_typed_without_explicit_schema_types ... ok
+test receiving_direct_claim_grants_replay_but_wms_composition_does_not ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/cursor.rs (target/debug/deps/cursor-e9c74dc0c5891026)
+
+running 5 tests
+test noncanonical_timestamps_and_numeric_spellings_refuse ... ok
+test numeric_cursor_preserves_postgresql_lexical_scale ... ok
+test malformed_or_mismatched_cursor_is_typed_invalid_input ... ok
+test noncanonical_json_and_unknown_version_never_reset_to_first_page ... ok
+test whole_second_timestamp_has_one_literal_wire_spelling ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/generation.rs (target/debug/deps/generation-3e10eac68f70669a)
+
+running 53 tests
+test a_lineless_command_canonicalizes_without_a_line_profile ... ok
+test a_command_that_declares_no_idempotence_refuses_and_names_all_three_remedies ... ok
+test a_generated_operation_names_an_exclusion_violation_with_its_constraint ... ok
+test a_line_profile_and_a_line_input_must_agree ... ok
+test a_model_identity_the_claim_does_not_mint_refuses ... ok
+test a_command_riding_a_base_claim_carries_its_one_contract_test ... ok
+test corpus_hash_uses_sorted_unambiguous_framing ... ok
+test an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim ... ok
+test a_state_idempotent_command_carries_the_relation_its_version_guards ... ok
+test custom_sql_generated_rust_symbols_are_unique_before_emission ... ok
+test component_grouping_defaults_one_group_and_refuses_invalid_splits ... ok
+test dependency_composition_may_add_one_declared_post_call_projection ... ok
+test an_authored_claim_is_refused_unless_every_identity_comes_from_it ... ok
+test an_authored_command_carries_the_two_claim_contract_tests ... ok
+test duplicate_filters_and_schema_qualified_authored_sql_refuse ... ok
+test command_privilege_declarations_match_sql_effects_and_row_locks ... ok
+test custom_operation_ir_references_require_declared_fields_and_named_constraints ... ok
+test additive_unused_column_on_consumed_relation_preserves_required_contract ... ok
+test custom_operation_kinds_visibility_permissions_and_registration_are_closed ... ok
+test custom_statement_declarations_drive_both_siblings_without_domain_tables ... ok
+test explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields ... ok
+test every_generated_create_carries_the_two_claim_contract_tests ... ok
+test generated_create_pins_and_grants_its_claim_relation ... ok
+test each_declared_idempotence_value_admits_only_its_own_shape ... ok
+test fresh_only_refuses_private_operations_and_non_boolean_flags ... ok
+test generated_create_contracts_publish_the_claim_and_its_refusal ... ok
+test generated_create_replay_writes_nothing ... ok
+test generated_create_takes_every_identity_from_the_claim ... ok
+test generated_weld_has_one_strict_canonical_reader ... ok
+test generated_operations_ship_a_result_contract_with_closed_domains ... ok
+test idempotency_conflict_is_closed_to_the_create ... ok
+test generated_create_refuses_a_claim_that_does_not_pre_generate_identity ... ok
+test only_a_create_carries_claim_contract_tests ... ok
+test generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings ... ok
+test mutation_contract_refuses_server_owned_and_nonnullable_null ... ok
+test fresh_only_public_operations_emit_policy_and_false_preserves_contract_bytes ... ok
+test operation_identity_errors_and_constraint_names_are_closed ... ok
+test generic_custom_operation_path_preserves_shipped_receiving_bytes ... ok
+test shared_operation_vocabulary_refuses_noncanonical_coordinates ... ok
+test shared_operation_vocabulary_refuses_permission_identity_drift ... ok
+test ordered_filters_and_query_variants_remain_structural_and_finite ... ok
+test generation_is_byte_stable_and_emits_both_projection_siblings ... ok
+test overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain ... ok
+test strict_manifest_and_ir_references_fail_loudly ... ok
+test shipped_receiving_manifest_and_authored_corpus_generate_without_drift ... ok
+test the_two_line_members_are_declared_together ... ok
+test ownership_only_model_generates_without_fabricated_crud ... ok
+test wamn_accessors_are_structurally_derived_from_operations_and_ir ... ok
+test shipped_command_source_map_parity_and_bind_fixtures_align_structurally ... ok
+test internal_relation_cdc_exclusion_is_closed_and_not_a_model ... ok
+test overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions ... ok
+test weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables ... ok
+test operation_error_details_are_required_closed_and_exact ... ok
+
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+     Running tests/parity.rs (target/debug/deps/parity-0351857799f5a0e3)
+
+running 5 tests
+test frozen_postgres_native_and_wamn_mappings_validate ... ok
+test nullability_mutant_fails_with_field_context ... ok
+test unknown_matrix_members_and_postgres_types_fail_closed ... ok
+test accessor_bind_mutants_fail_with_parameter_context ... ok
+test distinct_wamn_carrier_mutants_fail_with_field_context ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/tui_emitter.rs (target/debug/deps/tui_emitter-11b824504ecfd8b6)
+
+running 10 tests
+test invalid_paths_and_generated_module_collisions_are_refused ... ok
+test platform_and_revision_inputs_come_only_from_exact_declared_paths ... ok
+test event_handlers_are_excluded_and_deployment_values_are_supplied_at_launch ... ok
+test raw_schema_literals_preserve_quotes_without_becoming_rust_source ... ok
+test screens_reference_the_same_collision_free_helpers_as_the_client ... ok
+test queries_reference_their_own_result_schemas_and_preserve_distinct_error_cases ... ok
+test unexposed_unsupported_and_composed_operations_keep_distinct_screens ... ok
+test workspace_package_and_binary_names_keep_the_reference_crate_distinct ... ok
+test receiving_replay_and_wms_unknown_completion_use_the_served_contract ... ok
+test shipped_operator_crates_are_deterministic_and_cover_each_callable_operation ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
