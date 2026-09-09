@@ -1,0 +1,34 @@
+{
+  "bead": "wamn-0h0g.2.7.13",
+  "source": "ab0467f415dfd6b31e70323ec6ca049d5d2a5298",
+  "files": {
+    "proposal.patch": {
+      "sha256": "0e7ebecad2d7965cf33ca8d167279050733263997c80194b068cc69af4bb142a",
+      "bytes": 4011
+    },
+    "negative-test/proposal.patch": {
+      "sha256": "b38a4778bed283d6c72bc1e82ce3ea22dc4c3fab272a20d22c1f2df985baddbb",
+      "bytes": 6568
+    },
+    "combined.patch": {
+      "sha256": "7797b1fc0530320cb5a39ec9861df34fe73e07b364d4372abc302d3223c09437",
+      "bytes": 10579
+    }
+  },
+  "combined_patch_check": {
+    "argv": [
+      "git",
+      "apply",
+      "--check",
+      "/tmp/wamn-cutover-active-closure-prepared/combined.patch"
+    ],
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "source_changes": [
+    "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs: ACTIVE_WIRING_SQL only",
+    "tests/integration/src/virtualized_std_guest.rs: two exact pre-cache refusals, imports and URL clone; existing positive suffix unchanged"
+  ],
+  "validation": "Static-only preparation. No actual worktree edits, Cargo, compiler, SQL server, OCI, builds or live execution."
+}

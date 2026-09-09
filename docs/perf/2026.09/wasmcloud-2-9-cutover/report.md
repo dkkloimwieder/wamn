@@ -492,3 +492,20 @@ Only these two fields change in this one inventory row.
 This capture does not regenerate the full inventory or measure an existing deployment.
 Source correction `55481ea1` and this measured inventory change resolve `wamn-0h0g.2.7.9`.
 The [inventory conformance run](authority-inventory-preparation-001/conformance.log) passes both tests with zero ignored cases.
+
+
+## Active release query correction
+
+The [second virtualization run](virtualization-live-002/summary.json) uses clean source `ab0467f4`.
+Artifact inspection passes, but active route resolution fails before guest invocation.
+The active query returns six columns to a decoder that requires eight.
+Commit `1efc3b2c` introduced this mismatch before the cutover.
+The failed run retains successful fixture cleanup and the production guest rebuild.
+
+The correction supplies the current release snapshot and its full component set through the existing active query.
+It preserves activation, package membership, tombstone, environment, component identity, and completeness checks.
+The existing guest proof now also refuses an absent snapshot and a release that differs from the mounted release.
+The [scoped validation](scoped-validation-002/summary.json) records passing Clippy for both changed Rust packages and their test targets, with warnings.
+Its source hashes include the separate memory test and WMS probe correction that await their own commits.
+Bead `wamn-0h0g.2.7.13` owns this query correction and remains open until the live proof passes.
+The operation projection from `wamn-0h0g.2.7.11` passes manifest decoding in this run, but the complete guest proof remains open.

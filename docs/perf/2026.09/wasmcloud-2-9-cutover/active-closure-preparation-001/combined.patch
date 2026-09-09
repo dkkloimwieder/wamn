@@ -1,0 +1,211 @@
+--- a/crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs
++++ b/crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs
+@@ -21,11 +21,17 @@
+ pub const ACTIVE_WIRING_SQL: &str = "\
+ WITH selected AS MATERIALIZED ( \
+     SELECT wiring.version, head.effective_release_id, member.package_version, \
+-           wiring.graph_json, wiring.wiring_hash \
++           wiring.graph_json, wiring.wiring_hash, \
++           convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb AS manifest \
+       FROM catalog.wiring_activation AS active \
+       JOIN catalog.effective_release_heads AS head \
+         ON head.tenant_id = active.tenant_id \
+        AND head.environment = active.environment \
++      JOIN catalog.release_manifest_v3_snapshots AS snapshot \
++        ON snapshot.tenant_id = head.tenant_id \
++       AND snapshot.effective_release_id = head.effective_release_id \
++       AND convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb \
++             #>> '{release,environment}' = $3 \
+       JOIN catalog.effective_release_packages AS member \
+         ON member.tenant_id = head.tenant_id \
+        AND member.effective_release_id = head.effective_release_id \
+@@ -77,7 +83,40 @@
+                ) ORDER BY member.node_id COLLATE \"C\" \
+            ) FILTER (WHERE member.node_id IS NOT NULL), \
+            '[]'::jsonb \
+-       )::text AS node_components \
++       )::text AS node_components, \
++       COALESCE( \
++           (SELECT jsonb_agg( \
++               jsonb_build_object( \
++                   'scope', jsonb_build_object( \
++                       'tenant-id', $1::text, \
++                       'package-id', component.package_id, \
++                       'package-version', component.package_version \
++                   ), \
++                   'component', component.component, \
++                   'interface-version', component.interface_version, \
++                   'operations', component.operations, \
++                   'component-digest', component.component_digest, \
++                   'imports', component.imports, \
++                   'imports-fingerprint', component.imports_fingerprint, \
++                   'effects', component.effects \
++               ) ORDER BY projected.ordinality \
++            ) \
++              FROM jsonb_array_elements(selected.manifest -> 'components') \
++                   WITH ORDINALITY AS projected(definition, ordinality) \
++              JOIN catalog.effective_release_packages AS release_package \
++                ON release_package.tenant_id = $1 \
++               AND release_package.effective_release_id = selected.effective_release_id \
++               AND release_package.package_id = projected.definition ->> 'package-id' \
++              JOIN catalog.component_library AS component \
++                ON component.tenant_id = release_package.tenant_id \
++               AND component.package_id = release_package.package_id \
++               AND component.package_version = release_package.package_version \
++               AND component.component = projected.definition ->> 'component' \
++               AND component.interface_version = projected.definition ->> 'interface-version' \
++               AND component.component_digest = projected.definition ->> 'digest'), \
++           '[]'::jsonb \
++       )::text AS components, \
++       jsonb_array_length(selected.manifest -> 'components') AS manifest_component_count \
+   FROM selected \
+   LEFT JOIN catalog.release_components AS member \
+     ON member.tenant_id = $1 \
+@@ -93,7 +132,7 @@
+    AND component.component_digest = member.component_digest \
+  GROUP BY selected.version, selected.effective_release_id, \
+           selected.package_version, \
+-          selected.graph_json, selected.wiring_hash";
++          selected.graph_json, selected.wiring_hash, selected.manifest";
+ 
+ /// The immutable-version snapshot behind a queued delivery. Unlike
+ /// [`ACTIVE_WIRING_SQL`], this deliberately does not consult the mutable
+--- a/tests/integration/src/virtualized_std_guest.rs
++++ b/tests/integration/src/virtualized_std_guest.rs
+@@ -15,6 +15,7 @@
+     use http_body_util::{BodyExt as _, Full};
+     use hyper::{Method, Request, StatusCode};
+     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
++    use wamn_catalog::EffectiveReleaseId;
+     use wamn_execution_host::{
+         ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriverRequest, WiringResolution,
+     };
+@@ -22,6 +23,7 @@
+     use wamn_runtime::plugins::flow_http_routing::FLOW_HTTP_ROUTING_ID;
+     use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
+     use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream};
++    use wamn_runtime::release_manifest::ReleaseManifestWeld;
+     use wash_runtime::engine::InstancePolicy;
+     use wash_runtime::engine::ctx::{Ctx, SharedCtx};
+     use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
+@@ -438,7 +440,7 @@
+ 
+         let (upstream_base_url, served) = connection_origin().await?;
+         let route = trusted_http_route::build(&RouteOptions {
+-            database_url,
++            database_url: database_url.clone(),
+             artifact_base,
+             component_wasm,
+             upstream_base_url,
+@@ -446,6 +448,111 @@
+         })
+         .await
+         .context("build the released virtualized probe route")?;
++
++        // Exercise both refusals before a positive Active lookup can populate
++        // the cache. Release 2 has the same package and exact node binding.
++        let (admin, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
++            .await
++            .context("connect the release-closure fixture admin")?;
++        let admin_driver = tokio::spawn(connection);
++        let mounted_release_id = route.release.release().effective_release_id;
++        let other_release_id = 2_i32;
++        for statement in [
++            "INSERT INTO catalog.effective_releases \
++                 (tenant_id, effective_release_id, environment, verified_publisher_principal) \
++             SELECT tenant_id, $2, environment, verified_publisher_principal \
++               FROM catalog.effective_releases \
++              WHERE tenant_id=$1 AND effective_release_id=$3",
++            "INSERT INTO catalog.effective_release_packages \
++                 (tenant_id, effective_release_id, package_id, package_version) \
++             SELECT tenant_id, $2, package_id, package_version \
++               FROM catalog.effective_release_packages \
++              WHERE tenant_id=$1 AND effective_release_id=$3",
++            "INSERT INTO catalog.release_components \
++                 (tenant_id, effective_release_id, wiring_package_id, wiring_package_version, \
++                  wiring_id, wiring_version, node_id, package_id, package_version, component_digest) \
++             SELECT tenant_id, $2, wiring_package_id, wiring_package_version, wiring_id, \
++                    wiring_version, node_id, package_id, package_version, component_digest \
++               FROM catalog.release_components \
++              WHERE tenant_id=$1 AND effective_release_id=$3",
++        ] {
++            assert_eq!(
++                admin
++                    .execute(
++                        statement,
++                        &[&TENANT, &other_release_id, &mounted_release_id]
++                    )
++                    .await?,
++                1,
++                "the owned route has one release, package, and node binding"
++            );
++        }
++        let select_head = "UPDATE catalog.effective_release_heads SET effective_release_id=$3 \
++                            WHERE tenant_id=$1 AND environment=$2";
++        assert_eq!(
++            admin
++                .execute(select_head, &[&TENANT, &ENVIRONMENT, &other_release_id])
++                .await?,
++            1
++        );
++        for (snapshot_present, expected) in [
++            (false, "active-wiring-not-found"),
++            (true, "active-wiring-effective-release-mismatch"),
++        ] {
++            if snapshot_present {
++                let mut manifest = route.release.manifest().clone();
++                manifest.release.effective_release_id = EffectiveReleaseId::new(2)?;
++                let other_release = ReleaseManifestWeld::load_canonical_bytes(
++                    &manifest.canonical_bytes(),
++                    "virtualized std guest release-closure control",
++                )?;
++                let canonical_bytes = other_release.manifest().canonical_bytes();
++                let manifest_digest = other_release.release().manifest_digest.as_str();
++                assert_eq!(
++                    admin
++                        .execute(
++                            "INSERT INTO catalog.release_manifest_v3_snapshots \
++                             (tenant_id, effective_release_id, manifest_digest, canonical_bytes) \
++                         VALUES ($1, $2, $3, $4)",
++                            &[
++                                &TENANT,
++                                &other_release_id,
++                                &manifest_digest,
++                                &canonical_bytes
++                            ],
++                        )
++                        .await?,
++                    1
++                );
++            }
++            let refusal = route
++                .driver
++                .execute(RouterDriverRequest {
++                    tenant_id: TENANT.to_owned(),
++                    package_id: PACKAGE.to_owned(),
++                    environment: ENVIRONMENT.to_owned(),
++                    wiring_id: WIRING_ID.to_owned(),
++                    wiring_version: WIRING_VERSION,
++                    delivery_id: format!("virtualized-release-control-{snapshot_present}"),
++                    payload: serde_json::json!({"proof": "environment"}),
++                    caller_attached: true,
++                    resolution: WiringResolution::Active,
++                    caller: None,
++                    traceparent: None,
++                    tracestate: None,
++                })
++                .await
++                .expect_err("an absent or differently mounted release must not serve");
++            assert_eq!(refusal.to_string(), expected);
++        }
++        assert_eq!(
++            admin
++                .execute(select_head, &[&TENANT, &ENVIRONMENT, &mounted_release_id])
++                .await?,
++            1
++        );
++        drop(admin);
++        admin_driver.abort();
+ 
+         let delivery = route
+             .driver

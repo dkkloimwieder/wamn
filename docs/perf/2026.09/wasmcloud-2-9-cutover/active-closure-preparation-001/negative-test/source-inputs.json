@@ -1,0 +1,13 @@
+{
+  "source": "ab0467f4",
+  "root": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+  "files": {
+    "tests/integration/src/virtualized_std_guest.rs": "58ea438c528eedeb4073e5b199930cb79dbd2db989fbc7d4950629534ad43fef",
+    "tests/integration/src/trusted_http_route.rs": "c56dbfd1a639348ba2138bab5eb2425d45a7f1c0325d7d49dc0f06ef27f35a97",
+    "crates/catalog/model/src/package.rs": "ba6b34e7d4e87fb157e26f8c4732184e93a5b3b7b26ddcdaf10bccbfd0ad12ac",
+    "crates/catalog/model/src/serving_manifest.rs": "4e7fb5bb54b500f299bbfbbe374fe19fc06da54c7ca425f0ef6fc5b9a6eeef3a",
+    "crates/platform/runtime/src/release_manifest.rs": "6b7a99d5c6b980c5fc8991ef64e98cfabbcb38f077995b6080943669d3eff703",
+    "crates/execution/host/src/router_driver.rs": "b449848a07a4a742be44bd7329a252597acc05e0a11079807a8b7b5b68a47217",
+    "deploy/sql/catalog-schema.sql": "2a4beb0f4d8e79474a97cdeaa93824ab74432ae682789086feaa7a2fc5aba1ec"
+  }
+}

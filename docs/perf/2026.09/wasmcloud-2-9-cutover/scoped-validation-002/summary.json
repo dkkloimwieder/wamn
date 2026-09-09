@@ -1,0 +1,61 @@
+{
+  "source": {
+    "commit": "ab0467f415dfd6b31e70323ec6ca049d5d2a5298",
+    "dirty_paths": [
+      " M crates/platform/runtime/src/engine.rs",
+      " M crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs",
+      " M tests/integration/src/virtualized_std_guest.rs",
+      " M tools/wms-cluster-journey-run"
+    ],
+    "sha256": {
+      "crates/platform/runtime/src/engine.rs": "4f7f94b278646d1efbf0d0d784ad16872f0cc35b21f9125f0dc2fbc1d4342d13",
+      "tests/integration/src/virtualized_std_guest.rs": "7bfb57688edad9b105d19204ff5d741abc61ad4becfe060377507e5b9224e29e",
+      "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs": "73f5c1c1b90509065b913b651a47f4212cf44f81e0c07fb74439ac38b94c7dfb",
+      "tools/wms-cluster-journey-run": "cecc05dd4d424201f08cc5fdae25e2e2beaf02fa0718b693870bd6d289b1d6dc"
+    }
+  },
+  "started_unix_ns": 1788974826913456063,
+  "commands": [
+    {
+      "name": "deadline-memory",
+      "argv": [
+        "cargo",
+        "test",
+        "-p",
+        "wamn-runtime",
+        "--lib",
+        "--locked",
+        "--offline",
+        "engine::tests::dropping_a_store_after_epoch_interruption_releases_its_memory",
+        "--",
+        "--exact",
+        "--include-ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started_unix_ns": 1788974826913458379,
+      "exit_code": 0,
+      "finished_unix_ns": 1788974832898510832
+    },
+    {
+      "name": "clippy",
+      "argv": [
+        "cargo",
+        "clippy",
+        "-p",
+        "wamn-runtime",
+        "-p",
+        "wamn-proof-integration",
+        "--all-targets",
+        "--locked",
+        "--offline"
+      ],
+      "started_unix_ns": 1788974832898544394,
+      "exit_code": 0,
+      "finished_unix_ns": 1788974914194377773
+    }
+  ],
+  "finished_unix_ns": 1788974914194412723,
+  "source_unchanged": true,
+  "verdict": "pass"
+}
