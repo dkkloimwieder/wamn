@@ -26,8 +26,6 @@ const PROJECT_URL_ENV: &str = "WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL";
 const CONTROL_URL_ENV: &str = "WAMN_EFFECTIVE_RELEASE_CONTROL_PG_URL";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
-const BASE_COMPONENT_DIGEST: &str =
-    "sha256:8057a076d949d21effa45dfff27812f995f5ac101c38f52ac6d66108f1b15b60";
 const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const BASE_WIRINGS: [&str; 8] = [
@@ -55,12 +53,23 @@ struct PackageInput {
     root: PathBuf,
     component_declaration: PathBuf,
     component_bytes: PathBuf,
-    expected_component_digest: Option<&'static str>,
+    expected_component_digest: Option<String>,
     wirings: &'static [&'static str],
 }
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// The base component digest, read from the ONE file that authors it.
+///
+/// wamn-10yt.50: this proof used to restate the same `sha256:` literal the
+/// overlay manifest pins, which is a third copy of a value that must be one.
+fn base_component_digest() -> String {
+    let overlay = repository_root().join("packages/client_acme_receiving");
+    crate::dev::coordinator::authored_base_digests(&overlay)
+        .expect("the overlay manifest authors its base digest")["wamn_receiving@1.0.0"]
+        .to_string()
 }
 
 fn packages() -> [PackageInput; 2] {
@@ -76,7 +85,7 @@ fn packages() -> [PackageInput; 2] {
             component_bytes: std::env::var_os(BASE_WASM_ENV)
                 .map(PathBuf::from)
                 .expect("WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM names the built base component"),
-            expected_component_digest: Some(BASE_COMPONENT_DIGEST),
+            expected_component_digest: Some(base_component_digest()),
             wirings: &BASE_WIRINGS,
         },
         PackageInput {
@@ -190,21 +199,27 @@ async fn admit_components(
     // that declares the dependency reaches admission.
     let mut component_facts: BTreeMap<(String, String), Vec<AdmittedComponent>> = BTreeMap::new();
     for input in inputs {
-        let mut declaration: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&input.component_declaration).unwrap_or_else(|error| {
-                panic!("read {}: {error}", input.component_declaration.display())
-            }),
+        // The template leaves its base dependency digest as a placeholder, so
+        // the render -- not a tenant substitution -- is what makes it a
+        // declaration (wamn-10yt.50).
+        let base_digests = crate::dev::coordinator::authored_base_digests(&input.root)
+            .unwrap_or_else(|error| panic!("read {}@{} base pins: {error}", input.id, input.version));
+        let declaration = crate::dev::coordinator::render_declaration_document(
+            &input.component_declaration,
+            TENANT,
+            &base_digests,
         )
-        .unwrap_or_else(|error| panic!("parse {}: {error}", input.component_declaration.display()));
-        declaration["scope"]["tenant-id"] = serde_json::Value::String(TENANT.to_owned());
+        .unwrap_or_else(|error| {
+            panic!("render {}: {error}", input.component_declaration.display())
+        });
         let declaration: ComponentDeclaration = serde_json::from_value(declaration)
             .expect("the package-owned component declaration is strict");
         let bytes = std::fs::read(&input.component_bytes)
             .unwrap_or_else(|error| panic!("read {}: {error}", input.component_bytes.display()));
-        if let Some(expected) = input.expected_component_digest {
+        if let Some(expected) = &input.expected_component_digest {
             assert_eq!(
                 sha256(&bytes),
-                expected,
+                *expected,
                 "{}@{} must use the exact digest pinned by the overlay dependency",
                 input.id,
                 input.version

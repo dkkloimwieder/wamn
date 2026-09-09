@@ -448,29 +448,42 @@ pub enum ForeignKeyAction {
 /// One `EXCLUDE` constraint with its required authored name.
 ///
 /// An exclusion constraint is carried beside [`Constraint`] rather than inside
-/// it. The frozen `wamn:postgres` contract names the violated object for
-/// SQLSTATE 23505, 23503 and 23514; an exclusion violation is 23P01, which that
-/// contract has no variant for. A [`Constraint`] is therefore a shape whose
-/// violation a generated operation can name, and an [`Exclusion`] is a shape the
-/// database enforces without one.
+/// it because its keys are operator comparisons over a column OR an expression,
+/// which a [`ConstraintKind`]'s plain column list cannot hold (wamn-10yt.36).
+/// Both are nameable refusals: the `wamn:postgres` contract carries SQLSTATE
+/// 23505, 23503 and 23514 as [`Constraint`] violations and 23P01 as an
+/// exclusion violation, each naming the constraint that refused (wamn-10yt.54).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Exclusion {
     name: Box<str>,
     access_method: ExclusionAccessMethod,
     keys: Box<[ExclusionKey]>,
+    /// Every column the constraint depends on, including the columns an
+    /// expression key reads, sorted and deduplicated.
+    ///
+    /// PostgreSQL records these as auto dependencies of the constraint and of
+    /// its index -- the same dependency that blocks `DROP COLUMN` -- so the set
+    /// is read from the catalog and never parsed out of the expression text.
+    columns: Box<[Box<str>]>,
 }
 
 impl Exclusion {
-    /// Construct one exclusion constraint. Key order is semantic and preserved.
+    /// Construct one exclusion constraint. Key order is semantic and preserved;
+    /// the dependency columns are a set, so they are sorted and deduplicated.
     pub fn new(
         name: impl Into<Box<str>>,
         access_method: ExclusionAccessMethod,
         keys: Vec<ExclusionKey>,
+        columns: impl IntoIterator<Item = impl Into<Box<str>>>,
     ) -> Result<Self, IrError> {
+        let mut columns = boxed_strings(columns).into_vec();
+        columns.sort();
+        columns.dedup();
         Ok(Self {
             name: nonempty_name(name, "exclusion constraint")?,
             access_method,
             keys: keys.into_boxed_slice(),
+            columns: columns.into_boxed_slice(),
         })
     }
 
@@ -487,6 +500,12 @@ impl Exclusion {
     /// Compared keys in the order the constraint declares them.
     pub fn keys(&self) -> &[ExclusionKey] {
         &self.keys
+    }
+
+    /// Every column a write must touch to be capable of violating this
+    /// constraint, expression-referenced columns included.
+    pub fn columns(&self) -> &[Box<str>] {
+        &self.columns
     }
 }
 

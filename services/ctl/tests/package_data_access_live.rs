@@ -407,12 +407,11 @@ fn manifest_sha256(bytes: &[u8]) -> String {
 
 /// Stage one package root under the lineage fixture directory.
 ///
-/// The shipped generated evidence records a manifest hash that its manifest no
-/// longer has, because `ce7ffac4` edited every `packages/*/wamn.json` without
-/// regenerating `generated/platform-policy/data-access.json`. This helper
-/// copies the shipped root and writes the hash the generator writes today. A
-/// `bump` also moves the coordinate, which is how an author recovers from a
-/// stage that refused an already published version.
+/// This helper copies the shipped root and writes the hash of the staged
+/// manifest, because a `bump` rewrites that manifest and the evidence must
+/// follow the copy rather than the shipped file. A `bump` also moves the
+/// coordinate, which is how an author recovers from a stage that refused an
+/// already published version.
 fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> (PathBuf, String) {
     let root = lineage_fixture_directory().join(name);
     let _ = std::fs::remove_dir_all(&root);

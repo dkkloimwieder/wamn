@@ -17,8 +17,6 @@ const INTERFACE_VERSION: &str = "0.1.0";
 const PRIVATE_OPERATION: &str = "client-acme-receiving:quality/create-inspection@3.0.0";
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;
-const BASE_COMPONENT_DIGEST: &str =
-    "sha256:8057a076d949d21effa45dfff27812f995f5ac101c38f52ac6d66108f1b15b60";
 struct DirectOperation {
     wiring: &'static str,
     token: &'static str,
@@ -78,12 +76,23 @@ fn read_json(path: &Path) -> Value {
         .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
 }
 
+/// The base component digest, read from the ONE file that authors it.
+///
+/// wamn-10yt.50: this proof used to restate the same `sha256:` literal the
+/// overlay manifest pins, and the template carried a third copy. The template
+/// now leaves a placeholder, so the render is what makes it a declaration.
+fn base_digests() -> BTreeMap<Box<str>, Box<str>> {
+    wamn_ctl::dev::coordinator::authored_base_digests(&package_root())
+        .expect("the overlay manifest authors its base digest")
+}
+
 fn declaration() -> ComponentDeclaration {
     let path = publication_root()
         .join("components")
         .join("client_acme_receiving.json.in");
-    let mut document = read_json(&path);
-    document["scope"]["tenant-id"] = Value::String(TENANT.to_owned());
+    let document =
+        wamn_ctl::dev::coordinator::render_declaration_document(&path, TENANT, &base_digests())
+            .unwrap_or_else(|error| panic!("render {}: {error}", path.display()));
     serde_json::from_value(document)
         .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
 }
@@ -129,7 +138,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
             .then(|| ComponentOperationDependency {
                 package: "wamn_receiving".to_owned(),
                 version: "1.0.0".to_owned(),
-                digest: BASE_COMPONENT_DIGEST.to_owned(),
+                digest: base_digests()["wamn_receiving@1.0.0"].to_string(),
                 operation: BASE_RECORD_RECEIPT.to_owned(),
             })
             .into_iter()

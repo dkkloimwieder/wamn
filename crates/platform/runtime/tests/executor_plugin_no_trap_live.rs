@@ -389,6 +389,7 @@ fn postgres_guest() -> String {
       (case "unique-violation" string)
       (case "foreign-key-violation" string)
       (case "check-violation" string)
+      (case "exclusion-violation" string)
       (case "permission-denied")
       (case "query-error" (tuple string string))))
     (export "pg-error" (type $pg-error (eq $pg-error')))))

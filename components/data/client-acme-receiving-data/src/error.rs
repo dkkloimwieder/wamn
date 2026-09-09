@@ -124,6 +124,7 @@ fn classify(kind: StatementErrorKind) -> AccessErrorKind {
         | StatementErrorKind::UniqueViolation
         | StatementErrorKind::ForeignKeyViolation
         | StatementErrorKind::CheckViolation
+        | StatementErrorKind::ExclusionViolation
         | StatementErrorKind::QueryError
         | StatementErrorKind::InvalidResult => AccessErrorKind::InternalError,
     }

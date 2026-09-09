@@ -25,6 +25,11 @@ use super::environment::{
     write_dev_config,
 };
 
+/// The operator credential's file, written into `--root` by
+/// [`super::environment::provision_route`]. Named here so the summary can
+/// point at it: only the path is ever printed, never the token inside it.
+const ROUTE_CALLER_PAT_FILE: &str = "route-caller-pat.json";
+
 /// Inputs `wamn dev up` takes to mint one disposable environment.
 #[derive(Debug, Args)]
 pub struct DevUpArgs {
@@ -156,6 +161,16 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     println!("environment ready");
     println!("  gate:   http://{}/authoring", gate.bind());
     println!("  config: {}", config.display());
+    // Two PATs are minted and they are NOT interchangeable. This one is the
+    // operator credential a client presents on a published route, and it is
+    // not in dev.json at all; dev.json's gate_bearer_token is the
+    // management-author PAT, a different principal with a different project
+    // role. Without this line the operator path appeared once, buried in the
+    // provisioning log above (wamn-10yt.56).
+    println!(
+        "  pat:    {} (operator route-caller PAT, at .stringData.token)",
+        args.root.join(ROUTE_CALLER_PAT_FILE).display()
+    );
     println!();
     println!("run the loop from the repository root, in another terminal:");
     println!("  wamn dev --config {}{overlay} --tui", config.display());

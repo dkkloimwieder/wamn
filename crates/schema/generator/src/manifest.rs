@@ -345,6 +345,7 @@ pub enum AccessOperationErrorLiteral {
     UniqueViolation,
     ForeignKeyViolation,
     CheckViolation,
+    ExclusionViolation,
     Retry,
     Timeout,
     PermissionDenied,
@@ -361,6 +362,7 @@ impl AccessOperationErrorLiteral {
             Self::UniqueViolation => "unique_violation",
             Self::ForeignKeyViolation => "foreign_key_violation",
             Self::CheckViolation => "check_violation",
+            Self::ExclusionViolation => "exclusion_violation",
             Self::Retry => "retry",
             Self::Timeout => "timeout",
             Self::PermissionDenied => "permission_denied",
@@ -1577,6 +1579,7 @@ fn validate_access_error_details(
         Code::UniqueViolation,
         Code::ForeignKeyViolation,
         Code::CheckViolation,
+        Code::ExclusionViolation,
     ] {
         if details.contains_key(&constraint) {
             expected.insert(constraint);
@@ -1599,9 +1602,10 @@ fn validate_access_error_details(
             Code::InvalidInput | Code::IdempotencyConflict => (&[Key::Field], &[]),
             Code::NotFound => (&[Key::Field, Key::Id], &[]),
             Code::ConcurrencyConflict => (&[Key::ExpectedRowVersion, Key::ObservedRowVersion], &[]),
-            Code::UniqueViolation | Code::ForeignKeyViolation | Code::CheckViolation => {
-                (&[Key::Constraint], &[])
-            }
+            Code::UniqueViolation
+            | Code::ForeignKeyViolation
+            | Code::CheckViolation
+            | Code::ExclusionViolation => (&[Key::Constraint], &[]),
             Code::PermissionDenied => (&[Key::Operation], &[]),
             Code::Retry | Code::Timeout | Code::InternalError => (&[], &[]),
         };

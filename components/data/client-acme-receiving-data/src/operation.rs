@@ -273,12 +273,29 @@ fn parse_item<T: DeserializeOwned>(item: &EnvelopeItem) -> Result<T, OperationEr
     serde_json::from_value(item.body.clone()).map_err(|_| invalid_input("input"))
 }
 
+/// Parse any accepted UUID spelling and re-spell it lowercase-hyphenated.
+///
+/// Case is representation, so an input arrives in any spelling and reaches the
+/// database in one. The idempotency key hashes the re-spelled bytes, never the
+/// arriving bytes, so a caller whose retry infrastructure re-spells a UUID gets
+/// one command instead of an idempotency conflict.
 fn parse_uuid(value: &str, field: &'static str) -> Result<WamnUuid, AccessError> {
+    uuid::Uuid::parse_str(value)
+        .map(|parsed| WamnUuid(parsed.hyphenated().to_string()))
+        .map_err(|_| AccessError::invalid("input is not a UUID", field))
+}
+
+/// The base `record_receipt` result carries text this platform wrote, not a
+/// caller's representation choice, so a different spelling is a broken
+/// invariant rather than a spelling choice, and this one still refuses.
+fn base_result_uuid(value: &str) -> Result<WamnUuid, AccessError> {
     uuid::Uuid::parse_str(value)
         .ok()
         .filter(|parsed| parsed.hyphenated().to_string() == value)
         .map(|parsed| WamnUuid(parsed.hyphenated().to_string()))
-        .ok_or_else(|| AccessError::invalid("input is not a canonical UUID", field))
+        .ok_or_else(|| {
+            AccessError::internal("base record_receipt returned a noncanonical purchase_order_id")
+        })
 }
 
 fn parse_int64(value: &str, field: &'static str) -> Result<i64, AccessError> {
@@ -783,7 +800,7 @@ pub async fn receiving_record_receipt_result(input: &str) -> Result<String, Acce
                         )
                     })?
                     .to_owned();
-                let result = match parse_uuid(&purchase_order_id, "purchase_order_id") {
+                let result = match base_result_uuid(&purchase_order_id) {
                     Ok(id) => {
                         async {
                             let mut transaction = connection.begin().await.map_err(|source| {
@@ -817,9 +834,7 @@ pub async fn receiving_record_receipt_result(input: &str) -> Result<String, Acce
                         }
                         .await
                     }
-                    Err(_) => Err(AccessError::internal(
-                        "base record_receipt returned a noncanonical purchase_order_id",
-                    )),
+                    Err(error) => Err(error),
                 };
                 match result {
                     Ok(row) => {
@@ -893,9 +908,9 @@ mod tests {
     }
 
     #[test]
-    fn canonical_wire_scalars_refuse_noncanonical_spellings() {
+    fn noncanonical_int64_and_non_uuid_wire_scalars_refuse() {
         assert!(parse_uuid(ID, "id").is_ok());
-        assert!(parse_uuid(&ID.to_uppercase(), "id").is_err());
+        assert!(parse_uuid("not-a-uuid", "id").is_err());
         assert_eq!(parse_int64("-42", "row_version").unwrap(), -42);
         for value in ["", "01", "-0", "+1", "1.0"] {
             assert_eq!(
@@ -903,6 +918,46 @@ mod tests {
                 AccessErrorKind::InvalidInput
             );
         }
+    }
+
+    /// This overlay mints no idempotency key of its own; its command identity is
+    /// the canonical parameter text ingest hands to SQL, which the base
+    /// `record_receipt` key hashes. Two case-spellings of one UUID must
+    /// therefore arrive as one command rather than as an `idempotency_conflict`.
+    #[test]
+    fn two_spellings_of_one_uuid_make_one_command() {
+        let send = |receipt_id: &str| {
+            let parsed: ApproveInspectionInput = serde_json::from_value(serde_json::json!({
+                "receipt_id": receipt_id,
+                "expected_row_version": "1",
+            }))
+            .expect("the approve_inspection contract accepts either spelling");
+            parse_uuid(&parsed.receipt_id, "receipt_id")
+                .expect("either spelling of one UUID is a UUID")
+        };
+        let first = send(ID);
+        let second = send(&ID.to_uppercase());
+        assert_eq!(first, second);
+        assert_eq!(second.0, ID);
+    }
+
+    #[test]
+    fn a_noncanonical_base_purchase_order_id_still_refuses_internally() {
+        let base = serde_json::json!([{
+            "request_id": "r1",
+            "value": {"purchase_order_id": ID.to_uppercase()}
+        }]);
+        let projected = futures_executor::block_on(receiving_record_receipt_result(
+            &serde_json::to_string(&base).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&projected).unwrap(),
+            serde_json::json!([{
+                "request_id": "r1",
+                "error": {"code": "internal_error", "detail": {}}
+            }])
+        );
     }
 
     #[test]

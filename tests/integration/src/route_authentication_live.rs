@@ -2383,11 +2383,18 @@ fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyCompo
             let source = journey_publication_root(package)
                 .join("components")
                 .join(format!("{}.json.in", package.component));
-            let mut declaration: Value = serde_json::from_slice(
-                &std::fs::read(&source).with_context(|| format!("read {}", source.display()))?,
+            // The template leaves its base dependency digest as a placeholder
+            // that only the package manifest authors (wamn-10yt.50), so the
+            // render -- not a tenant substitution -- makes it a declaration.
+            let package_root = journey_package_root(package);
+            let base_digests = wamn_ctl::dev::coordinator::authored_base_digests(&package_root)
+                .with_context(|| format!("read {} base pins", package_root.display()))?;
+            let declaration = wamn_ctl::dev::coordinator::render_declaration_document(
+                &source,
+                TENANT,
+                &base_digests,
             )
-            .with_context(|| format!("parse {}", source.display()))?;
-            declaration["scope"]["tenant-id"] = Value::String(TENANT.to_owned());
+            .with_context(|| format!("render {}", source.display()))?;
             let destination = output.join(format!("{}.json", package.component));
             std::fs::write(&destination, serde_json::to_vec(&declaration)?)
                 .with_context(|| format!("write {}", destination.display()))?;
