@@ -207,8 +207,9 @@ Hosts read tenant operation permissions fresh for every new request.
 They accept public signing keys only within the configured issuer's 300-second evidence window.
 Private signing keys stay with the separate `wamn-identity` authority and its system database.
 The fresh-only restriction belongs to each registered operation and survives nested calls.
-Session routes remain disabled until the two-host and fresh-only proofs pass.
-This foundation adds keys and JWKS only, not a session admission path.
+Production session routes remain disabled until the two-host and fresh-only proofs pass.
+The owner permits session routes in disposable deployments for those proofs.
+`wamn-ctc8.15.3` owns host session admission, and `wamn-ctc8.15.4` owns fresh-only enforcement.
 
 Per-tenant roles imply pools per credential. Connection multiplication is the
 pooler trigger, not an alternative identity model.
@@ -233,6 +234,8 @@ pooler trigger, not an alternative identity model.
 ## Proof and delivery
 
 - All package, WIT, wire and schema versions remain `0.1` through MVP.
+- The release-manifest integer format and OCI media type remain `v1` while the project is greenfield.
+  Changes update the single current format without version bumps or compatibility machinery.
 - The gate registry is exhaustive for living gates. Every entry resolves to a
   live manifest or recipe; retired surfaces keep no corpse coverage. Commands,
   artifacts and dependencies derive from those sources, not duplicated registry

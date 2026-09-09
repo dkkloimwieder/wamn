@@ -317,7 +317,7 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
                 "wiring-version": WIRING_VERSION,
                 "definition-hash": attachment_definition_hash,
                 "definition": attachment_definition,
-                "auth-policy": {"mode": "none"}
+                "auth-policy": {"modes": ["none"]}
             }
         },
         "registrations": {},

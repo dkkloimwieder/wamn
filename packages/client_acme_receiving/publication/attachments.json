@@ -25,7 +25,7 @@
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {"modes": ["pat"]},
     "registered-operation": "client-acme-receiving:purchase-order/get@3.0.0"
   },
   "client-acme-receiving-purchase-order-update-http": {
@@ -70,7 +70,7 @@
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {"modes": ["pat"]},
     "registered-operation": "client-acme-receiving:purchase-order/update@3.0.0"
   },
   "client-acme-receiving-receiving-record-receipt-http": {
@@ -124,7 +124,7 @@
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {"modes": ["pat"]},
     "registered-operation": "client-acme-receiving:receiving/record-receipt@3.0.0"
   },
   "client-acme-receiving-quality-load-purchase-order-detail-http": {
@@ -151,7 +151,7 @@
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {"modes": ["pat"]},
     "registered-operation": "client-acme-receiving:quality/load-purchase-order-detail@3.0.0"
   },
   "client-acme-receiving-quality-approve-inspection-http": {
@@ -179,7 +179,7 @@
         }
       }
     },
-    "auth-policy": {"mode": "pat"},
+    "auth-policy": {"modes": ["pat"]},
     "registered-operation": "client-acme-receiving:quality/approve-inspection@3.0.0"
   }
 }

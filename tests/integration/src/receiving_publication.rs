@@ -173,7 +173,10 @@ fn package_owned_inputs_declare_the_exact_eight_route_closure() {
             attachment.registered_operation.as_deref(),
             Some(operation.token)
         );
-        assert_eq!(attachment.auth_policy, serde_json::json!({"mode": "pat"}));
+        assert_eq!(
+            attachment.auth_policy,
+            serde_json::json!({"modes": ["pat"]})
+        );
         assert_eq!(attachment.definition["id"], operation.attachment);
         assert_eq!(attachment.definition["kind"], "http");
         assert!(

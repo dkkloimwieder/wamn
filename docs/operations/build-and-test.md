@@ -420,7 +420,7 @@ trap - EXIT
 
 This proof applies both package migration streams to one fresh project
 database, admits the exact built components, authors every package wiring, and
-mints the same format-3 closure twice. It requires byte-identical canonical
+mints the same format-1 closure twice. It requires byte-identical canonical
 bytes and digest on replay, one stored snapshot, exact component dependencies
 and event ownership, plus typed refusals for manifest-hash drift and an
 unsatisfied generated package weld. The two databases are disposable siblings
@@ -1279,6 +1279,60 @@ It retains image identities, Job verdicts, Pod states, and public key receipts.
 It removes only its own cluster and temporary credentials.
 The two-host session-token proof remains mandatory in `wamn-ctc8.15.3`.
 Public-key cache tests do not establish host admission.
+
+### `[SESSION-ROUTE-LIVE]` scoped session permissions
+
+This local proof uses production route authentication with HTTPS keys and the provisioned `HttpAdmitter` credential.
+It measures one tenant permission query per warm request through PostgreSQL statistics.
+It covers role unions, tenant isolation, next-request permission removal, and evidence expiry during a blocked permission read.
+It does not replace the deployed two-host or nested fresh-only proofs.
+
+Use a fresh disposable PostgreSQL 18 server with the statistics extension loaded:
+
+```bash
+docker run -d --name wamn-session-route-pg -e POSTGRES_PASSWORD=probe \
+  -p 127.0.0.1:5440:5432 postgres:18 \
+  -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
+psql postgres://postgres:probe@127.0.0.1:5440/postgres -Atqc 'select 1'
+WAMN_SESSION_ROUTE_PG18_URL=postgres://postgres:probe@127.0.0.1:5440/postgres \
+  cargo test --locked --offline -p wamn-runtime --features test-util \
+  --test session_route_authentication -- --include-ignored --nocapture --test-threads=1
+docker rm -f -v wamn-session-route-pg
+```
+
+Wait for the connection query to succeed before starting the test.
+The test refuses a populated server and requires its environment variable.
+The final command removes only the named test database and its temporary volume.
+
+### `[HOST-SESSION-HTTP]` sessions on two hosts
+
+This gate covers the two-host proof in `wamn-ctc8.15.3`.
+It sends the same session token to two distinct host processes and compares each complete response with the expected purchase order.
+After both hosts accept the token, the runner removes its signing key.
+Both hosts must refuse it after the 300-second public-key window, while the token itself remains valid.
+The runner repeats the proof with JWKS unreachable and new host processes.
+
+The runner also traces a session call through the actual overlay and base components.
+Both invocations must retain the original human identity and session credential kind.
+This call uses disposable release 3 while the two hosts remain on release 2.
+Both releases use manifest format 1.
+
+Set `WAMN_SESSION_PROOF_EVIDENCE` to a new directory under the main checkout's `docs/perf/2026.09/ctc8-15-3-host-sessions/` directory.
+Run the gate from a clean source worktree:
+
+```bash
+tools/receiving-cluster-journey-run --session-host-proof --apply \
+  --evidence-dir "$WAMN_SESSION_PROOF_EVIDENCE"
+```
+
+Create the parent directory first.
+Use a new evidence directory for each run.
+Keep that directory outside the source worktree during the run.
+The runner builds the standard `host`, `gates`, and `identity` Dockerfile stages.
+It retains the host identities, image digests, Job results, and key-removal receipts.
+The private token fixture stays in disposable storage, not in the retained evidence.
+The runner removes its own cluster, database, images, and temporary credentials.
+Normal package routes remain PAT-only until this proof and the fresh-only proof pass.
 
 ### Identity foundation rollout
 

@@ -1,12 +1,13 @@
-//! Digest and closed-shape proofs for serving-manifest format 3.
+//! Digest and closed-shape proofs for serving-manifest format 1.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{
-    ArtifactHash, AttachmentKind, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
-    ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
-    ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
+    ArtifactHash, AttachmentAuthPolicy, AttachmentKind, CatalogIdentityError, DefinitionHash,
+    EffectiveReleaseId, PackageCoordinate, ServingAttachment, ServingComponent,
+    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRegistrationInput,
+    ServingRelease, ServingWiring, parse_attachment_auth_policy,
 };
 
 mod mint_vector {
@@ -109,7 +110,7 @@ fn manifest() -> ServingManifest {
                     "kind": "http",
                     "run-deadline-ms": 30000
                 }),
-                auth_policy: json!({"mode": "pat"}),
+                auth_policy: json!({"modes": ["pat"]}),
                 registered_operation: Some("client-acme-receiving:purchase-order/get@3.0.0".into()),
             },
         )]),
@@ -126,7 +127,7 @@ fn manifest() -> ServingManifest {
             },
         )]),
     )
-    .expect("the format-three fixture is valid")
+    .expect("the format-one fixture is valid")
 }
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -141,19 +142,103 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_three_preimage_and_digest_are_pinned() {
+fn the_format_one_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), mint_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), mint_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(mint_vector::CANONICAL_BYTES)
-        .expect("the v3 vector is admitted by the reader");
+        .expect("the v1 vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), mint_vector::DIGEST);
 
     let raw = <sha2::Sha256 as sha2::Digest>::digest(mint_vector::CANONICAL_BYTES);
     let hex: String = raw.iter().map(|byte| format!("{byte:02x}")).collect();
     assert_eq!(digest.as_str(), format!("sha256:{hex}"));
+}
+
+#[test]
+fn authentication_modes_are_shared_and_bound_into_canonical_bytes() {
+    let mut authenticated_digests = BTreeSet::new();
+    for (modes, expected, allows_pat, allows_session) in [
+        (json!(["none"]), AttachmentAuthPolicy::None, false, false),
+        (json!(["pat"]), AttachmentAuthPolicy::Pat, true, false),
+        (
+            json!(["session"]),
+            AttachmentAuthPolicy::Session,
+            false,
+            true,
+        ),
+        (
+            json!(["pat", "session"]),
+            AttachmentAuthPolicy::PatAndSession,
+            true,
+            true,
+        ),
+    ] {
+        let policy = json!({"modes": modes});
+        let parsed = parse_attachment_auth_policy(&policy).expect("supported modes");
+        assert_eq!(parsed, expected);
+        assert_eq!(parsed.allows_pat(), allows_pat);
+        assert_eq!(parsed.allows_session(), allows_session);
+
+        let mut candidate = manifest();
+        let attachment = candidate.attachments.get_mut("orders-http").unwrap();
+        attachment.auth_policy = policy.clone();
+        if parsed == AttachmentAuthPolicy::None {
+            attachment.registered_operation = None;
+        }
+        let bytes = candidate.canonical_bytes();
+        let (admitted, digest) = ServingManifest::from_canonical_bytes(&bytes)
+            .expect("canonical policy survives the release reader");
+        assert_eq!(admitted.attachments["orders-http"].auth_policy, policy);
+        assert_eq!(admitted.canonical_bytes(), bytes);
+        if parsed != AttachmentAuthPolicy::None {
+            assert!(authenticated_digests.insert(digest.as_str().to_owned()));
+        }
+    }
+}
+
+#[test]
+fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
+    for policy in [
+        json!(null),
+        json!([]),
+        json!({}),
+        json!({"mode": "pat"}),
+        json!({"modes": null}),
+        json!({"modes": "pat"}),
+        json!({"modes": []}),
+        json!({"modes": [null]}),
+        json!({"modes": [1]}),
+        json!({"modes": [""]}),
+        json!({"modes": ["unknown"]}),
+        json!({"modes": ["PAT"]}),
+        json!({"modes": ["pat", "pat"]}),
+        json!({"modes": ["session", "session"]}),
+        json!({"modes": ["none", "none"]}),
+        json!({"modes": ["none", "pat"]}),
+        json!({"modes": ["session", "none"]}),
+        json!({"modes": ["session", "pat"]}),
+        json!({"modes": ["pat", "unknown"]}),
+        json!({"modes": ["pat", "session", "session"]}),
+        json!({"modes": ["pat"], "mode": "pat"}),
+        json!({"modes": ["pat"], "unknown": true}),
+    ] {
+        assert_eq!(parse_attachment_auth_policy(&policy), None);
+        let mut candidate = manifest();
+        candidate
+            .attachments
+            .get_mut("orders-http")
+            .unwrap()
+            .auth_policy = policy;
+        assert_eq!(
+            ServingManifest::from_canonical_bytes(&candidate.canonical_bytes()),
+            Err(CatalogIdentityError::InvalidAttachmentAuthPolicy {
+                attachment_id: "orders-http".into(),
+            })
+        );
+    }
 }
 
 #[test]
@@ -271,7 +356,7 @@ fn every_manifest_field_is_pinned() {
     ] {
         assert!(
             !text.contains(retired),
-            "retired key {retired} re-entered v3"
+            "retired key {retired} re-entered v1"
         );
     }
 }

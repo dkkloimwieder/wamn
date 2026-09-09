@@ -159,7 +159,10 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
             attachment.registered_operation.as_deref(),
             Some(operation.token)
         );
-        assert_eq!(attachment.auth_policy, serde_json::json!({"mode": "pat"}));
+        assert_eq!(
+            attachment.auth_policy,
+            serde_json::json!({"modes": ["pat"]})
+        );
         assert_eq!(attachment.definition["id"], operation.attachment);
         assert_eq!(attachment.definition["kind"], "http");
         assert!(

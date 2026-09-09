@@ -98,7 +98,7 @@ SELECT selected.version, \
 /// The immutable-version snapshot behind a queued delivery. Unlike
 /// [`ACTIVE_WIRING_SQL`], this deliberately does not consult the mutable
 /// activation pointer: admission already froze the exact wiring version.
-/// Exact package membership and the verified format-3 snapshot keep that
+/// Exact package membership and the verified format-1 snapshot keep that
 /// historical version scoped to the carried tenant/package/environment release.
 pub const RELEASE_WIRING_SQL: &str = "\
 WITH release_scope AS MATERIALIZED ( \
@@ -500,7 +500,7 @@ impl WamnPostgres {
     ///
     /// This path is intentionally independent of `wiring_activation`: a flip
     /// after admission changes new direct deliveries, not history already
-    /// accepted by the queue. The exact format-3 release snapshot scopes the
+    /// accepted by the queue. The exact format-1 release snapshot scopes the
     /// version to the carried environment and release identity.
     #[expect(
         clippy::too_many_arguments,

@@ -32,7 +32,7 @@ use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
 use wamn_runtime::plugins::connection_http::{
     self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
 };
-use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
+use wamn_runtime::plugins::flow_http_routing::{AuthenticatedCaller, CredentialKind};
 use wamn_runtime::plugins::wamn_blobstore::plugin as wamn_blobstore_plugin;
 use wamn_runtime::plugins::wamn_blobstore::plugin::{WAMN_BLOBSTORE_ID, WamnBlobstore};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
@@ -411,10 +411,18 @@ fn component_invocation_span(
         wamn.node_id = %call.node,
         wamn.operation = %call.operation,
         wamn.caller_principal_id = tracing::field::Empty,
+        wamn.caller_credential_kind = tracing::field::Empty,
         wamn.input_port = tracing::field::Empty,
     );
     if let Some(caller) = request.caller.as_ref() {
         span.record("wamn.caller_principal_id", caller.principal_id());
+        span.record(
+            "wamn.caller_credential_kind",
+            match caller.credential_kind() {
+                CredentialKind::Pat => "pat",
+                CredentialKind::Session => "session",
+            },
+        );
     }
     if let Some(input_port) = call.input_port.as_deref() {
         span.record("wamn.input_port", input_port);
@@ -1870,9 +1878,17 @@ impl NestedOperationHost {
             wamn.node_id = %context.node_id,
             wamn.operation = %dependency.operation,
             wamn.caller_principal_id = tracing::field::Empty,
+            wamn.caller_credential_kind = tracing::field::Empty,
         );
         if let Some(caller) = bound.caller.as_ref() {
             span.record("wamn.caller_principal_id", caller.principal_id());
+            span.record(
+                "wamn.caller_credential_kind",
+                match caller.credential_kind() {
+                    CredentialKind::Pat => "pat",
+                    CredentialKind::Session => "session",
+                },
+            );
         }
         child
             .run(

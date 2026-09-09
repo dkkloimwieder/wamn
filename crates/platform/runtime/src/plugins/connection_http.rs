@@ -3,7 +3,7 @@
 //! The host binds the exact wiring, node position, occurrence and component
 //! digest before invoking a pooled component. The guest names only a store
 //! alias; the database must resolve that alias at the component grain and the
-//! mounted format-3 manifest must contain both the exact wiring version/hash and
+//! mounted format-1 manifest must contain both the exact wiring version/hash and
 //! component tuple. No run, plan, frame or effect-ledger fact participates.
 
 use std::collections::{HashMap, HashSet};
@@ -409,7 +409,7 @@ fn require_direct_transport(
 }
 
 /// Require the exact host-bound component and immutable wiring version/hash to
-/// be members of the digest-verified format-3 release manifest.
+/// be members of the digest-verified format-1 release manifest.
 ///
 /// Shared with the blobstore capability rather than reimplemented there: two
 /// spellings of "does this component belong to this release" could disagree,

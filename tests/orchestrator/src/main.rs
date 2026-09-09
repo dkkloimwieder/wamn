@@ -11,7 +11,8 @@
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
 use wamn_proof_integration::{
-    dashproof, identity_keys_proof, identity_session_proof, membershipproof, readerbench, retention,
+    dashproof, host_session_proof, identity_keys_proof, identity_session_proof, membershipproof,
+    readerbench, retention,
 };
 use wamn_proof_system::traceproof;
 
@@ -32,6 +33,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Prove session acceptance and removed-key refusal on two deployed hosts.
+    #[command(name = "host-session-proof")]
+    HostSessionProof(host_session_proof::HostSessionProofArgs),
     /// Prove public JWKS and cache evidence through deployed identity HTTPS.
     #[command(name = "identity-jwks")]
     IdentityJwks(identity_keys_proof::IdentityKeysProofArgs),
@@ -71,6 +75,7 @@ async fn async_main() -> anyhow::Result<()> {
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = match cli.command {
+        Command::HostSessionProof(args) => host_session_proof::run(args).await,
         Command::IdentityJwks(args) => identity_keys_proof::run(args).await,
         Command::IdentitySession(args) => identity_session_proof::run(args).await,
         Command::IdentitySessionFixture(args) => identity_session_proof::fixture(args).await,

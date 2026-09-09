@@ -780,7 +780,7 @@ mod tests {
             definition: json!({
                 "route": {"method": "POST", "path": "/purchase-orders/get"}
             }),
-            auth_policy: json!({"mode": "pat"}),
+            auth_policy: json!({"modes": ["pat"]}),
             registered_operation: Some("receiving@1.0.0::purchase-order/get".to_owned()),
         };
         ServingManifest {
