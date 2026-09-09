@@ -1,0 +1,88 @@
+--- before/measure/host-base.yaml
++++ after/measure/host-base.yaml
+@@ -14,7 +14,7 @@
+ # half of it switched off:
+ #
+ #   helm upgrade --install -n wamn-system wamn-host \
+-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
++#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+ #     -f deploy/platform/values-host-default.yaml
+ #   kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
+ #
+@@ -31,7 +31,7 @@
+ #
+ # WHY THIS ENVIRONMENT'S HOST NAMESPACE EQUALS THE OPERATOR'S RELEASE NAMESPACE.
+ # Giving the host tier a namespace of its own is not free at the pinned chart
+-# (vanilla rev 5c4ec4a3 = chart 2.8.0), and both failure modes are in the chart
++# (upstream rev 68ebece9 = chart 2.9.0), and both failure modes are in the chart
+ # source rather than in anything we wrote:
+ #   * templates/certificates.yaml:24 looks the CA up in `.Release.Namespace`
+ #     only. A host release in its own namespace, at the chart defaults
+@@ -78,6 +78,16 @@
+     dataUrl: nats://nats.wamn-system.svc.cluster.local:4222
+ 
+ runtime:
++  # Seven registered plugins produce a 61s shutdown envelope at native defaults.
++  # See deploy/README.md for the formula and timeout override requirements.
++  terminationGracePeriodSeconds: 70
++  drainDelaySeconds: 5
++  natsConnectTimeoutSeconds: 60
++  probes:
++    endpoint:
++      enabled: true
++      port: 8081
++      startupFailureThreshold: 60
+   # -- THE HOST IMAGE CARRIAGE. `runtime.image` is the chart-wide host image
+   # (chart values.yaml:285-289). `hostGroups[].image` is only an OPTIONAL
+   # per-group override in which any of registry/repository/tag set there win and
+@@ -104,14 +114,10 @@
+       # deploy/infra/values-wamn.yaml, and the WorkloadDeployments'
+       # `metadata.namespace` + `spec.template.spec.environment`.
+       namespace: warehouse-eu-3
+-      # -- Native warm-capacity floor (wamn-0h0g.10.8). At chart 2.8.0,
+-      # `http.enabled: true` renders the host HTTP listener, Service port, and
+-      # TCP readiness probe, so it marks this as a synchronous-serving group:
+-      # keep the chart's native replica count at least 1. Three is the MVP's
+-      # capacity choice, not an autoscaler. A future background-only group may
+-      # pair `http.enabled: false` with zero replicas; no controller, idle-down,
+-      # or cold-start path is implied here. Request admission remains the
+-      # executor's existing `/readyz` contract in executor.yaml.
++      # Keep at least one replica for synchronous HTTP serving. Three remains
++      # this profile's capacity choice (wamn-0h0g.10.8). Native /readyz and /livez
++      # use port 8081 independently of the workload HTTP listener on port 80.
++      # Readiness does not prove route-aware traffic removal or remove rebind outages.
+       replicas: 0
+       service:
+         type: ClusterIP
+@@ -126,7 +132,7 @@
+       # actual credential material lives in K8s Secrets). The chart passes each
+       # `hostGroups[].env` entry through verbatim
+       # (templates/runtime/deployment.yaml `{{- with .env }}{{ toYaml . }}` at
+-      # the pinned fork rev), so `valueFrom` needs no chart change.
++      # the pinned upstream rev), so `valueFrom` needs no chart change.
+       # `wamn-host-db` is host-tier config with this release's lifecycle —
+       # deliberately NOT the runner's per-project `wamn-runner-db`; see
+       # deploy/platform/host-db.example.yaml. APPLY THE SECRET BEFORE THIS
+@@ -173,7 +179,7 @@
+           readOnly: true
+       # [wamn-0h0g.15.155] Verify the in-cluster registry instead of dropping to
+       # plain HTTP. This replaces `extraArgs: [--allow-insecure-registries]`,
+-      # which chart 2.8.0 argues against in exactly these terms (chart
++      # which chart 2.9.0 argues against in exactly these terms (chart
+       # values.yaml:270-272): the flag "does not relax verification but replaces
+       # it: every registry drops to plain HTTP, so nothing is verified and
+       # credentials travel in the clear".
+@@ -217,8 +223,10 @@
+           # A real deployment sets its own in its own values file; nothing here
+           # decides what a production host is allowed to use.
+           cpu: "6"
+-        # Native v2.8 Wasmtime controls. The chart removes these two keys from
+-        # the Kubernetes resources block and renders WASH_DEFAULT_HEAP_MEMORY /
+-        # WASH_CORE_INSTANCES; limits.memory becomes WASH_HOST_MAX_GUEST_MEMORY.
++        # Native v2.9 controls are removed from Kubernetes resources and
++        # rendered as WASH_* environment variables. The current 6-core limit
++        # gives a native automatic start ceiling of 4; name that value explicitly.
+         defaultHeapMemory: "256MiB"
+         coreInstances: 512
++        guestMemoryMode: count
++        maxConcurrentStarts: 4

@@ -1,0 +1,55 @@
+--- before/tools/journey-host-values-proof
++++ after/tools/journey-host-values-proof
+@@ -7,8 +7,8 @@
+ #
+ # Three properties, each of which has caught a real defect:
+ #
+-#   1. BYTE IDENTITY. Receiving renders exactly the bytes it rendered before
+-#      the block was un-fused and lifted. Both arms -- the normal one and
++#   1. BYTE IDENTITY. Receiving renders the reviewed template bytes in
++#      both arms -- the normal one and
+ #      --measure-startup, which differ only in replica count.
+ #
+ #   2. SECOND CONSUMER. WMS renders through the same function with a different
+@@ -81,20 +81,25 @@
+ grep -q 'replicas: 3' "$work/normal/host-overlay.yaml"; check "normal arm renders 3" $?
+ grep -q 'replicas: 0' "$work/measure/host-overlay.yaml"; check "measure arm renders 0" $?
+ 
+-# The bytes themselves, pinned against what this block rendered BEFORE it was
+-# un-fused and lifted. Measured from the pre-lift code extracted verbatim from
+-# main. These are not decoration: three separate refactors of this block have
++# These byte pins began with the output from before this block was lifted,
++# measured from the original code extracted verbatim from main. Three separate
++# refactors of this block have
+ # been checked against them, and each time the question that mattered was
+ # whether the output changed, not whether the code looked equivalent.
+ #
+ # A legitimate template change moves these. Re-baseline DELIBERATELY -- render,
+ # read the diff, and only then update the digest. On failure the rendered file
+ # is left in place and named, so the diff is available.
++# 2026-09-09, wamn-0h0g.2.7.5: re-rendered dfa1c318 with the unchanged
++# renderer and verified all four old pins, then reviewed the 2.9 template diff.
++# These pins include native probes, shutdown budgets, count-mode memory, and
++# start concurrency. Before/after bytes and diffs:
++# docs/perf/2026.09/wasmcloud-2-9-cutover/live-harness-fix-001/
+ declare -A pinned=(
+-  [normal/host-base.yaml]=de5f914bcd485c8a223a8b32e2a9cea41947a1905365de747f22362f01104d3e
+-  [normal/host-overlay.yaml]=bbca90c7a0a3d1a44ccba9650f8c5ab68b8cfe61079b9ec950a6f599e95953d9
+-  [measure/host-base.yaml]=abe22dc41bd0fc9dae257baed2dd6db0e0eec432473330facdcc13050c908977
+-  [measure/host-overlay.yaml]=36c40a94f2b6938f5c5b581620ef3d217065e3cadf4f138934727f6942b41abf
++  [normal/host-base.yaml]=3e307dd74963248a1458d667962f4cfd6fdbe5e262d62d2548555b0ee12dbc1e
++  [normal/host-overlay.yaml]=2f40eb4093694d67c115a2ce7f43ac57491dc6f947d2d3f81876e91e67be9ed5
++  [measure/host-base.yaml]=0cb3ee37ac9b4f191652d348c1e2b20bf0d4ea5b1bc6884dae22e8dda3597beb
++  [measure/host-overlay.yaml]=51dc2c85b40fb169dfb2e856aa308c1a4b3a1b7b030802289321b468a76ed85e
+ )
+ keep=$(mktemp -d)
+ for rel in "${!pinned[@]}"; do
+@@ -104,7 +109,7 @@
+     cp "$work/$rel" "$keep/$rel"
+     echo "        rendered output kept at $keep/$rel" >&2
+   fi
+-  [[ "$actual" == "${pinned[$rel]}" ]]; check "bytes unchanged since the pre-lift block: $rel" $?
++  [[ "$actual" == "${pinned[$rel]}" ]]; check "bytes match reviewed template baseline: $rel" $?
+ done
+ ! grep -q 'acme--receiving--dev' "$work/normal/host-overlay.yaml"
+ check "every derived secret anchor fired (no template name survives)" $?

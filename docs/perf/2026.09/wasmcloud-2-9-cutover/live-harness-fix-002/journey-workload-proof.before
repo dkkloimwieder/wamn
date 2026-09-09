@@ -34,12 +34,8 @@ build_spec() { # <array-name> <template> <tenant> <project> <schema> <environmen
 echo "1. bytes, and both applications"
 build_spec rcv "$TEMPLATE" receiving-route-auth receiving receiving dev default
 render_workload_manifest rcv "$work/rcv.yaml"; check "the Receiving render succeeds" $?
-# 2026-09-09, wamn-0h0g.2.7.5: the unchanged renderer reproduces the old
-# dfa1c318 pin. The reviewed 2.9 delta changes only the wash publication
-# instructions; parsed Kubernetes objects are unchanged. Before/after evidence:
-# docs/perf/2026.09/wasmcloud-2-9-cutover/live-harness-fix-002/
-[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == c58b4e3bc663e16ef755db0edb49a8d35387a0d765476e0ecd2c25ef17edc74f ]]
-check "bytes match reviewed template baseline" $?
+[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == 54b44e025edde11d3f5d1462d068d7c4d1163f9baf560846d997dccc8df32c6e ]]
+check "bytes unchanged since the pre-lift block" $?
 build_spec wms "$TEMPLATE" wms-route-auth wms wms dev wms-catalog
 render_workload_manifest wms "$work/wms.yaml"; check "a second application renders" $?
 ! diff -q "$work/rcv.yaml" "$work/wms.yaml" >/dev/null

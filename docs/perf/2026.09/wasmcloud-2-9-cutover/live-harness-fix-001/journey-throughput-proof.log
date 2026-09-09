@@ -1,0 +1,35 @@
+1. the route layer: oha, POST, the PAT through Kubernetes expansion, no shell
+  ok    renders
+  ok    a one-shot Job with a deadline of three durations plus ninety seconds
+  ok    the digest-pinned image, the concurrency, duration, JSON output, headers, body and URL are the spec's
+  ok    the PAT comes from the named Secret and appears nowhere else
+  ok    no credential-shaped literal in the HTTP Job
+2. the no-DB layer: GET, unauthenticated, no Secret at all
+  ok    renders
+  ok    GET, no body, no env, the spec's concurrency and URL
+3. the direct-PostgreSQL layer: pgbench under sh, the statement written from a quoted heredoc
+  ok    renders
+  ok    the pinned image, the password env, clients, capped threads, sampling rate, target and statement
+4. THE PGBENCH SCRIPT RUNS -- broken shell here is a forty-minute failure
+  ok    the rendered script exits 0 against the stub
+  ok    the summary, then the marker, then the log lines, in that order
+  ok    the marker precedes the log
+  ok    pgbench received the sampling rate as its own argument
+5. refusals, each naming the cause
+  ok    a route spec without its Secret is refused by name
+  ok    an unknown layer is refused
+  ok    a non-numeric concurrency is refused
+  ok    a tag where a digest is required is refused
+  ok    a spec without a layer is refused
+
+6. fresh-auth sweeps keep distinct credentials and alternate their order
+  ok    exactly three sweeps per credential
+  ok    scheduled sweep 0
+  ok    scheduled sweep 1
+  ok    scheduled sweep 2
+  ok    scheduled sweep 3
+  ok    scheduled sweep 4
+  ok    scheduled sweep 5
+  ok    a failed sweep stops the sequence with its exit code
+  ok    the scheduler preserves errexit inside the real sweep
+journey-throughput-proof: all checks passed

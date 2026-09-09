@@ -1,0 +1,224 @@
+# Helm values for the application-neutral HOST TIER of ONE environment — the
+# MVP environment, whose namespace is `wamn-system`. This base intentionally
+# carries no application identity, PAT authority, or release coordinate; those
+# belong to an application/release overlay.
+#
+# ONE HELM RELEASE PER ENVIRONMENT (ruling wamn-0h0g.13.50, bead
+# wamn-0h0g.15.15): the runtime revision is environment-singular, so each
+# environment pins its own host image in its own release. MVP has exactly one
+# environment, so the shape costs nothing to run today — but it is not free for
+# the second one either; see the namespace note below before copying this file.
+#
+# This is the SAME chart at the SAME pinned version as the cluster-singleton
+# operator release (deploy/infra/values-wamn.yaml) — with every cluster-singular
+# half of it switched off:
+#
+#   helm upgrade --install -n wamn-system wamn-host \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.8.0 \
+#     -f deploy/platform/values-host-default.yaml
+#   kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
+#
+# ORDER MATTERS, TWICE:
+#   * The operator release installs the CRDs and the control-plane NATS these
+#     hosts heartbeat into. Install it first.
+#   * On a cluster that predates this split, `hostgroup-default` is still owned
+#     by the `wamn` release. Upgrade the operator release FIRST — its
+#     `runtime.hostGroups: []` deletes that object — and only then install this
+#     one, or Helm refuses with an ownership-metadata error on the identically
+#     named Deployment, Service and NetworkPolicy (all three are named after the
+#     host group, not the release). A fresh namespace has nothing to collide
+#     with, which is how the RC proves this (wamn-0h0g.15.25).
+#
+# WHY THIS ENVIRONMENT'S HOST NAMESPACE EQUALS THE OPERATOR'S RELEASE NAMESPACE.
+# Giving the host tier a namespace of its own is not free at the pinned chart
+# (vanilla rev 5c4ec4a3 = chart 2.8.0), and both failure modes are in the chart
+# source rather than in anything we wrote:
+#   * templates/certificates.yaml:24 looks the CA up in `.Release.Namespace`
+#     only. A host release in its own namespace, at the chart defaults
+#     `global.tls.enabled: true` + `global.certificates.generate: true`, finds no
+#     CA there and MINTS A FRESH ONE — the host then presents a client
+#     certificate the operator's NATS does not trust, and never registers.
+#   * With `generate: false` instead, nothing renders `wasmcloud-runtime-tls` or
+#     `wasmcloud-data-tls` into that namespace, and the host Pod mounts both by
+#     name (templates/runtime/deployment.yaml:83-89), so it never starts.
+# Either way the CA plus those two client-cert Secrets have to be distributed
+# into every environment namespace, and nothing does that today. Keeping this
+# environment's host namespace equal to the operator's release namespace
+# sidesteps both, because the operator release already renders those Secrets
+# there. Environment #2 is blocked on the distribution step, not on this file.
+
+# The cluster-singular halves of the chart, all owned by the operator release
+# (chart values.yaml:101-102 and :55-56 both default these to enabled).
+operator:
+  enabled: false
+nats:
+  enabled: false
+# Deprecated HTTP gateway off here too, and never adopted in either release:
+# HTTP exposure rides operator-managed EndpointSlices on standard Services
+# (chart values.yaml:205-210).
+gateway:
+  enabled: false
+
+global:
+  certificates:
+    # -- The operator release owns the CA and every certificate Secret in this
+    # namespace (chart values.yaml:28-31 defaults this to true); re-rendering
+    # them here would collide on Helm ownership metadata. `global.tls.enabled`
+    # stays at its default true, so the host still mounts them and still speaks
+    # mTLS on both NATS connections (templates/runtime/deployment.yaml:83-89).
+    generate: false
+  nats:
+    # -- Both default to `nats://nats.<this release's namespace>.svc.cluster.local:4222`
+    # (chart values.yaml:9-23, resolved in templates/_helpers.tpl's
+    # schedulerNatsUrl/dataNatsUrl helpers), which is only accidentally right
+    # while this release shares the operator's namespace. Named explicitly so it
+    # stays right, and so it matches the SANs the operator release generated for
+    # its NATS certificate (templates/certificates.yaml:70-75).
+    schedulerUrl: nats://nats.wamn-system.svc.cluster.local:4222
+    dataUrl: nats://nats.wamn-system.svc.cluster.local:4222
+
+runtime:
+  # -- THE HOST IMAGE CARRIAGE. `runtime.image` is the chart-wide host image
+  # (chart values.yaml:285-289). `hostGroups[].image` is only an OPTIONAL
+  # per-group override in which any of registry/repository/tag set there win and
+  # unset keys inherit this one (chart values.yaml:358-363, implemented at
+  # templates/runtime/deployment.yaml:7-10) — so with one host group per
+  # environment release, this is where the environment's runtime revision is
+  # pinned.
+  image:
+    registry: ""              # bare local name, loaded via `kind load`
+    repository: wamn-host
+    tag: sha-9f3c1ab
+    pull_policy: Never
+  hostGroups:
+    - name: default
+      # -- This environment's namespace, and the environment identity the
+      # operator's wrong-target lock is enforced against: the host Pod's
+      # namespace becomes `Host.Environment`
+      # (templates/runtime/deployment.yaml:135-138 + :162), and with
+      # `operator.allowSharedHosts: false` a WorkloadDeployment can only
+      # schedule onto hosts whose Environment equals its own namespace. Empty
+      # would mean the release namespace; naming it makes the identity explicit
+      # (chart values.yaml:338-343). Three values must agree with it:
+      # `operator.watchNamespaces` and `operator.hostNamespaces` in
+      # deploy/infra/values-wamn.yaml, and the WorkloadDeployments'
+      # `metadata.namespace` + `spec.template.spec.environment`.
+      namespace: warehouse-eu-3
+      # -- Native warm-capacity floor (wamn-0h0g.10.8). At chart 2.8.0,
+      # `http.enabled: true` renders the host HTTP listener, Service port, and
+      # TCP readiness probe, so it marks this as a synchronous-serving group:
+      # keep the chart's native replica count at least 1. Three is the MVP's
+      # capacity choice, not an autoscaler. A future background-only group may
+      # pair `http.enabled: false` with zero replicas; no controller, idle-down,
+      # or cold-start path is implied here. Request admission remains the
+      # executor's existing `/readyz` contract in executor.yaml.
+      replicas: 0
+      service:
+        type: ClusterIP
+      http:
+        enabled: true
+        port: 80
+      # The default tenant's Postgres URL: the wamn:postgres plugin's from_env()
+      # default pool connects as its prepared App-generation LOGIN for guest SQL.
+      # The stable `wamn_app` role only carries inherited grants and is NOLOGIN.
+      #
+      # A Secret REFERENCE, never inline plaintext (R8b, wamn-sysdb.yaml:8-11 —
+      # actual credential material lives in K8s Secrets). The chart passes each
+      # `hostGroups[].env` entry through verbatim
+      # (templates/runtime/deployment.yaml `{{- with .env }}{{ toYaml . }}` at
+      # the pinned fork rev), so `valueFrom` needs no chart change.
+      # `wamn-host-db` is host-tier config with this release's lifecycle —
+      # deliberately NOT the runner's per-project `wamn-runner-db`; see
+      # deploy/platform/host-db.example.yaml. APPLY THE SECRET BEFORE THIS
+      # RELEASE: a missing secretKeyRef leaves every host Pod unstartable.
+      env:
+        - name: WAMN_PG_URL
+          valueFrom:
+            secretKeyRef:
+              name: wamn-host-db
+              key: url
+        # Keep 2/16 connections reserved so guest-held sessions cannot starve host-owned work.
+        - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
+        - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
+        # Per-host, per-route inline execution ceiling; excess requests shed with 429.
+        - { name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT, value: "64" }
+        # Pod-private compiled components survive a container restart. This is
+        # deliberately outside /oci-cache, whose children the OCI sweeper owns.
+        - { name: WAMN_WASMTIME_CACHE_DIR, value: /tmp/wamn-wasmtime-cache }
+        # One standard Docker config drives both pull consumers in this pod:
+        # wash-runtime reads DOCKER_CONFIG for WorkloadDeployment components,
+        # and the digest-verifying wamn:node source reads the exact file named
+        # by WAMN_REGISTRY_AUTH_FILE. Missing Secret => pod does not start;
+        # wrong/missing registry entry => the demanding request refuses.
+        - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
+        - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
+        - name: WAMN_COMPONENT_ARTIFACT_BASE
+          value: registry.wamn-system.svc.cluster.local:5000/wamn/components
+        # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
+        # plugin — the materializer Service workload's stream/doorbell path.
+        # Absent, the plugin still links and returns connection-unavailable.
+        - name: WAMN_EVT_NATS_URL
+          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+      volumes:
+        - name: registry-pull
+          secret:
+            secretName: wamn-registry-pull
+            optional: false
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+      volumeMounts:
+        - name: registry-pull
+          mountPath: /etc/wamn/registry
+          readOnly: true
+      # [wamn-0h0g.15.155] Verify the in-cluster registry instead of dropping to
+      # plain HTTP. This replaces `extraArgs: [--allow-insecure-registries]`,
+      # which chart 2.8.0 argues against in exactly these terms (chart
+      # values.yaml:270-272): the flag "does not relax verification but replaces
+      # it: every registry drops to plain HTTP, so nothing is verified and
+      # credentials travel in the clear".
+      #
+      # No bundle has to be distributed for this. The chart already mounts its
+      # own CA at /runtime-cert/ca.crt whenever `global.tls.enabled` — which is
+      # on here, since only `certificates.generate` is switched off — and the
+      # chart concatenates these entries onto the chart-wide `runtime.ociCaPaths`
+      # to render one `--oci-ca-path=` per path
+      # (templates/runtime/deployment.yaml:189-190).
+      #
+      # *** NOT ROLLABLE ON ITS OWN. *** Two things must be true first, and both
+      # now are:
+      #   * the host binary must accept `--oci-ca-path`, or every host Pod
+      #     crashloops on an unknown argument. DONE — services/host/src/host.rs
+      #     gained it in the commit immediately before this one;
+      #   * deploy/platform/registry.yaml must serve TLS from the same
+      #     `wasmcloud-ca`. DONE — apply that file before this one, or every
+      #     pull fails verification.
+      ociCaPaths:
+        - "/runtime-cert/ca.crt"
+      resources:
+        requests:
+          memory: "256Mi"
+          # A QUARTER CORE GUARANTEED is what the host had while a journey ran
+          # three kind nodes, PostgreSQL, NATS and a registry beside it. Raised
+          # to two so the measured host is not the throttled one; the ceiling
+          # below still bounds it (wamn-0h0g.17.23).
+          cpu: "2"
+        limits:
+          # Roomy on purpose: the S1 density/cap-kill measurements must hit
+          # wasmtime's 256 MiB per-component cap, not the K8s OOM killer.
+          memory: "4Gi"
+          # WHY 6 AND NOT 2. instantiate_async for one component is 313 us on
+          # bare metal and 1.30 ms under the old 2-core cap -- 4.2x, on an
+          # 8-core box, for the identical call. Every absolute millisecond in
+          # docs/perf/2026.09 carried that factor. Six leaves two cores for the
+          # kind nodes and the databases sharing the machine.
+          #
+          # THIS IS THE JOURNEY'S DEVELOPMENT OVERLAY, NOT A PRODUCTION LIMIT.
+          # A real deployment sets its own in its own values file; nothing here
+          # decides what a production host is allowed to use.
+          cpu: "6"
+        # Native v2.8 Wasmtime controls. The chart removes these two keys from
+        # the Kubernetes resources block and renders WASH_DEFAULT_HEAP_MEMORY /
+        # WASH_CORE_INSTANCES; limits.memory becomes WASH_HOST_MAX_GUEST_MEMORY.
+        defaultHeapMemory: "256MiB"
+        coreInstances: 512

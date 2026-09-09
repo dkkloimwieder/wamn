@@ -1,0 +1,6 @@
+WMS cluster journey dry-run (no mutation)
+  source: 15f2d4da26df0bdb46022cfd5276c9550d415d86
+  cluster/context: wamn-wms-journey / kind-wamn-wms-journey
+  namespace: wamn-wms-journey
+  route host: wms.localhost (setup overlay only)
+  order: build -> mint through wamn-ctl (provision, apply, push x3, gate+author, publish) -> fixture seed -> JetStream -> operator 2.9.0 -> host + idle materializer ready -> route smoke -> route-not-found -> cross-environment refusal -> exact teardown
