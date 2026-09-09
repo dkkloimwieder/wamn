@@ -1,0 +1,181 @@
+{
+  "baseline": "dfa1c318",
+  "current": "802aed06",
+  "scope": "Compared both failing test owners, five included SQL files, and all provision implementation files. Source identity is not a baseline execution result.",
+  "files": [
+    {
+      "path": "crates/control/provision/tests/deploy_sql_authority.rs",
+      "baseline_sha256": "72668821081c6f13c6f28296b103598c5a552e97ffe1f4ce3e1278ee309ddada",
+      "current_sha256": "72668821081c6f13c6f28296b103598c5a552e97ffe1f4ce3e1278ee309ddada",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/tests/family_denial_matrix.rs",
+      "baseline_sha256": "de1cf3af2571bc268cf668fb3b72c9ce4032951fb5153bb77ac157d789965cab",
+      "current_sha256": "de1cf3af2571bc268cf668fb3b72c9ce4032951fb5153bb77ac157d789965cab",
+      "identical": true
+    },
+    {
+      "path": "deploy/sql/postgres-init.sql",
+      "baseline_sha256": "c58a0a9d813ac5ec2dde3f2609bbfa30c0d7b62c6006ef2f8f1ee0875e507ff1",
+      "current_sha256": "c58a0a9d813ac5ec2dde3f2609bbfa30c0d7b62c6006ef2f8f1ee0875e507ff1",
+      "identical": true
+    },
+    {
+      "path": "deploy/sql/catalog-schema.sql",
+      "baseline_sha256": "173f06ea9bfc78c05e449237b394852ba7d32cd99c39c7d1dd756819507a5431",
+      "current_sha256": "173f06ea9bfc78c05e449237b394852ba7d32cd99c39c7d1dd756819507a5431",
+      "identical": true
+    },
+    {
+      "path": "deploy/sql/run-state.sql",
+      "baseline_sha256": "b69f6899b9b8b5602f1b4596430667e103df1a51d6a8500af2e9cd6aa77065c7",
+      "current_sha256": "b69f6899b9b8b5602f1b4596430667e103df1a51d6a8500af2e9cd6aa77065c7",
+      "identical": true
+    },
+    {
+      "path": "deploy/sql/run-queue.sql",
+      "baseline_sha256": "1640b201827c5916417130b038a8dd110ef372652d853cc4b46891901506bd3e",
+      "current_sha256": "1640b201827c5916417130b038a8dd110ef372652d853cc4b46891901506bd3e",
+      "identical": true
+    },
+    {
+      "path": "deploy/sql/app-schema.sql",
+      "baseline_sha256": "58b2c6d5970bb5f8f0f7ba4cd2d81faaaa4f0857e47ccddcc5dca26b1fbdd530",
+      "current_sha256": "58b2c6d5970bb5f8f0f7ba4cd2d81faaaa4f0857e47ccddcc5dca26b1fbdd530",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/operation_grants.rs",
+      "baseline_sha256": "d5eb513c3e161d5b0e193cca2bc3143c3df5b4a283c9eacef829150f2dd871a5",
+      "current_sha256": "d5eb513c3e161d5b0e193cca2bc3143c3df5b4a283c9eacef829150f2dd871a5",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/sql.rs",
+      "baseline_sha256": "c19b278bbd264a637628af9ae51bb64ed5bfa7caa45a28f5722b16fc5215e7f7",
+      "current_sha256": "c19b278bbd264a637628af9ae51bb64ed5bfa7caa45a28f5722b16fc5215e7f7",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/saga.rs",
+      "baseline_sha256": "2705c35c4102219968fedb7a0855e8e1b803f7616692253008b8669ce7214428",
+      "current_sha256": "2705c35c4102219968fedb7a0855e8e1b803f7616692253008b8669ce7214428",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/identity_issuer.rs",
+      "baseline_sha256": "b9ef753aa1d7f95595c1a002cb52491f83378ab39264c43d8f754de444f8c50e",
+      "current_sha256": "b9ef753aa1d7f95595c1a002cb52491f83378ab39264c43d8f754de444f8c50e",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/restore.rs",
+      "baseline_sha256": "a15761201040a423d3a2da77494a7264a53758f88c3e20ce8e1edcc4c2c14ff4",
+      "current_sha256": "a15761201040a423d3a2da77494a7264a53758f88c3e20ce8e1edcc4c2c14ff4",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/system_reader.rs",
+      "baseline_sha256": "bce1d77164ccc2ed47c92d513e08042a6c51f88db37cb2c6d1f3834350ec8738",
+      "current_sha256": "bce1d77164ccc2ed47c92d513e08042a6c51f88db37cb2c6d1f3834350ec8738",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/lib.rs",
+      "baseline_sha256": "36e13e0fe6fa8b638917d75c58e6eb859fb06688a20072e820964c7df0814972",
+      "current_sha256": "36e13e0fe6fa8b638917d75c58e6eb859fb06688a20072e820964c7df0814972",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/workload_role.rs",
+      "baseline_sha256": "7ef898217c3d1a596506e43582c8c5dec08cb1c8caf695aa2b02d8087239b0e8",
+      "current_sha256": "7ef898217c3d1a596506e43582c8c5dec08cb1c8caf695aa2b02d8087239b0e8",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/state.rs",
+      "baseline_sha256": "c1caec63255e541c90056874e67da13f4d5f68ac256d3152c98b9dd2272417d0",
+      "current_sha256": "c1caec63255e541c90056874e67da13f4d5f68ac256d3152c98b9dd2272417d0",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/session_role_reader.rs",
+      "baseline_sha256": "9333007d7c38cdb0eef4b37f22c61567c96a8dff7044b6433057b54932044a07",
+      "current_sha256": "9333007d7c38cdb0eef4b37f22c61567c96a8dff7044b6433057b54932044a07",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/management_admitter.rs",
+      "baseline_sha256": "cb8fbfd89b4352189d5949fffa90c6c37a53cfa7d729e602285d27bebe81ee31",
+      "current_sha256": "cb8fbfd89b4352189d5949fffa90c6c37a53cfa7d729e602285d27bebe81ee31",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/database.rs",
+      "baseline_sha256": "b7add22044f5c28afa2dac2774ea49b6d67b7b8845e4975cdc314229ef53bbe0",
+      "current_sha256": "b7add22044f5c28afa2dac2774ea49b6d67b7b8845e4975cdc314229ef53bbe0",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/tenant_key.rs",
+      "baseline_sha256": "726ae9a3644f922f7e19de1babd552349be421b1e128f51cbb4dce2501d5b16d",
+      "current_sha256": "726ae9a3644f922f7e19de1babd552349be421b1e128f51cbb4dce2501d5b16d",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/control_author.rs",
+      "baseline_sha256": "350d4d5ba0c435111d1075ed60bed99801d6997d0d52ac02ca405fcf2f7caaf9",
+      "current_sha256": "350d4d5ba0c435111d1075ed60bed99801d6997d0d52ac02ca405fcf2f7caaf9",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/org.rs",
+      "baseline_sha256": "ea858846f78277081ddb870148b12ceeff7a6de6505898fff3cbb20ee1496ea4",
+      "current_sha256": "ea858846f78277081ddb870148b12ceeff7a6de6505898fff3cbb20ee1496ea4",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/copy.rs",
+      "baseline_sha256": "5e59e5f65c1e74f7742ee2670327167f7f73ab483b99fbce489c357ecfcfb8de",
+      "current_sha256": "5e59e5f65c1e74f7742ee2670327167f7f73ab483b99fbce489c357ecfcfb8de",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/name.rs",
+      "baseline_sha256": "978f554016efc484b1da59fe8227527157100f6f9fba83ba15c91b1b7b4f2d33",
+      "current_sha256": "978f554016efc484b1da59fe8227527157100f6f9fba83ba15c91b1b7b4f2d33",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/session_target.rs",
+      "baseline_sha256": "c62b199b3eca0738d0c2a864361fafa86675e1d15ebf8df3aa4b883016e34e4f",
+      "current_sha256": "c62b199b3eca0738d0c2a864361fafa86675e1d15ebf8df3aa4b883016e34e4f",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/dump.rs",
+      "baseline_sha256": "f2d5450347f739b9cc6835c560defa8f60f444016257d7e3dfe7ddcf7a2d93fd",
+      "current_sha256": "f2d5450347f739b9cc6835c560defa8f60f444016257d7e3dfe7ddcf7a2d93fd",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/secret.rs",
+      "baseline_sha256": "ffe024055c0ded266a591a7fb4e408fc2c44ef8517b147b116532a9a0a54d645",
+      "current_sha256": "ffe024055c0ded266a591a7fb4e408fc2c44ef8517b147b116532a9a0a54d645",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/backup.rs",
+      "baseline_sha256": "719b7750c05c14beede4c052e3139ca33108411510e61a0ad1c98ec6a59947c3",
+      "current_sha256": "719b7750c05c14beede4c052e3139ca33108411510e61a0ad1c98ec6a59947c3",
+      "identical": true
+    },
+    {
+      "path": "crates/control/provision/src/error.rs",
+      "baseline_sha256": "f6723b2d6d940aa7743a1f46132022e575caa8d868c0c7e2402b56a8f5896499",
+      "current_sha256": "f6723b2d6d940aa7743a1f46132022e575caa8d868c0c7e2402b56a8f5896499",
+      "identical": true
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "scope": "Retained ctc8-12 data only; no cutover measurement or performance acceptance",
+  "throughput_groups_equal": 72,
+  "authentication_groups_equal": 6,
+  "resource_samples_equal": 432,
+  "resource_groups_equal": 144,
+  "native_step_rows_unchanged": 216,
+  "native_knee_peak_rows_unchanged": 36,
+  "deadline_cutoffs_separate": {
+    "before": 1499,
+    "after": 1496
+  },
+  "wrong_source_refused": true,
+  "wrong_source_exit_code": 1,
+  "existing_reducer_tests": "existing-reducer-tests.log",
+  "reducer_sha256": "e0af2902cd45f31227c31edb36a7fc00da47c423533dfd0d932e195dd1d798dc"
+}

@@ -54,7 +54,17 @@ The [scoped runtime Clippy](../perf/2026.09/wasmcloud-2-9-cutover/validation-003
 The final lifecycle module emits neither of its two corrected warnings.
 The first [full Receiving journey](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/verdict.json) passes at clean `7798190c`, covering the released application, materializer, native scheduling, and cleanup.
 Current [telemetry](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-003/journey/telemetry/receipt.json) passes at `a40d1c18`.
-Startup trace exposure and operator recovery still require complete live evidence.
+The complete [startup receipt](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-004/journey/startup-burst/result.json) passes at `802aed06`, with eight overlapping native handlers per cold and warm herd.
+The local proof retains full control, probe, and application observations during native-start intervals.
+It measures queued demand with one shared HTTP digest, not permit occupancy, CPU use, or a distinct-digest herd under Kubernetes limits.
+The fourth journey then fails while decoding five consecutive CRD objects, before installed-schema assertions or deliberate operator disruption.
+The corrected reader preserves all five distributed schema hashes under `wamn-0h0g.2.7.8`.
+Installed CRD identity and operator recovery remain pending.
+
+The armed [authority run](../perf/2026.09/wasmcloud-2-9-cutover/authority-live-001/summary.json) records 40 passes and three failures across 43 tests.
+Its seven runtime claims tests and SQLx transaction isolation pass with explicit fresh database inputs.
+Bead `wamn-0h0g.2.7.9` owns the tenant-floor count and two denial-matrix differences.
+All 29 relevant source files match the baseline, which still requires a live comparison.
 
 The prepared [engine](../../crates/platform/runtime/src/engine.rs) and [manual stores](../../crates/execution/host/src/router_driver.rs) share the native guest-memory budget in `Count` mode.
 Production rejects `enforce` and `off` through the native memory-mode flag and environment name.

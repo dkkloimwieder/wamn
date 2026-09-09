@@ -370,3 +370,47 @@ The [offline replay](startup-trace-fix-001/replay.json) accepts all 16 retained 
 It rejects ten malformed or invalid inputs.
 A new live run must still establish complete startup trace exposure and operator recovery.
 The [owned cleanup receipt](live-receiving-003/journey/cleanup.receipt) passes.
+
+
+## Completed startup exposure and operator reader failure
+
+The [fourth full Receiving run](live-receiving-004/exit-code.txt) exits 1 at clean source `802aed06`.
+The production route, exact materializer acknowledgment, real idle executor signal cases, and current telemetry proofs pass again.
+The [complete startup receipt](live-receiving-004/journey/startup-burst/result.json) passes with all 16 exact native start traces.
+Each herd contains eight overlapping handlers against the configured start limit of four.
+Four cold observations and two warm observations finish inside continuous native-start intervals.
+The observations cover native control, live and ready probes, and the expected application response.
+Before the cold route binds, the application returns an empty `503`.
+During warm starts, the existing workloads keep the read-only application request successful.
+
+The cold herd reaches all-running state in 232.3 ms, and the warm herd takes 114.9 ms.
+The host becomes ready 656.3 ms after process start.
+The [protocol receipt](live-receiving-004/journey/startup-burst/protocol.json) records zero cleanup errors and successful host exit in 196.7 ms without forced termination.
+These local timings do not use the Kubernetes six-CPU quota or the production five-second shutdown delay.
+The replicas share one native HTTP digest and its compile deduplication.
+Native start spans begin before permit acquisition, so overlap measures queued demand rather than active permits or CPU use.
+This live evidence closes `wamn-0h0g.2.7.7` on its fix commit, `802aed06`.
+
+The operator helper then fails before its installed-schema assertions or any deliberate disruption.
+Its [captured kubectl output](live-receiving-004/journey/operator-recovery/0003-distributed-crds-client-decode.stdout) contains five consecutive JSON objects.
+The helper incorrectly expects one JSON List.
+The correction under `wamn-0h0g.2.7.8` decodes every object and preserves the exact five-name inventory and all schema hashes.
+The [offline replay](operator-json-fix-001/offline-replay.json) reproduces the original error, accepts all five real objects, and rejects five incomplete or malformed controls.
+Installed CRD identity and operator recovery still require a new live run.
+The [owned cleanup receipt](live-receiving-004/journey/cleanup.receipt) passes.
+
+
+## Armed PostgreSQL authority proofs
+
+The [authority summary](authority-live-001/summary.json) records 40 passes and three failures across 43 tests at clean source `802aed06`.
+All 16 cases use separate fresh PostgreSQL 18 containers with explicit database inputs.
+Every owned container cleanup succeeds, and the source stays clean.
+All seven runtime claims tests, SQLx transaction isolation, tenant-key tests, credential generation tests, connection binding, and string-mode refusal pass.
+
+The tenant-floor group reports 34 governed relations against its expected 36.
+The denial matrix reports one extra guest UPDATE privilege and six absent management-admitter SELECT privileges.
+The [source comparison](authority-preparation-001/authority-failure-source-comparison.json) finds identical bytes in all 29 relevant baseline and cutover files.
+Bead `wamn-0h0g.2.7.9` owns diagnosis of these three assertions.
+A live baseline comparison and governing contract review remain pending.
+No permission changes or passing authority-gate claim follow from this failed run.
+Public logs retain Rust test results, while private diagnostics remain outside this branch.

@@ -1,0 +1,33 @@
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+running 4 tests
+test the_platform_arm_admits_every_platform_family_from_the_server ... ok
+test the_platform_grain_family_set_is_pinned_and_not_derived ... ok
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+test the_two_scenario_author_emitters_agree_at_zero_memberships ... ok
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.33s
+[private diagnostic redacted]
+[private diagnostic redacted]

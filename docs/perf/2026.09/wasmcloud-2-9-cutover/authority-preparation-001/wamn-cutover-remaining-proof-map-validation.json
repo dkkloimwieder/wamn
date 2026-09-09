@@ -1,0 +1,49 @@
+{
+  "schema": "wamn-cutover-remaining-proof-map-static-validation/v1",
+  "source_commit": "c28f651bfb557922b979ce6525dd83586cfa844d",
+  "map_sha256": "f6816eab105ca8723018883cd794cbc77498a4fc41fd768e89cd79c250df3f7c",
+  "checked_shell_snippets": 18,
+  "checked_source_hashes": 30,
+  "checked_citations": 108,
+  "offline_stub_controls": [
+    {
+      "case": "plain-quoted-argv-and-owned-cleanup",
+      "passed": true,
+      "observed_exit": 0,
+      "owned_cleanup_calls": 1
+    },
+    {
+      "case": "nonzero-proof-exit-preserved",
+      "passed": true,
+      "observed_exit": 17,
+      "owned_cleanup_calls": 1
+    },
+    {
+      "case": "create-failure-cleans-no-container",
+      "passed": true,
+      "observed_exit": 42,
+      "owned_cleanup_calls": 0
+    },
+    {
+      "case": "cleanup-failure-is-not-green",
+      "passed": true,
+      "observed_exit": 1,
+      "owned_cleanup_calls": 1
+    },
+    {
+      "case": "two-database-bindings",
+      "passed": true,
+      "observed_exit": 0,
+      "owned_cleanup_calls": 1
+    },
+    {
+      "case": "scs-off-argv",
+      "passed": true,
+      "observed_exit": 0,
+      "owned_cleanup_calls": 1
+    }
+  ],
+  "seven_selections_path": "/tmp/wamn-cutover-seven-claim-selections.sh",
+  "seven_selections_sha256": "b77c2b78c690ac0e08b03ccc33c9f0d5ce2fbe9621261c0eed3c3c610971ebc4",
+  "executed": "Static Python, bash -n, and local Docker/psql command stubs only. No real Docker, database, Cargo, build, or network calls."
+}

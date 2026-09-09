@@ -1,0 +1,803 @@
+{
+  "schema": "wamn-cutover-remaining-proof-map/v1",
+  "source_commit": "c28f651bfb557922b979ce6525dd83586cfa844d",
+  "repo": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+  "scope": "Isolation/authority and limits/cancellation scheduling only. No command in this document ran during preparation. Existing executed proofs need no repeat without a relevant source change.",
+  "charter": [
+    "docs/wamn_wasmcloud_2_9_cutover.md:126",
+    "docs/wamn_wasmcloud_2_9_cutover.md:127"
+  ],
+  "execution_rules": [
+    "Root alone runs builds, live proof, and load. Wait for the current Receiving journey to end.",
+    "Each listed PostgreSQL suite gets a new owned server. Generation suites alter cluster-wide roles and CONNECT grants.",
+    "Never address or mutate kind-wamn. Keep source unchanged; root chooses a fresh cutover evidence increment.",
+    "Use --include-ignored for selected owning targets and --exact for named tests. Capture exit, nonzero test count, explicit arming, source hashes, and raw/redacted evidence.",
+    "URL secrets stay in private files or process environment. Do not print credentials in commands or published output.",
+    "Required arming is explicit per command; an ok result from an early return is not execution evidence. Do not infer absent ambient URL variables from validation-001 because that sweep did not retain its environment."
+  ],
+  "topologies": {
+    "fresh_pg18_per_suite": {
+      "recipe": "docs/operations/build-and-test.md:3364",
+      "bash": "cutover_owned_pg() (\n  set -euo pipefail\n  set +x\n  umask 077\n  cutover_case=$1; cutover_mode=$2; cutover_bindings=$3; shift 3\n  [[ $cutover_case =~ ^[a-z0-9-]+$ ]]\n  cutover_private=$(mktemp -d /tmp/wamn-cutover-pg.XXXXXXXX)\n  cutover_container_id=\n  cutover_cleanup() {\n    cutover_rc=$?\n    if [[ -n $cutover_container_id ]]; then\n      docker rm --force --volumes \"$cutover_container_id\" >/dev/null || cutover_rc=1\n    fi\n    rm -rf -- \"$cutover_private\"\n    exit \"$cutover_rc\"\n  }\n  trap cutover_cleanup EXIT\n  trap 'exit 130' INT\n  trap 'exit 143' TERM\n  PGPASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))')\n  printf 'POSTGRES_PASSWORD=%s\\n' \"$PGPASSWORD\" > \"$cutover_private/postgres.env\"\n  cutover_extra=()\n  case $cutover_mode in\n    plain|two-databases) ;;\n    scs-off) cutover_extra=(-c standard_conforming_strings=off) ;;\n    *) exit 2 ;;\n  esac\n  cutover_container_id=$(docker run --detach --name \"wamn-cutover-${cutover_case}-$(date -u +%Y%m%d%H%M%S)-$$\" --env-file \"$cutover_private/postgres.env\" --publish 127.0.0.1::5432 postgres:18 \"${cutover_extra[@]}\")\n  cutover_address=$(docker port \"$cutover_container_id\" 5432/tcp)\n  [[ $cutover_address =~ ^127\\.0\\.0\\.1:([0-9]+)$ ]]\n  PGPORT=${BASH_REMATCH[1]}\n  export PGHOST=127.0.0.1 PGPORT PGUSER=postgres PGPASSWORD PGDATABASE=postgres PGCONNECT_TIMEOUT=2\n  cutover_deadline=$((SECONDS + 90))\n  until psql --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --command 'SELECT 1' > /dev/null 2>&1; do\n    (( SECONDS < cutover_deadline )) || { printf '%s\\n' 'Owned PostgreSQL readiness timed out' >&2; exit 1; }\n    sleep 1\n  done\n  export CUTOVER_PG_BASE_URL=\"postgresql://postgres:${PGPASSWORD}@127.0.0.1:${PGPORT}\"\n  export CUTOVER_PG_ADMIN_URL=\"${CUTOVER_PG_BASE_URL}/postgres\"\n  if [[ $cutover_mode == two-databases ]]; then\n    psql --no-psqlrc --set ON_ERROR_STOP=1 --command 'CREATE DATABASE bind_project' --command 'CREATE DATABASE bind_control'\n  fi\n  unset WAMN_PG_URL DATABASE_URL WAMN_PG_TEST_URL\n  IFS=, read -r -a cutover_assignments <<< \"$cutover_bindings\"\n  for cutover_assignment in \"${cutover_assignments[@]}\"; do\n    cutover_name=${cutover_assignment%%=*}; cutover_database=${cutover_assignment#*=}\n    [[ $cutover_name =~ ^WAMN_[A-Z0-9_]+$ && $cutover_database =~ ^[a-z_]+$ ]]\n    export \"$cutover_name=${CUTOVER_PG_BASE_URL}/${cutover_database}\"\n    [[ -n ${!cutover_name} ]]\n    printf 'armed %s on owned PostgreSQL port %s\\n' \"$cutover_name\" \"$PGPORT\"\n  done\n  \"$@\"\n)",
+      "readiness": "Host-side authenticated SQL over the published loopback port; bounded to 90 seconds.",
+      "cleanup": "EXIT/INT/TERM removes only the returned container ID and its owned anonymous volume plus the mktemp directory."
+    },
+    "fresh_pg18_with_two_databases": {
+      "inherits": "fresh_pg18_per_suite",
+      "extra": "Create bind_project and bind_control on this same owned server before the named test."
+    },
+    "fresh_pg18_scs_off_only": {
+      "inherits": "fresh_pg18_per_suite",
+      "extra_argv": [
+        "-c",
+        "standard_conforming_strings=off"
+      ]
+    },
+    "existing_std_virtualization_compose": {
+      "recipe": "docs/operations/build-and-test.md:859",
+      "inputs": [
+        "WAMN_STD_VIRT_PROJECT: unique compose project",
+        "WAMN_STD_VIRT_PG_PORT and WAMN_STD_VIRT_REGISTRY_PORT: confirmed free loopback ports"
+      ],
+      "create_argv": [
+        "docker",
+        "compose",
+        "-p",
+        "${WAMN_STD_VIRT_PROJECT}",
+        "-f",
+        "test-support/infrastructure/std-virtualization.compose.yaml",
+        "up",
+        "--detach",
+        "--wait",
+        "--wait-timeout",
+        "60"
+      ],
+      "cleanup_argv": [
+        "docker",
+        "compose",
+        "-p",
+        "${WAMN_STD_VIRT_PROJECT}",
+        "-f",
+        "test-support/infrastructure/std-virtualization.compose.yaml",
+        "down",
+        "--volumes"
+      ],
+      "extra_readiness": "Also poll SELECT 1 through the published PostgreSQL TCP port before testing."
+    }
+  },
+  "already_executed": [
+    {
+      "id": "memory",
+      "claim": "Count, shared concurrent-store accounting, fixed heap refusal, Enforce, drop/trap and cancellation charge release",
+      "status": "executed_pass",
+      "scope": "Executed behavior",
+      "tests": [
+        {
+          "name": "engine::tests::count_mode_accounts_for_concurrent_stores_and_keeps_the_heap_ceiling",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3416"
+        },
+        {
+          "name": "engine::tests::enforce_mode_refuses_aggregate_growth_until_another_store_releases_memory",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3418"
+        },
+        {
+          "name": "engine::tests::cancelling_a_guest_waiting_in_a_host_call_releases_its_memory",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3413"
+        },
+        {
+          "name": "engine::tests::dropping_a_store_after_a_guest_start_trap_releases_its_memory",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3417"
+        },
+        {
+          "name": "engine::tests::configured_slots_bound_concurrent_live_instances",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3415"
+        }
+      ],
+      "source": "crates/platform/runtime/src/engine.rs:516",
+      "rerun_needed": false
+    },
+    {
+      "id": "epoch-cadence",
+      "claim": "The manual deadline scale equals the native ticker cadence",
+      "status": "executed_pass",
+      "scope": "Source conformance reads the pinned runtime cadence; no timing inference",
+      "tests": [
+        {
+          "name": "runtime_inventory::the_manual_store_epoch_tick_still_mirrors_the_runtime_ticker",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2545"
+        },
+        {
+          "name": "runtime_inventory::the_epoch_pin_survives_upstream_reformatting_but_not_a_retune",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2543"
+        }
+      ],
+      "source": "tests/conformance/src/runtime_inventory.rs:835",
+      "rerun_needed": false
+    },
+    {
+      "id": "epoch-interrupt",
+      "claim": "A real infinite guest traps on the native epoch and the engine accepts a fresh store afterward",
+      "status": "executed_pass",
+      "scope": "Executed behavior",
+      "tests": [
+        {
+          "name": "deadlineproof::tests::vanilla_epoch_ticker_interrupts_without_poisoning_the_engine",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3061"
+        }
+      ],
+      "source": "tests/system/src/deadlineproof.rs:19",
+      "rerun_needed": false
+    },
+    {
+      "id": "scope-cleanup",
+      "claim": "Drop cleans statement authority; a partial binding failure cleans earlier operations",
+      "status": "executed_pass",
+      "scope": "Executed behavior",
+      "tests": [
+        {
+          "name": "router_driver::tests::statement_scope_binds_empty_operations_and_cleans_on_drop",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2212"
+        },
+        {
+          "name": "router_driver::tests::partial_statement_binding_failure_cleans_earlier_operations",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2207"
+        }
+      ],
+      "source": "crates/execution/host/src/router_driver.rs:3094",
+      "rerun_needed": false
+    },
+    {
+      "id": "nested-refusals",
+      "claim": "Nested calls preserve the caller and exact refused operation through a real component boundary",
+      "status": "executed_pass",
+      "scope": "Executed behavior",
+      "tests": [
+        {
+          "name": "router_driver::tests::nested_permission_denial_survives_the_real_component_boundary",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2203"
+        },
+        {
+          "name": "router_driver::tests::nested_target_resolution_requires_the_exact_released_coordinate",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2204"
+        },
+        {
+          "name": "router_driver::tests::nested_acquisition_preserves_causation_without_minting_a_caller",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2202"
+        }
+      ],
+      "source": "crates/execution/host/src/router_driver.rs:3243",
+      "rerun_needed": false
+    },
+    {
+      "id": "admission",
+      "claim": "Actual excluded imports and mismatched declared dependencies refuse before admission",
+      "status": "executed_pass",
+      "scope": "Executed behavior",
+      "tests": [
+        {
+          "name": "component_admission::tests::actual_unadmitted_component_import_refuses",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3386"
+        },
+        {
+          "name": "component_admission::tests::operation_dependency_inventory_refuses_missing_extra_and_mismatch",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3396"
+        },
+        {
+          "name": "component_admission::tests::connection_authority_without_a_declared_alias_refuses",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3388"
+        }
+      ],
+      "source": "crates/platform/runtime/src/component_admission.rs:705",
+      "rerun_needed": false
+    },
+    {
+      "id": "guest-environment",
+      "claim": "The guest receives only its explicit context environment",
+      "status": "executed_pass",
+      "scope": "Executed behavior",
+      "tests": [
+        {
+          "name": "a_guest_never_sees_the_host_process_environment",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3804"
+        },
+        {
+          "name": "a_guest_reads_the_environment_its_context_carries",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3805"
+        }
+      ],
+      "source": "crates/platform/runtime/tests/guest_environment_isolation.rs:219",
+      "rerun_needed": false
+    },
+    {
+      "id": "candidate-binding",
+      "claim": "Frozen candidate binding missing/drift/wrong-wiring refusal and matching admission",
+      "status": "executed_pass",
+      "scope": "Executed plugin boundary unit proofs with supplied snapshots; not a live candidate-admission database proof",
+      "tests": [
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_closure_with_no_frozen_binding_refuses",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3510"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_from_another_wiring_refuses",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3511"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_disagrees_with_the_frozen_binding_refuses",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3512"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_matches_the_frozen_binding_is_admitted",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3513"
+        }
+      ],
+      "source": "crates/platform/runtime/src/plugins/wamn_blobstore/plugin.rs:739",
+      "rerun_needed": false
+    },
+    {
+      "id": "connection-generation-validation",
+      "claim": "Typed connection-generation contract and snapshotted authority ceilings",
+      "status": "executed_pass",
+      "scope": "Five executed tests use a controlled DNS/policy fixture; database credential rotation is separately unexecuted",
+      "tests": [
+        {
+          "name": "compatible_generation_records_every_validated_input_identity",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3751"
+        },
+        {
+          "name": "exact_type_contract_hash_and_field_ownership_fail_precisely",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3753"
+        },
+        {
+          "name": "canonical_authority_tls_redirect_and_proxy_coherence_are_closed",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3750"
+        },
+        {
+          "name": "credential_validation_uses_kind_metadata_only",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3752"
+        },
+        {
+          "name": "both_snapshotted_outer_policy_ceiling_denials_are_typed",
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3749"
+        }
+      ],
+      "source": "crates/platform/runtime/tests/connection_generation_validation.rs:143",
+      "rerun_needed": false
+    },
+    {
+      "id": "unpooled_component_serving_http_is_fresh_per_request",
+      "claim": "Native unpooled calls do not retain prior instance state",
+      "status": "executed_pass",
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/release-check.log:6772",
+      "upstream_source": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9:crates/wash-runtime/tests/integration_warm_instances.rs",
+      "rerun_needed": false,
+      "scope": "Native path, not a replacement for WAMN manual nested-call evidence"
+    },
+    {
+      "id": "unpooled_component_gets_a_fresh_instance_per_call",
+      "claim": "Native unpooled calls do not retain prior instance state",
+      "status": "executed_pass",
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/release-check.log:6774",
+      "upstream_source": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9:crates/wash-runtime/tests/integration_warm_instances.rs",
+      "rerun_needed": false,
+      "scope": "Native path, not a replacement for WAMN manual nested-call evidence"
+    },
+    {
+      "id": "receiving-nested-live",
+      "claim": "Released base/overlay calls, nested permission refusal, original caller identity, and manual nested memory cleanup",
+      "status": "executed_pass",
+      "source_commit": "7798190c7d045a48231a8db41448cc6e29cf3bd8",
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/production-route.log:282",
+      "result": "docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/production-route.log:351",
+      "source": [
+        "tests/integration/src/route_authentication_live.rs:3418",
+        "tests/integration/src/route_authentication_live.rs:3957",
+        "tests/integration/src/route_authentication_live.rs:3163",
+        "tests/integration/src/route_authentication_live.rs:3182"
+      ],
+      "rerun_needed": false,
+      "scope": "Current full Receiving rerun already scheduled by root. Do not run this test against a reused completed fixture independently."
+    }
+  ],
+  "next_serial_proofs": [
+    {
+      "id": "tenant-key",
+      "reason": "Rust and SQL tenant keys must agree on real guest generation logins",
+      "status": "explicit_self_skip",
+      "topology": "fresh_pg18_per_suite",
+      "environment": {
+        "WAMN_TENANT_KEY_PG_URL": "${CUTOVER_PG_ADMIN_URL}"
+      },
+      "source": "crates/control/provision/tests/tenant_key_live.rs:157",
+      "recipe": "docs/operations/build-and-test.md:1053",
+      "proof_rules": [
+        "Require exit 0, the expected nonzero test count, and no skip message.",
+        "Retain the explicit arming receipt and raw private output; publish only redacted output."
+      ],
+      "sweep": {
+        "reported_passed": 6,
+        "failed": 0,
+        "explicit_self_skip_count": 6,
+        "reported_seconds": 0.0,
+        "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:1491"
+      },
+      "runnable_shell": "cutover_owned_pg tenant-key plain WAMN_TENANT_KEY_PG_URL=postgres cargo test -p wamn-control-provision --locked --offline --test tenant_key_live -- --include-ignored --nocapture --test-threads=1"
+    },
+    {
+      "id": "tenant-floor",
+      "reason": "Run all three live tenant-floor/platform/scenario-author arms; the fourth pure test already passed",
+      "status": "explicit_self_skip",
+      "topology": "fresh_pg18_per_suite",
+      "environment": {
+        "WAMN_TENANT_FLOOR_PG_URL": "${CUTOVER_PG_ADMIN_URL}"
+      },
+      "source": "crates/control/provision/tests/deploy_sql_authority.rs:23",
+      "recipe": "docs/operations/build-and-test.md:1139",
+      "proof_rules": [
+        "Require exit 0, the expected nonzero test count, and no skip message.",
+        "Retain the explicit arming receipt and raw private output; publish only redacted output."
+      ],
+      "sweep": {
+        "reported_passed": 4,
+        "failed": 0,
+        "explicit_self_skip_count": 3,
+        "reported_seconds": 0.0,
+        "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:1317"
+      },
+      "runnable_shell": "cutover_owned_pg tenant-floor plain WAMN_TENANT_FLOOR_PG_URL=postgres cargo test -p wamn-control-provision --locked --offline --test deploy_sql_authority -- --include-ignored --nocapture --test-threads=1"
+    },
+    {
+      "id": "authority-denial-matrix",
+      "reason": "Run all 19 live family/tenant refusals; the pure 20th test already passed",
+      "status": "explicit_self_skip",
+      "topology": "fresh_pg18_per_suite",
+      "environment": {
+        "WAMN_DENIAL_MATRIX_PG_URL": "${CUTOVER_PG_ADMIN_URL}"
+      },
+      "source": "crates/control/provision/tests/family_denial_matrix.rs:42",
+      "recipe": "docs/operations/build-and-test.md:3251",
+      "proof_rules": [
+        "Require exit 0, the expected nonzero test count, and no skip message.",
+        "Retain the explicit arming receipt and raw private output; publish only redacted output."
+      ],
+      "sweep": {
+        "reported_passed": 20,
+        "failed": 0,
+        "explicit_self_skip_count": 19,
+        "reported_seconds": 0.0,
+        "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:1338"
+      },
+      "runnable_shell": "cutover_owned_pg authority-denial-matrix plain WAMN_DENIAL_MATRIX_PG_URL=postgres cargo test -p wamn-control-provision --locked --offline --test family_denial_matrix -- --include-ignored --nocapture --test-threads=1"
+    },
+    {
+      "id": "runtime-guest-claims",
+      "reason": "Seven tests silently return when every URL fallback is absent; reported ok alone does not establish execution",
+      "status": "reported_pass_arming_unproved",
+      "topology": "fresh_pg18_per_suite",
+      "environment": {
+        "WAMN_PG_TEST_URL": "${CUTOVER_PG_ADMIN_URL}"
+      },
+      "unset_fallbacks": [
+        "WAMN_PG_URL",
+        "DATABASE_URL"
+      ],
+      "commands": [
+        {
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3606",
+          "source": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:3145",
+          "runnable_shell": "cutover_owned_pg runtime-guest-claims plain WAMN_PG_TEST_URL=postgres cargo test -p wamn-runtime --locked --offline --lib plugins::wamn_postgres::claims::tests::live_bound_claims_are_injection_inert_and_txn_local -- --include-ignored --nocapture --test-threads=1 --exact"
+        },
+        {
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3605",
+          "source": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:3279",
+          "runnable_shell": "cutover_owned_pg runtime-guest-claims plain WAMN_PG_TEST_URL=postgres cargo test -p wamn-runtime --locked --offline --lib plugins::wamn_postgres::claims::tests::live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim -- --include-ignored --nocapture --test-threads=1 --exact"
+        },
+        {
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3607",
+          "source": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:3429",
+          "runnable_shell": "cutover_owned_pg runtime-guest-claims plain WAMN_PG_TEST_URL=postgres cargo test -p wamn-runtime --locked --offline --lib plugins::wamn_postgres::claims::tests::live_compiled_per_user_policy_permits_the_injected_caller -- --include-ignored --nocapture --test-threads=1 --exact"
+        },
+        {
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3609",
+          "source": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:3523",
+          "runnable_shell": "cutover_owned_pg runtime-guest-claims plain WAMN_PG_TEST_URL=postgres cargo test -p wamn-runtime --locked --offline --lib plugins::wamn_postgres::claims::tests::live_guest_cannot_override_the_injected_role_or_user_claim -- --include-ignored --nocapture --test-threads=1 --exact"
+        },
+        {
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3604",
+          "source": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:3978",
+          "runnable_shell": "cutover_owned_pg runtime-guest-claims plain WAMN_PG_TEST_URL=postgres cargo test -p wamn-runtime --locked --offline --lib plugins::wamn_postgres::claims::tests::live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_rows -- --include-ignored --nocapture --test-threads=1 --exact"
+        },
+        {
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3608",
+          "source": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:4090",
+          "runnable_shell": "cutover_owned_pg runtime-guest-claims plain WAMN_PG_TEST_URL=postgres cargo test -p wamn-runtime --locked --offline --lib plugins::wamn_postgres::claims::tests::live_connect_asserts_standard_conforming_strings -- --include-ignored --nocapture --test-threads=1 --exact"
+        },
+        {
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3603",
+          "source": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:4362",
+          "runnable_shell": "cutover_owned_pg runtime-guest-claims plain WAMN_PG_TEST_URL=postgres cargo test -p wamn-runtime --locked --offline --lib plugins::wamn_postgres::claims::tests::live_a_cold_connection_parses_inside_the_claim_transaction -- --include-ignored --nocapture --test-threads=1 --exact"
+        }
+      ],
+      "arming_source": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:3050",
+      "recipe": "docs/operations/build-and-test.md:1088",
+      "scope": "Do not include bench_pipelined_claim_flight or the separate known-red pool lifecycle arm in this focused sequence.",
+      "expected_required_cases": 7,
+      "arming_rule": "Each exact case receives WAMN_PG_TEST_URL from its own ready PG18 container; the wrapper explicitly unsets both fallback URL variables. An armed one-test pass is required for all seven."
+    },
+    {
+      "id": "guest-credential-generation",
+      "reason": "Execute preparation, exact grants, A/B rotation, retirement, and refusal against a dedicated server",
+      "status": "explicit_self_skip",
+      "topology": "fresh_pg18_per_suite",
+      "environment": {
+        "WAMN_GUEST_GENERATION_PG18_URL": "${CUTOVER_PG_ADMIN_URL}"
+      },
+      "source": "services/ctl/tests/guest_generation_live.rs:14",
+      "recipe": "docs/operations/build-and-test.md:3230",
+      "proof_rules": [
+        "Require exit 0, the expected nonzero test count, and no skip message.",
+        "Retain the explicit arming receipt and raw private output; publish only redacted output."
+      ],
+      "sweep": {
+        "reported_passed": 1,
+        "failed": 0,
+        "explicit_self_skip_count": 1,
+        "reported_seconds": 0.0,
+        "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:1963"
+      },
+      "runnable_shell": "cutover_owned_pg guest-credential-generation plain WAMN_GUEST_GENERATION_PG18_URL=postgres cargo test -p wamn-ctl --locked --offline --features ops --test guest_generation_live -- --include-ignored --nocapture --test-threads=1"
+    },
+    {
+      "id": "effect-writer-credential-generation",
+      "reason": "Execute preparation, exact grants, A/B rotation, retirement, and refusal against a dedicated server",
+      "status": "unarmed_failure",
+      "topology": "fresh_pg18_per_suite",
+      "environment": {
+        "WAMN_EFFECT_WRITER_PG18_URL": "${CUTOVER_PG_ADMIN_URL}"
+      },
+      "source": "services/ctl/tests/effect_writer_generation_live.rs:7",
+      "recipe": "docs/operations/build-and-test.md:3229",
+      "proof_rules": [
+        "Require exit 0, the expected nonzero test count, and no skip message.",
+        "Retain the explicit arming receipt and raw private output; publish only redacted output."
+      ],
+      "sweep": {
+        "reported_passed": 0,
+        "failed": 1,
+        "explicit_self_skip_count": 0,
+        "reported_seconds": 0.0,
+        "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:1946"
+      },
+      "runnable_shell": "cutover_owned_pg effect-writer-credential-generation plain WAMN_EFFECT_WRITER_PG18_URL=postgres cargo test -p wamn-ctl --locked --offline --test effect_writer_generation_live -- --include-ignored --nocapture --test-threads=1"
+    },
+    {
+      "id": "management-admitter-credential-generation",
+      "reason": "Execute preparation, exact grants, A/B rotation, retirement, and refusal against a dedicated server",
+      "status": "unarmed_failure",
+      "topology": "fresh_pg18_per_suite",
+      "environment": {
+        "WAMN_MANAGEMENT_ADMITTER_PG18_URL": "${CUTOVER_PG_ADMIN_URL}"
+      },
+      "source": "services/ctl/tests/management_admitter_generation_live.rs:13",
+      "recipe": "docs/operations/build-and-test.md:3231",
+      "proof_rules": [
+        "Require exit 0, the expected nonzero test count, and no skip message.",
+        "Retain the explicit arming receipt and raw private output; publish only redacted output."
+      ],
+      "sweep": {
+        "reported_passed": 0,
+        "failed": 1,
+        "explicit_self_skip_count": 0,
+        "reported_seconds": 0.0,
+        "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:1989"
+      },
+      "runnable_shell": "cutover_owned_pg management-admitter-credential-generation plain WAMN_MANAGEMENT_ADMITTER_PG18_URL=postgres cargo test -p wamn-ctl --locked --offline --test management_admitter_generation_live -- --include-ignored --nocapture --test-threads=1"
+    },
+    {
+      "id": "bound-connection-live",
+      "reason": "Existing live bridge from production bind-connection into the actual plugin snapshot resolver",
+      "status": "unarmed_failure",
+      "topology": "fresh_pg18_with_two_databases",
+      "environment": {
+        "WAMN_BIND_CONNECTION_PROJECT_PG_URL": "${CUTOVER_PG_BASE_URL}/bind_project",
+        "WAMN_BIND_CONNECTION_CONTROL_PG_URL": "${CUTOVER_PG_BASE_URL}/bind_control"
+      },
+      "source": "services/ctl/tests/bind_connection_live.rs:375",
+      "recipe": "docs/operations/build-and-test.md:2859",
+      "proof_rules": [
+        "Require exit 0, the expected nonzero test count, and no skip message.",
+        "Retain the explicit arming receipt and raw private output; publish only redacted output."
+      ],
+      "sweep": {
+        "reported_passed": 0,
+        "failed": 1,
+        "explicit_self_skip_count": 0,
+        "reported_seconds": 0.0,
+        "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:1908"
+      },
+      "scope": "Release binding and unbound/wrong alias/type refusals, not a new live proof of private candidate admission.",
+      "runnable_shell": "cutover_owned_pg bound-connection-live two-databases WAMN_BIND_CONNECTION_PROJECT_PG_URL=bind_project,WAMN_BIND_CONNECTION_CONTROL_PG_URL=bind_control cargo test -p wamn-ctl --locked --offline --test bind_connection_live bind_connection_round_trips_through_the_plugins_own_resolution -- --include-ignored --nocapture --test-threads=1 --exact"
+    },
+    {
+      "id": "sqlx-transaction-isolation",
+      "reason": "Actual guest transaction commit/rollback and current_user RLS denial",
+      "status": "unarmed_failure",
+      "topology": "fresh_pg18_per_suite",
+      "environment": {
+        "WAMN_SQLX_TRANSACTION_PG_URL": "${CUTOVER_PG_ADMIN_URL}",
+        "WAMN_SQLX_TRANSACTION_COMPONENT": "${REPO}/components/target/wasm32-wasip2/debug/sqlx-command.wasm"
+      },
+      "source": "crates/platform/runtime/tests/sqlx_transaction_live.rs:267",
+      "recipe": "docs/operations/build-and-test.md:1114",
+      "proof_rules": [
+        "Require exit 0, the expected nonzero test count, and no skip message.",
+        "Retain the explicit arming receipt and raw private output; publish only redacted output."
+      ],
+      "sweep": {
+        "reported_passed": 0,
+        "failed": 1,
+        "explicit_self_skip_count": 0,
+        "reported_seconds": 0.0,
+        "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3958"
+      },
+      "prepare_argv": [
+        [
+          "cargo",
+          "build",
+          "--manifest-path",
+          "components/Cargo.toml",
+          "--locked",
+          "--offline",
+          "-p",
+          "sqlx-command",
+          "--target",
+          "wasm32-wasip2"
+        ]
+      ],
+      "build_environment": {
+        "CARGO_TARGET_DIR": "${REPO}/components/target",
+        "RUSTC_WRAPPER": ""
+      },
+      "arming_source": "crates/platform/runtime/tests/sqlx_transaction_live.rs:30",
+      "runnable_shell": "export WAMN_SQLX_TRANSACTION_COMPONENT=\"$REPO/components/target/wasm32-wasip2/debug/sqlx-command.wasm\"\ncutover_owned_pg sqlx-transaction-isolation plain WAMN_SQLX_TRANSACTION_PG_URL=postgres cargo test -p wamn-runtime --locked --offline --test sqlx_transaction_live sqlx_command_commits_rolls_back_and_obeys_current_user_rls -- --include-ignored --nocapture --test-threads=1 --exact",
+      "prepare_shell": "CARGO_TARGET_DIR=\"$REPO/components/target\" RUSTC_WRAPPER= cargo build --manifest-path components/Cargo.toml --locked --offline -p sqlx-command --target wasm32-wasip2\ntest -s \"$REPO/components/target/wasm32-wasip2/debug/sqlx-command.wasm\""
+    },
+    {
+      "id": "virtualized-production-guest-isolation",
+      "status": "unarmed_failure",
+      "reason": "The plain context environment proof passed; the shipped virtualized guest sentinel and panic route proofs did not execute",
+      "topology": "existing_std_virtualization_compose",
+      "source": "tests/integration/src/virtualized_std_guest.rs:66",
+      "recipe": "docs/operations/build-and-test.md:829",
+      "preparation_argv": [
+        [
+          "tools/build-components",
+          "proof"
+        ],
+        [
+          "mkdir",
+          "-p",
+          "${REPO}/components/target/virtualized/std-empty-environment"
+        ],
+        [
+          "cargo",
+          "run",
+          "-p",
+          "wamn-component-virtualizer",
+          "--locked",
+          "--offline",
+          "--",
+          "--input",
+          "components/target/wasm32-wasip2/debug/std_virtualization_probe.wasm",
+          "--output",
+          "components/target/virtualized/std-empty-environment/std_virtualization_probe.wasm"
+        ]
+      ],
+      "environment": {
+        "WAMN_STD_VIRTUALIZATION_SENTINEL": "must-not-cross",
+        "WAMN_STD_VIRTUALIZATION_PG_URL": "postgresql://postgres:probe@127.0.0.1:${WAMN_STD_VIRT_PG_PORT}/postgres",
+        "WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE": "127.0.0.1:${WAMN_STD_VIRT_REGISTRY_PORT}/wamn/std-proof",
+        "WAMN_STD_VIRTUALIZATION_COMPONENT_WASM": "${REPO}/components/target/virtualized/std-empty-environment/std_virtualization_probe.wasm",
+        "WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY": "${REPO}/components/target/virtualized/std-empty-environment",
+        "WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM": "${REPO}/components/target/wasm32-wasip2/debug/http_route.wasm"
+      },
+      "commands": [
+        {
+          "argv": [
+            "cargo",
+            "test",
+            "-p",
+            "wamn-proof-integration",
+            "--locked",
+            "--offline",
+            "--lib",
+            "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+            "--",
+            "--include-ignored",
+            "--nocapture",
+            "--test-threads=1",
+            "--exact"
+          ],
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2991"
+        },
+        {
+          "argv": [
+            "cargo",
+            "test",
+            "-p",
+            "wamn-proof-integration",
+            "--locked",
+            "--offline",
+            "--lib",
+            "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+            "--",
+            "--include-ignored",
+            "--nocapture",
+            "--test-threads=1",
+            "--exact"
+          ],
+          "expected_tests": 1,
+          "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:2993"
+        }
+      ],
+      "scope": "Build only after the active journey finishes. The proof profile can replace guest artifacts, so the next production journey must rebuild its m1 artifacts normally.",
+      "runnable_shell": "(\n  set -euo pipefail\n  set +x\n  umask 077\n  : \"${REPO:?set REPO to the cutover checkout}\"\n  cd \"$REPO\"\n  tools/build-components proof\n  cutover_std_dir=\"$REPO/components/target/virtualized/std-empty-environment\"\n  mkdir -p \"$cutover_std_dir\"\n  cargo run -p wamn-component-virtualizer --locked --offline -- --input components/target/wasm32-wasip2/debug/std_virtualization_probe.wasm --output \"$cutover_std_dir/std_virtualization_probe.wasm\"\n  export WAMN_STD_VIRTUALIZATION_COMPONENT_WASM=\"$cutover_std_dir/std_virtualization_probe.wasm\"\n  export WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY=\"$cutover_std_dir\"\n  cargo test -p wamn-proof-integration --locked --offline --lib virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports -- --include-ignored --nocapture --test-threads=1 --exact\n  export WAMN_STD_VIRT_PROJECT=\"wamn-cutover-std-$(date -u +%Y%m%d%H%M%S)-$$\"\n  read -r WAMN_STD_VIRT_PG_PORT WAMN_STD_VIRT_REGISTRY_PORT < <(python3 -c 'import socket; a=socket.socket(); b=socket.socket(); a.bind((\"127.0.0.1\",0)); b.bind((\"127.0.0.1\",0)); print(a.getsockname()[1],b.getsockname()[1])')\n  export WAMN_STD_VIRT_PG_PORT WAMN_STD_VIRT_REGISTRY_PORT\n  cutover_std_compose=test-support/infrastructure/std-virtualization.compose.yaml\n  cutover_std_cleanup() {\n    cutover_rc=$?\n    docker compose -p \"$WAMN_STD_VIRT_PROJECT\" -f \"$cutover_std_compose\" down --volumes >/dev/null || cutover_rc=1\n    exit \"$cutover_rc\"\n  }\n  trap cutover_std_cleanup EXIT\n  trap 'exit 130' INT\n  trap 'exit 143' TERM\n  docker compose -p \"$WAMN_STD_VIRT_PROJECT\" -f \"$cutover_std_compose\" up --detach --wait --wait-timeout 60\n  export PGHOST=127.0.0.1 PGPORT=\"$WAMN_STD_VIRT_PG_PORT\" PGUSER=postgres PGPASSWORD=probe PGDATABASE=postgres PGCONNECT_TIMEOUT=2\n  cutover_deadline=$((SECONDS + 90))\n  until psql --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --command 'SELECT 1' >/dev/null 2>&1; do\n    (( SECONDS < cutover_deadline )) || exit 1\n    sleep 1\n  done\n  export WAMN_STD_VIRTUALIZATION_SENTINEL=must-not-cross\n  export WAMN_STD_VIRTUALIZATION_PG_URL=\"postgresql://postgres:probe@127.0.0.1:${PGPORT}/postgres\"\n  export WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE=\"127.0.0.1:${WAMN_STD_VIRT_REGISTRY_PORT}/wamn/std-proof\"\n  export WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM=\"$REPO/components/target/wasm32-wasip2/debug/http_route.wasm\"\n  cargo test -p wamn-proof-integration --locked --offline --lib virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal -- --include-ignored --nocapture --test-threads=1 --exact\n)",
+      "artifact_acceptance": "First exact test reads both Receiving base and overlay artifacts from the virtualized directory and enforces their precise imports/exports. Second exact test uses the virtualized probe plus production HTTP shell. Each must execute one test; neither may self-skip.",
+      "port_rule": "The two ports are selected together and released immediately before Compose bind. A racing bind must fail this run; never reuse an existing service on those ports."
+    },
+    {
+      "id": "scs-off-refusal",
+      "status": "explicit_self_skip",
+      "reason": "A server that disables standard_conforming_strings must fail guest checkout closed",
+      "topology": "fresh_pg18_scs_off_only",
+      "environment": {
+        "WAMN_SCS_OFF_PG_URL": "${CUTOVER_PG_ADMIN_URL}"
+      },
+      "postgres_extra_argv": [
+        "-c",
+        "standard_conforming_strings=off"
+      ],
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3610",
+      "recipe": "docs/operations/build-and-test.md:1036",
+      "runnable_shell": "cutover_owned_pg scs-off-refusal scs-off WAMN_SCS_OFF_PG_URL=postgres cargo test -p wamn-runtime --locked --offline --lib plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed -- --include-ignored --nocapture --test-threads=1 --exact"
+    }
+  ],
+  "baseline_reds_needing_explicit_disposition": [
+    {
+      "test": "production_claim_live",
+      "status": "unarmed_in_cutover_sweep; known_armed_baseline_failure",
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3860",
+      "disposition": "docs/operations/build-and-test.md:3285",
+      "rule": "Retain the existing authority failure. Do not grant a fixture another family to turn this green."
+    },
+    {
+      "test": "production_claim_durable_live",
+      "status": "unarmed_in_cutover_sweep; known_armed_baseline_failure",
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3843",
+      "disposition": "docs/operations/build-and-test.md:3286",
+      "rule": "Retain the existing authority failure. Do not grant a fixture another family to turn this green."
+    },
+    {
+      "test": "plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving",
+      "status": "unarmed_in_cutover_sweep; known_armed_baseline_failure",
+      "evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log:3612",
+      "disposition": "docs/operations/build-and-test.md:3287",
+      "rule": "The fixture supplies guest authority to every class. Do not fabricate platform authority. An explicit owner disposition is needed for release-readiness claims."
+    }
+  ],
+  "limits": [
+    "Candidate frozen-world unit refusals executed. bind_connection_live uses a release snapshot with candidate_binding=None, so it does not prove a live private-candidate database path.",
+    "Native fresh-store counters executed upstream. WAMN Receiving separately proves manual nested memory returns to zero and original caller/refusal behavior. No claim of opted-in warm-store behavior.",
+    "Fresh-only PAT/session live acceptance remains with wamn-ctc8.15.4 and the separate identity proof branch. Do not substitute unit refusal tests for those live proofs."
+  ],
+  "source_sha256": {
+    "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep.log": "43c7fd647c85f2248ac401d410c5cd9e94312368a282a930fad7c3da80157e42",
+    "crates/platform/runtime/src/engine.rs": "fd079a4876fc885c8c9602388c68e47c918f14d4708f421984319adc8ff8e19d",
+    "tests/conformance/src/runtime_inventory.rs": "ca09b45f31e650aad0b8136b4436b23a8d7af55876750d771672f76c77bc2550",
+    "tests/system/src/deadlineproof.rs": "6e008c9cee8883a450c2f3983b78b6f67ec474464ac63c1038cf8689b3ff2899",
+    "crates/execution/host/src/router_driver.rs": "b449848a07a4a742be44bd7329a252597acc05e0a11079807a8b7b5b68a47217",
+    "crates/platform/runtime/src/component_admission.rs": "fb1031894bdcbcb69b89678f9cca0bc050ff949a45b9fe9b852193073c9911fa",
+    "crates/platform/runtime/tests/guest_environment_isolation.rs": "76294398f5819ee13e689a9a3b175b6fa7b91e3cbc6ae86a961ebe286e671d69",
+    "crates/platform/runtime/src/plugins/wamn_blobstore/plugin.rs": "d8b3ec1f011626a9a59d71bf510b8c88adc1a182ecbd33f280e16532ea678d17",
+    "crates/platform/runtime/tests/connection_generation_validation.rs": "fc1a58740d0d58f08316f2dd7ee5d46d6496b4f5251b1dce9fe1d0b0f537efe6",
+    "docs/perf/2026.09/wasmcloud-2-9-cutover/upstream-gate-003/release-check.log": "a92a40cbd86ddcf0bc85cea68ecea913b73c8fa1a14c2725b907b11a9bedc522",
+    "docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/production-route.log": "c6b226a8c11c3b629efce07b7b7eaec6c893103d590666c50b6427ba4ad514b5",
+    "tests/integration/src/route_authentication_live.rs": "1a1df15bfddf9f9d83292fba5d76c2865d639b1c8bc02a4d5af1536390887476",
+    "crates/control/provision/tests/tenant_key_live.rs": "1c31fb6f3284246885489ae71de74f7f90247d288f5610fb0a100353b9618c8a",
+    "docs/operations/build-and-test.md": "d133a4449c52631812cf00079505b507b01a279ca47cf92e249966861907b684",
+    "crates/control/provision/tests/deploy_sql_authority.rs": "72668821081c6f13c6f28296b103598c5a552e97ffe1f4ce3e1278ee309ddada",
+    "crates/control/provision/tests/family_denial_matrix.rs": "de1cf3af2571bc268cf668fb3b72c9ce4032951fb5153bb77ac157d789965cab",
+    "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs": "d5fb340f72e67212c488b11bb11f09022d938cf21ff3f3700d69964aa7fdb969",
+    "services/ctl/tests/guest_generation_live.rs": "3dc43b4c03ea08fdd5e365d05ae5e4547ab33539530ac2c219697ea69c5a390b",
+    "services/ctl/tests/effect_writer_generation_live.rs": "2db834e93e3386de4b7343a7094756cee43db32b33976c912457cb306291b2c8",
+    "services/ctl/tests/management_admitter_generation_live.rs": "93d8f1d43aee3127673fa1f998acdd90bbe2c9e4dfe0d8f1ff50e4a434df1a8f",
+    "services/ctl/tests/bind_connection_live.rs": "973728ded44b7f948e08003ea79a0912f922138060b64e0bcecb9baaab43fba8",
+    "crates/platform/runtime/tests/sqlx_transaction_live.rs": "6497e4f5993ed91cd3520bebc525ff32bd195276284b9215c68a2e9b90d8536c",
+    "tests/integration/src/virtualized_std_guest.rs": "58ea438c528eedeb4073e5b199930cb79dbd2db989fbc7d4950629534ad43fef",
+    "docs/wamn_wasmcloud_2_9_cutover.md": "d6898fb7740eb2d02c28c69e6ee0d2b0b11d633d65d80c21db091c79f76637dc",
+    "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep-command.txt": "17921668f1f058fdf66c0c84fbd00a55bdd56044204e8ac851c2f7b3cf0f122f",
+    "services/host/Cargo.toml": "355d192fa1b1e6d51db3acb2d9e6e3cf2d500acff27d5da7d104bfa5b62086d8",
+    "services/host/tests/native_lifecycle_live.rs": "fc14f008886e7af1434c417599d98ba331802fee34b994db77655f61704a2e68",
+    "tests/integration/tests/startup_burst_live.rs": "0b8fa7e0931edee6002db506581e33444eb83f8eafc184680f7e83e2d7d2757e",
+    "docs/perf/2026.09/wasmcloud-2-9-cutover/report.md": "3b5ceae32b04b7bfee0b7072e6e89f7cf2d1ccca8198f176a94d92920aca76d5",
+    "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-results.json": "2780595bfa13630e4deabb501271b4ff739ad2199b1cc9bf378c4c973554bf0a"
+  },
+  "recipe_usage": "Run the Bash function below in a fresh shell after exporting REPO to this map repo and changing to it. Each runnable_shell invokes its own disposable PG18 server, records the explicit environment variable names without URLs, and cleans only its own container. Retain private command output with mode 0600; publish redacted copies. Preparation commands are separate, serial steps.",
+  "final_gate_of_record": {
+    "status": "required_after_final_source_changes; not_executed_by_this_agent",
+    "reason": "The explicit host Tokio process feature and new host/startup live test targets postdate validation-001. Earlier workspace results cannot validate the final combined source.",
+    "argv": [
+      "cargo",
+      "test",
+      "--workspace",
+      "--locked",
+      "--offline",
+      "--no-fail-fast",
+      "--",
+      "--include-ignored",
+      "--nocapture",
+      "--test-threads=1",
+      "--skip",
+      "regenerate_checked_in_journey_schema",
+      "--skip",
+      "regenerate_checked_in_dev_config_schema"
+    ],
+    "command": "cargo test --workspace --locked --offline --no-fail-fast -- --include-ignored --nocapture --test-threads=1 --skip regenerate_checked_in_journey_schema --skip regenerate_checked_in_dev_config_schema",
+    "command_evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-sweep-command.txt:1",
+    "source": [
+      "services/host/Cargo.toml:26",
+      "services/host/tests/native_lifecycle_live.rs:404",
+      "tests/integration/tests/startup_burst_live.rs:316"
+    ],
+    "classification": {
+      "compare_to": "docs/perf/2026.09/wasmcloud-2-9-cutover/validation-001/workspace-results.json#/failures",
+      "key": [
+        "package",
+        "target",
+        "name"
+      ],
+      "existing_baseline_failure_names": "Compare exact identities with the retained 67 failure rows and their prior baseline matches; preserve each recorded cause instead of treating all nonzero tests as regressions.",
+      "new_unavailable_fixture_targets": [
+        {
+          "package": "wamn-host",
+          "target": "--test native_lifecycle_live",
+          "name": "rebuilt_host_probes_signals_and_scheduler_recovery",
+          "required_environment": [
+            "WAMN_HOST_LIVE_NATS_SERVER_BIN",
+            "WAMN_HOST_LIVE_EVIDENCE_DIR"
+          ],
+          "arming_source": "services/host/tests/native_lifecycle_live.rs:406",
+          "already_has_separate_live_evidence": "docs/perf/2026.09/wasmcloud-2-9-cutover/report.md:289"
+        },
+        {
+          "package": "wamn-proof-integration",
+          "target": "--test startup_burst_live",
+          "name": "production_http_start_burst_keeps_native_host_progress",
+          "required_environment": [
+            "WAMN_STARTUP_BURST_INPUT"
+          ],
+          "arming_source": "tests/integration/tests/startup_burst_live.rs:317",
+          "owner": "Full Receiving journey startup helper; use that live evidence separately, never reuse an already consumed private fixture in the sweep."
+        }
+      ],
+      "new_failure_rule": "If a new target fails solely because its required fixture is unavailable, list it separately from old baseline names and from code regressions. Retain diagnostics and its separate live proof status. Any new assertion/build failure needs independent cause classification.",
+      "skip_rule": "Include ignored tests, retain explicit self-skip counts, and keep seven claims arming unproved unless a retained environment receipt proves their supplied URL."
+    },
+    "retention": [
+      "Final source commit and dirty-source hashes",
+      "Exact command, start/end, exit, raw private log, redacted retained log",
+      "All target summaries and exact failure identities",
+      "Explicit environment arming names and artifact digests without credentials"
+    ],
+    "restriction": "Use the identical command above with only its two regeneration skips. No test-name additions to the skip list, no broad fixes, no source mutations for this planning task."
+  },
+  "map_preparation_validation": "JSON parse, cited-path/line/hash checks, and bash -n on generated recipe text only; no Cargo, Docker, network, or live proof executed."
+}

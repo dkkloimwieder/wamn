@@ -1,0 +1,1 @@
+Run the wrapper from this repository evidence directory. Keep live evidence outside the fixed source checkout. Keep raw private logs under the main checkout with mode 0600. Commit only public receipts and redacted logs. Preserve the private originals locally and exclude private/ from Git.

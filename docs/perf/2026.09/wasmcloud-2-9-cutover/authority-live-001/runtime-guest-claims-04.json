@@ -1,0 +1,78 @@
+{
+  "id": "runtime-guest-claims-04",
+  "group": "runtime-guest-claims",
+  "expected_tests": 1,
+  "verdict": "pass",
+  "stage": "complete",
+  "arming": {
+    "WAMN_PG_TEST_URL": {
+      "set": true,
+      "database": "postgres",
+      "owned_container": "92d6f1a0f44d36d68bce2c99fa95e81727eb270772b12dd63189d74cc286a766",
+      "host": "127.0.0.1",
+      "port": 32851
+    }
+  },
+  "cleanup": {
+    "owned_id": "92d6f1a0f44d36d68bce2c99fa95e81727eb270772b12dd63189d74cc286a766",
+    "attempted": true,
+    "exit_code": 0,
+    "timeout": false,
+    "success": true
+  },
+  "source": {
+    "commit": "802aed0688194437f18b90398858dc6342024069",
+    "clean": true
+  },
+  "fixture": {
+    "container_id": "92d6f1a0f44d36d68bce2c99fa95e81727eb270772b12dd63189d74cc286a766",
+    "image_id": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14",
+    "server_version_num": 180006,
+    "host": "127.0.0.1",
+    "port": 32851
+  },
+  "fallbacks_unset": [
+    "WAMN_PG_URL",
+    "DATABASE_URL"
+  ],
+  "test_command": {
+    "label": "runtime-guest-claims-04-test",
+    "argv": [
+      "cargo",
+      "test",
+      "-p",
+      "wamn-runtime",
+      "--locked",
+      "--offline",
+      "--lib",
+      "plugins::wamn_postgres::claims::tests::live_guest_cannot_override_the_injected_role_or_user_claim",
+      "--",
+      "--include-ignored",
+      "--nocapture",
+      "--test-threads=1",
+      "--exact"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started_unix_ns": 1788970791645217635,
+    "exit_code": 0,
+    "timeout": false,
+    "interrupted": false,
+    "raw_private_log": "private/055-runtime-guest-claims-04-test.log",
+    "redacted_log": "055-runtime-guest-claims-04-test.redacted.log",
+    "owned_group_cleanup": false,
+    "finished_unix_ns": 1788970792160040320,
+    "raw_sha256": "0028da3f62d18fbc69897f87b50af4a3228969c2af20a8afec95202fd0bb143c",
+    "redacted_sha256": "1651d6ea600f2e9ed659584cd2f02f29e20a2a23a4903e8e4ce55470edf2b400"
+  },
+  "test_summaries": [
+    {
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 309
+    }
+  ],
+  "explicit_skip_detected": false
+}

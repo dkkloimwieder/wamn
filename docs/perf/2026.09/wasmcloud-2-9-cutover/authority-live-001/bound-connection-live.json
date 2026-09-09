@@ -1,0 +1,86 @@
+{
+  "id": "bound-connection-live",
+  "group": "bound-connection-live",
+  "expected_tests": 1,
+  "verdict": "pass",
+  "stage": "complete",
+  "arming": {
+    "WAMN_BIND_CONNECTION_PROJECT_PG_URL": {
+      "set": true,
+      "database": "bind_project",
+      "owned_container": "39153d037b64299406c57692acb5ed5cbcafde4f9a1b09254ac4bc58a96a6d2b",
+      "host": "127.0.0.1",
+      "port": 32858
+    },
+    "WAMN_BIND_CONNECTION_CONTROL_PG_URL": {
+      "set": true,
+      "database": "bind_control",
+      "owned_container": "39153d037b64299406c57692acb5ed5cbcafde4f9a1b09254ac4bc58a96a6d2b",
+      "host": "127.0.0.1",
+      "port": 32858
+    }
+  },
+  "cleanup": {
+    "owned_id": "39153d037b64299406c57692acb5ed5cbcafde4f9a1b09254ac4bc58a96a6d2b",
+    "attempted": true,
+    "exit_code": 0,
+    "timeout": false,
+    "success": true
+  },
+  "source": {
+    "commit": "802aed0688194437f18b90398858dc6342024069",
+    "clean": true
+  },
+  "fixture": {
+    "container_id": "39153d037b64299406c57692acb5ed5cbcafde4f9a1b09254ac4bc58a96a6d2b",
+    "image_id": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14",
+    "server_version_num": 180006,
+    "host": "127.0.0.1",
+    "port": 32858
+  },
+  "fallbacks_unset": [
+    "WAMN_PG_URL",
+    "DATABASE_URL"
+  ],
+  "test_command": {
+    "label": "bound-connection-live-test",
+    "argv": [
+      "cargo",
+      "test",
+      "-p",
+      "wamn-ctl",
+      "--locked",
+      "--offline",
+      "--test",
+      "bind_connection_live",
+      "bind_connection_round_trips_through_the_plugins_own_resolution",
+      "--",
+      "--include-ignored",
+      "--nocapture",
+      "--test-threads=1",
+      "--exact"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909",
+    "started_unix_ns": 1788970959395754647,
+    "exit_code": 0,
+    "timeout": false,
+    "interrupted": false,
+    "raw_private_log": "private/112-bound-connection-live-test.log",
+    "redacted_log": "112-bound-connection-live-test.redacted.log",
+    "owned_group_cleanup": false,
+    "finished_unix_ns": 1788970961915696866,
+    "raw_sha256": "81027223607ce1f765091b787e4a6596c5ed685b3358028807ce9b166b496b7c",
+    "redacted_sha256": "5cfcd3584066087d3f6f104df3b3d31118ebc10c0acf459796d2650c6aa98f9b"
+  },
+  "test_summaries": [
+    {
+      "result": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "measured": 0,
+      "filtered": 0
+    }
+  ],
+  "explicit_skip_detected": false
+}

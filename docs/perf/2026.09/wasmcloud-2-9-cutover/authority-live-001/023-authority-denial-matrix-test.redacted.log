@@ -1,0 +1,55 @@
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+running 20 tests
+test a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say ... ok
+test every_governed_relation_carries_the_tenant_key_expression_index ... ok
+test every_ordered_pair_of_matrix_families_is_covered_exactly_once ... ok
+test the_authority_derivations_match_their_pinned_definition_digest ... ok
+test the_dispatch_reader_family_is_refused_the_other_families_operations ... ok
+test the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers ... ok
+test the_effect_writer_family_is_refused_the_other_families_operations ... ok
+test the_event_materializer_family_is_refused_the_other_families_operations ... ok
+test the_executor_platform_family_is_refused_the_other_families_operations ... ok
+test the_guest_family_reads_its_own_tenant_and_only_its_own ... ok
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+test the_http_admitter_family_is_refused_the_other_families_operations ... ok
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+test the_platform_group_members_are_exactly_the_derived_families ... ok
+test the_retention_family_is_refused_the_other_families_operations ... ok
+test the_run_plane_guards_are_still_public_execute ... ok
+test the_scenario_author_has_no_platform_membership_or_project_reads ... ok
+test the_service_reader_family_is_refused_the_other_families_operations ... ok
+test the_session_role_reader_is_refused_the_other_families_operations ... ok
+test the_tenant_scoped_platform_member_reads_nothing_outside_its_grants ... ok
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+[private diagnostic redacted]
+test result: FAILED. 18 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.83s
+[private diagnostic redacted]
+[private diagnostic redacted]
