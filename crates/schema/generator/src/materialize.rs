@@ -549,20 +549,22 @@ mod tests {
 
     struct TestPackage {
         root: PathBuf,
+        scratch: PathBuf,
     }
 
     impl TestPackage {
         fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
+            let scratch = std::env::temp_dir().join(format!(
                 "wamn-schema-generator-materialize-{}-{name}",
                 std::process::id()
             ));
-            if root.exists() {
-                fs::remove_dir_all(&root).expect("remove stale test package");
+            if scratch.exists() {
+                fs::remove_dir_all(&scratch).expect("remove stale test package");
             }
+            let root = scratch.join("test_package");
             fs::create_dir_all(&root).expect("create test package");
             fs::write(root.join("wamn.json"), MANIFEST).expect("write test manifest");
-            Self { root }
+            Self { root, scratch }
         }
 
         fn generated_snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
@@ -580,7 +582,7 @@ mod tests {
 
     impl Drop for TestPackage {
         fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).expect("remove test package");
+            fs::remove_dir_all(&self.scratch).expect("remove test package");
         }
     }
 
