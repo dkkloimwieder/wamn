@@ -5437,9 +5437,12 @@ name = "wamn-client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "boon",
+ "chrono",
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
  "wamn-execution-contract",
 ]
 
