@@ -2374,7 +2374,10 @@ struct JourneyComponentDeclaration {
     path: PathBuf,
 }
 
-fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyComponentDeclaration>> {
+fn render_component_declarations(
+    root: &Path,
+    component_directory: &Path,
+) -> anyhow::Result<Vec<JourneyComponentDeclaration>> {
     let output = root.join("component-declarations");
     std::fs::create_dir_all(&output).context("create rendered declaration directory")?;
     JOURNEY_PACKAGES
@@ -2383,12 +2386,21 @@ fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyCompo
             let source = journey_publication_root(package)
                 .join("components")
                 .join(format!("{}.json.in", package.component));
-            // The template leaves its base dependency digest as a placeholder
-            // that only the package manifest authors (wamn-10yt.50), so the
-            // render -- not a tenant substitution -- makes it a declaration.
+            // Like the disposable dev coordinator, layer this run's exact
+            // virtualized bytes over authored pins without editing the package.
             let package_root = journey_package_root(package);
-            let base_digests = wamn_ctl::dev::coordinator::authored_base_digests(&package_root)
+            let mut base_digests = wamn_ctl::dev::coordinator::authored_base_digests(&package_root)
                 .with_context(|| format!("read {} base pins", package_root.display()))?;
+            for base in JOURNEY_PACKAGES {
+                let coordinate = format!("{}@{}", base.id, base.version);
+                if let Some(digest) = base_digests.get_mut(coordinate.as_str()) {
+                    let artifact = component_directory.join(format!("{}.wasm", base.component));
+                    let bytes = std::fs::read(&artifact)
+                        .with_context(|| format!("read built base {}", artifact.display()))?;
+                    *digest = wamn_runtime::component_admission::component_digest(&bytes)
+                        .into_boxed_str();
+                }
+            }
             let declaration = wamn_ctl::dev::coordinator::render_declaration_document(
                 &source,
                 TENANT,
@@ -2404,6 +2416,49 @@ fn render_component_declarations(root: &Path) -> anyhow::Result<Vec<JourneyCompo
             })
         })
         .collect()
+}
+
+#[test]
+fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result<()> {
+    let root = ScratchRoot(
+        std::env::temp_dir().join(format!("journey-built-base-digests-{}", std::process::id())),
+    );
+    std::fs::create_dir(root.path())?;
+    let artifacts = root.path().join("components");
+    std::fs::create_dir(&artifacts)?;
+    let manifest = overlay_package_root().join("wamn.json");
+    let template = overlay_package_root()
+        .join("publication/components")
+        .join(format!("{OVERLAY_COMPONENT}.json.in"));
+    let authored_manifest = std::fs::read(&manifest)?;
+    let authored_template = std::fs::read(&template)?;
+    assert!(render_component_declarations(root.path(), &artifacts).is_err());
+
+    // Two distinct component binaries; the second adds an empty custom section.
+    for bytes in [
+        b"\0asm\x0d\0\x01\0".as_slice(),
+        b"\0asm\x0d\0\x01\0\0\x02\x01x".as_slice(),
+    ] {
+        std::fs::write(artifacts.join(format!("{BASE_COMPONENT}.wasm")), bytes)?;
+        let declarations = render_component_declarations(root.path(), &artifacts)?;
+        let overlay = declarations
+            .iter()
+            .find(|declaration| declaration.package.id == OVERLAY_PACKAGE_ID)
+            .expect("the journey renders its overlay");
+        let declaration: Value = serde_json::from_slice(&std::fs::read(&overlay.path)?)?;
+        assert_eq!(
+            declaration["operations"][OVERLAY_RECORD_RECEIPT]["dependencies"],
+            serde_json::json!([{
+                "package": BASE_PACKAGE_ID,
+                "version": BASE_PACKAGE_VERSION,
+                "digest": wamn_runtime::component_admission::component_digest(bytes),
+                "operation": BASE_RECORD_RECEIPT,
+            }]),
+        );
+    }
+    assert_eq!(std::fs::read(manifest)?, authored_manifest);
+    assert_eq!(std::fs::read(template)?, authored_template);
+    Ok(())
 }
 
 async fn push_journey_components(
@@ -3390,7 +3445,7 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
     )
     .await?;
     reconcile_journey_data_access(&route.database_url).await?;
-    let declarations = render_component_declarations(root)?;
+    let declarations = render_component_declarations(root, &inputs.component_directory)?;
     push_journey_components(&inputs, &route.database_url, &system_url, &declarations).await?;
     let admitted_component_digests =
         verify_journey_components_are_effectful(project.as_ref()).await?;
