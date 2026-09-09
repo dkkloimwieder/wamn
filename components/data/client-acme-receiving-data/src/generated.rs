@@ -10,6 +10,10 @@ pub(crate) mod purchase_order {
 const _: &[&str] = purchase_order::UPDATE_UNIQUE_CONSTRAINTS;
 const _: &[&str] = purchase_order::UPDATE_FOREIGN_KEY_CONSTRAINTS;
 const _: &[&str] = purchase_order::UPDATE_CHECK_CONSTRAINTS;
+// `4862faee` taught the generator to emit a fourth slice. Nothing consumes it:
+// `AllowedConstraints` carries three fields, and giving it an `exclusion` one
+// changes the classifier and its cases, which is its own change (wamn-10yt.66).
+const _: &[&str] = purchase_order::UPDATE_EXCLUSION_CONSTRAINTS;
 
 pub(crate) mod quality_approve_inspection {
     include!(concat!(

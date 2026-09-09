@@ -18,6 +18,12 @@ pub(crate) mod wamn {
         ));
     }
 
+    // `4862faee` taught the generator to emit a fourth slice. Nothing consumes
+    // it: `AllowedConstraints` carries three fields, and giving it an
+    // `exclusion` one changes the classifier and its cases, which is its own
+    // change (wamn-10yt.66). The other three reach `purchase_order.rs`.
+    const _: &[&str] = purchase_order::UPDATE_EXCLUSION_CONSTRAINTS;
+
     /// Generated `receipt` projection and statement digests.
     pub(crate) mod receipt {
         include!(concat!(
