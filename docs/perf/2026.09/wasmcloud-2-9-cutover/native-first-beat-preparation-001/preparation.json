@@ -1,0 +1,43 @@
+{
+  "schema": "wamn-native-first-beat-proof-preparation/v1",
+  "owner": "wamn-0h0g.2.7.3",
+  "status": "prepared_not_applied_not_compiled_not_executed",
+  "source_revision": "6bfda73b730e9b5e54b3ade98a264c2ef3bc87ae",
+  "source_path": "services/host/tests/native_lifecycle_live.rs",
+  "source_sha256": "fc14f008886e7af1434c417599d98ba331802fee34b994db77655f61704a2e68",
+  "proposed_sha256": "76d9b028af1716301a6444e3636b0cf4a3e3b7d38448cfd02b8bea42207fa66e",
+  "patch_sha256": "86bd8a84623aa705d61c062792c24cebf7b756f1eb197345d5a6738a8a545313",
+  "existing_test_name": "rebuilt_host_probes_signals_and_scheduler_recovery",
+  "command": "cargo test -p wamn-host --test native_lifecycle_live --locked --offline rebuilt_host_probes_signals_and_scheduler_recovery -- --ignored --exact --nocapture",
+  "arming": {
+    "WAMN_HOST_LIVE_NATS_SERVER_BIN": "Absolute existing real NATS server binary, same existing fixture owner.",
+    "WAMN_HOST_LIVE_EVIDENCE_DIR": "Fresh absolute directory outside the source tree; parent exists and is outside the repository. The test creates it mode 0700."
+  },
+  "new_receipt": "native-missing-first-beat.receipt",
+  "new_dependencies": [],
+  "proof_steps": [
+    "Connect/flush a real owned NATS client, request drain, and await a failed valid subscription command. Check the public SubscribeErrorKind::Other so an invalid-subject refusal cannot satisfy the control.",
+    "Supply the confirmed closed client to the actual native ClusterHostBuilder with a public 100ms heartbeat interval and native 3x (300ms) silence budget. Start without ingress, plugins or workloads.",
+    "Wait on production WAMN watch_liveness without polling the opaque cleanup future. Require the first-beat error, silence None, and elapsed time inside the configured silence-plus-observer bound.",
+    "After observer completion, drain ProbeState and use WAMN bounded_cleanup on the actual native cleanup future. Require a typed public async_nats SubscribeError and the native subscribe context, not a cleanup timeout or injected error.",
+    "Drop the returned native HostApi handle. Retain a scope-labelled receipt and continue the existing full-process cases."
+  ],
+  "timeouts": {
+    "connect_seconds": 1,
+    "connected_flush_seconds": 1,
+    "drain_request_seconds": 1,
+    "confirm_closed_subscription_seconds": 1,
+    "native_start_seconds": 1,
+    "watch_seconds": 1.3,
+    "native_cleanup_seconds": 1,
+    "existing_owned_nats_reap_seconds": 5
+  },
+  "cleanup": "New helper creates no child process. It executes inside the existing captured-result async block, so all returned failures reach the existing NATS kill/reap tail. Real cleanup is polled after the observer even if the observer times out, then the HostApi handle is dropped before result assertions. No ingress/plugins/workloads are installed because the native subscribe error skips Host::stop.",
+  "limits": [
+    "This proves an actual native detached subscribe-task failure observed by production WAMN lifecycle helpers in the test process. It does not prove the wamn-host executable unexpected-failure branch.",
+    "The nonzero public 100ms heartbeat setting derives a 300ms silence bound. It does not measure the default 45-second silence interval.",
+    "The existing WAMN process signal/exporter tests remain unchanged; this patch neither exposes hidden JoinHandles/errors nor polls cleanup as a passive monitor.",
+    "Keep .2.7.3 open pending actual passing evidence."
+  ],
+  "static_validation": "Source/API inspection and local file/diff/JSON checks only. No Rust compiler, test, live tool, source edit or Beads mutation."
+}

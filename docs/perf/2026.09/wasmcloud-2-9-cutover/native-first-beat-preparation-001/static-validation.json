@@ -1,0 +1,9 @@
+{
+  "patch_sha256": "86bd8a84623aa705d61c062792c24cebf7b756f1eb197345d5a6738a8a545313",
+  "source_sha256": "fc14f008886e7af1434c417599d98ba331802fee34b994db77655f61704a2e68",
+  "new_test_helper_lines": 94,
+  "existing_test_owner_extended": true,
+  "source_unchanged": true,
+  "test_or_build_or_live_commands_run": 0,
+  "git_apply_check_exit": 0
+}

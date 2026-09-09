@@ -1,0 +1,1 @@
+cargo test -p wamn-host --test native_lifecycle_live --locked --offline rebuilt_host_probes_signals_and_scheduler_recovery -- --ignored --exact --nocapture

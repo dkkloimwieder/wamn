@@ -406,16 +406,13 @@ async fn prove_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyho
 async fn prove_missing_first_beat(nats_address: SocketAddr, evidence: &Path) -> anyhow::Result<()> {
     use std::sync::Arc;
 
-    use wamn_runtime::lifecycle::{bounded_cleanup, watch_liveness};
     use wash_runtime::host::probes::{Liveness, ProbeState};
     use wash_runtime::washlet::{ClusterHostBuilder, liveness_silence};
+    use wamn_runtime::lifecycle::{bounded_cleanup, watch_liveness};
 
-    let client = timeout(
-        REQUEST_BUDGET,
-        async_nats::connect(nats_address.to_string()),
-    )
-    .await
-    .context("connect the first-beat proof client within its budget")??;
+    let client = timeout(REQUEST_BUDGET, async_nats::connect(nats_address.to_string()))
+        .await
+        .context("connect the first-beat proof client within its budget")??;
     timeout(REQUEST_BUDGET, client.flush())
         .await
         .context("flush the connected first-beat proof client")??;
@@ -469,8 +466,8 @@ async fn prove_missing_first_beat(nats_address: SocketAddr, evidence: &Path) -> 
     let cleanup_time = cleanup_started.elapsed();
     drop(host);
 
-    let error =
-        observed.context("the failed native task was not detected within its silence bound")?;
+    let error = observed
+        .context("the failed native task was not detected within its silence bound")?;
     ensure!(
         error.to_string().contains("first liveness beat") && never_beat,
         "the native task did not fail before its first beat: {error:#}"
@@ -479,10 +476,7 @@ async fn prove_missing_first_beat(nats_address: SocketAddr, evidence: &Path) -> 
         observation_time >= silence_budget && observation_time < silence_budget + REQUEST_BUDGET,
         "first-beat observation did not preserve its configured silence bound"
     );
-    ensure!(
-        cleanup_time < REQUEST_BUDGET,
-        "native cleanup exceeded its budget"
-    );
+    ensure!(cleanup_time < REQUEST_BUDGET, "native cleanup exceeded its budget");
     let error = cleaned
         .err()
         .context("native subscription failure returned successful cleanup")?;
@@ -494,16 +488,10 @@ async fn prove_missing_first_beat(nats_address: SocketAddr, evidence: &Path) -> 
             && error.to_string() == "failed to subscribe for API requests",
         "cleanup returned a different native failure: {error:#}"
     );
-    fs::write(
-        evidence.join("native-missing-first-beat.receipt"),
-        format!(
-            "scope=native ClusterHost and WAMN lifecycle helpers in test process\nclosed_client_subscription_failed=true\nheartbeat_interval_ms=100\nsilence_budget_ms={}\nobservation_ms={}\nnever_beat=true\ncleanup_polled_after_observer=true\nnative_subscription_error_retrieved=true\ncleanup_ms={}\ncleanup_budget_ms={}\nfull_process_unexpected_failure_proved=false\n",
-            silence_budget.as_millis(),
-            observation_time.as_millis(),
-            cleanup_time.as_millis(),
-            REQUEST_BUDGET.as_millis(),
-        ),
-    )?;
+    fs::write(evidence.join("native-missing-first-beat.receipt"), format!(
+        "scope=native ClusterHost and WAMN lifecycle helpers in test process\nclosed_client_subscription_failed=true\nheartbeat_interval_ms=100\nsilence_budget_ms={}\nobservation_ms={}\nnever_beat=true\ncleanup_polled_after_observer=true\nnative_subscription_error_retrieved=true\ncleanup_ms={}\ncleanup_budget_ms={}\nfull_process_unexpected_failure_proved=false\n",
+        silence_budget.as_millis(), observation_time.as_millis(), cleanup_time.as_millis(), REQUEST_BUDGET.as_millis(),
+    ))?;
     Ok(())
 }
 

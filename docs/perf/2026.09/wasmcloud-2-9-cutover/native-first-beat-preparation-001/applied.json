@@ -1,0 +1,7 @@
+{
+  "base": "6bfda73b730e9b5e54b3ade98a264c2ef3bc87ae",
+  "path": "services/host/tests/native_lifecycle_live.rs",
+  "sha256": "c6daa30a438c9d402bd1925cf27f41e603393a059cdcb06d31b2621eca3c47a5",
+  "format": "rustfmt --edition 2024 services/host/tests/native_lifecycle_live.rs",
+  "status": "applied and formatted; execution pending final workspace sweep"
+}
