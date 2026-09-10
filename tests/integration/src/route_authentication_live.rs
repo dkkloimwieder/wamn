@@ -3609,7 +3609,10 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
     if let Some(copies) = &inputs.fresh_only_packages {
         for name in ["control-author", "management-admitter"] {
             let destination = copies.join(format!("{name}.json"));
-            anyhow::ensure!(!destination.exists(), "fresh-only authority copy must be new");
+            anyhow::ensure!(
+                !destination.exists(),
+                "fresh-only authority copy must be new"
+            );
             std::fs::copy(root.join(format!("{name}.json")), &destination)?;
             std::fs::set_permissions(&destination, Permissions::from_mode(0o600))?;
         }

@@ -134,8 +134,12 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
         .await?;
     assert_counter_authority(&proof).await?;
 
+    let base_package = *JOURNEY_PACKAGES
+        .iter()
+        .find(|package| package.id == BASE_PACKAGE_ID)
+        .context("the journey must declare the actual base package")?;
     let source: Value = serde_json::from_slice(&std::fs::read(
-        journey_publication_root(JOURNEY_PACKAGES[0]).join("components/receiving.json.in"),
+        journey_publication_root(base_package).join("components/receiving.json.in"),
     )?)?;
     let ports = &source["operations"][BASE_RECORD_RECEIPT];
     let declaration = json!({
@@ -196,16 +200,16 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
             "definition": definition, "auth-policy": {"modes": ["pat", "session"]}
         }}),
     )?;
-    let mut packages = JOURNEY_PACKAGES
-        .iter()
-        .map(|package| PackageCoordinate::new(package.id, package.version))
-        .collect::<Result<Vec<_>, _>>()?;
-    packages.push(PackageCoordinate::new(PACKAGE, VERSION)?);
-    let mut manifests = JOURNEY_PACKAGES
-        .iter()
-        .map(|package| journey_package_root(*package).join("wamn.json"))
-        .collect::<Vec<_>>();
-    manifests.push(package.join("wamn.json"));
+    // Acme's event handler is outside this wiring's actual dependency closure.
+    // Including that package would also require its unrelated handler wiring.
+    let packages = vec![
+        PackageCoordinate::new(BASE_PACKAGE_ID, BASE_PACKAGE_VERSION)?,
+        PackageCoordinate::new(PACKAGE, VERSION)?,
+    ];
+    let manifests = vec![
+        journey_package_root(base_package).join("wamn.json"),
+        package.join("wamn.json"),
+    ];
     publish_release::run(PublishReleaseArgs {
         database_url: proof.project_url.to_owned(),
         control_database_url: proof.inputs.system_pg_url.clone(),
@@ -248,6 +252,20 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
         )
         .await?
         .get(0);
+    let attested: String = proof
+        .control
+        .query_one(
+            "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
+             WHERE tenant_id = $1 AND effective_release_id = 4 \
+               AND org_id = $2 AND project_id = $3 AND environment = $4",
+            &[&TENANT, &ORG, &PROJECT, &ENVIRONMENT],
+        )
+        .await?
+        .get(0);
+    anyhow::ensure!(
+        attested == digest,
+        "prior-commit deployment attestation differs from its minted release"
+    );
     let source = ReleaseManifestSource::new(
         &proof.inputs.release_artifact_base,
         true,
@@ -261,6 +279,11 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
     anyhow::ensure!(
         release.manifest().format_version == 1
             && release.release().effective_release_id == 4
+            && release.manifest().release.packages.len() == 2
+            && release.manifest().components.len() == 2
+            && release.manifest().wirings.len() == 1
+            && release.manifest().attachments.len() == 1
+            && release.manifest().registrations.is_empty()
             && release
                 .manifest()
                 .components
@@ -388,8 +411,9 @@ fn assert_counter_trace(
     for invocation in &invoked {
         anyhow::ensure!(
             span_attribute(invocation, "wamn.caller_credential_kind").as_deref()
-                == Some(credential),
-            "counter wiring changed the original credential kind"
+                == Some(credential)
+                && span_attribute(invocation, "wamn.tenant").as_deref() == Some(TENANT),
+            "counter wiring changed the original credential kind or tenant"
         );
     }
     if reached_base {

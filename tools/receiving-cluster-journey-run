@@ -19,7 +19,7 @@ Without --apply, print the immutable plan and exit.
   --session-host-proof Prove session-key removal on two deployed hosts, with
                        reachable and unavailable JWKS; cannot combine modes
   --fresh-only-proof   Prove direct/nested session refusal, same-human PAT success, and
-                       next-request revocation, plus the session-host proof
+                       next-request revocation and prior commits, plus the session-host proof
   --fresh-auth-bench    Repeat the existing throughput sweep three times for each
                        of service and human PATs; implies --throughput
   --evidence-dir DIR   New directory retaining commands and machine evidence
@@ -195,7 +195,7 @@ if [[ "$apply" != true ]]; then
   printf '  namespace: %s\n' "$namespace"
   printf '  route host: %s (setup overlay only)\n' "$route_host"
   if [[ "$fresh_only_proof" == true ]]; then
-    printf '  order: Dockerfile host + gates + identity -> copied authored fresh-only base -> production admission + v1 release -> direct/nested session refusal + same-human PAT success + role/membership revocation -> two-host session proof -> exact teardown\n'
+    printf '  order: Dockerfile host + gates + identity -> copied authored fresh-only base -> production admission + v1 release -> direct/nested session refusal + same-human PAT success + role/membership revocation + prior-commit survival -> two-host session proof -> exact teardown\n'
   elif [[ "$session_host_proof" == true ]]; then
     printf '  order: Dockerfile host + gates + identity -> disposable v1 session release -> two distinct deployed hosts -> reachable/unavailable JWKS removal Jobs (300 seconds each) -> exact teardown\n'
   elif [[ "$membershipproof" == true ]]; then
@@ -497,7 +497,7 @@ cleanup() {
 
   if [[ $status -eq 0 && "$run_complete" == true && "$cleanup_failed" == false ]]; then
     if [[ "$fresh_only_proof" == true ]]; then
-      printf 'RECEIVING FRESH ONLY PROOF PASS source=%s namespace=%s direct=pass nested=pass role_revocation=pass membership_revocation=pass hosts=2 reachable=pass unreachable=pass cleanup=pass\n' \
+      printf 'RECEIVING FRESH ONLY PROOF PASS source=%s namespace=%s direct=pass nested=pass role_revocation=pass membership_revocation=pass prior_commit=pass hosts=2 reachable=pass unreachable=pass cleanup=pass\n' \
         "$head" "$namespace" >"$evidence_dir/fresh-only-proof-journey.receipt"
     elif [[ "$session_host_proof" == true ]]; then
       printf 'RECEIVING HOST SESSION PROOF PASS source=%s namespace=%s hosts=2 reachable=pass unreachable=pass cleanup=pass\n' \
@@ -906,8 +906,14 @@ install -d -m 0700 "$compilation_cache_directory"
 # So the count is asserted at the invocation rather than inferred downstream.
 assert_one_test_ran() {
   local log=$1 name=$2
-  grep -qE '^test result: ok\. 1 passed; 0 failed;' "$log" || {
-    echo "cargo test ran no matching test for $name -- an --exact name that does not exist exits 0 having executed nothing" >&2
+  awk -v selected="test route_authentication_live::$name ... " '
+    /^running 1 test$/ { runs++ }
+    index($0, selected) == 1 { matches++ }
+    /^test result:/ { summaries++ }
+    /^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured;/ { passed++ }
+    END { if (runs != 1 || matches != 1 || summaries != 1 || passed != 1) exit 1 }
+  ' "$log" || {
+    echo "cargo test did not run exactly one successful $name test" >&2
     grep -E '^(running|test result)' "$log" >&2 || true
     exit 1
   }
@@ -1796,6 +1802,10 @@ if [[ "$session_host_proof" == true ]]; then
     deploy/platform/identity/Chart.yaml deploy/platform/identity/values.yaml \
     deploy/platform/identity/templates/deployment.yaml deploy/platform/identity/templates/service.yaml \
     >"$evidence_dir/session-source-inputs.sha256"
+  if [[ "$fresh_only_proof" == true ]]; then
+    sha256sum tests/integration/src/route_authentication_live/fresh_only.rs \
+      >>"$evidence_dir/session-source-inputs.sha256"
+  fi
   printf '#!/usr/bin/env bash\nexec %q --kubeconfig %q --context %q "$@"\n' \
     "$(command -v kubectl)" "$kubeconfig" "$context" >"$work_dir/session-kubectl"
   chmod 0700 "$work_dir/session-kubectl"
