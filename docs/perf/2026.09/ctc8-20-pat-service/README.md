@@ -67,5 +67,21 @@ The [final receipt](receiving-001/receiving-correctness-journey.receipt) binds t
 The runner removed only its owned cluster, containers, images, and private scratch files.
 
 This proof exercises the separate native PAT bootstrap process, not an operator-CA mount through the identity Helm chart.
-That deployment change still requires permission.
-Beads owns the remaining work and approval status.
+
+## Optional operator CA deployment
+
+The owner approved the three identity Helm files and full public Beads publication on 2026-09-10.
+The chart accepts an existing dedicated CA Secret through `operatorCaSecret`.
+Its default remains empty, which disables PAT issuance.
+The mount contains only `ca.crt`, read-only with mode `0400`.
+The deployment instructions require a service restart after the trusted CA changes.
+
+The first [render test](helm-001/positive.log) exposed a test-parser error with nested Secret names.
+Commit `94d5992f` corrected that parser without changing the chart.
+All three [identity render tests](helm-001/positive-fixed.log) then passed, and [Helm lint](helm-001/lint.log) passed.
+The [negative control](helm-001/broken-path.log) changed the CA environment path to a nonexistent file.
+The named operator-CA test detected that exact difference and returned 101.
+The [restored run](helm-001/restored.log) passed all three tests with the original template SHA-256 hash.
+The [full inventory](helm-001/inventory.log) passed eight tests and retained the existing Secret-inventory failure, `wamn-362o.58`.
+
+These chart proofs render manifests locally. They do not claim an installed Helm deployment.

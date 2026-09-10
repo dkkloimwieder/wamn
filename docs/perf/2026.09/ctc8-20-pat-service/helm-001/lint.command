@@ -1,0 +1,1 @@
+helm lint deploy/platform/identity -f deploy/platform/values-identity-default.yaml --set-string issuer=https://identity.invalid --set-string tlsSecret=identity-tls --set-string operatorCaSecret=provisioning-operator-ca 
