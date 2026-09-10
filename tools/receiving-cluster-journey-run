@@ -24,7 +24,8 @@ Without --apply, print the immutable plan and exit.
                        of service and human PATs; implies --throughput
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
-The fixed scratch cluster is wamn-receiving-journey. Every Kubernetes and Helm
+The correctness mode uses scratch cluster wamn-receiving-correctness. Other
+modes use wamn-receiving-journey. Every Kubernetes and Helm
 command carries its private kubeconfig and context. The frozen kind-wamn cluster
 is never a target.
 EOF
@@ -96,8 +97,11 @@ cd -- "$repo_root"
 head=$(git rev-parse --verify HEAD)
 short_head=${head:0:12}
 cluster=wamn-receiving-journey
-context=kind-wamn-receiving-journey
-namespace=wamn-receiving-journey
+if [[ "$receiving_correctness" == true ]]; then
+  cluster=wamn-receiving-correctness
+fi
+context=kind-$cluster
+namespace=$cluster
 system_namespace=wamn-system
 
 # The APPLICATION'S OWN IDENTITY, named once and derived from everywhere else.
@@ -527,6 +531,9 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
 lock_file=${TMPDIR:-/tmp}/wamn-receiving-cluster-journey.lock
+if [[ "$receiving_correctness" == true ]]; then
+  lock_file=${TMPDIR:-/tmp}/wamn-receiving-correctness.lock
+fi
 exec 9>"$lock_file"
 if ! flock -n 9; then
   echo "another Receiving cluster journey owns the fixed scratch name" >&2
