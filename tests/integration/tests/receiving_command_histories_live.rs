@@ -938,6 +938,25 @@ fn production_receiving_command_histories() -> Result<()> {
         weld["application_sql_corpus_identity"] == inputs.corpus_sha256,
         "Receiving proof SQL corpus identity differs from the package weld"
     );
+    let overlay_weld: Value = serde_json::from_slice(&std::fs::read(
+        repository.join("packages/client_acme_receiving/generated/package-weld.json"),
+    )?)?;
+    let schema_state_ids = json!({
+        "receiving": weld["verified_schema_state_id"].as_str()
+            .context("Receiving weld has no verified schema identity")?,
+        "client_acme_receiving": overlay_weld["verified_schema_state_id"].as_str()
+            .context("Acme weld has no verified schema identity")?,
+    });
+    let compiler = std::process::Command::new("rustc")
+        .args(["--version", "--verbose"])
+        .current_dir(&repository)
+        .output()
+        .context("read the Receiving proof compiler identity")?;
+    ensure!(
+        compiler.status.success(),
+        "cannot read the proof compiler version"
+    );
+    let compiler_version = std::str::from_utf8(&compiler.stdout)?.trim();
     let secret: Value = serde_json::from_slice(&std::fs::read(&inputs.route_caller_secret)?)?;
     let route = Route {
         client: reqwest::Client::builder()
@@ -969,6 +988,10 @@ fn production_receiving_command_histories() -> Result<()> {
         &mut evidence,
         json!({"case":"identity","source_commit":inputs.source_commit,
         "component_digests":inputs.component_digests,"corpus_sha256":inputs.corpus_sha256,
+        "postgres_server_version_num":version,"schema_state_ids":schema_state_ids,
+        "generation_provenance":{"receiving":weld["provenance"],
+            "client_acme_receiving":overlay_weld["provenance"]},
+        "proof_compiler_version":compiler_version,
         "seed":inputs.seed,"generated_cases":inputs.cases,"max_shrink_iterations":64,
         "invariants":["REC-HISTORY","REC-REFUSAL","REC-REPLAY","REC-CONTENTION",
             "REC-ROLLBACK","REC-LOST-RESPONSE","REC-REVISION","REC-AUTHORITY"]}),

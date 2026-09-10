@@ -2259,8 +2259,10 @@ if [[ "$receiving_correctness" == true ]]; then
   ' "$evidence_dir/flow-http-endpointslices.json" >"$correctness_nodeport"
   run "${kube[@]}" apply -f "$correctness_nodeport"
   cp "$correctness_nodeport" "$evidence_dir/receiving-correctness-nodeport.json"
-  correctness_node_port=$("${kube[@]}" -n "$namespace" get service receiving-correctness-nodeport \
-    -o jsonpath='{.spec.ports[0].nodePort}')
+  "${kube[@]}" -n "$namespace" get service receiving-correctness-nodeport -o json \
+    >"$evidence_dir/receiving-correctness-service.json"
+  correctness_node_port=$(jq -er '.spec.ports[0].nodePort' \
+    "$evidence_dir/receiving-correctness-service.json")
   correctness_node_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
     "$cluster-control-plane")
   [[ $correctness_node_port =~ ^[0-9]{4,5}$ && -n $correctness_node_ip ]] || {
@@ -2294,16 +2296,35 @@ if [[ "$receiving_correctness" == true ]]; then
     ' >"$correctness_document"
   )
   [[ $(stat -c '%a' "$correctness_document") == 600 ]] || exit 1
-  correctness_probe_status=$(curl --silent --output /dev/null --max-time 5 \
-    --write-out '%{http_code}' --header "Host: $route_host" "$correctness_endpoint/")
-  [[ "$correctness_probe_status" == 404 ]] || {
-    echo "the correctness NodePort did not return 404 for the unmatched route" >&2
-    exit 1
-  }
+  # Reuse the observational reachability policy from wamn-0h0g.15.137.14.
+  # A refused connection returns immediately, before connect-timeout applies.
+  correctness_probe_exit=0
+  correctness_probe_status=$(timeout --signal=TERM --kill-after=2s 30s \
+    curl --silent --show-error --connect-timeout 5 --max-time 5 \
+      --retry 15 --retry-delay 1 --retry-connrefused --retry-max-time 20 \
+      --dump-header "$evidence_dir/receiving-correctness-probe.headers" \
+      --output "$evidence_dir/receiving-correctness-probe.body" --write-out '%{http_code}' \
+      --header "Host: $route_host" "$correctness_endpoint/" \
+      2>"$evidence_dir/receiving-correctness-probe.stderr") || correctness_probe_exit=$?
   jq -n --arg endpoint "$correctness_endpoint" --arg host "$route_host" \
-    --arg status "$correctness_probe_status" \
-    '{endpoint:$endpoint,host:$host,http_status:$status}' \
+    --arg status "$correctness_probe_status" --argjson exit_code "$correctness_probe_exit" \
+    '{endpoint:$endpoint,host:$host,http_status:$status,curl_exit_code:$exit_code}' \
     >"$evidence_dir/receiving-correctness-endpoint.json"
+  correctness_content_type=$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' \
+    "$evidence_dir/receiving-correctness-probe.headers" | tr -d '\r' | tail -n 1)
+  if [[ "$correctness_probe_exit" -ne 0 || "$correctness_probe_status" != 404 ||
+        "$correctness_content_type" != application/json ]] ||
+     ! cmp -s <(printf '%s' '{"error":{"code":"route-not-found"}}') \
+       "$evidence_dir/receiving-correctness-probe.body"; then
+    echo "the correctness NodePort did not return the exact route-not-found response" >&2
+    "${kube[@]}" -n "$namespace" logs deployment/hostgroup-default \
+      --all-pods=true --all-containers=true --tail=200 \
+      >"$evidence_dir/receiving-correctness-host-failure.log" 2>&1 || true
+    "${kube[@]}" -n kube-system logs daemonset/kube-proxy --all-pods=true --tail=100 \
+      >"$evidence_dir/receiving-correctness-proxy-failure.log" 2>&1 || true
+    [[ "$correctness_probe_exit" -ne 0 ]] || correctness_probe_exit=1
+    exit "$correctness_probe_exit"
+  fi
   record_command timeout --signal=TERM --kill-after=10s 600s \
     env WAMN_RECEIVING_CORRECTNESS_DOCUMENT='<private-fixture-path>' \
     CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \

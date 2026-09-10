@@ -2752,6 +2752,9 @@ This case does not establish behavior under a real TCP connection failure.
 The private fixture document carries credentials and never enters the evidence directory.
 The `WAMN_RECEIVING_CORRECTNESS_DOCUMENT` variable names that file.
 The evidence records source, component and SQL corpus identities, fixture IDs, histories, executed steps, and boundary results.
+It also records the PostgreSQL version, both package schema identities, generation provenance, and the observed proof compiler version.
+The observational NodePort probe reuses the existing connection-refusal retry policy and has a 30-second limit.
+It requires the exact JSON route-not-found response and retains its address, headers, body, and curl errors.
 A successful run requires the exact test, its structured summary, and the final cleanup receipt.
 An ignored, missing, zero-case, or unarmed leg does not pass.
 
