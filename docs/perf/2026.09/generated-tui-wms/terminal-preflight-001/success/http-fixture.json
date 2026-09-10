@@ -1,0 +1,26 @@
+[
+  {
+    "authorization_matches": true,
+    "content_type": "application/json",
+    "host": "wms-preflight.localhost",
+    "method": "POST",
+    "path": "/pallet/get",
+    "request_body": "[{\"id\":\"44444444-0000-0000-0000-000000000001\",\"request_id\":\"3335da15-ed9f-4a2a-8da9-860428471647\"}]",
+    "request_sha256": "f0f820f5e2ffdacc56a6b85612edae5c2124eb353ec7eac8a73120c13a3795f6",
+    "response_body": "[{\"request_id\": \"3335da15-ed9f-4a2a-8da9-860428471647\", \"value\": {\"id\": \"44444444-0000-0000-0000-000000000001\", \"location_id\": \"44444444-0000-0000-0000-000000000003\", \"pallet_code\": \"WMS-TUI-PREFLIGHT\", \"row_version\": 1, \"status\": \"available\", \"created_at\": \"2026-09-10T10:00:00Z\", \"updated_at\": \"2026-09-10T10:00:00Z\"}}]",
+    "response_sha256": "5147a855a97fbbbda545d631c88afb2ea11d204827bbf1feb574b8b515986d7f",
+    "status": 200
+  },
+  {
+    "authorization_matches": true,
+    "content_type": "application/json",
+    "host": "wms-preflight.localhost",
+    "method": "POST",
+    "path": "/inventory/move",
+    "request_body": "[{\"request_id\":\"f3db5e75-39b8-442a-8769-7a91c57a30fe\",\"value\":{\"expected_row_version\":1,\"idempotency_key\":\"1d80a124-cc63-4020-9a0c-a36444c87ebb\",\"occurred_at\":\"2026-09-10T12:11:18.197408Z\",\"pallet_id\":\"44444444-0000-0000-0000-000000000001\",\"to_location_id\":\"44444444-0000-0000-0000-000000000004\"}}]",
+    "request_sha256": "84da7dd2c528b134f6b9710f7a2799cfb580d1985afaef5582537c8b30b5eee4",
+    "response_body": "[{\"request_id\": \"f3db5e75-39b8-442a-8769-7a91c57a30fe\", \"value\": {\"movement_id\": \"44444444-0000-0000-0000-000000000009\", \"pallet_id\": \"44444444-0000-0000-0000-000000000001\", \"location_id\": \"44444444-0000-0000-0000-000000000004\", \"pallet_status\": \"available\", \"row_version\": 2, \"zpl\": \"^XA^FO10,10^FDSynthetic WMS preflight^FS^XZ\", \"stored\": {\"container\": \"labels\", \"key\": \"44444444-0000-0000-0000-000000000009\"}}}]",
+    "response_sha256": "c25c2fb0c2728195f5a59f8ec13cb1c4051f15a0bb216d1ee49838f3aa0fcd93",
+    "status": 200
+  }
+]

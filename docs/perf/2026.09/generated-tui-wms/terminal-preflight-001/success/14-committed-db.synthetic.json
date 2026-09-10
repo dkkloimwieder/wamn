@@ -1,0 +1,35 @@
+{
+  "observation": {
+    "claims": 1,
+    "command": {
+      "idempotency_key": "1d80a124-cc63-4020-9a0c-a36444c87ebb",
+      "movement_id": "44444444-0000-0000-0000-000000000009",
+      "pallet_id": "44444444-0000-0000-0000-000000000001",
+      "pallet_status": "available",
+      "row_version": 2
+    },
+    "movement": {
+      "from_location_id": "44444444-0000-0000-0000-000000000003",
+      "idempotency_key": "1d80a124-cc63-4020-9a0c-a36444c87ebb",
+      "kind": "move",
+      "pallet_id": "44444444-0000-0000-0000-000000000001",
+      "product_id": "44444444-0000-0000-0000-000000000002",
+      "quantity": "10.0000",
+      "to_location_id": "44444444-0000-0000-0000-000000000004"
+    },
+    "movements": 1,
+    "pallet": {
+      "location_id": "44444444-0000-0000-0000-000000000004",
+      "row_version": 2,
+      "status": "available"
+    },
+    "quantity": [
+      {
+        "product_id": "44444444-0000-0000-0000-000000000002",
+        "quantity": "10.0000",
+        "status": "available"
+      }
+    ]
+  },
+  "source": "synthetic database fixture; no SQL executed"
+}

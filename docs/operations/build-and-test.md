@@ -3183,6 +3183,29 @@ The evidence directory retains `wms-partial-http.json`,
 `wms-partial.receipt` records passing assertions, and `verdict.json` includes
 `committed-move-with-failed-label-store` only after the journey passes.
 
+#### Generated move form
+
+`--prove-generated-tui` adds the operator proof for `wamn-10yt.62.7` and includes the partial completion arm.
+The example composes generated `pallet.get` and `inventory.move` screens through the shared terminal driver.
+A successful matching pallet read supplies the protected pallet ID and revision.
+The operator enters the destination and submits the form.
+The generated package remains unchanged because its contract declares no record mapping for this command.
+
+Run from a clean, committed source tree. Choose a new evidence directory.
+
+```bash
+tools/wms-cluster-journey-run --apply --prove-generated-tui \
+  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/generated-tui-wms/live-001/journey
+```
+
+The first terminal session must show the returned label key.
+The harness reads that object and compares its bytes with the returned label.
+After bucket removal, a second session must show the committed movement beside the store failure.
+Both sessions must refuse captured retry and another submission of the spent intent.
+A local relay records HTTP bodies and counts attempts without publishing authorization headers.
+Each session must send exactly one read and one move, restore the terminal, and remove its database fixtures.
+The shared reducer tests cover missing completion evidence separately.
+
 #### `--demo` — the WMS demo, the command and the URL
 
 `--demo` holds the environment after a passing run and makes the released route

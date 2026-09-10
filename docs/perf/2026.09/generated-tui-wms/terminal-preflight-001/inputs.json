@@ -1,0 +1,10 @@
+{
+  "binary": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/target/debug/examples/wms_move",
+  "binary_sha256": "471bc45e8341da705f11b1137670fe91cda6f182ca5215da475514b46f314ea0",
+  "driver_sha256": "38e77d21b8216d2919f84c01da4bc7dd0a2e9af37ca1daf2c8c414707ad14200",
+  "partial_failure_source": "docs/perf/2026.09/effects-response/live-002/journey/wms-partial-http.json",
+  "partial_failure_source_sha256": "e3427b40c81c24e3526e8f2f8a7d0fd1df4ce06c6fffab9fec379f683e6a1602",
+  "platform_proof": false,
+  "preflight_sha256": "f704e1803c7881aa7bf05a3210f168e58d1ad2bb79328033c176357f8f2e0122",
+  "scope": "synthetic terminal preflight"
+}

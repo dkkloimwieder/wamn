@@ -1,0 +1,37 @@
+[
+  {
+    "action": "keys",
+    "bytes": "34343434343434342d303030302d303030302d303030302d3030303030303030303030310d",
+    "description": "set /id"
+  },
+  {
+    "action": "keys",
+    "bytes": "13",
+    "description": "read the owned pallet"
+  },
+  {
+    "action": "keys",
+    "bytes": "34343434343434342d303030302d303030302d303030302d3030303030303030303030340d",
+    "description": "set /value/to_location_id"
+  },
+  {
+    "action": "keys",
+    "bytes": "13",
+    "description": "submit the composed move once"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b5b31387e",
+    "description": "attempt captured retry of the spent move"
+  },
+  {
+    "action": "keys",
+    "bytes": "13",
+    "description": "attempt submit of the spent move"
+  },
+  {
+    "action": "keys",
+    "bytes": "71",
+    "description": "quit the completed operator"
+  }
+]

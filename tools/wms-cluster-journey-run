@@ -12,6 +12,7 @@ Without --apply, print the immutable plan and exit.
   --apply              Build and run the journey, then tear down owned resources
   --measure-startup    Cold, restart-first and steady pallet.get requests with trace breakdowns
   --prove-partial-completion  Prove a committed move survives a missing labels bucket
+  --prove-generated-tui  Drive the generated move form through success and partial completion
   --demo               Hold the environment afterwards and serve the route at
                        http://127.0.0.1:8080/ -- see THE DEMO below
   --evidence-dir DIR   New directory retaining commands and machine evidence
@@ -37,6 +38,7 @@ EOF
 apply=false
 measure_startup=false
 prove_partial_completion=false
+prove_generated_tui=false
 demo=false
 evidence_dir=
 demo_node_port=30950
@@ -61,6 +63,7 @@ while (($#)); do
     --apply) apply=true; shift ;;
     --measure-startup) measure_startup=true; shift ;;
     --prove-partial-completion) prove_partial_completion=true; shift ;;
+    --prove-generated-tui) prove_generated_tui=true; prove_partial_completion=true; shift ;;
     --demo) demo=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -210,6 +213,9 @@ if [[ "$apply" != true ]]; then
   fi
   if [[ "$prove_partial_completion" == true ]]; then
     printf '  partial proof: remove owned labels bucket -> one move -> HTTP and database evidence -> restore bucket\n'
+  fi
+  if [[ "$prove_generated_tui" == true ]]; then
+    printf '  TUI proof: generated pallet read -> bound move form -> stored label -> failed store -> spent submission\n'
   fi
   exit 0
 fi
@@ -616,6 +622,10 @@ run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   "$repo_root/tools/build-components" m1
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked -p wamn-host -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker
+if [[ "$prove_generated_tui" == true ]]; then
+  run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo build --locked --offline -p wamn-client-terminal --example wms_move
+fi
 
 # Release, matching tools/build-components and the Dockerfile's component
 # stage. These two were the last debug guests the journey pushed.
@@ -2265,6 +2275,41 @@ label_key=$(jq -rs '.[0].key // empty' "$evidence_dir/labels-objects.json")
 printf 'verdict=pass movement_id=%s labels=%s operations=pass split_pallet_id=%s\n' \
   "$winning_movement_id" "$label_count" "$split_pallet_id" \
   >"$evidence_dir/wms-runtime.receipt"
+# Each TUI arm owns separate database fixtures and uses the real route credentials.
+run_generated_tui() {
+  local mode=$1
+  local token_file=$work_dir/generated-tui-pat
+  local database_file=$work_dir/generated-tui-database-url
+  local target_instance
+  jq -er '.stringData.token' "$route_caller_secret" >"$token_file"
+  printf 'postgresql://postgres:probe@127.0.0.1:%s/%s\n' \
+    "$postgres_host_port" "$project_database" >"$database_file"
+  chmod 0600 "$token_file" "$database_file"
+  target_instance=$(jq -er '.metadata.uid' "$evidence_dir/flow-http-workload.json")
+  run python3 "$repo_root/docs/perf/2026.09/generated-tui-wms/tools/wms_pty.py" \
+    --binary "$cargo_target_dir/debug/examples/wms_move" \
+    --operator-pat-file "$token_file" --target-postgres-url-file "$database_file" \
+    --endpoint "http://$runtime_node_ip:$runtime_node_port" --host "$route_host" \
+    --target-instance "$target_instance" --mode "$mode" \
+    --evidence-dir "$evidence_dir/generated-tui-$mode"
+}
+if [[ "$prove_generated_tui" == true ]]; then
+  run_generated_tui success
+  tui_label_key=$(jq -er '.stored_key' "$evidence_dir/generated-tui-success/result.json")
+  [[ "$tui_label_key" =~ ^wms/[0-9a-f-]{36}$ ]] || {
+    echo "the generated TUI returned an invalid label key" >&2
+    exit 1
+  }
+  run_sensitive read-generated-tui-label \
+    docker run --rm --network kind --entrypoint sh minio/mc -c \
+    "mc alias set journey '$minio_endpoint' '$minio_access_key' '$minio_secret_key' >/dev/null && mc cat 'journey/labels/$tui_label_key'" \
+    >"$evidence_dir/generated-tui-success/label.zpl"
+  read -r tui_label_sha256 _ < <(sha256sum "$evidence_dir/generated-tui-success/label.zpl")
+  [[ "$tui_label_sha256" == $(jq -er '.label_sha256' "$evidence_dir/generated-tui-success/result.json") ]] || {
+    echo "the stored label differs from the generated TUI response" >&2
+    exit 1
+  }
+fi
 if [[ "$prove_partial_completion" == true ]]; then
   restore_partial_bucket() {
     run_sensitive restore-partial-labels-bucket \
@@ -2285,6 +2330,9 @@ if [[ "$prove_partial_completion" == true ]]; then
     docker run --rm --network kind --entrypoint sh minio/mc -c \
     "mc alias set journey '$minio_endpoint' '$minio_access_key' '$minio_secret_key' >/dev/null && mc rb --force journey/labels" \
     >"$evidence_dir/partial-bucket-removed.log" 2>&1
+  if [[ "$prove_generated_tui" == true ]]; then
+    run_generated_tui partial
+  fi
   record_command cargo test wms_runtime_live::committed_move_survives_label_store_failure \
     '<journey document with the runtime phase redacted>'
   partial_status=0

@@ -1,0 +1,9 @@
+{
+  "changed_source_sha256": {
+    "Cargo.lock": "e4ef483cd9e47bf77e28319a2cbb0423e4a36c3981664022042721d19d9edc87",
+    "crates/client/terminal/Cargo.toml": "a6f7e5e5e1511a31ebad1170e5908b1463d6665f2e815b070a5ddfe4898a9f51",
+    "crates/client/terminal/examples/wms_move.rs": "0e77ff1d6d0fa26a23cbbb48c5eafaf4cb1fc9e6973f6206bb365d33dc4e5a31",
+    "tools/wms-cluster-journey-run": "53cdd955ff8767b5e39eead557270b80d6e7ed762d51f1270d7118e5362f12f8"
+  },
+  "head": "7a50997b7560d96980c0738c0b7f50af2d28732a"
+}

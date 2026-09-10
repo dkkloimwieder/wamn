@@ -5597,6 +5597,7 @@ dependencies = [
  "uuid",
  "wamn-client",
  "wamn-client-tui",
+ "wamn-generated-wms-tui",
 ]
 
 [[package]]

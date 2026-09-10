@@ -1,0 +1,50 @@
+{
+  "baseline": "/home/kaalin/dev/wamn/docs/perf/2026.09/generated-tui-wms/focused-003",
+  "changed_only_bound_revision": true,
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-client-terminal",
+    "--example",
+    "wms_move",
+    "tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key",
+    "--",
+    "--exact",
+    "--include-ignored"
+  ],
+  "compiled_mutant": true,
+  "mutant_exit_code": 101,
+  "mutated_sha256": "7da596381afc7c585f1e3e8b881aab7d21d8bfb7629395fbcda1b7f391df0603",
+  "named_test_failed": true,
+  "original_sha256": "ebb0b1301435a3a0f6378fc54da5806ee30b86625ea3ce6663352434d4e6e6d7",
+  "passed": true,
+  "restored_exit_code": 0,
+  "restored_sha256": "ebb0b1301435a3a0f6378fc54da5806ee30b86625ea3ce6663352434d4e6e6d7",
+  "wire_actual": [
+    {
+      "request_id": "move",
+      "value": {
+        "expected_row_version": 8,
+        "idempotency_key": "idem-move",
+        "occurred_at": "2026-09-10T10:00:00.000000Z",
+        "pallet_id": "33333333-0000-0000-0000-000000000002",
+        "to_location_id": "33333333-0000-0000-0000-000000000003"
+      }
+    }
+  ],
+  "wire_expected": [
+    {
+      "request_id": "move",
+      "value": {
+        "expected_row_version": 7,
+        "idempotency_key": "idem-move",
+        "occurred_at": "2026-09-10T10:00:00.000000Z",
+        "pallet_id": "33333333-0000-0000-0000-000000000002",
+        "to_location_id": "33333333-0000-0000-0000-000000000003"
+      }
+    }
+  ]
+}

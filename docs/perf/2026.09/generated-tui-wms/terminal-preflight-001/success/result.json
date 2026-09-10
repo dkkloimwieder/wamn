@@ -1,0 +1,28 @@
+{
+  "driver_assertions": {
+    "committed_claims": 1,
+    "committed_movements": 1,
+    "exit_code": 0,
+    "http_requests": 2,
+    "label_sha256": "ccc181ad4d2041606011e2dd3edc1421378e33bdddad42d55cba01f11d90fc47",
+    "location_id": "44444444-0000-0000-0000-000000000004",
+    "mode": "success",
+    "move_requests": 1,
+    "movement_id": "44444444-0000-0000-0000-000000000009",
+    "pallet_id": "44444444-0000-0000-0000-000000000001",
+    "partial_result_and_failure_visible": false,
+    "read_requests": 1,
+    "row_version": 2,
+    "spent_controls_send_nothing": true,
+    "stored": {
+      "container": "labels",
+      "key": "44444444-0000-0000-0000-000000000009"
+    },
+    "stored_key": "wms/44444444-0000-0000-0000-000000000009",
+    "terminal_restored": true
+  },
+  "mode": "success",
+  "passed": true,
+  "platform_proof": false,
+  "scope": "synthetic terminal preflight"
+}

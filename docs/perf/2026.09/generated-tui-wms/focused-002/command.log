@@ -1,0 +1,62 @@
+   Compiling wamn-client-terminal v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/client/terminal)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.75s
+     Running unittests src/lib.rs (target/debug/deps/wamn_client_terminal-af6c7c61ccc76aec)
+
+running 26 tests
+test operator::tests::a_required_nullable_array_can_return_from_null_to_repeated_values ... ok
+test operator::tests::an_unknown_nested_array_leaf_never_becomes_text_input ... ok
+test operator::tests::composition_opens_the_shared_decimal_editor_and_preserves_its_input_rules ... ok
+test operator::tests::captured_retry_keeps_route_parameters_and_request_bytes_unchanged ... ok
+test operator::tests::a_wrapped_retry_gets_no_new_intent_and_ctrl_c_stays_owned_by_the_loop ... ok
+test operator::tests::a_fresh_screen_without_fresh_credentials_never_falls_back_to_a_session ... ok
+test operator::tests::captured_retry_keeps_the_fresh_selection_route_and_exact_body ... ok
+test operator::tests::a_nested_fresh_only_refusal_never_replays_the_outer_request ... ok
+test operator::tests::escape_requires_dirty_confirmation_and_q_refuses_pending ... ok
+test operator::tests::main_result_preserves_the_terminal_exit_reason ... ok
+test operator::tests::linked_navigation_requires_the_declared_relation_or_exact_read_operation ... ok
+test operator::tests::driver_edits_keep_optional_presence_null_and_closed_choice_separate ... ok
+test operator::tests::f5_refreshes_command_a_even_when_the_shared_read_now_holds_b ... ok
+test operator::tests::nested_repeated_rows_expose_each_optional_field_and_removal_target ... ok
+test operator::tests::navigation_selects_a_model_before_its_own_operations ... ok
+test operator::tests::route_parameters_are_required_before_any_request_becomes_pending ... ok
+test operator::tests::status_preserves_conflict_versions_and_permission_details ... ok
+test operator::tests::the_loop_also_refuses_exit_for_its_own_in_flight_transport ... ok
+test operator::tests::nested_arrays_use_indexed_typed_editors_and_enforce_inner_bounds ... ok
+test operator::tests::queued_initial_and_follow_up_reads_use_the_shared_request_driver ... ok
+test operator::tests::cursor_display_stays_opaque_and_query_columns_come_from_its_schema ... ok
+test operator::tests::the_driver_selects_credentials_before_sending_the_declared_screen ... ok
+test operator::tests::unsupported_input_never_enters_a_text_editor ... ok
+test tests::broken_output_still_disables_raw_mode_and_preserves_the_first_error ... ok
+test operator::tests::escape_warns_before_abandoning_an_uncertain_captured_intent ... ok
+test operator::tests::default_and_composed_adapters_share_preparation_resolution_and_pending_exit_protection ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests examples/wms_move.rs (target/debug/examples/wms_move-9a11c666d3345090)
+
+running 5 tests
+test tests::incompatible_or_mismatched_reads_do_not_unlock_the_move ... ok
+test tests::changed_or_invalidated_sessions_do_not_accept_old_read_bindings ... ok
+test tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key ... FAILED
+test tests::missing_commit_evidence_keeps_the_move_uncertain_without_replay ... ok
+test tests::the_declared_partial_response_preserves_the_commit_and_spends_the_move ... ok
+
+failures:
+
+---- tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key stdout ----
+
+thread 'tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key' (1231412) panicked at crates/client/terminal/examples/wms_move.rs:278:9:
+assertion `left == right` failed
+  left: [91, 123, 34, 114, 101, 113, 117, 101, 115, 116, 95, 105, 100, 34, 58, 34, 109, 111, 118, 101, 34, 44, 34, 118, 97, 108, 117, 101, 34, 58, 123, 34, 101, 120, 112, 101, 99, 116, 101, 100, 95, 114, 111, 119, 95, 118, 101, 114, 115, 105, 111, 110, 34, 58, 55, 44, 34, 105, 100, 101, 109, 112, 111, 116, 101, 110, 99, 121, 95, 107, 101, 121, 34, 58, 34, 105, 100, 101, 109, 45, 109, 111, 118, 101, 34, 44, 34, 111, 99, 99, 117, 114, 114, 101, 100, 95, 97, 116, 34, 58, 34, 50, 48, 50, 54, 45, 48, 57, 45, 49, 48, 84, 49, 48, 58, 48, 48, 58, 48, 48, 46, 48, 48, 48, 48, 48, 48, 90, 34, 44, 34, 112, 97, 108, 108, 101, 116, 95, 105, 100, 34, 58, 34, 51, 51, 51, 51, 51, 51, 51, 51, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 50, 34, 44, 34, 116, 111, 95, 108, 111, 99, 97, 116, 105, 111, 110, 95, 105, 100, 34, 58, 34, 51, 51, 51, 51, 51, 51, 51, 51, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 51, 34, 125, 125, 93]
+ right: [91, 123, 34, 114, 101, 113, 117, 101, 115, 116, 95, 105, 100, 34, 58, 34, 109, 111, 118, 101, 34, 44, 34, 118, 97, 108, 117, 101, 34, 58, 123, 34, 101, 120, 112, 101, 99, 116, 101, 100, 95, 114, 111, 119, 95, 118, 101, 114, 115, 105, 111, 110, 34, 58, 55, 44, 34, 105, 100, 101, 109, 112, 111, 116, 101, 110, 99, 121, 95, 107, 101, 121, 34, 58, 34, 105, 100, 101, 109, 45, 109, 111, 118, 101, 34, 44, 34, 111, 99, 99, 117, 114, 114, 101, 100, 95, 97, 116, 34, 58, 34, 50, 48, 50, 54, 45, 48, 57, 45, 49, 48, 84, 49, 48, 58, 48, 48, 58, 48, 48, 90, 34, 44, 34, 112, 97, 108, 108, 101, 116, 95, 105, 100, 34, 58, 34, 51, 51, 51, 51, 51, 51, 51, 51, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 50, 34, 44, 34, 116, 111, 95, 108, 111, 99, 97, 116, 105, 111, 110, 95, 105, 100, 34, 58, 34, 51, 51, 51, 51, 51, 51, 51, 51, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 45, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 48, 51, 34, 125, 125, 93]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p wamn-client-terminal --example wms_move`
+error: 1 target failed:
+    `-p wamn-client-terminal --example wms_move`
