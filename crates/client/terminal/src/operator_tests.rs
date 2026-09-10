@@ -1,4 +1,8 @@
 use super::*;
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use wamn_client::CredentialProvider;
+use wamn_client::credentials::CredentialError;
 use wamn_client_tui::screen::{RecordLink, RevisionBinding, SuppliedField, SuppliedKind};
 use wamn_client_tui::submission::{Replay, ResponseContract};
 
@@ -76,6 +80,7 @@ const SPEC: ScreenSpec = ScreenSpec {
         replay: Replay::Claim,
     },
     route: Some(route),
+    fresh_only: false,
     record: None,
     revision: None,
     revision_inputs: &[],
@@ -653,6 +658,8 @@ struct Wrapper {
     intents: Vec<bool>,
     resolved: usize,
     keys: usize,
+    queued: VecDeque<Action>,
+    after_resolve: Option<Action>,
 }
 impl Application for Wrapper {
     fn render(&self, area: Rect, buffer: &mut Buffer) {
@@ -666,6 +673,9 @@ impl Application for Wrapper {
         } else {
             self.generated.key(key)
         }
+    }
+    fn next_action(&mut self) -> Action {
+        self.queued.pop_front().unwrap_or(Action::None)
     }
     fn prepare(
         &mut self,
@@ -686,6 +696,9 @@ impl Application for Wrapper {
     ) {
         self.resolved += 1;
         self.generated.resolve(screen - 100, attempt, response);
+        if let Some(action) = self.after_resolve.take() {
+            self.queued.push_back(action);
+        }
     }
     fn set_message(&mut self, message: String) {
         self.generated.set_message(message);
@@ -743,6 +756,8 @@ fn default_and_composed_adapters_share_preparation_resolution_and_pending_exit_p
         intents: Vec::new(),
         resolved: 0,
         keys: 0,
+        queued: VecDeque::new(),
+        after_resolve: None,
     };
     shared_round_trip(&mut wrapped);
     assert_eq!(wrapped.intents, [true]);
@@ -763,6 +778,8 @@ fn a_wrapped_retry_gets_no_new_intent_and_ctrl_c_stays_owned_by_the_loop() {
         intents: Vec::new(),
         resolved: 0,
         keys: 0,
+        queued: VecDeque::new(),
+        after_resolve: None,
     };
     let first = prepare_application(&mut wrapped, send(false)).unwrap();
     let forced = application_key(
@@ -804,6 +821,8 @@ fn the_loop_also_refuses_exit_for_its_own_in_flight_transport() {
         intents: Vec::new(),
         resolved: 0,
         keys: 0,
+        queued: VecDeque::new(),
+        after_resolve: None,
     };
     assert!(!wrapped.pending());
     assert!(matches!(
@@ -811,4 +830,351 @@ fn the_loop_also_refuses_exit_for_its_own_in_flight_transport() {
         Action::None
     ));
     assert!(wrapped.generated.message.contains("pending"));
+}
+
+#[derive(Debug, Default)]
+struct SelectingCredentials(Mutex<Vec<&'static str>>);
+
+#[async_trait::async_trait]
+impl CredentialProvider for SelectingCredentials {
+    async fn bearer(&self) -> Result<String, CredentialError> {
+        self.0.lock().unwrap().push("ordinary");
+        Ok("operator-session".into())
+    }
+
+    async fn fresh_bearer(&self) -> Result<String, CredentialError> {
+        let mut calls = self.0.lock().unwrap();
+        calls.push("fresh");
+        Ok(format!("operator-pat-{}", calls.len()))
+    }
+}
+
+#[derive(Debug)]
+struct RecordingTransport {
+    requests: Mutex<Vec<HttpRequest>>,
+    replies: Mutex<VecDeque<Result<HttpResponse, ClientError>>>,
+}
+
+#[async_trait::async_trait]
+impl Transport for RecordingTransport {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
+        self.requests.lock().unwrap().push(request);
+        self.replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("an unexpected request exhausted the replies")
+    }
+}
+
+fn recorded_client(
+    credentials: Arc<dyn CredentialProvider>,
+    replies: impl IntoIterator<Item = Result<HttpResponse, ClientError>>,
+) -> (WamnClient, Arc<RecordingTransport>) {
+    let transport = Arc::new(RecordingTransport {
+        requests: Mutex::new(Vec::new()),
+        replies: Mutex::new(replies.into_iter().collect()),
+    });
+    let client = WamnClient::new(
+        binding().url,
+        Some("operator.example".into()),
+        credentials,
+        transport.clone(),
+    );
+    (client, transport)
+}
+
+const FRESH: ScreenSpec = ScreenSpec {
+    fresh_only: true,
+    ..SPEC
+};
+
+fn ready_screen(spec: &'static ScreenSpec) -> GeneratedApplication {
+    let mut app = GeneratedApplication::new("test", vec![Screen::new(spec, binding())]);
+    app.views[0]
+        .parameters
+        .insert("location".into(), "dock-1".into());
+    app
+}
+
+fn lost_response() -> ClientError {
+    ClientError::Transport {
+        detail: "response lost".into(),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn the_driver_selects_credentials_before_sending_the_declared_screen() {
+    for (spec, selection, bearer) in [
+        (&SPEC, "ordinary", "Bearer operator-session"),
+        (&FRESH, "fresh", "Bearer operator-pat-1"),
+    ] {
+        let mut app = ready_screen(spec);
+        let request = prepare_application(&mut app, send(false)).unwrap();
+        let expected_body = request.body.body().to_vec();
+        let credentials = Arc::new(SelectingCredentials::default());
+        let (client, transport) = recorded_client(credentials.clone(), [Err(lost_response())]);
+
+        let (screen, attempt, response) = submit_request(&client, &request).await;
+        app.resolve(screen, attempt, response);
+
+        let requests = transport.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url, "https://example.invalid/record/dock-1");
+        assert_eq!(requests[0].method, "POST");
+        assert_eq!(requests[0].headers["authorization"], bearer);
+        assert_eq!(requests[0].headers["host"], "operator.example");
+        assert_eq!(requests[0].body, expected_body);
+        assert_eq!(*credentials.0.lock().unwrap(), [selection]);
+        assert!(matches!(
+            app.screens[0].submission().state(),
+            State::Uncertain { .. }
+        ));
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn captured_retry_keeps_the_fresh_selection_route_and_exact_body() {
+    let mut app = ready_screen(&FRESH);
+    let first = prepare_application(&mut app, send(false)).unwrap();
+    let expected_body = first.body.body().to_vec();
+    let success = HttpResponse {
+        status: 200,
+        body: json!([{"request_id": first.body.item()["request_id"], "value": {"id": "A"}}])
+            .to_string(),
+    };
+    let credentials = Arc::new(SelectingCredentials::default());
+    let (client, transport) =
+        recorded_client(credentials.clone(), [Err(lost_response()), Ok(success)]);
+
+    let (screen, attempt, response) = submit_request(&client, &first).await;
+    app.resolve(screen, attempt, response);
+    assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    assert!(app.unresolved());
+    app.views[0]
+        .parameters
+        .insert("location".into(), "dock-2".into());
+    let retry = prepare_application(&mut app, send(true)).unwrap();
+    let (screen, attempt, response) = submit_request(&client, &retry).await;
+    app.resolve(screen, attempt, response);
+
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(*credentials.0.lock().unwrap(), ["fresh", "fresh"]);
+    assert_eq!(
+        requests[0].headers["authorization"],
+        "Bearer operator-pat-1"
+    );
+    assert_eq!(
+        requests[1].headers["authorization"],
+        "Bearer operator-pat-2"
+    );
+    for request in requests.iter() {
+        assert_eq!(request.url, "https://example.invalid/record/dock-1");
+        assert_eq!(request.body, expected_body);
+    }
+    assert!(matches!(
+        app.screens[0].submission().state(),
+        State::Succeeded { .. }
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_nested_fresh_only_refusal_never_replays_the_outer_request() {
+    const COMPOSED: ScreenSpec = ScreenSpec {
+        response: ResponseContract {
+            direct: false,
+            replay: Replay::Unknown,
+            ..SPEC.response
+        },
+        ..SPEC
+    };
+    let mut app = ready_screen(&COMPOSED);
+    let request = prepare_application(&mut app, send(false)).unwrap();
+    let credentials = Arc::new(SelectingCredentials::default());
+    let (client, transport) = recorded_client(
+        credentials.clone(),
+        [Ok(HttpResponse {
+            status: 403,
+            body: json!({"error": {
+                "code": "fresh-credential-required",
+                "message": "the nested operation requires a PAT",
+                "operation": "example:nested/commit@1.0.0"
+            }})
+            .to_string(),
+        })],
+    );
+
+    let (screen, attempt, response) = submit_request(&client, &request).await;
+    app.resolve(screen, attempt, response);
+
+    assert!(matches!(
+        app.screens[0].submission().state(),
+        State::Uncertain { .. }
+    ));
+    let message = state_text(&app.screens[0]);
+    assert!(message.contains("requires a PAT"));
+    assert!(message.contains("request was not retried"));
+    assert!(prepare_application(&mut app, send(true)).is_err());
+    assert!(prepare_application(&mut app, send(false)).is_err());
+    assert_eq!(transport.requests.lock().unwrap().len(), 1);
+    assert_eq!(*credentials.0.lock().unwrap(), ["ordinary"]);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_fresh_screen_without_fresh_credentials_never_falls_back_to_a_session() {
+    #[derive(Debug)]
+    struct SessionOnly;
+    #[async_trait::async_trait]
+    impl CredentialProvider for SessionOnly {
+        async fn bearer(&self) -> Result<String, CredentialError> {
+            panic!("a fresh-only screen must not request the ordinary session")
+        }
+    }
+    let mut app = ready_screen(&FRESH);
+    let request = prepare_application(&mut app, send(false)).unwrap();
+    let (client, transport) = recorded_client(Arc::new(SessionOnly), []);
+
+    let (screen, attempt, response) = submit_request(&client, &request).await;
+    assert!(response.is_err());
+    app.resolve(screen, attempt, response);
+
+    assert!(transport.requests.lock().unwrap().is_empty());
+    assert!(app.unresolved());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn queued_initial_and_follow_up_reads_use_the_shared_request_driver() {
+    const READ: ScreenSpec = ScreenSpec {
+        kind: "get",
+        response: ResponseContract {
+            kind: "get",
+            replay: Replay::Unknown,
+            ..SPEC.response
+        },
+        ..SPEC
+    };
+    fn locations_route() -> RouteMetadata {
+        RouteMetadata {
+            method: "POST".into(),
+            template: "/locations".into(),
+        }
+    }
+    const LOCATIONS: ScreenSpec = ScreenSpec {
+        name: "locations",
+        operation: "example:locations/get@1.0.0",
+        route: Some(locations_route),
+        ..READ
+    };
+    let mut app = Wrapper {
+        generated: GeneratedApplication::new(
+            "test",
+            vec![
+                Screen::new(&READ, binding()),
+                Screen::new(&LOCATIONS, binding()),
+            ],
+        ),
+        intents: Vec::new(),
+        resolved: 0,
+        keys: 0,
+        queued: VecDeque::from([send(false)]),
+        after_resolve: Some(Action::Send {
+            screen: 1,
+            retry: false,
+            delete_confirmed: false,
+        }),
+    };
+    app.generated.views[0]
+        .parameters
+        .insert("location".into(), "dock-1".into());
+    assert!(matches!(
+        queued_application_action(&mut app, true),
+        Action::None
+    ));
+    assert_eq!(app.queued.len(), 1);
+    let initial = queued_application_action(&mut app, false);
+    let first = prepare_application(&mut app, initial).unwrap();
+    let first_id = first.body.item()["request_id"].clone();
+    assert!(matches!(
+        queued_application_action(&mut app, false),
+        Action::None
+    ));
+    let credentials = Arc::new(SelectingCredentials::default());
+    let (client, transport) = recorded_client(
+        credentials.clone(),
+        [Ok(HttpResponse {
+            status: 200,
+            body: json!([{"request_id": first_id, "value": {"id": "A"}}]).to_string(),
+        })],
+    );
+    let (screen, attempt, response) = submit_request(&client, &first).await;
+    app.resolve(screen, attempt, response);
+
+    assert_eq!(app.queued.len(), 1);
+    assert!(matches!(
+        queued_application_action(&mut app, true),
+        Action::None
+    ));
+    assert_eq!(app.queued.len(), 1);
+    let follow_up = queued_application_action(&mut app, false);
+    let second = prepare_application(&mut app, follow_up).unwrap();
+    let second_id = second.body.item()["request_id"].clone();
+    assert_ne!(first_id, second_id);
+    transport
+        .replies
+        .lock()
+        .unwrap()
+        .push_back(Ok(HttpResponse {
+            status: 200,
+            body: json!([{"request_id": second_id, "value": {"id": "dock-1"}}]).to_string(),
+        }));
+    let (screen, attempt, response) = submit_request(&client, &second).await;
+    app.resolve(screen, attempt, response);
+
+    assert!(matches!(
+        queued_application_action(&mut app, false),
+        Action::None
+    ));
+    assert_eq!(app.intents, [true, true]);
+    assert_eq!(app.resolved, 2);
+    assert_eq!(app.keys, 0);
+    assert!(!app.unresolved());
+    let requests = transport.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].url, "https://example.invalid/record/dock-1");
+    assert_eq!(requests[1].url, "https://example.invalid/locations");
+    assert_eq!(*credentials.0.lock().unwrap(), ["ordinary", "ordinary"]);
+}
+
+#[test]
+fn composition_opens_the_shared_decimal_editor_and_preserves_its_input_rules() {
+    const DECIMAL: ScreenSpec = ScreenSpec {
+        input: &[field("quantity", "numeric")],
+        supplied: &[],
+        ..SPEC
+    };
+    let mut app = ready_screen(&DECIMAL);
+    app.select_results(0);
+    assert_eq!(app.active_screen(), Some(0));
+    assert_eq!(app.selected_row(0), 0);
+    assert!(app.browsing());
+    app.edit_field(0, "/quantity").unwrap();
+    assert!(!app.browsing());
+    for character in "-12x..5-".chars() {
+        app.key(key(KeyCode::Char(character)));
+    }
+    app.key(key(KeyCode::Enter));
+    assert_eq!(app.screen(0).draft().item()["quantity"], "-12.5");
+    assert!(app.browsing());
+    assert!(app.edit_field(0, "/unknown").is_err());
+
+    let mut reserved = ready_screen(&SPEC);
+    assert!(reserved.edit_field(0, "/request_id").is_err());
+    assert!(reserved.browsing());
+    reserved.edit_field(0, "/note").unwrap();
+    for character in "a-2..x".chars() {
+        reserved.key(key(KeyCode::Char(character)));
+    }
+    reserved.key(key(KeyCode::Enter));
+    assert_eq!(reserved.screen(0).draft().item()["note"], "a-2..x");
 }

@@ -925,3 +925,82 @@ fn wms_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_uncerta
         Evidence::Uncertain(_)
     ));
 }
+
+#[test]
+fn undeclared_concurrency_conflict_remains_uncertain_with_both_revisions_visible() {
+    let contract = contract(Replay::Unknown);
+    for (expected, observed) in [(json!(4), json!(7)), (json!("4"), json!("7"))] {
+        let mut submission = Submission::new(binding("one"));
+        let attempt = submission.begin(request(), &contract).unwrap();
+        assert!(submission.resolve(
+            attempt,
+            &contract,
+            response(
+                200,
+                json!([{
+                    "request_id":"intent-1",
+                    "error":{
+                        "code":"concurrency_conflict",
+                        "detail":{"expected_row_version":expected,"observed_row_version":observed}
+                    }
+                }])
+            )
+        ));
+        let State::Uncertain { reason, .. } = submission.state() else {
+            panic!("an undeclared error cannot prove refusal");
+        };
+        assert!(reason.contains("concurrency_conflict"));
+        assert!(reason.contains("expected_row_version=4, observed_row_version=7"));
+        assert!(submission.retry().is_err());
+        assert!(submission.begin(request(), &contract).is_err());
+    }
+}
+
+#[test]
+fn malformed_conflict_detail_does_not_invent_revisions_or_render_arbitrary_fields() {
+    let contract = contract(Replay::Unknown);
+    for detail in [
+        json!({"expected_row_version":4,"observed_row_version":7.5}),
+        json!({"expected_row_version":null,"observed_row_version":"7"}),
+        json!({"expected_row_version":"not-a-revision","observed_row_version":7}),
+        json!({"expected_row_version":"9223372036854775808","observed_row_version":7}),
+        json!({"expected_row_version":4}),
+        json!({"private":"private-detail-must-not-render"}),
+    ] {
+        let evidence = classify(
+            &contract,
+            "intent-1",
+            response(
+                200,
+                json!([{
+                    "request_id":"intent-1",
+                    "error":{"code":"concurrency_conflict","detail":detail}
+                }]),
+            ),
+        );
+        let Evidence::Uncertain(reason) = evidence else {
+            panic!("malformed details cannot establish an outcome");
+        };
+        assert!(reason.ends_with("the server reported concurrency_conflict"));
+        assert!(!reason.contains("expected_row_version="));
+        assert!(!reason.contains("observed_row_version="));
+        assert!(!reason.contains("private-detail"));
+    }
+    let Evidence::Uncertain(reason) = classify(
+        &contract,
+        "intent-1",
+        response(
+            200,
+            json!([{
+                "request_id":"intent-1",
+                "error":{
+                    "code":"unknown_conflict",
+                    "detail":{"expected_row_version":4,"observed_row_version":7}
+                }
+            }]),
+        ),
+    ) else {
+        panic!("an unknown code cannot establish an outcome");
+    };
+    assert!(reason.ends_with("the server reported unknown_conflict"));
+}

@@ -57,6 +57,8 @@ pub struct ScreenSpec {
     pub input_schema: Option<&'static str>,
     pub response: ResponseContract,
     pub route: Option<fn() -> RouteMetadata>,
+    /// Select fresh credentials before the first attempt and every captured retry.
+    pub fresh_only: bool,
     pub record: Option<RecordLink>,
     pub revision: Option<RevisionBinding>,
     pub revision_inputs: &'static [&'static str],
@@ -201,6 +203,7 @@ pub struct Screen {
     definition_error: Option<String>,
     rows: Vec<Value>,
     cursor: Option<String>,
+    append_page: bool,
     dirty: bool,
     composed: bool,
     record_bound: bool,
@@ -217,6 +220,7 @@ impl Screen {
             definition_error: None,
             rows: Vec::new(),
             cursor: None,
+            append_page: false,
             dirty: false,
             composed: false,
             record_bound: false,
@@ -376,7 +380,9 @@ impl Screen {
         let request = draft.build(self.input_schema.as_ref())?;
         let attempt = self.submission.begin(request, &self.spec.response)?;
         self.draft = draft;
-        self.rows.clear();
+        if !self.append_page {
+            self.rows.clear();
+        }
         self.cursor = None;
         Ok(attempt)
     }
@@ -511,7 +517,7 @@ impl Screen {
         read.bind(&pointer(mapping.read_key_input), key)
     }
 
-    /// Preserve the opaque server cursor exactly and ready the next read.
+    /// Preserve the opaque cursor and prior rows, then ready the next page to append.
     pub fn next_page(&mut self) -> Result<(), ScreenError> {
         if !self.is_read() || !self.has_cursor() {
             return Err(binding_error("this screen has no declared cursor input"));
@@ -524,7 +530,7 @@ impl Screen {
         draft.bind("/cursor", Value::String(cursor))?;
         self.submission.new_command()?;
         self.draft = draft;
-        self.rows.clear();
+        self.append_page = true;
         self.cursor = None;
         Ok(())
     }
@@ -614,6 +620,7 @@ impl Screen {
     }
 
     fn clear_page(&mut self) -> Result<(), ScreenError> {
+        self.append_page = false;
         self.rows.clear();
         self.cursor = None;
         if self.has_cursor() {
@@ -658,13 +665,16 @@ impl Screen {
         }
         self.rows.clear();
         self.cursor = None;
+        self.append_page = false;
         self.dirty = false;
         self.composed = !self.spec.requires_composition;
         self.record_bound = self.binding_paths().is_empty();
     }
 
     fn show_result(&mut self) {
-        self.rows.clear();
+        if !self.append_page {
+            self.rows.clear();
+        }
         self.cursor = None;
         if let State::Succeeded { value, .. } = self.submission.state() {
             match self.spec.response.result_class {
@@ -675,7 +685,7 @@ impl Screen {
                         "rows"
                     };
                     if let Some(rows) = value.get(key).and_then(Value::as_array) {
-                        self.rows.clone_from(rows);
+                        self.rows.extend_from_slice(rows);
                     }
                     if self.has_cursor() {
                         self.cursor = value
@@ -686,6 +696,7 @@ impl Screen {
                 }
                 _ => self.rows.push(value.clone()),
             }
+            self.append_page = false;
             self.dirty = false;
         } else if matches!(self.submission.state(), State::PartiallyCompleted { .. }) {
             self.dirty = false;

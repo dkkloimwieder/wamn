@@ -88,6 +88,7 @@ const READ: ScreenSpec = ScreenSpec {
         replay: Replay::Unknown,
     },
     route: Some(route),
+    fresh_only: false,
     record: Some(RECORD),
     revision: None,
     revision_inputs: &[],
@@ -699,4 +700,46 @@ mod cursor_transport {
             }
         }
     }
+}
+
+#[test]
+fn next_pages_append_validated_rows_and_refresh_discards_the_accumulated_pages() {
+    let mut page = Screen::new(&PAGE, binding("a"));
+    page_result(&mut page, "opaque-next");
+    page.next_page().unwrap();
+    assert_eq!(page.rows(), &[result()]);
+    let attempt = page.begin(&intent(), false).unwrap();
+    assert_eq!(page.rows(), &[result()]);
+    let second = json!({"id":KEY,"row_version":"8"});
+    let response = response(&page, &json!({"item":[second],"next_cursor":null}));
+    assert!(page.resolve(attempt, Ok(response)));
+    assert_eq!(page.rows(), &[result(), second]);
+    assert_eq!(page.cursor(), None);
+    assert!(page.next_page().is_err());
+
+    page.refresh().unwrap();
+    assert!(page.rows().is_empty());
+    assert_eq!(page.draft().state("/cursor").unwrap(), FieldState::Absent);
+    page_result(&mut page, "fresh-next");
+    assert_eq!(page.rows(), &[result()]);
+}
+
+#[test]
+fn an_invalid_next_page_retains_prior_rows_without_claiming_a_successful_read() {
+    let mut page = Screen::new(&PAGE, binding("a"));
+    page_result(&mut page, "opaque-next");
+    page.next_page().unwrap();
+    let attempt = page.begin(&intent(), false).unwrap();
+    let response = response(
+        &page,
+        &json!({"item":[{"id":KEY,"row_version":7.5}],"next_cursor":null}),
+    );
+    assert!(page.resolve(attempt, Ok(response)));
+    assert_eq!(page.rows(), &[result()]);
+    assert_eq!(page.cursor(), None);
+    assert!(matches!(page.submission().state(), State::Uncertain { .. }));
+    let mut read = Screen::new(&READ, binding("a"));
+    assert!(read.populate_read_from_record(&page, 0).is_err());
+    page.refresh().unwrap();
+    assert!(page.rows().is_empty());
 }

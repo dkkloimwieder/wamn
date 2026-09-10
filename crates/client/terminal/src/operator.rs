@@ -124,6 +124,22 @@ pub async fn run_application<A: Application>(
         credentials,
         transport,
     ));
+    run_application_with_client(label, binding, client, factory).await
+}
+
+/// Run a composed application with its prepared client and active target binding.
+///
+/// The caller completes login before this function enters the terminal. The driver
+/// retains the same request, signal, and terminal restoration rules as `run_application`.
+///
+/// # Errors
+/// Returns signal-registration or terminal I/O failures.
+pub async fn run_application_with_client<A: Application>(
+    label: &str,
+    binding: SessionBinding,
+    client: Arc<WamnClient>,
+    factory: impl FnOnce(&str, SessionBinding) -> A,
+) -> Result<ExitReason, Box<dyn Error>> {
     let mut app = factory(label, binding);
     let mut events = crate::events();
     let shutdown = shutdown_signal()?;
@@ -135,18 +151,23 @@ pub async fn run_application<A: Application>(
         loop {
             terminal.draw(ApplicationWidget(&app))?;
             let transport_pending = !pending.is_empty();
-            let action = tokio::select! {
-                signal = &mut shutdown => { exit_reason = signal?; Action::Exit },
-                Some((index, attempt, response)) = pending.next(), if transport_pending => {
-                    app.resolve(index, attempt, response);
-                    Action::None
-                },
-                event = events.next() => match event {
-                    Some(Ok(Event::Key(key))) => application_key(&mut app, key, transport_pending),
-                    Some(Ok(_)) => Action::None,
-                    Some(Err(error)) => return Err(error),
-                    None => Action::Exit,
-                },
+            let queued = queued_application_action(&mut app, transport_pending);
+            let action = if matches!(queued, Action::None) {
+                tokio::select! {
+                    signal = &mut shutdown => { exit_reason = signal?; Action::Exit },
+                    Some((index, attempt, response)) = pending.next(), if transport_pending => {
+                        app.resolve(index, attempt, response);
+                        Action::None
+                    },
+                    event = events.next() => match event {
+                        Some(Ok(Event::Key(key))) => application_key(&mut app, key, transport_pending),
+                        Some(Ok(_)) => Action::None,
+                        Some(Err(error)) => return Err(error),
+                        None => Action::Exit,
+                    },
+                }
+            } else {
+                queued
             };
             if matches!(action, Action::Exit) {
                 break;
@@ -155,12 +176,9 @@ pub async fn run_application<A: Application>(
                 match prepare_application(&mut app, action) {
                     Ok(request) => {
                         let client = client.clone();
-                        pending.push(Box::pin(async move {
-                            let response = client
-                                .submit(&request.route, &request.parameters, &request.body)
-                                .await;
-                            (request.screen, request.attempt, response)
-                        }));
+                        pending.push(Box::pin(
+                            async move { submit_request(&client, &request).await },
+                        ));
                     }
                     Err(error) => app.set_message(error),
                 }
@@ -187,6 +205,10 @@ pub async fn run_application<A: Application>(
 pub trait Application {
     fn render(&self, area: Rect, buffer: &mut Buffer);
     fn key(&mut self, key: KeyEvent) -> Action;
+    /// Supply an initial or follow-up action when no application or transport request is pending.
+    fn next_action(&mut self) -> Action {
+        Action::None
+    }
     /// Prepare a validated request. A new intent receives values; a retry receives None.
     ///
     /// # Errors
@@ -213,6 +235,14 @@ struct ApplicationWidget<'a, A>(&'a A);
 impl<A: Application> Widget for ApplicationWidget<'_, A> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         self.0.render(area, buffer);
+    }
+}
+
+fn queued_application_action(app: &mut impl Application, transport_pending: bool) -> Action {
+    if transport_pending || app.pending() {
+        Action::None
+    } else {
+        app.next_action()
     }
 }
 
@@ -245,6 +275,22 @@ fn prepare_application(
         occurred_at: chrono::Utc::now().to_rfc3339(),
     });
     app.prepare(action, intent.as_ref())
+}
+
+async fn submit_request(
+    client: &WamnClient,
+    request: &PreparedRequest,
+) -> (usize, Attempt, Result<HttpResponse, ClientError>) {
+    let response = if request.fresh_only {
+        client
+            .submit_fresh(&request.route, &request.parameters, &request.body)
+            .await
+    } else {
+        client
+            .submit(&request.route, &request.parameters, &request.body)
+            .await
+    };
+    (request.screen, request.attempt, response)
 }
 
 type Pending =
@@ -342,6 +388,8 @@ pub struct PreparedRequest {
     pub screen: usize,
     pub attempt: Attempt,
     pub route: RouteMetadata,
+    /// Request a fresh credential when the operation declares that requirement.
+    pub fresh_only: bool,
     pub parameters: BTreeMap<String, String>,
     pub body: BuiltRequest,
 }
@@ -394,6 +442,70 @@ impl GeneratedApplication {
         }
     }
 
+    /// Read a screen from the fixed constructor list.
+    #[must_use]
+    pub fn screen(&self, index: usize) -> &Screen {
+        &self.screens[index]
+    }
+
+    /// Edit a screen through its validated bindings and lifecycle methods.
+    pub fn screen_mut(&mut self, index: usize) -> &mut Screen {
+        &mut self.screens[index]
+    }
+
+    /// Return the currently open screen's constructor index.
+    #[must_use]
+    pub const fn active_screen(&self) -> Option<usize> {
+        self.active
+    }
+
+    /// Return the selected result row for a screen.
+    #[must_use]
+    pub fn selected_row(&self, index: usize) -> usize {
+        self.views[index].row
+    }
+
+    /// True when a field editor, choice, or confirmation does not own the keyboard.
+    #[must_use]
+    pub fn browsing(&self) -> bool {
+        matches!(self.mode, Mode::Browse)
+    }
+
+    /// Open a screen with its result pane selected.
+    pub fn select_results(&mut self, index: usize) {
+        self.open_screen(index);
+        self.views[index].pane = Pane::Results;
+    }
+
+    /// Open the shared editor for a declared, unreserved input field.
+    ///
+    /// # Errors
+    /// Refuses an unknown, reserved, or unsupported field.
+    pub fn edit_field(&mut self, index: usize, pointer: &str) -> Result<(), String> {
+        let rows = editor_rows(
+            self.screens[index].spec().input,
+            self.screens[index].draft().item(),
+        );
+        let (position, row) = rows
+            .iter()
+            .enumerate()
+            .find(|(_, row)| row.pointer == pointer)
+            .ok_or("The requested field is not declared.")?;
+        if reserved(self.screens[index].spec(), row.schema.field.path) {
+            return Err(
+                "This value is supplied by the platform or a declared record binding.".into(),
+            );
+        }
+        if row.kind == InputKind::Unsupported {
+            return Err("This field requires a composed editor.".into());
+        }
+        self.open_screen(index);
+        self.views[index].pane = Pane::Inputs;
+        self.views[index].input = self.views[index].parameters.len() + position;
+        self.open_editor(index, row);
+        Ok(())
+    }
+
     fn operations(&self) -> Vec<usize> {
         self.screens
             .iter()
@@ -406,7 +518,8 @@ impl GeneratedApplication {
             .collect()
     }
 
-    fn open_screen(&mut self, index: usize) {
+    /// Open a screen by its index in the fixed constructor list.
+    pub fn open_screen(&mut self, index: usize) {
         self.model = self
             .models
             .iter()
@@ -442,7 +555,9 @@ impl GeneratedApplication {
                         self.mode = Mode::Text { target, value };
                     }
                     KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        value.push(character);
+                        if self.accepts_character(&target, &value, character) {
+                            value.push(character);
+                        }
                         self.mode = Mode::Text { target, value };
                     }
                     _ => self.mode = Mode::Text { target, value },
@@ -851,6 +966,23 @@ impl GeneratedApplication {
         self.report(result);
     }
 
+    fn accepts_character(&self, target: &Target, value: &str, character: char) -> bool {
+        let Target::Field(pointer) = target else {
+            return true;
+        };
+        let index = self.active.expect("editor has an active screen");
+        let numeric = editor_rows(
+            self.screens[index].spec().input,
+            self.screens[index].draft().item(),
+        )
+        .iter()
+        .any(|row| row.pointer == *pointer && row.schema.field.type_name == "numeric");
+        !numeric
+            || character.is_ascii_digit()
+            || (character == '.' && !value.contains('.'))
+            || (character == '-' && value.is_empty())
+    }
+
     fn commit(&mut self, target: Target, value: String) {
         let index = self.active.expect("editor has an active screen");
         match target {
@@ -1076,6 +1208,7 @@ impl GeneratedApplication {
             screen: index,
             attempt,
             route,
+            fresh_only: self.screens[index].spec().fresh_only,
             parameters,
             body,
         })
@@ -1316,7 +1449,12 @@ fn state_text(screen: &Screen) -> String {
             reason,
             retry_refusal,
         } => format!(
-            "Outcome unknown: {reason}. {}{}",
+            "Outcome unknown: {reason}. {}{}{}",
+            if reason.ends_with("; the server reported fresh-credential-required") {
+                "This operation requires a PAT. The request was not retried. "
+            } else {
+                ""
+            },
             recovery_message(&screen.spec().response),
             retry_refusal
                 .as_ref()

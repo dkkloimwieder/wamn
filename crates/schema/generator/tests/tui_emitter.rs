@@ -186,7 +186,8 @@ fn fixtures() -> ClientContractIr {
                 "operation",
                 json!({
                     "operation": identity, "kind": kind, "grant": identity,
-                    "permission_token": format!("entry.{name}"), "result": "one"
+                    "permission_token": format!("entry.{name}"), "result": "one",
+                    "fresh_only": name == "query_beta"
                 }),
             ),
             (
@@ -467,4 +468,13 @@ fn screens_reference_the_same_collision_free_helpers_as_the_client() {
         assert!(bindings.contains(&format!("pub fn {helper}() -> RouteMetadata")));
         assert!(bindings.contains(&format!(".invoke(&{helper}(),")));
     }
+}
+
+#[test]
+fn screen_metadata_preserves_the_operation_freshness_requirement() {
+    let ir = fixtures();
+    let files = emit_tui(&ir, "example").unwrap();
+    let screens = source(&files, "generated/example-tui/src/screens/entry.rs");
+    assert!(spec(screens, "query_alpha").contains("fresh_only: false,"));
+    assert!(spec(screens, "query_beta").contains("fresh_only: true,"));
 }

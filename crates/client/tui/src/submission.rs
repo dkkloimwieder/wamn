@@ -1,5 +1,7 @@
 //! Shared submission evidence and lifecycle for generated and composed screens.
 
+use std::fmt::Write as _;
+
 use serde_json::{Value, json};
 use wamn_client::request::{BuiltRequest, validate_result, validate_schema};
 use wamn_client::{ClientError, HttpResponse};
@@ -454,7 +456,28 @@ fn unknown_with_literal(reason: &str, document: &Value) -> Evidence {
         .and_then(|error| error.get("code"))
         .and_then(Value::as_str)
     {
-        Some(literal) => Evidence::Uncertain(format!("{reason}; the server reported {literal}")),
+        Some(literal) => {
+            let mut diagnostic = format!("{reason}; the server reported {literal}");
+            if literal == "concurrency_conflict" {
+                let revision = |name: &str| {
+                    let value = outcome.get("error")?.get("detail")?.get(name)?;
+                    value
+                        .as_i64()
+                        .or_else(|| value.as_str()?.parse::<i64>().ok())
+                };
+                if let (Some(expected), Some(observed)) = (
+                    revision("expected_row_version"),
+                    revision("observed_row_version"),
+                ) {
+                    write!(
+                        diagnostic,
+                        " (expected_row_version={expected}, observed_row_version={observed})"
+                    )
+                    .expect("write to String");
+                }
+            }
+            Evidence::Uncertain(diagnostic)
+        }
         None => unknown(reason),
     }
 }

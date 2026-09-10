@@ -223,6 +223,7 @@ fn emit_model(model: &ModelIr, module: &str) -> Result<(String, Vec<String>), Cl
             },
         );
         writeln!(source, "    route: {route},").expect("write to String");
+        writeln!(source, "    fresh_only: {},", operation.fresh_only).expect("write to String");
         if let Some(record) = &operation.record {
             writeln!(source, "    record: Some(screen::RecordLink {{ relation: {:?}, key_field: {:?}, key_input: {:?} }}),", record.relation, record.key_field, record.key_input).expect("write to String");
         } else {
