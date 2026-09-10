@@ -1,0 +1,1 @@
+verdict=fail cluster=wamn-wms-journey containers=wamn-wms-pg18-6f198834dad5-298045,wamn-wms-registry-6f198834dad5-298045,wamn-wms-nats-6f198834dad5-298045,wamn-wms-minio-6f198834dad5-298045 reader_pid=318227 image=wamn-host:wms-6f198834dad5-298045-debug

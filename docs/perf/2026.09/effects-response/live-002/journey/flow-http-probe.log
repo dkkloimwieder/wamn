@@ -1,0 +1,1 @@
+WMS_HTTP_PROBE {"status":404,"content_type":"application/json","host":"wms.localhost","body":{"error":{"code":"route-not-found"}}}

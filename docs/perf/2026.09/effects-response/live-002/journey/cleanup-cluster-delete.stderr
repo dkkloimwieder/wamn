@@ -1,0 +1,4 @@
+Deleting cluster "wamn-wms-journey" ...
+failed to update kubeconfig: failed to lock config file: open /dev/null.lock: permission denied
+Deleted nodes: ["wamn-wms-journey-worker2" "wamn-wms-journey-worker" "wamn-wms-journey-control-plane"]
+ERROR: failed to delete cluster "wamn-wms-journey": failed to lock config file: open /dev/null.lock: permission denied

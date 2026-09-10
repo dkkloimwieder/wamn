@@ -93,5 +93,17 @@ A [later read](live-001/cleanup-followup.json) finds none of its owned container
 The old cleanup output does not identify the failed step.
 The runner now retains named failed cleanup steps, exit statuses, and command errors without changing cleanup decisions.
 
-The deployed partial response and the final combined integration sweep remain unproved.
+The [second deployed run](live-002/result.json) passes all 13 journey arms at source `6f198834`.
+The [HTTP evidence](live-002/journey/wms-partial-http.json) records HTTP 500 with exactly the committed movement and the later store failure.
+The failed outcome carries `write_failed`, `responded`, and `Error::NoSuchObject`.
+The named test sends the command once and proves the committed movement through a later read.
+The [database evidence](live-002/journey/wms-partial-database.json) proves one command, one movement, one quantity row, and the matching pallet state.
+The [partial receipt](live-002/journey/wms-partial.receipt) also records successful bucket restoration.
+
+The second run still exits 1 because cleanup fails.
+Its [diagnostics](live-002/journey/cleanup-cluster-delete.stderr) show that kind deletes the nodes but cannot lock `/dev/null.lock`.
+The cleanup command inherits `KUBECONFIG=/dev/null` from the capture tool.
+The runner now passes its own Kubernetes configuration file to both cluster creation and deletion.
+
+The full journey with successful cleanup and the final combined integration sweep remain unproved.
 The effects issue remains in progress.

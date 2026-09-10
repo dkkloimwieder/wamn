@@ -1,0 +1,43 @@
+{
+  "schema": "wamn-wms-cluster-journey/v0.1",
+  "verdict": "pass",
+  "source": "6f198834dad531f77711680e9a7fc200081f1c68",
+  "namespace": "wamn-wms-journey",
+  "release_manifest_digest": "sha256:2e0f61c48eb2d201e0dc473da0bcd198140ecc034a4e401a5283cef111fdc2ce",
+  "route_host": "wms.localhost",
+  "passing_arms": [
+    "production-mint-and-attestation",
+    "production-cdc-reader-session",
+    "operator-before-host-2.9.0",
+    "three-ready-default-hosts",
+    "flow-http-workload-ready",
+    "idle-materializer-ready",
+    "operator-endpointslice",
+    "exact-route-not-found-reachability",
+    "wms-composed-move-contention-and-replay",
+    "wms-released-operations",
+    "one-label-object-for-winning-movement",
+    "cross-environment-scheduling-refusal",
+    "committed-move-with-failed-label-store"
+  ],
+  "evidence_scope": {
+    "cited_immutable_rc": {
+      "close": "851acb80",
+      "source": "79d2ab64",
+      "arms": [
+        "bootstrap",
+        "M2-supersession",
+        "socketguard",
+        "traceproof",
+        "scoped-RegistryReader"
+      ]
+    },
+    "rerun": [
+      "wms-runtime",
+      "idle-materializer",
+      "native-scheduling",
+      "exact-cleanup"
+    ]
+  },
+  "reachability_scope": "The exact 404 proves HTTP routing and guest execution only."
+}

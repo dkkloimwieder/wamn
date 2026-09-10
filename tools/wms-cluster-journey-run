@@ -492,8 +492,8 @@ DEMO
 
   if [[ "$cluster_owned" == true ]] &&
      kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
-    record_command kind delete cluster --name "$cluster"
-    kind delete cluster --name "$cluster" >/dev/null 2>"$evidence_dir/cleanup-cluster-delete.stderr" || cleanup_failure cluster-delete "$?"
+    record_command kind delete cluster --name "$cluster" --kubeconfig "$kubeconfig"
+    kind delete cluster --name "$cluster" --kubeconfig "$kubeconfig" >/dev/null 2>"$evidence_dir/cleanup-cluster-delete.stderr" || cleanup_failure cluster-delete "$?"
   fi
   if [[ "$postgres_owned" == true ]] &&
      docker container inspect "$postgres_container" >/dev/null 2>&1; then
