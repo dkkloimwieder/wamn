@@ -122,6 +122,8 @@ fn noncanonical_timestamps_and_numeric_spellings_refuse() {
         .unwrap_err();
         assert_eq!(error.kind(), CursorErrorKind::InvalidInput);
     }
+    // Input normalization accepts values such as 01.0 and 1. before serialization.
+    // Cursor validation refuses them so the opaque v1 value is never rewritten.
     for numeric in ["01.0", "1e2", "+1.00", "1."] {
         let error = encode_cursor(&CursorV1::new(
             "amount",

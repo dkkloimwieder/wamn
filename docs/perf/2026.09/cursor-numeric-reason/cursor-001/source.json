@@ -1,0 +1,7 @@
+{
+  "changed_source_sha256": {
+    "crates/schema/generator/src/cursor.rs": "cb1ed12d6163b5f64170c7cb5c6326a543055314f7a17e30e57d990f17ce7cd8",
+    "crates/schema/generator/tests/cursor.rs": "a1d9a3251dfa64bfdba3d7c35dba314e9f0eff91411f15dd2c349bf178dc4d80"
+  },
+  "head": "8c2716121c5d17ab08a6baf053d4615497bc135e"
+}

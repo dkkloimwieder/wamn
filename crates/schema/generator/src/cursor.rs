@@ -300,6 +300,10 @@ fn validate_field(field: &str) -> Result<(), CursorError> {
     }
 }
 
+// A v1 cursor is an opaque server value that clients preserve verbatim.
+// User-entered numerics can be normalized before serialization. Cursor keys
+// retain their PostgreSQL spelling and scale because decode_cursor compares
+// exact canonical bytes. Do not apply input normalization here.
 fn canonical_numeric(value: &str) -> bool {
     let bytes = value.as_bytes();
     if bytes.is_empty() {

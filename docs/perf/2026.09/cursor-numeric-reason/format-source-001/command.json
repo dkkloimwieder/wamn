@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "rustfmt",
+    "--edition",
+    "2024",
+    "--check",
+    "crates/schema/generator/src/cursor.rs"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/cursor-numeric-reason-20260910"
+}
