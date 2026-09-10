@@ -110,8 +110,14 @@ Its [verdict](live-003/journey/verdict.json) records all 13 passing journey arms
 The [partial receipt](live-003/journey/wms-partial.receipt) records one command, one movement, the observed failure, and successful bucket restoration.
 The [cleanup receipt](live-003/journey/cleanup.receipt) passes with the owned Kubernetes configuration file.
 The [source receipt](live-003/source-stability.json) records a clean worktree at the same commit before and after the run.
-Shared finding `wamn-2npt` remains open for the corresponding Receiving cleanup repair.
+Shared finding `wamn-2npt` closes after both runner fixes and their committed cleanup receipts pass.
 
 The deployed response proof is complete.
-The final combined integration sweep remains unproved while the identity and Receiving proof branches finish their current runs.
+The first combined candidate is `2452eb0c`.
+It contains effects `dc58f2d9`, Receiving `0673f3f5`, and identity `e13fd2f3`, with both proof modes and all three test dependencies preserved.
+The [manifest inspection](combined-integration-preparation-001/metadata.json) passes without a build.
+The [merged runner check](combined-runner-check-001/result.json) accepts both existing successful logs and rejects the wrong test prefix.
+Both proof modes produce their expected plans, and their combined invocation refuses.
+
+The final combined workspace test run remains unproved.
 The effects issue remains in progress until that integration boundary.

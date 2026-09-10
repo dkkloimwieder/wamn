@@ -1,0 +1,19 @@
+{
+  "refs": {
+    "main": "refs/heads/main",
+    "effects": "refs/heads/lane/effects-response-20260909",
+    "receiving": "refs/heads/work/receiving-correctness-20260909",
+    "identity": "refs/heads/work/ctc8-15-4-fresh-only-20260909"
+  },
+  "commits": {
+    "main": "41ba0334510c4e8bc8420d4c0d3cff15acd34a7b",
+    "effects": "dc58f2d96d63c03af19b96494ffd919ab3c26d2e",
+    "receiving": "0673f3f54f2db1250c6b023a11d7dc5877a944da",
+    "identity": "e13fd2f391a6cf0c4db797803a1f6c4c2cd846ea"
+  },
+  "proofs_pending": [
+    "identity deployed-006",
+    "Receiving restored-001"
+  ],
+  "excluded_refs": "all proof/* refs"
+}

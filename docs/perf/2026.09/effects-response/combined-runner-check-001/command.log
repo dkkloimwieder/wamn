@@ -1,0 +1,18 @@
+Receiving cluster journey dry-run (no mutation)
+  source: 2452eb0c6936fa8a7fcf0b90b5888f63a77194b5
+  cluster/context: wamn-receiving-correctness / kind-wamn-receiving-correctness
+  namespace: wamn-receiving-correctness
+  route host: receiving.localhost (setup overlay only)
+  order: compile correctness proof -> Dockerfile host + gates -> production admission + release -> deployed HTTP command histories, rollback, replay, authorization, and contention -> exact teardown
+  correctness: 16 generated histories with seed 7701, explicit histories, and seven boundary cases. No performance measurement.
+Receiving cluster journey dry-run (no mutation)
+  source: 2452eb0c6936fa8a7fcf0b90b5888f63a77194b5
+  cluster/context: wamn-receiving-journey / kind-wamn-receiving-journey
+  namespace: wamn-receiving-journey
+  route host: receiving.localhost (setup overlay only)
+  order: Dockerfile host + gates + identity -> copied authored fresh-only base -> production admission + v1 release -> direct/nested session refusal + same-human PAT success + role/membership revocation + prior-commit survival -> two-host session proof -> exact teardown
+--receiving-correctness cannot combine with other proof or measurement modes
+cargo test did not run exactly one successful production_receiving_command_histories test
+running 1 test
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 2.46s
+Merged runner modes and exact-test receipt checks pass. No builds or live calls ran.

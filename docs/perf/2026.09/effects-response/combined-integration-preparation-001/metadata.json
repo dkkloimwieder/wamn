@@ -1,0 +1,23 @@
+{
+  "command": [
+    "cargo",
+    "metadata",
+    "--no-deps",
+    "--format-version",
+    "1",
+    "--locked",
+    "--offline"
+  ],
+  "exit_code": 0,
+  "integration_dev_dependencies": [
+    "http-body-util",
+    "hyper",
+    "proptest",
+    "uuid",
+    "wamn-run-state",
+    "wamn-schema-generator",
+    "wasmtime-wasi-http",
+    "wat"
+  ],
+  "workspace_member_count": 40
+}
