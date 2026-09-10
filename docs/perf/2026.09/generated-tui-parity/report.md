@@ -35,4 +35,16 @@ The retained failed runs remain failed evidence.
 
 The same source change deletes the old model, reducer, request builder, and screen modules after parity passes.
 It repoints the Receiving recipe and preserves the developer-owned crate and its public login helpers.
-Issue `wamn-10yt.62.6` remains open until the required workspace sweep and publication finish.
+
+The workspace sweep runs at clean commit `9e3307eb4ecab84efe2009ceece0f5bad69d170a` after the identity proof lands.
+It reports 2,183 passing tests, six passing doctests, and 74 failures, with exit code 101.
+The test count includes 85 explicit self-skips, which do not prove their live behavior.
+No tests remain ignored, and the two existing schema regeneration exclusions remain in place.
+The [source receipt](workspace-001/source-stability.json) records a clean tree before and after the sweep.
+
+The [baseline comparison](workspace-001/baseline-comparison.json) preserves all 68 cutover failure identities and causes.
+Six further failures lack their declared live fixtures.
+Compared with the effects sweep, the corrected TUI revision fixture passes and the new session-client test lacks its journey document.
+The identity lane retains that test's separate deployed proof under `wamn-ctc8.15.5`.
+No new TUI failure appears in the sweep.
+The [contract follow-up](contract-diff-001/result.json) exits zero with 36 passing tests across its three legs.

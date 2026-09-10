@@ -1,0 +1,166 @@
+{
+  "current_sha256": "9068f5d1d454236a26ce90d9028df1fa92dab7ca6f4a3e08c4bce4f125a4a11a",
+  "comparisons": [
+    {
+      "baseline": "cutover",
+      "path": "docs/perf/2026.09/wasmcloud-2-9-cutover/workspace-integration-001/workspace-results.json",
+      "sha256": "cd3ddd7265b03b09f666176ce4f75bebd3fa94f4e82a8f2ab3c2385b18e831a9",
+      "baseline_failures": 68,
+      "current_failures": 74,
+      "matching_identities_and_classified_causes": 68,
+      "changed_classified_causes": [],
+      "absent_baseline_failures": [],
+      "added_failures": [
+        {
+          "identity": [
+            "wamn-proof-integration",
+            "--lib",
+            "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+          ],
+          "diagnostic_excerpt": [
+            {
+              "log_line": 2770,
+              "text": "Error: WAMN_TENANT_KEY_PG_URL must arm this disposable proof"
+            },
+            {
+              "log_line": 2771,
+              "text": ""
+            },
+            {
+              "log_line": 2772,
+              "text": "Caused by:"
+            },
+            {
+              "log_line": 2773,
+              "text": "    environment variable not found"
+            },
+            {
+              "log_line": 2774,
+              "text": "FAILED"
+            }
+          ]
+        },
+        {
+          "identity": [
+            "wamn-proof-integration",
+            "--lib",
+            "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation"
+          ],
+          "diagnostic_excerpt": [
+            {
+              "log_line": 2782,
+              "text": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey"
+            },
+            {
+              "log_line": 2783,
+              "text": "FAILED"
+            }
+          ]
+        },
+        {
+          "identity": [
+            "wamn-proof-integration",
+            "--lib",
+            "route_authentication_live::production_session_client_login_and_fresh_selection"
+          ],
+          "diagnostic_excerpt": [
+            {
+              "log_line": 2792,
+              "text": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey"
+            },
+            {
+              "log_line": 2793,
+              "text": "FAILED"
+            }
+          ]
+        },
+        {
+          "identity": [
+            "wamn-proof-integration",
+            "--lib",
+            "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+          ],
+          "diagnostic_excerpt": [
+            {
+              "log_line": 2794,
+              "text": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey"
+            },
+            {
+              "log_line": 2795,
+              "text": "FAILED"
+            }
+          ]
+        },
+        {
+          "identity": [
+            "wamn-proof-integration",
+            "--lib",
+            "wms_runtime_live::committed_move_survives_label_store_failure"
+          ],
+          "diagnostic_excerpt": [
+            {
+              "log_line": 2822,
+              "text": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey"
+            },
+            {
+              "log_line": 2823,
+              "text": "FAILED"
+            }
+          ]
+        },
+        {
+          "identity": [
+            "wamn-proof-integration",
+            "--test receiving_command_histories_live",
+            "production_receiving_command_histories"
+          ],
+          "diagnostic_excerpt": [
+            {
+              "log_line": 2895,
+              "text": "Error: WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document"
+            },
+            {
+              "log_line": 2896,
+              "text": "FAILED"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "baseline": "effects",
+      "path": "docs/perf/2026.09/effects-response/combined-workspace-001/workspace-results.json",
+      "sha256": "444c9785411b0752d10bf86eab8d5351c1669406a8119f85c03db46f0d4fa945",
+      "baseline_failures": 74,
+      "current_failures": 74,
+      "matching_identities_and_classified_causes": 73,
+      "changed_classified_causes": [],
+      "absent_baseline_failures": [
+        [
+          "wamn-client-tui",
+          "--test screen",
+          "a_malformed_or_different_record_read_cannot_supply_a_revision"
+        ]
+      ],
+      "added_failures": [
+        {
+          "identity": [
+            "wamn-proof-integration",
+            "--lib",
+            "route_authentication_live::production_session_client_login_and_fresh_selection"
+          ],
+          "diagnostic_excerpt": [
+            {
+              "log_line": 2792,
+              "text": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey"
+            },
+            {
+              "log_line": 2793,
+              "text": "FAILED"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
