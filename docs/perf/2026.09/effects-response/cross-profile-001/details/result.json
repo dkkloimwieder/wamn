@@ -1,0 +1,10 @@
+{
+  "head": "c86488041b09b02d3f82676c60cdb3ed1d1fca04",
+  "harness_sha256": "ede703a865f56c9910109a437d3d5b2fc80157dc3d98324d30af36e027c95ad2",
+  "exit_code": 101,
+  "build_exit_codes": [
+    0,
+    0
+  ],
+  "limits": "The existing raw guest digest comparison only; no deployed behavior proof."
+}

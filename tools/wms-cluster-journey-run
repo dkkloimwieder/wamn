@@ -314,8 +314,13 @@ cleanup() {
   # below never fired (run 5, wamn-362o.44).
   local status=$? cleanup_failed=false failure_capture_errors
   trap - EXIT HUP INT TERM
+  cleanup_failure() {
+    cleanup_failed=true
+    printf 'step=%s exit_status=%s\n' "$1" "${2:-not-applicable}" \
+      >>"$evidence_dir/cleanup-errors.log" || true
+  }
   if [[ "$partial_bucket_removed" == true ]]; then
-    restore_partial_bucket || cleanup_failed=true
+    restore_partial_bucket 2>"$evidence_dir/cleanup-restore-partial-bucket.stderr" || cleanup_failure restore-partial-bucket "$?"
   fi
   # The authoring gate is a LOCAL process this journey spawned; on any exit
   # after it started -- a gate refusal exits inside the wiring loop -- it must
@@ -399,18 +404,18 @@ DEMO
   if [[ "$reader_owned" == true && -n "$reader_pid" ]]; then
     if kill -0 "$reader_pid" 2>/dev/null; then
       record_command kill -TERM "$reader_pid"
-      kill -TERM "$reader_pid" >/dev/null 2>&1 || cleanup_failed=true
+      kill -TERM "$reader_pid" >/dev/null 2>"$evidence_dir/cleanup-reader-term.stderr" || cleanup_failure reader-term "$?"
       for _ in $(seq 1 50); do
         kill -0 "$reader_pid" 2>/dev/null || break
         sleep 0.1
       done
       if kill -0 "$reader_pid" 2>/dev/null; then
-        kill -KILL "$reader_pid" >/dev/null 2>&1 || true
-        cleanup_failed=true
+        kill -KILL "$reader_pid" >/dev/null 2>"$evidence_dir/cleanup-reader-kill.stderr" || true
+        cleanup_failure reader-term-deadline-exceeded
       fi
     fi
     wait "$reader_pid" >/dev/null 2>&1 || true
-    kill -0 "$reader_pid" 2>/dev/null && cleanup_failed=true
+    kill -0 "$reader_pid" 2>"$evidence_dir/cleanup-reader-still-alive.stderr" && cleanup_failure reader-still-alive 0
   fi
 
   if [[ $status -ne 0 && "$cluster_owned" == true && -s "$kubeconfig" ]] &&
@@ -488,57 +493,57 @@ DEMO
   if [[ "$cluster_owned" == true ]] &&
      kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
     record_command kind delete cluster --name "$cluster"
-    kind delete cluster --name "$cluster" >/dev/null 2>&1 || cleanup_failed=true
+    kind delete cluster --name "$cluster" >/dev/null 2>"$evidence_dir/cleanup-cluster-delete.stderr" || cleanup_failure cluster-delete "$?"
   fi
   if [[ "$postgres_owned" == true ]] &&
      docker container inspect "$postgres_container" >/dev/null 2>&1; then
     if docker container inspect "$demo_proxy_container" >/dev/null 2>&1; then
       record_command docker rm --force "$demo_proxy_container"
-      docker rm --force "$demo_proxy_container" >/dev/null 2>&1 || cleanup_failed=true
+      docker rm --force "$demo_proxy_container" >/dev/null 2>"$evidence_dir/cleanup-demo-proxy-remove.stderr" || cleanup_failure demo-proxy-remove "$?"
     fi
     record_command docker rm --force --volumes "$postgres_container"
-    docker rm --force --volumes "$postgres_container" >/dev/null 2>&1 || cleanup_failed=true
+    docker rm --force --volumes "$postgres_container" >/dev/null 2>"$evidence_dir/cleanup-postgres-remove.stderr" || cleanup_failure postgres-remove "$?"
   fi
   if [[ "$registry_owned" == true ]] &&
      docker container inspect "$registry_container" >/dev/null 2>&1; then
     record_command docker rm --force --volumes "$registry_container"
-    docker rm --force --volumes "$registry_container" >/dev/null 2>&1 || cleanup_failed=true
+    docker rm --force --volumes "$registry_container" >/dev/null 2>"$evidence_dir/cleanup-registry-remove.stderr" || cleanup_failure registry-remove "$?"
   fi
   if [[ "$nats_owned" == true ]] &&
      docker container inspect "$nats_container" >/dev/null 2>&1; then
     record_command docker rm --force --volumes "$nats_container"
-    docker rm --force --volumes "$nats_container" >/dev/null 2>&1 || cleanup_failed=true
+    docker rm --force --volumes "$nats_container" >/dev/null 2>"$evidence_dir/cleanup-nats-remove.stderr" || cleanup_failure nats-remove "$?"
   fi
   if [[ "$minio_owned" == true ]] &&
      docker container inspect "$minio_container" >/dev/null 2>&1; then
     record_command docker rm --force --volumes "$minio_container"
-    docker rm --force --volumes "$minio_container" >/dev/null 2>&1 || cleanup_failed=true
+    docker rm --force --volumes "$minio_container" >/dev/null 2>"$evidence_dir/cleanup-minio-remove.stderr" || cleanup_failure minio-remove "$?"
   fi
   if [[ "$host_image_owned" == true ]] &&
      docker image inspect "$host_image" >/dev/null 2>&1; then
     record_command docker image rm "$host_image"
-    docker image rm "$host_image" >/dev/null 2>&1 || cleanup_failed=true
+    docker image rm "$host_image" >/dev/null 2>"$evidence_dir/cleanup-host-image-remove.stderr" || cleanup_failure host-image-remove "$?"
   fi
 
-  if kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
-    cleanup_failed=true
+  if kind get clusters 2>"$evidence_dir/cleanup-cluster-still-present.stderr" | grep -Fx -- "$cluster" >/dev/null; then
+    cleanup_failure cluster-still-present 0
   fi
-  if docker container inspect "$postgres_container" >/dev/null 2>&1; then
-    cleanup_failed=true
+  if docker container inspect "$postgres_container" >/dev/null 2>"$evidence_dir/cleanup-postgres-still-present.stderr"; then
+    cleanup_failure postgres-still-present 0
   fi
-  if docker container inspect "$registry_container" >/dev/null 2>&1; then
-    cleanup_failed=true
+  if docker container inspect "$registry_container" >/dev/null 2>"$evidence_dir/cleanup-registry-still-present.stderr"; then
+    cleanup_failure registry-still-present 0
   fi
-  if docker container inspect "$minio_container" >/dev/null 2>&1; then cleanup_failed=true; fi
-  if docker container inspect "$nats_container" >/dev/null 2>&1; then
-    cleanup_failed=true
+  if docker container inspect "$minio_container" >/dev/null 2>"$evidence_dir/cleanup-minio-still-present.stderr"; then cleanup_failure minio-still-present 0; fi
+  if docker container inspect "$nats_container" >/dev/null 2>"$evidence_dir/cleanup-nats-still-present.stderr"; then
+    cleanup_failure nats-still-present 0
   fi
-  if docker image inspect "$host_image" >/dev/null 2>&1; then
-    cleanup_failed=true
+  if docker image inspect "$host_image" >/dev/null 2>"$evidence_dir/cleanup-host-image-still-present.stderr"; then
+    cleanup_failure host-image-still-present 0
   fi
   record_command rm -rf -- "$work_dir"
-  rm -rf -- "$work_dir" || cleanup_failed=true
-  [[ ! -e "$work_dir" ]] || cleanup_failed=true
+  rm -rf -- "$work_dir" 2>"$evidence_dir/cleanup-workdir-remove.stderr" || cleanup_failure workdir-remove "$?"
+  [[ ! -e "$work_dir" ]] || cleanup_failure workdir-still-present "$?"
 
   if [[ "$cleanup_failed" == false ]]; then
     printf 'verdict=pass cluster=%s containers=%s,%s,%s,%s reader_pid=%s image=%s\n' \
@@ -2268,20 +2273,22 @@ if [[ "$prove_partial_completion" == true ]]; then
       >"$evidence_dir/partial-bucket-restored.log" 2>&1 || return "$?"
     partial_bucket_removed=false
   }
+  partial_journey_document=$work_dir/journey-partial.json
+  write_journey_document journey_spec "$journey_schema" "$partial_journey_document"
+  amend_journey_document "$journey_schema" "$partial_journey_document" runtime \
+    "$(jq -n --arg endpoint "http://$runtime_node_ip:$runtime_node_port" \
+        --arg pallet "$app_fixture_pallet_id" --arg to "$app_fixture_location_a_id" \
+        '{route_endpoint: $endpoint, pallet_id: $pallet, to_location_id: $to}')"
   # The normal object proof finished above. Remove only this journey's bucket.
   partial_bucket_removed=true
   run_sensitive remove-partial-labels-bucket \
     docker run --rm --network kind --entrypoint sh minio/mc -c \
     "mc alias set journey '$minio_endpoint' '$minio_access_key' '$minio_secret_key' >/dev/null && mc rb --force journey/labels" \
     >"$evidence_dir/partial-bucket-removed.log" 2>&1
-  amend_journey_document "$journey_schema" "$journey_document" runtime \
-    "$(jq -n --arg endpoint "http://$runtime_node_ip:$runtime_node_port" \
-        --arg pallet "$app_fixture_pallet_id" --arg to "$app_fixture_location_a_id" \
-        '{route_endpoint: $endpoint, pallet_id: $pallet, to_location_id: $to}')"
   record_command cargo test wms_runtime_live::committed_move_survives_label_store_failure \
     '<journey document with the runtime phase redacted>'
   partial_status=0
-  if WAMN_JOURNEY_DOCUMENT="$journey_document" \
+  if WAMN_JOURNEY_DOCUMENT="$partial_journey_document" \
       CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
       cargo test -p wamn-proof-integration --lib --locked --offline \
       wms_runtime_live::committed_move_survives_label_store_failure \

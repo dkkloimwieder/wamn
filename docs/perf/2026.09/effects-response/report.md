@@ -68,5 +68,30 @@ The module check reaches that pool through its existing module declaration.
 The [CLI and integration compilation](ctl-integration-compile-001/result.json) passes for all selected test targets.
 It compiles the new live WMS test but does not run it.
 
-The WMS live proof and the full integration sweep did not run in this capture.
-These local results do not establish deployed behavior or complete the effects issue.
+The source boundary is `c86488041b09b02d3f82676c60cdb3ed1d1fca04`.
+Identity and Receiving incorporate this candidate into their isolated proof branches.
+
+The [cross-profile comparison](cross-profile-001/details/comparison.json) reproduces `wamn-10yt.61` at that source.
+Both component builds pass, but the existing named assertion fails with status 101.
+The same four packages differ between `m1` and `proof`: blob-put, client-acme-receiving, receiving, and wms.
+This run does not investigate or repair the dependency cause.
+
+The [first deployed WMS run](live-001/result.json) exits 1.
+The deployed contention, replay, and remaining operation assertions pass, along with the single winning label object assertion.
+Their results are retained in [wms-runtime.receipt](live-001/journey/wms-runtime.receipt).
+The new partial arm stops before its test because the journey document already contains its runtime phase.
+The helper refuses a second amendment, as its contract requires.
+
+The runner now creates a separate journey document for the return move before it removes the labels bucket.
+The [offline setup proof](partial-document-001/result.json) executes that setup against the existing journey example.
+It proves that the original document stays unchanged and the new document selects the return location.
+This result does not prove the deployed partial response.
+
+The failed run's [bucket restoration log](live-001/journey/partial-bucket-restored.log) records successful restoration.
+Its [cleanup receipt](live-001/journey/cleanup.receipt) still reports failure.
+A [later read](live-001/cleanup-followup.json) finds none of its owned containers, host image, cluster, or scratch directory.
+The old cleanup output does not identify the failed step.
+The runner now retains named failed cleanup steps, exit statuses, and command errors without changing cleanup decisions.
+
+The deployed partial response and the final combined integration sweep remain unproved.
+The effects issue remains in progress.

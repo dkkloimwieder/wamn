@@ -1,0 +1,3 @@
+Error from server (BadRequest): previous terminated container "host" in pod "hostgroup-default-8f59f5848-2tq5r" not found
+Error from server (BadRequest): previous terminated container "host" in pod "hostgroup-default-8f59f5848-p6qh2" not found
+Error from server (BadRequest): previous terminated container "host" in pod "hostgroup-default-8f59f5848-q7qkn" not found

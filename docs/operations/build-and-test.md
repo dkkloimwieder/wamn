@@ -2959,8 +2959,9 @@ tools/wms-cluster-journey-run --apply --prove-partial-completion \
 
 After the normal object assertions pass, the harness removes its own `labels`
 bucket while MinIO stays running. It runs
-`wms_runtime_live::committed_move_survives_label_store_failure` once, with the
-existing journey document. The test sends one fresh move and requires HTTP500
+`wms_runtime_live::committed_move_survives_label_store_failure` once, with a
+separate journey document for the return move. The test sends one fresh move
+and requires HTTP500
 with only `committed_result` and `failed_outcome`. The committed result must
 preserve the original movement fields and match the submitted `request_id`.
 The failed outcome must contain exactly `code`, `message`, and `effect_outcome`.

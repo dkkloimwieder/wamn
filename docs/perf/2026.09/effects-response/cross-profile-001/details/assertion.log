@@ -1,0 +1,309 @@
+   Compiling hashbrown v0.17.1
+   Compiling tokio v1.53.1
+   Compiling indexmap v2.14.0
+   Compiling wasmtime-internal-core v47.0.4
+   Compiling cranelift-bitset v0.134.4
+   Compiling cranelift-entity v0.134.4
+   Compiling gimli v0.33.0
+   Compiling tokio-util v0.7.19
+   Compiling cranelift-bforest v0.134.4
+   Compiling tokio-rustls v0.26.4
+   Compiling h2 v0.4.19
+   Compiling regalloc2 v0.15.2
+   Compiling tower v0.5.3
+   Compiling hyper v1.11.0
+   Compiling object v0.39.1
+   Compiling hyper-util v0.1.20
+   Compiling pulley-interpreter v47.0.4
+   Compiling wasmtime-environ v47.0.4
+   Compiling cranelift-codegen v0.134.4
+   Compiling tokio-stream v0.1.19
+   Compiling wasmtime-internal-cache v47.0.4
+   Compiling wasmtime-internal-fiber v47.0.4
+   Compiling addr2line v0.26.1
+   Compiling wasmtime-internal-jit-icache-coherence v47.0.4
+   Compiling wasmparser v0.253.0
+   Compiling axum v0.8.9
+   Compiling cranelift-frontend v0.134.4
+   Compiling wasmtime-internal-unwinder v47.0.4
+   Compiling cranelift-native v0.134.4
+   Compiling wasmtime-internal-cranelift v47.0.4
+   Compiling wasmtime v47.0.4
+   Compiling hyper-rustls v0.27.9
+   Compiling hyper-timeout v0.5.2
+   Compiling tower-http v0.6.11
+   Compiling wasmparser v0.254.0
+   Compiling reqwest v0.13.4
+   Compiling tonic v0.14.6
+   Compiling postgres-types v0.2.14
+   Compiling wasm-encoder v0.253.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling opentelemetry_sdk v0.31.0
+   Compiling wasm-metadata v0.253.0
+   Compiling tonic-prost v0.14.6
+   Compiling tokio-postgres v0.7.18
+   Compiling wiggle v47.0.4
+   Compiling wasm-encoder v0.254.0
+   Compiling wasmtime-wasi-io v47.0.4
+   Compiling wit-parser v0.253.0
+   Compiling jsonwebtoken v10.4.0
+   Compiling oci-client v0.17.0
+   Compiling wit-component v0.253.0
+   Compiling nkeys v0.4.5
+   Compiling wasmtime-wasi v47.0.4
+   Compiling wasm-metadata v0.254.0
+   Compiling opentelemetry-proto v0.31.0
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/components/execution/contract)
+   Compiling wit-parser v0.254.0
+   Compiling combine v4.6.8
+   Compiling deadpool-runtime v0.3.1
+   Compiling tryhard v0.5.2
+   Compiling boon v0.6.1
+   Compiling async-nats v0.49.1
+   Compiling wasmtime-wasi-http v47.0.4
+   Compiling redis v0.27.6
+   Compiling deadpool v0.13.1
+   Compiling opentelemetry-otlp v0.31.1
+   Compiling wit-component v0.254.0
+   Compiling cap-net-ext v3.4.6
+   Compiling oci-wasm v0.6.0
+   Compiling tracing-opentelemetry v0.32.1
+   Compiling opentelemetry-appender-tracing v0.31.1
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/execution/run-state)
+   Compiling object_store v0.14.1
+   Compiling deadpool-postgres v0.14.2
+   Compiling wamn-router v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/execution/router)
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/identity/platform)
+   Compiling sqlx-core v0.9.0
+   Compiling wast v252.0.0
+   Compiling sqlx-postgres v0.9.0
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/platform/runtime)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:52:7
+   |
+52 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:114:1
+    |
+114 | / pub struct ConnectionHttp {
+115 | |     postgres: Arc<WamnPostgres>,
+116 | |     vault: Arc<WamnCredentials>,
+117 | |     tenant: Box<str>,
+...   |
+133 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+134 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:55:1
+    |
+ 55 | / pub struct WamnPostgres {
+ 56 | |     /// Resolves a project id → its database connection + policy.
+ 57 | |     provider: Arc<dyn CredentialProvider>,
+ 58 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+121 | |     pub(super) bind_counters: super::BindCounters,
+122 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib) generated 16 warnings
+   Compiling wamn-gate-harness v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/test-support/harness)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> test-support/harness/src/ceiling.rs:72:1
+   |
+72 | / pub struct Ramp {
+73 | |     tolerance: f64,
+74 | |     max_levels: usize,
+75 | |     levels: Vec<LevelStats>,
+...  |
+82 | |     retrying: bool,
+83 | | }
+   | |_^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-gate-harness` (lib) generated 1 warning
+   Compiling wamn-proof-conformance v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/tests/conformance)
+warning: type does not implement `Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> tests/conformance/src/socketguard.rs:26:1
+   |
+26 | pub struct SocketGuardArgs {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-proof-conformance` (lib) generated 1 warning
+   Compiling sqlx v0.9.0
+   Compiling wamn-execution-host v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/execution/host)
+   Compiling wat v1.252.0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7m 45s
+     Running tests/guest_workspace_closure.rs (target/debug/deps/guest_workspace_closure-9551d14c0cafb672)
+
+running 1 test
+
+thread 'one_commit_built_under_two_profiles_yields_identical_guest_digests' (228996) panicked at tests/conformance/tests/guest_workspace_closure.rs:271:5:
+the same commit produced different guest bytes under the m1 and proof component profiles, so a component digest is a claim about WHICH PROFILE built it and a pin minted under one profile cannot be reproduced under the other (wamn-10yt.61). The cause is a feature the two selections resolve differently: diff the `features` field of the two target directories' `.fingerprint/*/lib-*.json` to name the crate, then find which requester adds it, which may be a dependency's own manifest and not anything this repository declares: [
+    "blob-put: m1 d7e0543af60e02d2e9e4cea0cd49575a7ee3707c7b874c27c17272075827b8fc != proof ef5e4aa56a5cde521345ccd534da1418ab355f803ccac68239a0a4be76b8b7df",
+    "client-acme-receiving: m1 6b5f2a868624cfe4c43772b2a3e006a74a792bafe63f8989058fba1acb55dbeb != proof e6f0971560ee1818aac6d11509311796f055b2d3765b0e905400ef16a8dadf25",
+    "receiving: m1 f2de825e318d0e71ba4ef358031dc526151b2b7c750293da48f2b7513a59c511 != proof 3d7cffdbb6b1aef57b88b1e378139ec5428b8a410dfb049790508d3f820959ae",
+    "wms: m1 e77eff8cec4423bd740177dfdf01a6b701ce181d42c8494ae5ba6c9e2dc66c7d != proof 461722088484ef83479da8d60b4c19ca962a18764b1535bacd4041031e1c2a6b",
+]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test one_commit_built_under_two_profiles_yields_identical_guest_digests ... FAILED
+
+failures:
+
+failures:
+    one_commit_built_under_two_profiles_yields_identical_guest_digests
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p wamn-proof-conformance --test guest_workspace_closure`
