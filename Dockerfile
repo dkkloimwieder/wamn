@@ -31,6 +31,7 @@ FROM chef AS root-planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY components ./components
+COPY packages ./packages
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
