@@ -117,7 +117,7 @@ Dockerfile              shared build plus one final stage per deployable artifac
 
 ```bash
 # host + gate suite (debug by default)
-cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
+cargo build -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-dispatcher \
   -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates
 
 # wasm guests — two workspaces, and they must not share one Cargo invocation
@@ -126,8 +126,10 @@ cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
 (cd components/no-std && cargo build --release --target wasm32-wasip2)
 ```
 
-The product binary stands up its own disposable environment. `wamn dev up`
-provisions it. It then spawns `wamn-scenario-worker serve` as the authoring Gate
+The product binary starts its own disposable environment. `wamn dev up`
+provisions it and uses a separate `wamn-identity` process to mint its initial PATs.
+It requires a disposable system database named `wamn_system`.
+It then spawns `wamn-scenario-worker serve` as the authoring Gate
 on a fixed port, holds that Gate open, and prints the `wamn dev --tui` line to
 run in a second terminal. For the disposable services it needs and the exact
 flags, read `[WAMN-DEV-ENVIRONMENT]` in `docs/operations/build-and-test.md`.

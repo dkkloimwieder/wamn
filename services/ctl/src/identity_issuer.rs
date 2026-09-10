@@ -17,10 +17,10 @@ use tokio_postgres::{Client, Config, GenericClient, NoTls, Row};
 use url::Url;
 use wamn_control_provision::CredentialGeneration;
 use wamn_control_provision::identity_issuer::{
-    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_READ_COLUMNS, IDENTITY_ISSUER_ROLE,
-    IDENTITY_ISSUER_TABLES, identity_issuer_generation_role, parse_identity_issuer_url,
-    prepare_identity_issuer_generation_sql, retire_identity_issuer_generation_sql,
-    validate_identity_issuer,
+    IDENTITY_ISSUER_DATABASE, IDENTITY_ISSUER_PAT_INSERT_COLUMNS, IDENTITY_ISSUER_READ_COLUMNS,
+    IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, identity_issuer_generation_role,
+    parse_identity_issuer_url, prepare_identity_issuer_generation_sql,
+    retire_identity_issuer_generation_sql, validate_identity_issuer,
 };
 use wamn_control_provision::sql;
 
@@ -254,23 +254,30 @@ async fn exact_grants(
                 .map(|(schema, _, _)| *schema),
         )
         .collect();
-    // The foundation shipped exactly identity USAGE plus key-table CRUD.
-    // Recognize that complete old surface only at preparation preflight;
+    // The foundation and session exchange shipped two exact prior surfaces.
+    // Recognize either complete old surface only at preparation preflight;
     // a partial upgrade or any extra grant remains unexpected drift.
+    const PAT_RETURN_COLUMNS: [&str; 3] = ["id", "label", "created_at"];
     let foundation = matches!(expected, Grants::StableBeforePrepare)
         && rows.len() == 1 + IDENTITY_ISSUER_TABLES.len() * 4;
+    let current_count = schemas.len()
+        + IDENTITY_ISSUER_TABLES.len() * 4
+        + IDENTITY_ISSUER_READ_COLUMNS
+            .iter()
+            .map(|(_, _, columns)| columns.len())
+            .sum::<usize>()
+        + IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len();
+    let read_only_pat = matches!(expected, Grants::StableBeforePrepare)
+        && rows.len()
+            == current_count - IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len() - PAT_RETURN_COLUMNS.len();
     let count = match expected {
         Grants::None => 0,
         Grants::Generation => 1,
         Grants::StableBeforePrepare if foundation => 1 + IDENTITY_ISSUER_TABLES.len() * 4,
-        Grants::Stable | Grants::StableBeforePrepare => {
-            schemas.len()
-                + IDENTITY_ISSUER_TABLES.len() * 4
-                + IDENTITY_ISSUER_READ_COLUMNS
-                    .iter()
-                    .map(|(_, _, columns)| columns.len())
-                    .sum::<usize>()
+        Grants::StableBeforePrepare if read_only_pat => {
+            current_count - IDENTITY_ISSUER_PAT_INSERT_COLUMNS.len() - PAT_RETURN_COLUMNS.len()
         }
+        Grants::Stable | Grants::StableBeforePrepare => current_count,
     };
     anyhow::ensure!(
         rows.len() == count
@@ -308,9 +315,20 @@ async fn exact_grants(
                                             schema == *expected_schema
                                                 && columns.iter().any(|column| {
                                                     object == format!("{table}.{column}")
+                                                        && !(read_only_pat
+                                                            && *table == "pats"
+                                                            && PAT_RETURN_COLUMNS.contains(column))
                                                 })
                                         },
                                     )
+                                || !foundation
+                                    && !read_only_pat
+                                    && kind == "column"
+                                    && schema == "identity"
+                                    && privilege == "INSERT"
+                                    && IDENTITY_ISSUER_PAT_INSERT_COLUMNS
+                                        .iter()
+                                        .any(|column| object == format!("pats.{column}"))
                         }
                     }
             }),

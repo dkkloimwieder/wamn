@@ -303,3 +303,55 @@ the verifier work reuses it for item 4's paired proof.
 Before enabling sessions, reconcile the owner-approved exception with the
 fresh-authorization rule in `docs/exe-model.md`; fresh PAT checks and tenant
 permission reads retain next-request revocation.
+
+## PAT service addendum, 2026-09-10
+
+The owner approved `wamn-ctc8.20` on 2026-09-10.
+This addendum replaces the temporary CLI minting rule in §1 and preserves the earlier proposal as a historical snapshot.
+The existing native `wamn-identity` process now owns `POST /pats` through the existing identity library and system database.
+The authoring Gate and hosts do not gain PAT minting authority.
+
+Only provisioning operators authenticate to `/pats`, through client certificates.
+A dedicated certificate authority (CA) signs these operator certificates.
+Configure its trust roots with `wamn-identity serve --operator-ca` or `WAMN_IDENTITY_OPERATOR_CA`.
+Do not use this CA for host, application, or ordinary user certificates.
+
+Every accepted certificate from this CA grants operator authority to mint for an existing active principal, whether human or service.
+PATs, JWTs, and identity headers do not grant this authority.
+Without operator trust roots, the service refuses PAT issuance.
+The public JWKS and existing `/session` authentication rules remain unchanged.
+
+The endpoint accepts `Content-Type: application/json` with exactly `principal_id`, `label`, and integer `lifetime_seconds`.
+The service refuses extra or duplicate fields, bodies above 1,024 bytes, missing principals, and disabled principals.
+The existing library limits the trimmed label to 1–200 bytes and the lifetime to 1 second–365 days.
+The endpoint creates no principal, membership, or role assignment.
+
+Success returns HTTP `201` with exactly `token`, `token_prefix`, `principal_id`, `created_at`, and `expires_at`.
+The timestamps use RFC 3339 UTC text.
+The service sends `Cache-Control: no-store` and never logs the raw token.
+
+The `provision-project-env` command keeps its existing principal creation, role assignment, PAT authentication, and prefix-based revocation operations in the system database.
+When either PAT Secret flag is present, the command requires the identity service, including during first-time provisioning.
+The command requests the existing 30-day lifetime and authenticates the returned token against the expected principal before writing its Secret.
+Secret output remains an atomic file replacement with mode `0600`, never stdout.
+The command has no direct-database fallback for PAT issuance.
+
+Configure the operator transport with these flags or their environment variables:
+
+- Set `--pat-issuer` or `WAMN_PAT_ISSUER` to the HTTPS base URL.
+- Set `--pat-client-cert` or `WAMN_PAT_CLIENT_CERT` to the PEM certificate chain.
+- Set `--pat-client-key` or `WAMN_PAT_CLIENT_KEY` to the PEM private key.
+- Set optional `--pat-server-ca` or `WAMN_PAT_SERVER_CA` to PEM roots that replace the default server trust roots.
+
+The CLI appends `/pats` to the configured base path.
+It refuses URL credentials, queries, fragments, and incomplete TLS configuration before provisioning writes.
+It authenticates the server certificate, allows five seconds for the request, and refuses responses above 4,096 bytes.
+It follows no redirects and retries no issuance request.
+
+If the connection fails after issuance, a PAT can exist even when its raw token never reaches the operator.
+The CLI reports that uncertainty without exposing response contents or credentials.
+The stored digest cannot recover the lost raw token.
+
+This increment runs correctness and security proofs, not benchmarks.
+Both PATs and JWT sessions remain required.
+The owner paused session measurements in `wamn-ctc8.15.6`.

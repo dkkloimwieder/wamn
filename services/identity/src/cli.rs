@@ -13,7 +13,10 @@ use wamn_platform_identity::session_keys::{
     activate_session_key, publish_session_key, remove_compromised_session_key, retire_session_keys,
 };
 
-use crate::{IdentityConfig, IdentityService, IdentityServiceError, connect, serve, tls_config};
+use crate::{
+    IdentityConfig, IdentityService, IdentityServiceError, connect, serve, tls_config,
+    tls_config_with_operator_ca,
+};
 
 /// Identity authority CLI; database credentials are absent from Debug and help values.
 #[derive(Parser)]
@@ -55,6 +58,9 @@ enum Command {
         tls_cert: PathBuf,
         #[arg(long, env = "WAMN_IDENTITY_TLS_KEY")]
         tls_key: PathBuf,
+        /// Dedicated client-certificate CA for provisioning operators that mint PATs.
+        #[arg(long, env = "WAMN_IDENTITY_OPERATOR_CA")]
+        operator_ca: Option<PathBuf>,
         /// Mounted provisioner-generated target file; repeat for each admitted audience.
         #[arg(long)]
         session_target: Vec<PathBuf>,
@@ -89,6 +95,7 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         bind,
         tls_cert,
         tls_key,
+        operator_ca,
         session_target,
     } = cli.command
     {
@@ -121,12 +128,24 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         let private_key = tokio::fs::read(tls_key)
             .await
             .map_err(|_| IdentityServiceError::new("read identity TLS private key failed"))?;
-        let tls = tls_config(&certificate, &private_key)?;
+        let tls = match operator_ca {
+            Some(path) => {
+                let ca = tokio::fs::read(path)
+                    .await
+                    .map_err(|_| IdentityServiceError::new("read identity operator CA failed"))?;
+                tls_config_with_operator_ca(&certificate, &private_key, &ca)?
+            }
+            None => tls_config(&certificate, &private_key)?,
+        };
         drop(private_key);
         let service = IdentityService::connect(config).await?;
         let listener = TcpListener::bind(bind)
             .await
             .map_err(|_| IdentityServiceError::new("bind identity HTTPS listener failed"))?;
+        let address = listener
+            .local_addr()
+            .map_err(|_| IdentityServiceError::new("read identity HTTPS address failed"))?;
+        println!("identity listening on {address}");
         return tokio::select! {
             result = serve(listener, service, tls) => result,
             result = tokio::signal::ctrl_c() => result.map_err(|_| IdentityServiceError::new("identity shutdown signal failed")),

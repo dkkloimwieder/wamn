@@ -25,6 +25,7 @@ mod ident;
 pub mod identity_issuer;
 #[cfg(feature = "ops")]
 mod ops_schema;
+pub mod pat_client;
 pub mod print_release_env;
 pub mod project_env_membership;
 pub mod promote;

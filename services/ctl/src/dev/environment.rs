@@ -205,6 +205,7 @@ fn provisioning_args(
         emit_secret: Some(root.join("database-secret.json")),
         emit_management_author_pat_secret: management_secret.map(Path::to_path_buf),
         emit_route_caller_pat_secret: Some(route_secret.to_path_buf()),
+        pat_issuer: crate::pat_client::PatIssuerArgs::default(),
         revoke_pat_prefix: None,
     }
 }
@@ -246,6 +247,7 @@ pub fn generation_args(
         emit_secret: None,
         emit_management_author_pat_secret: None,
         emit_route_caller_pat_secret: None,
+        pat_issuer: crate::pat_client::PatIssuerArgs::default(),
         revoke_pat_prefix: None,
     }
 }
@@ -347,14 +349,20 @@ pub async fn provision_route(
     management_secret: Option<&Path>,
 ) -> anyhow::Result<ProvisionedRoute> {
     let route_secret = root.join("route-caller-pat.json");
-    provision_project_env::run(provisioning_args(
-        system_url,
-        root,
-        &route_secret,
-        management_secret,
-    ))
-    .await
-    .context("run production project-environment and route-PAT provisioning")?;
+    let issuer = super::pat_issuer::start(system_url, root).await?;
+    let mut args = provisioning_args(system_url, root, &route_secret, management_secret);
+    args.pat_issuer = issuer.args.clone();
+    let issued = provision_project_env::run(args).await;
+    let stopped = issuer.stop().await;
+    if let Err(error) = issued {
+        let context = if stopped.is_err() {
+            "project-environment provisioning failed and identity bootstrap cleanup also failed"
+        } else {
+            "run production project-environment and route-PAT provisioning"
+        };
+        return Err(error.context(context));
+    }
+    stopped?;
 
     let database = read_json(&root.join("database.json"))?["spec"]["name"]
         .as_str()
@@ -411,6 +419,7 @@ pub struct JourneyCredentials {
 }
 
 pub async fn provision_journey_control(system_url: &str, admin: &Client) -> anyhow::Result<()> {
+    super::pat_issuer::preflight(system_url)?;
     reset_control_store(admin).await?;
     provision_org::run(ProvisionOrgArgs {
         org: ORG.to_owned(),
