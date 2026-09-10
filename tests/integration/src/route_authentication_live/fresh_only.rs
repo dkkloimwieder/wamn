@@ -334,7 +334,12 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
             proof.body.clone(),
         )
         .await?;
-        assert_operation_refusal(&response, "fresh-credential-required", BASE_RECORD_RECEIPT)?;
+        let refusal =
+            assert_operation_refusal(&response, "fresh-credential-required", BASE_RECORD_RECEIPT);
+        if refusal.is_err() {
+            diagnose_prior_commit_failure(&proof, &trace).await;
+        }
+        refusal?;
         anyhow::ensure!(
             counter(&proof, &counter_read).await? == 1,
             "late session refusal rolled back or repeated the earlier committed effect"
@@ -378,6 +383,126 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
         "FRESH_ONLY_PRIOR_COMMIT result=pass session_counter=1 pat_counter=2 fixture_release=4"
     );
     Ok(())
+}
+
+async fn diagnose_prior_commit_failure(proof: &Proof<'_>, trace: &str) {
+    let counter = proof.project.query_one(
+        "SELECT count FROM fresh_only_probe.counter WHERE tenant_id = $1 AND id = $2::text::uuid",
+        &[&TENANT, &COUNTER_ID],
+    ).await.and_then(|row| row.try_get::<_, i64>(0))
+        .map_or_else(|_| json!("read-failed"), |value| json!(value));
+    let spans = proof.traces.spans();
+    let matched: Vec<_> = spans
+        .iter()
+        .filter(|span| span.span_context.trace_id().to_string() == trace)
+        .collect();
+    let redactions = (|| -> anyhow::Result<Vec<String>> {
+        let registry = serde_json::from_slice(&std::fs::read(&proof.inputs.registry_auth_file)?)?;
+        diagnostic_redactions(
+            &[
+                &proof.credentials.guest_sql,
+                &proof.credentials.executor_platform,
+                &proof.credentials.event_materializer,
+                &proof.credentials.http_admitter,
+                &proof.credentials.identity_reader,
+                &proof.credentials.control_author,
+                &proof.credentials.management_admitter,
+                proof.project_url,
+                &proof.inputs.system_pg_url,
+            ],
+            &[proof.session, proof.pat],
+            &registry,
+        )
+    })();
+    let Ok(redactions) = redactions else {
+        // Never render parser/IO errors: their context may contain credentials.
+        eprintln!(
+            "FRESH_ONLY_PRIOR_COMMIT_DIAGNOSTIC {}",
+            json!({
+                "trace": trace, "counter": counter, "matched_spans": matched.len(),
+                "details": "redaction-unavailable"
+            })
+        );
+        return;
+    };
+    let mut details = Vec::new();
+    for span in matched {
+        let mut errors = Vec::new();
+        for event in span.events.iter() {
+            for attribute in &event.attributes {
+                if attribute.key.as_str() == "error" {
+                    errors.push(json!({
+                        "event": redact_diagnostic(&event.name, &redactions),
+                        "error": redact_diagnostic(&attribute.value.to_string(), &redactions)
+                    }));
+                }
+            }
+        }
+        details.push(json!({"name": redact_diagnostic(&span.name, &redactions), "errors": errors}));
+    }
+    eprintln!(
+        "FRESH_ONLY_PRIOR_COMMIT_DIAGNOSTIC {}",
+        json!({"trace": trace, "counter": counter, "spans": details})
+    );
+}
+
+fn diagnostic_redactions(
+    urls: &[&str],
+    tokens: &[&str],
+    registry: &Value,
+) -> anyhow::Result<Vec<String>> {
+    let mut secrets: Vec<String> = tokens.iter().map(|token| (*token).to_owned()).collect();
+    for url in urls.iter().filter(|url| !url.is_empty()) {
+        secrets.push((*url).to_owned());
+        let config: tokio_postgres::Config = url.parse()?;
+        if let Some(password) = config.get_password() {
+            secrets.push(std::str::from_utf8(password)?.to_owned());
+        }
+        if let Ok(parsed) = reqwest::Url::parse(url)
+            && let Some(encoded) = parsed.password()
+        {
+            secrets.push(encoded.to_owned());
+        }
+    }
+    // The journey writes only this supported username/password shape. If it
+    // grows an encoded auth/token/helper form, suppress diagnostics rather than
+    // risk exposing a decoded secret we have not collected.
+    let config = registry.as_object().context("registry config shape")?;
+    anyhow::ensure!(config.len() == 1, "registry config shape");
+    let auths = config
+        .get("auths")
+        .and_then(Value::as_object)
+        .context("registry auths shape")?;
+    anyhow::ensure!(!auths.is_empty(), "registry auths missing");
+    for entry in auths.values() {
+        let entry = entry.as_object().context("registry entry shape")?;
+        anyhow::ensure!(entry.len() == 2, "registry entry shape");
+        for field in ["username", "password"] {
+            let value = entry
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .context("registry field missing")?;
+            secrets.push(value.to_owned());
+        }
+    }
+    // Error displays can quote strings. Cover JSON/Rust string escapes too.
+    for secret in secrets.clone() {
+        let quoted = serde_json::to_string(&secret)?;
+        secrets.push(quoted[1..quoted.len() - 1].to_owned());
+        let quoted = format!("{secret:?}");
+        secrets.push(quoted[1..quoted.len() - 1].to_owned());
+    }
+    secrets.retain(|secret| !secret.is_empty());
+    secrets.sort_unstable_by(|left, right| right.len().cmp(&left.len()).then(left.cmp(right)));
+    secrets.dedup();
+    Ok(secrets)
+}
+
+fn redact_diagnostic(text: &str, secrets: &[String]) -> String {
+    secrets.iter().fold(text.to_owned(), |text, secret| {
+        text.replace(secret, "<redacted>")
+    })
 }
 
 fn assert_counter_trace(
@@ -732,4 +857,171 @@ fn counter_parent_has_the_real_node_and_nested_operation_abi() -> anyhow::Result
         "instrumentation parent must remain ordinary"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod execution_tests {
+    use super::{BASE_RECORD_RECEIPT, COUNTER_SQL, OPERATION, parent_component};
+    use anyhow::Context as _;
+    use wash_runtime::wasmtime::component::{Component, Linker, TypedFunc};
+    use wash_runtime::wasmtime::{Engine, Store};
+
+    mod node_bindings {
+        wash_runtime::wasmtime::component::bindgen!({
+            path: "../../crates/execution/router/wit",
+            world: "node",
+            additional_derives: [PartialEq],
+            wasmtime_crate: wash_runtime::wasmtime,
+        });
+    }
+
+    mod postgres_bindings {
+        wash_runtime::wasmtime::component::bindgen!({
+            path: "../../crates/platform/runtime/wit",
+            world: "postgres-plugin",
+            wasmtime_crate: wash_runtime::wasmtime,
+        });
+    }
+
+    use node_bindings::wamn::node::types::{Emission, NodeContext, NodeError};
+    use postgres_bindings::wamn::postgres::types::{PgError, SqlValue};
+
+    #[derive(Default)]
+    struct Calls {
+        order: Vec<&'static str>,
+        nested: Option<(NodeContext, String)>,
+    }
+
+    #[test]
+    fn prior_commit_diagnostic_redacts_fixture_credentials() -> anyhow::Result<()> {
+        let urls = [
+            "postgresql://fixture:encoded%21password@localhost/system",
+            "postgresql://fixture:other-password@localhost/project",
+        ];
+        let tokens = ["fixture-pat-full-token", "fixture-session-full-token"];
+        let registry = serde_json::json!({"auths": {
+            "registry-a": {"username": "fixture-user", "password": "registry-password"},
+            "registry-b": {"username": "second-user", "password": "quoted\"password"}
+        }});
+        let secrets = super::diagnostic_redactions(&urls, &tokens, &registry)?;
+        for value in urls.into_iter().chain(tokens).chain([
+            "encoded!password",
+            "encoded%21password",
+            "other-password",
+            "fixture-user",
+            "registry-password",
+            "second-user",
+            "quoted\"password",
+            "quoted\\\"password",
+        ]) {
+            assert_eq!(super::redact_diagnostic(value, &secrets), "<redacted>");
+        }
+        assert_eq!(
+            super::redact_diagnostic("unreachable instruction", &secrets),
+            "unreachable instruction"
+        );
+        assert!(super::diagnostic_redactions(&["not-a-database-url"], &tokens, &registry).is_err());
+        assert!(
+            super::diagnostic_redactions(
+                &urls,
+                &tokens,
+                &serde_json::json!({"auths": {"registry": {"auth": "opaque-auth"}}})
+            )
+            .is_err()
+        );
+        Ok(())
+    }
+
+    /// Isolate the WAT's memory ABI from DB/authorization setup. The deployed
+    /// proof above remains the witness for actual commits and fresh-only checks.
+    #[tokio::test]
+    async fn counter_parent_executes_sql_then_forwards_the_exact_nested_call() -> anyhow::Result<()>
+    {
+        let engine = Engine::default();
+        let component = Component::new(&engine, parent_component()?)?;
+        let context = NodeContext {
+            wiring_id: "abi-wiring".to_owned(),
+            wiring_version: 7,
+            node_id: "abi-parent".to_owned(),
+            delivery_id: "abi-delivery".to_owned(),
+            input_port: Some("input".to_owned()),
+            occurrence: 3,
+            traceparent: Some("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_owned()),
+            tracestate: Some("fixture=value".to_owned()),
+            deadline_ms: Some(30_000),
+            config: "{\"fixture\":true}".to_owned(),
+        };
+        let input = "[{\"request_id\":\"abi-only\",\"value\":17}]";
+        for refuse_nested in [false, true] {
+            let mut linker = Linker::<Calls>::new(&engine);
+            linker.instance("wamn:node/types@0.1.0")?;
+            linker.instance("wamn:postgres/types@0.1.0")?;
+            linker
+                .instance("wamn:postgres/client@0.1.0")?
+                .func_wrap_async(
+                    "execute",
+                    |mut store, (sql, params): (String, Vec<SqlValue>)| {
+                        Box::new(async move {
+                            assert_eq!(sql, COUNTER_SQL);
+                            assert!(params.is_empty());
+                            store.data_mut().order.push("sql");
+                            Ok((Ok::<u64, PgError>(1),))
+                        })
+                    },
+                )?;
+            linker.instance(BASE_RECORD_RECEIPT)?.func_wrap_async(
+                "run",
+                move |mut store, (context, input): (NodeContext, String)| {
+                    Box::new(async move {
+                        store.data_mut().order.push("nested");
+                        store.data_mut().nested = Some((context, input.clone()));
+                        if refuse_nested {
+                            return Err(wash_runtime::wasmtime::Error::msg(
+                                "local nested refusal sentinel",
+                            ));
+                        }
+                        Ok((Ok::<Emission, NodeError>(Emission {
+                            payload: input,
+                            port: Some("main".to_owned()),
+                        }),))
+                    })
+                },
+            )?;
+            let mut store = Store::new(&engine, Calls::default());
+            let instance = linker.instantiate_async(&mut store, &component).await?;
+            let handler = instance
+                .get_export_index(&mut store, None, OPERATION)
+                .context("fixture handler export")?;
+            let export = instance
+                .get_export_index(&mut store, Some(&handler), "run")
+                .context("fixture run export")?;
+            let run: TypedFunc<(&NodeContext, &str), (Result<Emission, NodeError>,)> =
+                instance.get_typed_func(&mut store, &export)?;
+            let result = run.call_async(&mut store, (&context, input)).await;
+            if refuse_nested {
+                let error = result.expect_err("the nested host error must propagate");
+                anyhow::ensure!(
+                    format!("{error:#}").contains("local nested refusal sentinel"),
+                    "the fixture trapped before reaching the nested refusal: {error:#}"
+                );
+            } else {
+                let (result,) = result
+                    .map_err(anyhow::Error::from)
+                    .context("execute the actual counter-parent WAT")?;
+                assert_eq!(
+                    result,
+                    Ok(Emission {
+                        payload: input.to_owned(),
+                        port: Some("main".to_owned())
+                    })
+                );
+            }
+            assert_eq!(store.data().order, ["sql", "nested"]);
+            assert_eq!(
+                store.data().nested,
+                Some((context.clone(), input.to_owned()))
+            );
+        }
+        Ok(())
+    }
 }
