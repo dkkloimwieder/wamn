@@ -347,6 +347,14 @@ fn executor_credentials(
 }
 
 pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
+    let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
+    tracing::info!(
+        ?descriptor_soft_limit,
+        default_max_connections = wash_runtime::host::quota::default_max_connections(),
+        default_max_http_ingress_connections =
+            wash_runtime::host::quota::default_max_http_ingress_connections(),
+        "native descriptor limits initialized"
+    );
     wash_runtime::init_crypto();
 
     // Installed once, before anything can pull, and the call that validates the

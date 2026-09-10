@@ -1,6 +1,6 @@
 # WAMN native alignment after wasmCloud 2.9
 
-Status: draft 0.3 with owner rulings from 2026-09-10.
+Execution approved on 2026-09-10. Beads owns implementation status.
 
 Scope: targeted use of native wasmCloud capabilities after the zero-fork 2.9 cutover. Its charter remains in force.
 
@@ -41,6 +41,8 @@ These are path-specific integrations. Native startup limits do not automatically
 
 **Acceptance:** a subprocess starts with a deliberately low soft limit and known hard limit; the native helper's effective result is observed and derived ceilings use it. Cover inability to raise the limit according to the helper's supported behavior. Do not alter the test runner's own limit or require elevated privileges.
 
+A's [descriptor proof](../perf/2026.09/native-a-descriptor/report.md) records the service startup calls and isolated subprocess results under `wamn-0ct2.1`.
+
 ### B. Replace manual guest execution, including its duplicate caches
 
 **Observation:** 2.9 exposes `DispatchTarget` / `GuestCall` and native digest-based component loading/caching. WAMN still owns `RouterDriver`'s compiled cache, `PreparedCache`, linker/pre-instantiation work and `NodeInstance`, including nested calls. Dispatch alone does not move loading into the native cache. [S4, S6, S7]
@@ -63,7 +65,7 @@ Prove compilation reuse through the native loader, including a shared digest und
 
 A probe passing is not B complete. Each converted path loses its predecessor in the same landing. Completion requires released, nested and candidate invocation paths accounted for and the duplicate mechanisms above removed. Any blocked path retains one named owner and exit condition; do not call the whole replacement complete or retain two selectable lifecycles for the same path.
 
-Review checkpoint: native dispatch instantiates before its response timeout starts. The current WAMN deadline also bounds guest start code. The owner must resolve the enclosing deadline before B changes this boundary. Preserve nested remaining budgets and prove bounded execution of a nonterminating start function. [S4, S6, S20]
+Owner ruling, 2026-09-10: preserve one enclosing deadline across guest initialization, execution and nested calls. A child cannot extend that deadline. Native dispatch instantiates before its response timeout starts, so that response timer alone is insufficient. Prove bounded execution of a nonterminating start function. If public APIs cannot preserve this guarantee, record the exact obstacle and stop. Do not use private access. [S4, S6, S20]
 
 **Stop condition:** a required context, candidate or loading boundary cannot be represented through public APIs. Record the exact obstacle before expanding the adapter. Do not copy internals or preserve duplicate machinery merely to report native adoption.
 
@@ -117,7 +119,7 @@ Select either native adoption or the scoped fallback, with measured evidence, un
 
 **Observation:** the reviewed HTTP shell still exports P2 `incoming-handler` and calls synchronous WAMN routing/auth/delivery imports. Runtime support for P3 does not convert those interfaces. [S12]
 
-Continue the existing P3 follow-on from the successful probe. Convert the actual HTTP shell, request/response handling, WIT bindings, manifests, publication tooling and owning tests. Preserve request limits, origin-form/Host authority handling, authentication, typed responses and fresh stores.
+The P3 cutover owner is `wamn-0h0g.2.7.17`, under the cutover follow-ons. The successful probe remains `wamn-0h0g.17.26`. Sequence P3 after B because both change the HTTP shell and dispatch path. Convert the actual HTTP shell, request/response handling, WIT bindings, manifests, publication tooling and owning tests. Preserve request limits, origin-form/Host authority handling, authentication, typed responses and fresh stores.
 
 **Acceptance:** the same P3 artifact runs through in-process and deployed proofs, including valid requests, refusals, cancellation and bounded bodies. Recheck actual post-build/post-virtualization imports; move any necessary pin, digest and exact capability-registry rows together. Do not broaden admission with a WASI wildcard.
 
@@ -160,7 +162,7 @@ B2 explicitly proposes changing the existing fresh-store adoption rule; the othe
 | **Bounded probe** | Place F with the data-access owner after shared-file availability is confirmed; start with the public transaction/session checkpoint. No dependency on F for B/C or application delivery. |
 | **After B and correctness proofs** | B2 lands warm reuse, resource/admission rules, execution-model and row 4 together. The throughput comparison follows. Stateful affinity remains separate. |
 
-The tracker owns status and dependencies under epic `wamn-0ct2`. A is `wamn-0ct2.1`, B is `.2`, B2 is `.3`, C is `.4`, and F is `.5`. D references `wamn-ctc8.13` and `wamn-ctc8.16`. The closed P3 probe is `wamn-0h0g.17.26`. The existing P3 cutover owner remains an open question, so this plan creates no duplicate.
+The tracker owns status and dependencies under epic `wamn-0ct2`. A is `wamn-0ct2.1`, B is `.2`, B2 is `.3`, C is `.4`, and F is `.5`. D references `wamn-ctc8.13` and `wamn-ctc8.16`. The closed P3 probe is `wamn-0h0g.17.26`. The P3 implementation owner is `wamn-0h0g.2.7.17`, with B as its prerequisite.
 
 Use separate worktrees and serialize A, B and C landings. The shared driver is `crates/execution/host/src/router_driver.rs`. Coordinate its edits with `services/host`, `services/executor`, `crates/platform/runtime`, affected manifests and shared proofs. Identity and TUI owners keep their current files and stay outside each active substitution boundary. Each owner rebases after the boundary lands. F waits for shared-file availability.
 

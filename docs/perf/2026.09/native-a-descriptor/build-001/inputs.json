@@ -1,0 +1,20 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "-p",
+    "wamn-host",
+    "-p",
+    "wamn-executor",
+    "--locked",
+    "--offline"
+  ],
+  "source_base": "6228917e74744eadb69a7422a912a7ea319e3925",
+  "source_files": {
+    "services/host/src/host.rs": "8ebb4a5d63be5f97dddcbf2348f65e8eebb02218778cfd6c225b81cf07a9b897",
+    "services/executor/src/lib.rs": "134e088f63a441c6dfa8d98ea62023c069a6ab2137312c145a153401fd83ce71"
+  },
+  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8\n",
+  "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)\n",
+  "target_dir": "/home/kaalin/.cache/wamn-lanes/native-a-descriptor-20260910/target"
+}

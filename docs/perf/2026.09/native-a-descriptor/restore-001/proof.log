@@ -1,0 +1,5 @@
+host_raises_low_soft: PASS
+host_respects_hard_ceiling: PASS
+executor_raises_low_soft: PASS
+executor_respects_hard_ceiling: PASS
+Result: /home/kaalin/dev/wamn/docs/perf/2026.09/native-a-descriptor/restore-001/proof/result.json

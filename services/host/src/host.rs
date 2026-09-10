@@ -498,6 +498,14 @@ fn session_verifier(
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let startup_started = Instant::now();
+    let descriptor_soft_limit = wash_runtime::host::quota::raise_descriptor_limit();
+    tracing::info!(
+        ?descriptor_soft_limit,
+        default_max_connections = wash_runtime::host::quota::default_max_connections(),
+        default_max_http_ingress_connections =
+            wash_runtime::host::quota::default_max_http_ingress_connections(),
+        "native descriptor limits initialized"
+    );
     wash_runtime::init_crypto();
 
     // Trust roots are a property of the host, not of any one pull, so they are

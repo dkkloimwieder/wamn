@@ -139,6 +139,38 @@ JSON publication receipts must report both `.success` and `.data.success` as tru
 The component digest is `.data.digest`.
 WAMN custom artifact publication remains owned by `wamn-ctl push-component` and its admission proof.
 
+### `[NATIVE-A]` descriptor limits at service startup
+
+`wamn-0ct2.1` owns the host and executor startup proof.
+The proof starts each rebuilt binary with a low soft descriptor limit and a known hard limit.
+A descriptor is an open file or socket handle.
+The parent process keeps its original limits.
+Each child stops at a deliberate local CA-file refusal before release pulls or network setup.
+
+Build both debug binaries in the isolated worktree:
+
+```bash
+cargo build -p wamn-host -p wamn-executor --locked --offline
+```
+
+Use a new evidence directory outside that worktree:
+
+```bash
+tools/native-descriptor-limit-check \
+  --host-binary target/debug/wamn-host \
+  --executor-binary target/debug/wamn-run-worker \
+  --output-dir /absolute/path/to/new-native-descriptor-evidence
+```
+
+The four cases cover a raise from soft 256 to hard 4096 and an unchanged hard ceiling of 256.
+They compare the effective limit with the native default connection ceilings.
+The hard-ceiling cases do not inject a failing system call.
+The parent hard limit must permit 4096 descriptors.
+The tool refuses unavailable inputs and records zero skipped cases.
+It retains source and binary hashes, exact commands, logs, case results and parent limits.
+This proof covers startup and native defaults, with no engine, workload or network execution claim.
+No throughput benchmark is required for this startup change.
+
 ### Rebuilt host process lifecycle
 
 The ignored host test starts an owned NATS process on a temporary loopback port.

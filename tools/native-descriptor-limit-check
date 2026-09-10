@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""Prove descriptor startup behavior in isolated production processes."""
+
+import argparse
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import resource
+import signal
+import subprocess
+import sys
+
+
+EVENT = "native descriptor limits initialized"
+CHILD_LIMITS = "native-descriptor-child-limits: "
+TIMEOUT_SECONDS = 15
+SOURCE_PATHS = (
+    "Cargo.toml",
+    "Cargo.lock",
+    "services/host/Cargo.toml",
+    "services/host/src/main.rs",
+    "services/host/src/host.rs",
+    "services/executor/Cargo.toml",
+    "services/executor/src/main.rs",
+    "services/executor/src/lib.rs",
+    "tools/native-descriptor-limit-check",
+)
+
+
+def sha256(path):
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def child():
+    # Only this disposable process changes its limits, then becomes the service.
+    resource.setrlimit(resource.RLIMIT_NOFILE, (int(sys.argv[2]), int(sys.argv[3])))
+    print(CHILD_LIMITS + json.dumps(resource.getrlimit(resource.RLIMIT_NOFILE)), flush=True)
+    os.execv(sys.argv[4], sys.argv[4:])
+
+
+def run_case(role, binary, mode, soft, hard, output_dir):
+    name = f"{role}_{mode}"
+    missing_ca = str(output_dir / "deliberately-missing-ca.pem")
+    service_args = ["host"] if role == "host" else [
+        "--release-artifact-base", "registry.invalid/wamn-proof/release",
+        "--release-manifest-digest", "sha256:" + "0" * 64,
+        "--component-artifact-base", "registry.invalid/wamn-proof/component",
+        "--registry-auth-file", str(output_dir / "deliberately-missing-auth.json"),
+    ]
+    service_args += ["--oci-ca-path", missing_ca]
+    command = [sys.executable, str(Path(__file__).resolve()), "--_child", str(soft), str(hard),
+               str(binary), *service_args]
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C",
+        "LC_ALL": "C",
+        "NO_COLOR": "1",
+        "TERM": "dumb",
+        "TOKIO_WORKER_THREADS": "2",
+    }
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               env=environment, start_new_session=True)
+    timed_out = False
+    try:
+        raw, _ = process.communicate(timeout=TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        os.killpg(process.pid, signal.SIGKILL)
+        raw, _ = process.communicate()
+    log_path = output_dir / f"{name}.log"
+    log_path.write_bytes(raw)
+    log = re.sub(r"\x1b\[[0-9;]*m", "", raw.decode("utf-8", errors="replace"))
+    errors = []
+    starting_limits = [line[len(CHILD_LIMITS):] for line in log.splitlines()
+                       if line.startswith(CHILD_LIMITS)]
+    if starting_limits != [json.dumps([soft, hard])]:
+        errors.append("The child did not report the requested starting limits.")
+    expected_soft = hard
+    expected = {
+        "descriptor_soft_limit": expected_soft,
+        "default_max_connections": max(64, min(32768, expected_soft // 2)),
+        "default_max_http_ingress_connections": max(256, min(32768, expected_soft // 4)),
+    }
+    events = [line for line in log.splitlines() if EVENT in line]
+    observed = {}
+    if len(events) != 1:
+        errors.append(f"Expected one production startup event, received {len(events)}.")
+    else:
+        for field in expected:
+            pattern = rf"\b{field}=(?:Some\((\d+)\)|(\d+))"
+            matches = re.findall(pattern, events[0])
+            if len(matches) != 1:
+                errors.append(f"Expected one numeric {field} field.")
+                continue
+            observed[field] = int(matches[0][0] or matches[0][1])
+            if observed[field] != expected[field]:
+                errors.append(f"{field}: expected {expected[field]}, received {observed[field]}.")
+    ca_refusal = "trust the configured OCI CA bundles"
+    if ca_refusal not in log:
+        errors.append("The service did not reach the deliberate CA refusal.")
+    elif events and log.index(EVENT) > log.index(ca_refusal):
+        errors.append("The descriptor event followed the CA refusal.")
+    if timed_out:
+        errors.append(f"The child exceeded the {TIMEOUT_SECONDS}-second timeout.")
+    if process.returncode != 1:
+        errors.append(f"Expected CA refusal exit 1, received {process.returncode}.")
+    return {
+        "name": name,
+        "command": command,
+        "environment": environment,
+        "starting_nofile": [soft, hard],
+        "expected": expected,
+        "observed": observed,
+        "exit_code": process.returncode,
+        "timeout_seconds": TIMEOUT_SECONDS,
+        "timed_out": timed_out,
+        "log": {"path": log_path.name, "sha256": sha256(log_path)},
+        "errors": errors,
+        "passed": not errors,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host-binary", type=Path, required=True)
+    parser.add_argument("--executor-binary", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True,
+                        help="New evidence directory under docs/perf/2026.09/native-a-descriptor")
+    args = parser.parse_args()
+    parent_before = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if parent_before[1] != resource.RLIM_INFINITY and parent_before[1] < 4096:
+        parser.error("The parent hard descriptor limit must be at least 4096.")
+    binaries = {"host": args.host_binary.resolve(), "executor": args.executor_binary.resolve()}
+    for binary in binaries.values():
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            parser.error(f"The binary is not executable: {binary}")
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=False)
+    repository = Path(__file__).resolve().parent.parent
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    diff = subprocess.check_output(["git", "diff", "HEAD", "--", *SOURCE_PATHS], cwd=repository)
+    result = {
+        "schema_version": 1,
+        "bead": "wamn-0ct2.1",
+        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "invocation": sys.argv,
+        "platform": {"system": platform.system(), "machine": platform.machine()},
+        "source": {
+            "repository": str(repository),
+            "commit": commit,
+            "selected_diff_sha256": hashlib.sha256(diff).hexdigest(),
+            "selected_paths_sha256": {path: sha256(repository / path) for path in SOURCE_PATHS},
+        },
+        "artifacts": {role: {"path": str(binary), "sha256": sha256(binary),
+                             "bytes": binary.stat().st_size} for role, binary in binaries.items()},
+        "parent_nofile_before": list(parent_before),
+        "scope": "Startup hook and native defaults only; no engine, workload, or network proof.",
+        "hard_ceiling_scope": "Equal soft and hard limits; no injected syscall failure.",
+        "cases": [],
+    }
+    for role, binary in binaries.items():
+        for mode, soft, hard in (("raises_low_soft", 256, 4096), ("respects_hard_ceiling", 256, 256)):
+            case = run_case(role, binary, mode, soft, hard, output_dir)
+            result["cases"].append(case)
+            print(f"{case['name']}: {'PASS' if case['passed'] else 'FAIL'}", flush=True)
+    parent_after = resource.getrlimit(resource.RLIMIT_NOFILE)
+    result["parent_nofile_after"] = list(parent_after)
+    result["parent_nofile_unchanged"] = parent_before == parent_after
+    passed = sum(case["passed"] for case in result["cases"])
+    result["counts"] = {"passed": passed, "failed": len(result["cases"]) - passed, "skipped": 0}
+    result["passed"] = passed == 4 and result["parent_nofile_unchanged"]
+    result_path = output_dir / "result.json"
+    result_path.write_text(json.dumps(result, indent=2) + "\n")
+    print(f"Result: {result_path}")
+    return 0 if result["passed"] else 1
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--_child":
+        child()
+    else:
+        sys.exit(main())

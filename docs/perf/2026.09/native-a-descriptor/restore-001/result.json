@@ -1,0 +1,9 @@
+{
+  "build_exit": 0,
+  "source_sha256": {
+    "services/host/src/host.rs": "8ebb4a5d63be5f97dddcbf2348f65e8eebb02218778cfd6c225b81cf07a9b897",
+    "services/executor/src/lib.rs": "134e088f63a441c6dfa8d98ea62023c069a6ab2137312c145a153401fd83ce71"
+  },
+  "proof_exit": 0,
+  "passed": true
+}

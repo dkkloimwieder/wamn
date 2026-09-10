@@ -17,7 +17,7 @@ The historical ledger below retains the reasons for the former 2.8 patches.
 
 | # | Deviation (wamn vs native) | What it buys | Disposition / re-convergence trigger |
 |---|---|---|---|
-| 1 | `wamn:postgres` capability seam — guests never hold sockets or credentials (native: guest sockets + allowed-hosts) | Host-injected credential generations, RLS identity set by trusted code, span per effect. This is the product. | **Keep.** Implementation rides `component-model-async`; never re-converges. |
+| 1 | `wamn:postgres` capability seam — guests never hold sockets or credentials (native: `wasmcloud:postgres` with host-owned connections and credentials) | Host-injected credential generations, RLS identity set by trusted code, span per effect. This is the product. | **Keep.** Implementation rides `component-model-async`; never re-converges. |
 | 2 | Publish-time import allowlist — **as of §2a, the declared capability registry**: 8 rows of `{package, version, posture}` matched on exact package AND exact version (native: runtime non-satisfaction of ungranted caps) | Auditable tenant contract; refusal before distribution, not at wiring. Posture is declared rather than inferred from a namespace, so an unregistered import is refused by ABSENCE and interfaces carry name, shape and posture with no second classifier. | **Keep** — additive over native model, composes cleanly. The registry lives in `wamn-component-policy` as code, never a catalog row, so posture moves only through code review plus a ledger row. Design: `docs/architecture/2a-capability-registry.md`. |
 | 3 | Wirings as gated tenant rows + hot pointer flip (native: lattice links / wadm manifests / CRDs) | Tenancy, minutes-scale user churn, gate + rollback + provenance. | **Keep (ruled).** Trigger to revisit: upstream ships a multi-tenant, per-link-authz link store. |
 | 4 | Wasmtime's pooling **allocator is on**, while the router still constructs and drops a fresh store per invocation; wash-runtime's warm `InstancePool` dispatch remains unwired. | Fast allocator-backed fresh instances without guest state surviving a call. Allocator capacity and store reuse are separate controls. | **Keep the allocator; keep reuse off.** Admission rejects `poolSize > 0`, so every workload stays `InstancePolicy::Ephemeral`. The `.17.x` router/native-dispatch wiring remains open only if it preserves that fresh-store rule. Revisit warm reuse with explicit affinity/windowed state; `a5e7d5a` is already present for that future step. |
@@ -33,6 +33,13 @@ The historical ledger below retains the reasons for the former 2.8 patches.
 The root workspace and both standalone HTTP probes use direct upstream source at the same peeled release commit.
 The Wasmtime requirements and resolved packages use one crates.io `47.0.4` family.
 WAMN keeps upstream default providers disabled.
+
+The host and executor call the native `raise_descriptor_limit()` helper before descriptor-derived resources.
+They record its effective result and native default connection ceilings.
+The shared engine builder does not change process limits.
+The [descriptor proof](../perf/2026.09/native-a-descriptor/report.md), owned by `wamn-0ct2.1`, records four passing subprocess cases.
+An omission mutant fails both raise cases, and the rebuilt restored source passes all four.
+The test runner retains its original limits.
 `tools/wasmcloud-release-check` requires clean released source and retains the upstream runtime suite and isolated Git template fixtures.
 
 The [combined Cargo check](../perf/2026.09/wasmcloud-2-9-cutover/build-003/exit-code.txt) passed with `--workspace --all-targets --locked`.

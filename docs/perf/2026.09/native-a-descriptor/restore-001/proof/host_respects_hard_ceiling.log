@@ -1,0 +1,7 @@
+native-descriptor-child-limits: [256, 256]
+2026-09-10T11:45:47.821346Z  INFO native descriptor limits initialized descriptor_soft_limit=Some(256) default_max_connections=128 default_max_http_ingress_connections=256
+Error: trust the configured OCI CA bundles
+
+Caused by:
+    0: failed to read OCI CA bundle /home/kaalin/dev/wamn/docs/perf/2026.09/native-a-descriptor/restore-001/proof/deliberately-missing-ca.pem
+    1: No such file or directory (os error 2)
