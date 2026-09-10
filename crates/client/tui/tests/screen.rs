@@ -272,9 +272,29 @@ fn revision_transfer_requires_the_exact_successful_read_and_reserves_envelope_pa
 }
 
 #[test]
+fn a_numeric_record_revision_keeps_its_carrier_when_bound() {
+    let mut read = Screen::new(&READ, binding("a"));
+    read.edit("/id", FieldState::Value(json!(ID))).expect("id");
+    read.edit("/locale", FieldState::Value(json!("en")))
+        .expect("locale");
+    let attempt = read.begin(&intent(), false).expect("begin");
+    let response = response(&read, &json!({"id":ID,"row_version":7}));
+    assert!(read.resolve(attempt, Ok(response)));
+    let mut command = Screen::new(&COMMAND, binding("a"));
+    command
+        .bind_from_read(&read)
+        .expect("valid numeric revision");
+    assert_eq!(
+        command.draft().item(),
+        &json!({"id":ID,"expected_row_version":7})
+    );
+    assert_eq!(command.availability(), Availability::Ready);
+}
+
+#[test]
 fn a_malformed_or_different_record_read_cannot_supply_a_revision() {
     for row in [
-        json!({"id":ID,"row_version":7}),
+        json!({"id":ID,"row_version":7.5}),
         json!({"id":KEY,"row_version":"7"}),
     ] {
         let mut read = Screen::new(&READ, binding("a"));

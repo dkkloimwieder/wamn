@@ -1,0 +1,16 @@
+2026-09-10T04:56:50.979355Z  INFO connected to NATS
+2026-09-10T04:56:50.980361Z  INFO host memory resolved max_guest_memory=45.7GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-10T04:56:50.982322Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=false
+2026-09-10T04:56:50.982338Z  INFO wamn-host carries no release; no release-gated interface is served
+2026-09-10T04:56:50.982402Z  INFO HTTP server listening addr=127.0.0.1:46763 protocol="HTTP"
+2026-09-10T04:56:50.982406Z  INFO probe server listening addr=127.0.0.1:35489
+2026-09-10T04:56:50.982445Z  INFO Starting WASI OTel plugin endpoint=http://localhost:4317 protocol="grpc"
+2026-09-10T04:56:50.983133Z  INFO WASI OTel plugin started
+2026-09-10T04:56:50.983189Z  INFO Host started host_id="a1124219-5420-4d50-ba08-1992b24ef56b" friendly_name="scrawny-sky-2913" host_name="host-int" labels={"hostgroup": "lifecycle-proof"} version="2.9.0" max_concurrent_starts=1
+2026-09-10T04:56:50.983490Z  INFO Host provides interfaces count=10 interfaces=["wasi:cli/exit,terminal-stdin,environment,stdin,stderr,terminal-input,terminal-stderr,terminal-stdout,terminal-output,stdout@0.2.0", "wasi:clocks/wall-time,monotonic-clock@0.2.0", "wasi:clocks/wall-clock,monotonic-clock@0.2.0", "wasi:filesystem/preopens,types@0.2.0", "wasi:http/handler,types@0.3.0", "wasi:http/types,outgoing-handler,incoming-handler@0.2.0", "wasi:io/poll,error,streams@0.2.0", "wasi:random/insecure,insecure-seed,random@0.2.0", "wasi:random/random@0.2.0", "wasi:sockets/instance-network,tcp,tcp-create-socket,network,udp,udp-create-socket,ip-name-lookup@0.2.0"]
+2026-09-10T04:56:50.983530Z  INFO wamn-host runtime startup completed elapsed_ms=6 cleanup_budget_secs=45
+2026-09-10T04:56:55.999939Z  INFO shutting down wamn-host
+2026-09-10T04:56:56.000087Z  INFO HTTP server stopping addr=127.0.0.1:46763
+2026-09-10T04:56:56.000137Z  INFO Stopping WASI OTel plugin
+2026-09-10T04:56:56.000486Z  INFO WASI OTel plugin stopped
+2026-09-10T04:56:56.000550Z  INFO HTTP server received shutdown signal

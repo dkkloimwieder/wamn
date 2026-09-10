@@ -119,5 +119,31 @@ The [manifest inspection](combined-integration-preparation-001/metadata.json) pa
 The [merged runner check](combined-runner-check-001/result.json) accepts both existing successful logs and rejects the wrong test prefix.
 Both proof modes produce their expected plans, and their combined invocation refuses.
 
-The final combined workspace test run remains unproved.
-The effects issue remains in progress until that integration boundary.
+The [combined workspace run](combined-workspace-001/run.json) tests clean candidate `fafdce0e` and exits 101 after 420.204 seconds.
+It includes ignored tests and excludes only the two named schema regeneration helpers.
+The [source receipt](combined-workspace-001/source-stability.json) records the same clean commit before and after the run.
+
+The [classification](combined-workspace-001/workspace-results.json) records 2,151 test passes, six doctest passes, and 74 failures in 35 targets.
+At least 85 reported passes skip their live or artifact proof.
+The 2,072 reported passes after that subtraction are not an exact executed proof count.
+The classifier reports no incomplete targets or unresolved parse cases.
+
+The [final baseline comparison](combined-workspace-001/final-baseline-comparison.json) finds all 68 previous failures with unchanged classified causes.
+Five added failures lack their private live fixture inputs: three identity tests, one WMS test, and one Receiving history test.
+Those workspace failures do not execute the application behavior.
+Their separate deployed and PostgreSQL proofs remain in the linked lane evidence.
+
+The sixth added failure belongs to the TUI revision fixture.
+The effects response contract accepts numeric or string int64 values, subject to the complete declared schema.
+The old negative fixture treats the valid numeric value `7` as malformed.
+The correction uses fractional `7.5` and adds an assertion that numeric revisions keep their carrier through record binding.
+The [focused rerun](screen-tests-001/result.json) passes all 13 screen tests after recompilation.
+Only that test file changes after the full sweep, so the retained sweep remains a failed run at its original source.
+
+The armed native host lifecycle test passes in the combined sweep.
+Its [termination receipt](combined-workspace-001/host-lifecycle/host-term.receipt) records successful shutdown after the NATS outage and recovery.
+Its [blocked export receipt](combined-workspace-001/host-lifecycle/host-blocked-flush.receipt) records the expected failed flush and nonzero exit.
+No second workspace sweep or cluster proof follows the test-only correction.
+
+The effects implementation and integration validation are complete.
+Main publication remains a separate integration step.

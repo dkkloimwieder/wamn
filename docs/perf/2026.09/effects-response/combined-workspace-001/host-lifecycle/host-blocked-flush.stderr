@@ -1,0 +1,20 @@
+2026-09-10T04:56:56.022893Z  INFO connected to NATS
+2026-09-10T04:56:56.024294Z  INFO host memory resolved max_guest_memory=45.7GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-10T04:56:56.034803Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=false
+2026-09-10T04:56:56.034845Z  INFO wamn-host carries no release; no release-gated interface is served
+2026-09-10T04:56:56.034904Z  INFO probe server listening addr=127.0.0.1:45369
+2026-09-10T04:56:56.034924Z  INFO HTTP server listening addr=127.0.0.1:45259 protocol="HTTP"
+2026-09-10T04:56:56.034981Z  INFO Starting WASI OTel plugin endpoint=http://127.0.0.1:46457 protocol="grpc"
+2026-09-10T04:56:56.035578Z  INFO WASI OTel plugin started
+2026-09-10T04:56:56.035644Z  INFO Host started host_id="bf35103c-085b-48b5-bf57-53635953425c" friendly_name="tan-glove-6446" host_name="host-blocked-flush" labels={"hostgroup": "lifecycle-proof"} version="2.9.0" max_concurrent_starts=1
+2026-09-10T04:56:56.035942Z  INFO Host provides interfaces count=10 interfaces=["wasi:cli/terminal-stderr,terminal-stdout,stdout,environment,exit,stderr,terminal-output,stdin,terminal-input,terminal-stdin@0.2.0", "wasi:clocks/monotonic-clock,wall-clock@0.2.0", "wasi:clocks/monotonic-clock,wall-time@0.2.0", "wasi:filesystem/preopens,types@0.2.0", "wasi:http/handler,types@0.3.0", "wasi:http/incoming-handler,outgoing-handler,types@0.2.0", "wasi:io/error,streams,poll@0.2.0", "wasi:random/random@0.2.0", "wasi:random/insecure-seed,random,insecure@0.2.0", "wasi:sockets/instance-network,network,tcp-create-socket,tcp,ip-name-lookup,udp-create-socket,udp@0.2.0"]
+2026-09-10T04:56:56.035993Z  INFO wamn-host runtime startup completed elapsed_ms=15 cleanup_budget_secs=45
+2026-09-10T04:56:56.048607Z  WARN handle_http_request{http.method=GET http.uri=/flush-proof http.host=localhost http.request.method=GET url.path=/flush-proof server.address="localhost"}: failed to route incoming request err=no workload bound to host "localhost"
+2026-09-10T04:57:01.051761Z  INFO shutting down wamn-host
+2026-09-10T04:57:01.051947Z  INFO HTTP server stopping addr=127.0.0.1:45259
+2026-09-10T04:57:01.052035Z  INFO Stopping WASI OTel plugin
+2026-09-10T04:57:01.052393Z  INFO WASI OTel plugin stopped
+2026-09-10T04:57:01.052461Z  INFO HTTP server received shutdown signal
+2026-09-10T04:57:03.055064Z ERROR telemetry flush failed or exceeded its shutdown budget
+failed to shutdown meter provider: Operation failed: [InternalFailure("Failed to shutdown")]
+Error: telemetry flush did not complete

@@ -1,0 +1,157 @@
+{
+  "schema": "wamn-effects-combined-workspace-comparison/v1",
+  "inputs": [
+    {
+      "path": "docs/perf/2026.09/wasmcloud-2-9-cutover/workspace-integration-001/workspace-results.json",
+      "sha256": "cd3ddd7265b03b09f666176ce4f75bebd3fa94f4e82a8f2ab3c2385b18e831a9"
+    },
+    {
+      "path": "docs/perf/2026.09/effects-response/combined-workspace-001/workspace-results.json",
+      "sha256": "444c9785411b0752d10bf86eab8d5351c1669406a8119f85c03db46f0d4fa945"
+    }
+  ],
+  "baseline_failures": 68,
+  "current_failures": 74,
+  "matching_identities_and_classified_causes": 68,
+  "changed_classified_causes": [],
+  "absent_baseline_failures": [],
+  "added_failures": [
+    {
+      "identity": [
+        "wamn-client-tui",
+        "--test screen",
+        "a_malformed_or_different_record_read_cannot_supply_a_revision"
+      ],
+      "classification": "requires_source_inspection",
+      "diagnostic_excerpt": [
+        {
+          "log_line": 807,
+          "text": ""
+        },
+        {
+          "log_line": 808,
+          "text": "thread 'a_malformed_or_different_record_read_cannot_supply_a_revision' (701185) panicked at crates/client/tui/tests/screen.rs:288:9:"
+        },
+        {
+          "log_line": 809,
+          "text": "assertion failed: command.bind_from_read(&read).is_err()"
+        },
+        {
+          "log_line": 810,
+          "text": "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+        },
+        {
+          "log_line": 811,
+          "text": "FAILED"
+        }
+      ]
+    },
+    {
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+      ],
+      "classification": "new_missing_live_fixture",
+      "diagnostic_excerpt": [
+        {
+          "log_line": 2776,
+          "text": "Error: WAMN_TENANT_KEY_PG_URL must arm this disposable proof"
+        },
+        {
+          "log_line": 2777,
+          "text": ""
+        },
+        {
+          "log_line": 2778,
+          "text": "Caused by:"
+        },
+        {
+          "log_line": 2779,
+          "text": "    environment variable not found"
+        },
+        {
+          "log_line": 2780,
+          "text": "FAILED"
+        }
+      ]
+    },
+    {
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation"
+      ],
+      "classification": "new_missing_live_fixture",
+      "diagnostic_excerpt": [
+        {
+          "log_line": 2788,
+          "text": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey"
+        },
+        {
+          "log_line": 2789,
+          "text": "FAILED"
+        }
+      ]
+    },
+    {
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+      ],
+      "classification": "new_missing_live_fixture",
+      "diagnostic_excerpt": [
+        {
+          "log_line": 2798,
+          "text": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey"
+        },
+        {
+          "log_line": 2799,
+          "text": "FAILED"
+        }
+      ]
+    },
+    {
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::committed_move_survives_label_store_failure"
+      ],
+      "classification": "new_missing_live_fixture",
+      "diagnostic_excerpt": [
+        {
+          "log_line": 2826,
+          "text": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey"
+        },
+        {
+          "log_line": 2827,
+          "text": "FAILED"
+        }
+      ]
+    },
+    {
+      "identity": [
+        "wamn-proof-integration",
+        "--test receiving_command_histories_live",
+        "production_receiving_command_histories"
+      ],
+      "classification": "new_missing_live_fixture",
+      "diagnostic_excerpt": [
+        {
+          "log_line": 2898,
+          "text": "Error: WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document"
+        },
+        {
+          "log_line": 2899,
+          "text": "FAILED"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Missing fixture inputs do not prove live behavior.",
+    "Read the retained diagnostics and separate deployed proofs.",
+    "This comparison does not change the recorded failing sweep result."
+  ]
+}
