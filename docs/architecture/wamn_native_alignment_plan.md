@@ -1,8 +1,10 @@
 # WAMN native alignment after wasmCloud 2.9
 
-**Status:** draft 0.2 for external review · 2026-09-10  
-**Scope:** targeted use of native wasmCloud capabilities; follow-on to the zero-fork 2.9 cutover, not a replacement for its charter.  
-**Evidence baseline:** original review at WAMN `41ba0334510c4e8bc8420d4c0d3cff15acd34a7b`; amendment review confirms `main` at `c32aeed9569a28b60fb42fe5ae51b8f220be8334`. Upstream remains unmodified v2.9.0 `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`. Source anchors distinguish historical evidence from the current checks; no builds, tests or benchmarks were run for this revision.
+Status: draft 0.3 with owner rulings from 2026-09-10.
+
+Scope: targeted use of native wasmCloud capabilities after the zero-fork 2.9 cutover. Its charter remains in force.
+
+Evidence baseline: original review at WAMN `41ba0334510c4e8bc8420d4c0d3cff15acd34a7b`, with an amendment review at `c32aeed9569a28b60fb42fe5ae51b8f220be8334`. The filing review uses `c0ac2cf67ff689ea4b06d417ba6442799bcc6377`. Its reviewed runtime, service, driver, execution-model and ledger paths remain unchanged from `c32aeed9`. Upstream remains unmodified v2.9.0 `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`. Source anchors distinguish historical evidence from this review. No builds, tests or benchmarks ran for this revision.
 
 ## 1. Direction and boundaries
 
@@ -10,7 +12,7 @@
 
 Use unmodified upstream source and public embedding APIs. Do not carry a mirror fork, vendor modified runtime code, copy private ingress/dispatch internals, or substitute `wash host` for WAMN's binary. Greenfield status permits changing component interfaces and deleting predecessors; it does not justify weakening authority or adding speculative infrastructure.
 
-Preserve invocation isolation, the closed capability registry, verified application SQL, host-owned credentials, nested-operation authorization and exact release/candidate bindings. B first adopts native dispatch with fresh stores; B2 proposes measured warm reuse for eligible application components after that boundary is proven, not blanket reuse by package label. Retain operation-specific retry behavior: timeout or cancellation does not prove that an effect did not occur. This work adds no production capture, durable-execution machinery, database structures, new test engine or application-language program.
+Preserve invocation isolation, the closed capability registry, verified application SQL, host-owned credentials, nested-operation authorization and exact release/candidate bindings. B first adopts native dispatch with fresh stores. B2 permits warm reuse after B and its correctness proofs. Package labels alone do not establish eligibility. Retain operation-specific retry behavior: timeout or cancellation does not prove that an effect did not occur. This work adds no production capture, durable-execution machinery, database structures, new test engine or application-language program.
 
 Each substitution must identify the code it removes, the policy it retains, and an executed acceptance test. A failed probe produces a specific limitation and a disposition—not a permanent second implementation. Existing application and testing delivery must not wait for every item below.
 
@@ -35,7 +37,7 @@ These are path-specific integrations. Native startup limits do not automatically
 
 **Observation:** upstream PR **#5529, “fix ingress descriptor exhaustion,”** explicitly requires embedders to call `raise_descriptor_limit()` themselves. `wash host` does so before deriving connection ceilings; the original WAMN review found no equivalent call. Recheck before editing. No current WAMN descriptor-exhaustion failure was demonstrated. [S3, S5, S18]
 
-**Change:** use that public helper at the WAMN process-start boundary before constructing resources that derive descriptor-based limits. Record the effective limit. Do not change explicit connection ceilings or introduce a separate limit calculator.
+**Change:** use that public helper at the WAMN process-start boundary before constructing resources that derive descriptor-based limits. Record the effective limit. Do not change explicit connection ceilings or introduce a separate limit calculator. Cover both host and executor startup. Keep the process-global mutation outside the shared engine builder.
 
 **Acceptance:** a subprocess starts with a deliberately low soft limit and known hard limit; the native helper's effective result is observed and derived ceilings use it. Cover inability to raise the limit according to the helper's supported behavior. Do not alter the test runner's own limit or require elevated privileges.
 
@@ -61,19 +63,23 @@ Prove compilation reuse through the native loader, including a shared digest und
 
 A probe passing is not B complete. Each converted path loses its predecessor in the same landing. Completion requires released, nested and candidate invocation paths accounted for and the duplicate mechanisms above removed. Any blocked path retains one named owner and exit condition; do not call the whole replacement complete or retain two selectable lifecycles for the same path.
 
+Review checkpoint: native dispatch instantiates before its response timeout starts. The current WAMN deadline also bounds guest start code. The owner must resolve the enclosing deadline before B changes this boundary. Preserve nested remaining budgets and prove bounded execution of a nonterminating start function. [S4, S6, S20]
+
 **Stop condition:** a required context, candidate or loading boundary cannot be represented through public APIs. Record the exact obstacle before expanding the adapter. Do not copy internals or preserve duplicate machinery merely to report native adoption.
 
-#### B2. Measured warm reuse after B — proposed policy amendment
+#### B2. Warm reuse after B with its policy amendment
 
-**Remove the old “wait for a state/affinity requirement” trigger.** An identified instantiation bottleneck is sufficient performance demand. Per-workload/component native pools can preserve tenant separation when WAMN's mapping proves one tenant scope per workload. That does not establish isolation between callers, operations or invocation resources within that tenant. Current WAMN policy puts request state in store data; warming that store changes its lifetime. [S15, S16]
+The owner ruling of 2026-09-10 replaces both the state/affinity trigger and the benchmark prerequisite. B2 depends on B and the correctness conditions below. Per-workload pools require proof that each workload serves one tenant scope. That mapping alone does not isolate callers, operations or invocation resources within the tenant. WAMN currently stores request state in store data. Move that state out of the warmed store's lifetime before enabling reuse. [S15, S16]
 
 Package ownership and database-backed business state do not establish that arbitrary guest code is stateless. Native warm stores retain globals, resources, frozen configuration and unawaited tasks. Eligibility must cover the **entire linked store closure**: upstream disables pooling if a linked component has not opted in. [S16]
 
-After B, use the existing throughput bench to attribute the limiting cost to instantiation and compare fresh versus warm native execution. For an eligible package component with a reproducible benefit, adopt native `poolSize` and `reclaimWindowSeconds`, with measured bounds. Begin with `maxConcurrency = 1` per instance; overlapping calls inside one store need separate evidence. Pool capacity is not total admission capacity: saturation can fall back to ephemeral stores. Keep request/memory bounds independently. [S16]
+After B and the correctness proofs, adopt bounded native `poolSize` and `reclaimWindowSeconds` for eligible components. Keep `maxConcurrency = 1` per instance. Prove that pool saturation falls back to ephemeral stores. Pool capacity does not bound total admission. Keep request and memory bounds independent of pool capacity. [S16]
+
+Run the existing throughput bench after the B2 landing. Compare fresh and warm execution against the identified unmodified 2.9 baseline. Record the artifacts, commands, counts and machine load. A noisy or neutral result is a recorded measurement, not a blocker. No benchmark result or measured benefit is a prerequisite for B2.
 
 **Eligibility proof:** observe actual instance reuse, not just configured pooling; alternate differently authorized callers in one tenant, including PAT/session and fresh-only cases; preserve tenant/environment/release/binding separation; rebind and revoke authority per invocation; demonstrate that prior transactions, invocation resources, caller-dependent results and unfinished work cannot leak into the next call. Immutable, authority-independent caches may survive. Check trap/timeout retirement, release/credential changes and idle reclamation. No new statelessness analyzer is required; an unproved component remains ephemeral.
 
-Palette or other components without this evidence keep `poolSize` unset/zero. This preserves per-call state for components; it does **not** implement windowed state or affinity, and long-lived services have a different lifetime contract. On approval, amend execution-model and ledger row 4 together with the resource/admission rules; do not silently turn the current global refusal into an allow-all. [S15, S16]
+Palette or other components without this evidence keep `poolSize` unset/zero. This preserves per-call state for components; it does **not** implement windowed state or affinity, and long-lived services have a different lifetime contract. Land the production mechanism, resource/admission rules, execution-model amendment and ledger row 4 in the same commit. The ledger amendment is a B2 deliverable, with no separate issue. Keep the current global refusal until that complete landing. Do not silently turn it into an allow-all. [S15, S16]
 
 ### C. Re-evaluate `wamn:jetstream` against native NATS
 
@@ -86,6 +92,8 @@ Palette or other components without this evidence keep `poolSize` unset/zero. Th
 Use the existing Receiving event path and private `quality.create_inspection` handler. Preserve registration-specific selection, durable-consumer behavior, required event metadata, bounded retries, completion-before-ack, correlated dead letters, and separation of event-plane traffic from control-plane doorbells. Causation remains provenance, not borrowed caller authority. Native `term` alone does not establish WAMN dead-letter publication.
 
 **Acceptance:** deliver a committed receipt through the real broker/materializer path; prove a second handler delivery leaves one inspection without resetting its business state. A distinct valid receipt must still create its own inspection. Exercise interruption after commit but before acknowledgement, poison handling followed by valid-event progress, denied foreign registration/subject access, and bounded delivery pressure. A duplicate publication suppressed by the broker is not a duplicate-handler proof.
+
+The existing WAMN consumer owner creates the durable consumer and refuses configuration drift. Native `open_pull_consumer` attaches to an existing consumer. Retain WAMN registration and exact configuration enforcement around that attachment. [S8, S21]
 
 An idempotent inspection result is not a platform-wide exactly-once claim. Keep stream/consumer administration in its existing owning layer; do not replace run/lease semantics with broker semantics. The 2.8 generic async messaging interface is not an interchangeable substitute: its documented retry disposition did not itself provide broker redelivery. [S9]
 
@@ -117,9 +125,11 @@ Remove P2-specific production wiring and tests when their subject is replaced; r
 
 ### F. One bounded probe of native PostgreSQL mechanics
 
-**Scope:** add one probe under existing data-access/native-alignment ownership; reconcile or file its bead before implementation. This document creates no tracker item. Test whether WAMN's existing `wamn:postgres` boundary can reuse upstream pools, prepared execution and named routing through **public APIs**. Keep statement-by-reference admission, SQLx corpus identity, claim/causation binding, database identity, operation authorization and transaction ownership in WAMN. Host-resolved verified SQL may reach the native backend; guests gain no arbitrary-SQL import. [S13, S17]
+Scope: `wamn-0ct2.5` owns one bounded probe under the native-alignment epic. Test whether WAMN's existing `wamn:postgres` boundary can reuse upstream pools, prepared execution and named routing through **public APIs**. Keep statement-by-reference admission, SQLx corpus identity, claim/causation binding, database identity, operation authorization and transaction ownership in WAMN. Host-resolved verified SQL may reach the native backend; guests gain no arbitrary-SQL import. [S13, S17]
 
 **First checkpoint — transaction access:** tagged `PgId` exposes `query` and `execute`, but acquires a connection per call; `client()` is `pub(super)`. Its prepared-token path also reacquires and re-prepares. Those APIs do not themselves expose the held session WAMN needs for several parameterized statements in one command transaction. Check other supported public entrypoints before attempting a wrapper. `BEGIN`, queries and `COMMIT` through separate checkouts are not a transaction boundary. [S17]
+
+Source review at upstream `68ebece9` found no public held-session entrypoint in the named or async PostgreSQL modules. Public query and execution calls acquire connections separately. The async path streams results without exposing a public session across command statements. F records this source-level stop condition. No live probe or adapter ran. [S17]
 
 **Acceptance, if the checkpoint is viable:** one real verified query and one multi-statement command use native mechanics; committed results and rollback after an intermediate failure hold on the same session. Preserve credential-generation/authority-class routing, exactness checks, RLS, typed database errors, cancellation cleanup and statement isolation. Demonstrate actual reuse and identify WAMN pool/prepared/routing code that would be removed.
 
@@ -129,7 +139,7 @@ Remove P2-specific production wiring and tests when their subject is replaced; r
 
 | Area | Disposition |
 |---|---|
-| **Warm guest reuse and idle reclamation** | B2 proposes benchmark-triggered adoption for eligible package components after B and invocation-isolation proof. Other components stay ephemeral; no global package-based presumption of statelessness. |
+| **Warm guest reuse and idle reclamation** | B2 requires B and the correctness proofs. Its policy and mechanism land together. The throughput comparison follows that landing. Other components stay ephemeral. |
 | **Aggregate memory Enforce** | Retain production Count and existing Enforce proofs. A later rollout needs measured demand, host-memory headroom and explicit approval—not another accounting implementation. |
 | **Unified plugin configuration and named bindings** | Evaluate first in C, using the native `plugins` policy and stable `wasi:config` merge. Derive from WAMN facts; keep one authority. No standalone configuration framework. |
 | **PostgreSQL capability** | Retain WAMN's policy boundary; run bounded probe F for native mechanics. Correct the outdated guest-socket comparison. No broad PostgreSQL rewrite or automatic adoption. |
@@ -140,7 +150,7 @@ B2 explicitly proposes changing the existing fresh-store adoption rule; the othe
 
 ## 5. Delivery, proof and handoff
 
-**This is a prioritized backlog, not concurrent replacement programs.** The amendment check confirms `main` at `c32aeed9`, including the effects integration receipt. It does not certify machine or lane availability. Before implementation, recheck source, ledger, Beads and shared-file ownership. The completed cutover is not reopened; its unproved legs are not declared green. [S19]
+**This is a prioritized backlog, not concurrent replacement programs.** The original amendment review uses `c32aeed9`, including the effects integration receipt. It does not certify machine or lane availability. Before implementation, recheck source, ledger, Beads and shared-file ownership. The completed cutover is not reopened; its unproved legs are not declared green. [S19]
 
 | Order | Placement and exit |
 |---|---|
@@ -148,17 +158,21 @@ B2 explicitly proposes changing the existing fresh-store adoption rule; the othe
 | **Next native-alignment work** | B first proves native fresh-store dispatch and its explicit deletion targets; C evaluates native NATS and named configuration as a separately reviewable substitution. Serialize shared runtime/host edits. |
 | **Existing follow-ons** | Continue HTTP pooling and P3 under their current owners. Coordinate overlapping files rather than create duplicate epics. |
 | **Bounded probe** | Place F with the data-access owner after shared-file availability is confirmed; start with the public transaction/session checkpoint. No dependency on F for B/C or application delivery. |
-| **After B, by measured demand** | B2 adopts warm reuse only after the instantiation attribution, benefit and isolation checks pass. Stateful affinity remains separate; no new plugin-configuration program. |
+| **After B and correctness proofs** | B2 lands warm reuse, resource/admission rules, execution-model and row 4 together. The throughput comparison follows. Stateful affinity remains separate. |
+
+The tracker owns status and dependencies under epic `wamn-0ct2`. A is `wamn-0ct2.1`, B is `.2`, B2 is `.3`, C is `.4`, and F is `.5`. D references `wamn-ctc8.13` and `wamn-ctc8.16`. The closed P3 probe is `wamn-0h0g.17.26`. The existing P3 cutover owner remains an open question, so this plan creates no duplicate.
+
+Use separate worktrees and serialize A, B and C landings. The shared driver is `crates/execution/host/src/router_driver.rs`. Coordinate its edits with `services/host`, `services/executor`, `crates/platform/runtime`, affected manifests and shared proofs. Identity and TUI owners keep their current files and stay outside each active substitution boundary. Each owner rebases after the boundary lands. F waits for shared-file availability.
 
 Keep the existing proof gaps visible: `wamn-10yt.74` owns the missing automation producer; `.75` owns dependent active-work shutdown evidence; `.76` owns the native startup-refusal/recovery gap. Do not fabricate an admission path to satisfy those tests. A path-dependent replacement needs its relevant proof, but unrelated application work does not wait for every gap. [S2]
 
 Reuse existing application journeys, authority tests and throughput benchmarks. Follow `docs/operations/build-and-test.md`'s named mutation, negative-control, distinguishing-step and live-test arming rules rather than create a second evidence policy. [S14] Test meaningful allowed/refused pairs through production code; a compiling adapter or empty test selection is not acceptance.
 
-Compare each performance-sensitive substitution with an identified unmodified **2.9 baseline** using comparable artifacts, features, profiles, resource limits and repeated measurements. Preserve 2.8 as historical cutover evidence. Record latency distributions, throughput, errors, CPU/memory and relevant connection/queue counts. Do not relax gate thresholds to obtain a pass or attribute noisy changes to P3/native code without evidence.
+Compare each performance-sensitive substitution with an identified unmodified **2.9 baseline** using comparable artifacts, features, profiles, resource limits and repeated measurements. Preserve 2.8 as historical cutover evidence. Record latency distributions, throughput, errors, CPU/memory and relevant connection/queue counts. Do not relax gate thresholds to obtain a pass or attribute noisy changes to P3/native code without evidence. For B2, run this comparison after the correctness landing. A noisy or neutral measurement does not block that landing.
 
-Each landed change includes the exact source/artifact identities, executed commands and counts, failing or unavailable legs, code removed, remaining deviations, and the ledger/recipe update. Hold shared-file ownership during overlapping changes and exclusive machine use during measurements. Changes should reduce total maintenance, not merely move custom code behind a new adapter.
+Each landed change includes the exact source/artifact identities, executed commands and counts, failing or unavailable legs, code removed, remaining deviations, and the ledger/recipe update. Hold shared-file ownership during overlapping changes and exclusive machine use during measurements. For B2, record the later comparison under the same issue. Changes must reduce total maintenance.
 
-**Approval requested:** this incremental order; B's explicit deletion contract; B2's performance-triggered, isolation-proven warm-reuse policy in place of the old state/affinity trigger; native NATS/configuration evaluation in C; one bounded PostgreSQL probe F; conditional native HTTP adoption; and the separate P3 cutover. Production warm reuse waits for its named conditions and synchronized policy change. No additional production mechanism is approved by implication.
+The owner approved five children: A, B, B2, C and F. B2 includes the ledger amendment and requires B plus correctness proofs, with no benchmark prerequisite. Production warm reuse waits for those proofs and the single policy/mechanism commit. D and E retain separate ownership. No additional production mechanism opens because upstream exposes it.
 
 ## Source anchors
 
@@ -183,3 +197,6 @@ Original review/evidence links retain `41ba0334`; S4 and S15/S19 use the amendme
 - **S17 — PostgreSQL public/private boundary:** [named PostgreSQL implementation](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_postgres/multiplexed.rs), `PgId::client/query/execute/prepare/exec`; [async implementation](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_postgres/async_p3.rs) shares the pools and adds streamed results, not a public command transaction in the inspected entrypoints.
 - **S18 — Descriptor omission provenance:** [merged upstream PR #5529](https://github.com/wasmCloud/wasmCloud/pull/5529), including its explicit third-party embedder instruction.
 - **S19 — Latest integration boundary:** [main integration commit](https://github.com/dkkloimwieder/wamn/commit/c32aeed9569a28b60fb42fe5ae51b8f220be8334). Its source/evidence publication does not establish present lane availability.
+
+- S20: [native response deadline](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/engine/abandon.rs), `await_reply` starts after dispatch creates the instance.
+- S21: [native consumer attachment](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_nats/interfaces/jetstream/mod.rs), `open_pull_consumer`.
