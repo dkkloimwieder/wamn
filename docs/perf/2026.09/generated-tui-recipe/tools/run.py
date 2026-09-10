@@ -29,7 +29,8 @@ def main():
                    if not key.startswith(('WAMN_', 'WASH_', 'OTEL_', 'GIT_', 'PG'))
                    and key not in {'DATABASE_URL', 'DB_URL', 'CARGO_TARGET_DIR', 'KUBECONFIG'}}
     environment.update(RUSTUP_TOOLCHAIN='1.98.0', RUSTC_WRAPPER='', CARGO_BUILD_JOBS='2',
-                       KUBECONFIG='/dev/null', GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1')
+                       KUBECONFIG='/dev/null', GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1',
+                       WAMN_IDENTITY_BINARY=str(tree / 'target/debug/wamn-identity'))
 
     def git(*arguments):
         return subprocess.check_output(['git', *arguments], cwd=tree, env=environment, text=True).strip()
@@ -79,6 +80,7 @@ def main():
     try:
         materialize('materialize')
         run('build-cli', ['cargo', 'build', '--locked', '--offline', '-p', 'wamn-ctl', '--bin', 'wamn'])
+        run('build-identity', ['cargo', 'build', '--locked', '--offline', '-p', 'wamn-identity', '--bin', 'wamn-identity'])
         run('build-clients', ['cargo', 'build', '--locked', '--offline', '-p', 'wamn-host',
             '-p', 'wamn-scenario-worker', '-p', 'wamn-receiving-tui', '-p', 'wamn-generated-receiving-tui',
             '-p', 'wamn-generated-client-acme-receiving-tui', '-p', 'wamn-generated-wms-tui', '--bins'])

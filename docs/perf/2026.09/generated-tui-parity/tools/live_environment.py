@@ -156,7 +156,7 @@ def main():
     for required in (proof, compose_file, tree / "packages/receiving/wamn.json", tree / "packages/client_acme_receiving/wamn.json"):
         if not required.is_file():
             raise ProofFailure(f"required source is absent: {required}")
-    for name in ("wamn", "wamn-host", "wamn-scenario-worker", "wamn-receiving"):
+    for name in ("wamn", "wamn-identity", "wamn-host", "wamn-scenario-worker", "wamn-receiving"):
         if not os.access(target / "debug" / name, os.X_OK):
             raise ProofFailure(f"required native artifact is absent: {name}")
     for command in ("docker", "cargo", "psql"):
@@ -170,7 +170,8 @@ def main():
     username = project
     temporary_container = project + "-htpasswd"
     environment = os.environ.copy()
-    environment.update(RUSTUP_TOOLCHAIN="1.98.0", RUSTC_WRAPPER="", CARGO_BUILD_JOBS="2")
+    environment.update(RUSTUP_TOOLCHAIN="1.98.0", RUSTC_WRAPPER="", CARGO_BUILD_JOBS="2",
+                       WAMN_IDENTITY_BINARY=str(target / "debug/wamn-identity"))
     # The dev loop uses the lane's native target and normal components/target.
     environment.pop("CARGO_TARGET_DIR", None)
     environment.pop("CARGO_BUILD_TARGET_DIR", None)
@@ -213,7 +214,7 @@ def main():
         if not guest.is_file() or guest.stat().st_size == 0:
             raise ProofFailure("http-route guest artifact is absent")
         artifacts = [guest, *(target / "debug" / name for name in
-                              ("wamn", "wamn-host", "wamn-scenario-worker", "wamn-receiving"))]
+                              ("wamn", "wamn-identity", "wamn-host", "wamn-scenario-worker", "wamn-receiving"))]
         (evidence / "artifacts.json").write_text(json.dumps({
             str(path.relative_to(tree)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in artifacts}, indent=2) + "\n")
@@ -230,6 +231,7 @@ def main():
         owned.run("substrate-up", compose + ["up", "--detach", "--wait", "--wait-timeout", "90", "--no-deps", *SERVICES], timeout=150)
         wait_until("tempo ready", lambda: http_status(f"http://127.0.0.1:{ports['tempo']}/ready") == 200, 90)
         owned.run("postgres-ready", compose + ["exec", "-T", "-e", "PGPASSWORD=probe", "receiving-route-postgres", "psql", "-h", "127.0.0.1", "-U", "postgres", "-Atqc", "select 1"])
+        owned.run("create-system-database", compose + ["exec", "-T", "-e", "PGPASSWORD=probe", "receiving-route-postgres", "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", "CREATE DATABASE wamn_system"])
         if http_status(f"http://{authority}/v2/") != 401:
             raise ProofFailure("registry does not enforce authentication")
         docker_auth = scratch / "docker"
@@ -243,7 +245,7 @@ def main():
         env_root = scratch / "environment"
         up = owned.start("dev-up", [
             target / "debug/wamn", "dev", "up",
-            "--system-database-url", f"postgresql://postgres:probe@127.0.0.1:{ports['postgres']}/postgres",
+            "--system-database-url", f"postgresql://postgres:probe@127.0.0.1:{ports['postgres']}/wamn_system",
             "--root", env_root, "--scenario-worker-binary", target / "debug/wamn-scenario-worker",
             "--gate-bind", f"127.0.0.1:{ports['gate']}",
             "--nats-url", f"nats://127.0.0.1:{ports['nats']}",
