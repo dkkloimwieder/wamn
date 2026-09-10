@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] --evidence-dir DIR
+usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] [--receiving-correctness] --evidence-dir DIR
 
 Without --apply, print the immutable plan and exit.
 
@@ -18,11 +18,14 @@ Without --apply, print the immutable plan and exit.
                        cannot combine with startup or throughput measurement
   --session-host-proof Prove session-key removal on two deployed hosts, with
                        reachable and unavailable JWKS; cannot combine modes
+  --receiving-correctness Prove command histories, rollback, replay, authorization, and contention
+                         Cannot combine modes. Does not measure performance.
   --fresh-auth-bench    Repeat the existing throughput sweep three times for each
                        of service and human PATs; implies --throughput
   --evidence-dir DIR   New directory retaining commands and machine evidence
 
-The fixed scratch cluster is wamn-receiving-journey. Every Kubernetes and Helm
+The correctness mode uses scratch cluster wamn-receiving-correctness. Other
+modes use wamn-receiving-journey. Every Kubernetes and Helm
 command carries its private kubeconfig and context. The frozen kind-wamn cluster
 is never a target.
 EOF
@@ -33,6 +36,7 @@ measure_startup=false
 throughput=false
 membershipproof=false
 session_host_proof=false
+receiving_correctness=false
 standard_images=false
 fresh_auth_bench=false
 evidence_dir=
@@ -43,6 +47,7 @@ while (($#)); do
     --throughput) throughput=true; measure_startup=true; shift ;;
     --membershipproof) membershipproof=true; shift ;;
     --session-host-proof) session_host_proof=true; shift ;;
+    --receiving-correctness) receiving_correctness=true; shift ;;
     --fresh-auth-bench) fresh_auth_bench=true; throughput=true; measure_startup=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -57,7 +62,11 @@ if [[ "$session_host_proof" == true && ( "$membershipproof" == true || "$measure
   echo "--session-host-proof cannot combine with other proof or measurement modes" >&2
   exit 2
 fi
-if [[ "$membershipproof" == true || "$session_host_proof" == true ]]; then
+if [[ "$receiving_correctness" == true && ( "$membershipproof" == true || "$session_host_proof" == true || "$measure_startup" == true ) ]]; then
+  echo "--receiving-correctness cannot combine with other proof or measurement modes" >&2
+  exit 2
+fi
+if [[ "$membershipproof" == true || "$session_host_proof" == true || "$receiving_correctness" == true ]]; then
   standard_images=true
 fi
 
@@ -88,8 +97,11 @@ cd -- "$repo_root"
 head=$(git rev-parse --verify HEAD)
 short_head=${head:0:12}
 cluster=wamn-receiving-journey
-context=kind-wamn-receiving-journey
-namespace=wamn-receiving-journey
+if [[ "$receiving_correctness" == true ]]; then
+  cluster=wamn-receiving-correctness
+fi
+context=kind-$cluster
+namespace=$cluster
 system_namespace=wamn-system
 
 # The APPLICATION'S OWN IDENTITY, named once and derived from everywhere else.
@@ -185,7 +197,10 @@ if [[ "$apply" != true ]]; then
   printf '  cluster/context: %s / %s\n' "$cluster" "$context"
   printf '  namespace: %s\n' "$namespace"
   printf '  route host: %s (setup overlay only)\n' "$route_host"
-  if [[ "$session_host_proof" == true ]]; then
+  if [[ "$receiving_correctness" == true ]]; then
+    printf '  order: compile correctness proof -> Dockerfile host + gates -> production admission + release -> deployed HTTP command histories, rollback, replay, authorization, and contention -> exact teardown\n'
+    printf '  correctness: 16 generated histories with seed 7701, explicit histories, and seven boundary cases. No performance measurement.\n'
+  elif [[ "$session_host_proof" == true ]]; then
     printf '  order: Dockerfile host + gates + identity -> disposable v1 session release -> two distinct deployed hosts -> reachable/unavailable JWKS removal Jobs (300 seconds each) -> exact teardown\n'
   elif [[ "$membershipproof" == true ]]; then
     printf '  order: Dockerfile host + gates -> production mint/attest -> operator 2.9.0 -> deployed HTTP membershipproof Job -> exact teardown\n'
@@ -404,8 +419,8 @@ cleanup() {
 
   if [[ "$cluster_owned" == true ]] &&
      kind get clusters 2>/dev/null | grep -Fx -- "$cluster" >/dev/null; then
-    record_command kind delete cluster --name "$cluster"
-    kind delete cluster --name "$cluster" >/dev/null 2>&1 || cleanup_failed=true
+    record_command kind delete cluster --name "$cluster" --kubeconfig "$kubeconfig"
+    kind delete cluster --name "$cluster" --kubeconfig "$kubeconfig" >/dev/null 2>&1 || cleanup_failed=true
   fi
   if [[ "$postgres_owned" == true ]] &&
      docker container inspect "$postgres_container" >/dev/null 2>&1; then
@@ -485,7 +500,10 @@ cleanup() {
   fi
 
   if [[ $status -eq 0 && "$run_complete" == true && "$cleanup_failed" == false ]]; then
-    if [[ "$session_host_proof" == true ]]; then
+    if [[ "$receiving_correctness" == true ]]; then
+      printf 'RECEIVING CORRECTNESS PASS source=%s namespace=%s generated_cases=16 boundary_cases=7 cleanup=pass\n' \
+        "$head" "$namespace" >"$evidence_dir/receiving-correctness-journey.receipt"
+    elif [[ "$session_host_proof" == true ]]; then
       printf 'RECEIVING HOST SESSION PROOF PASS source=%s namespace=%s hosts=2 reachable=pass unreachable=pass cleanup=pass\n' \
         "$head" "$namespace" >"$evidence_dir/session-host-proof-journey.receipt"
     elif [[ "$membershipproof" == true ]]; then
@@ -513,6 +531,9 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
 lock_file=${TMPDIR:-/tmp}/wamn-receiving-cluster-journey.lock
+if [[ "$receiving_correctness" == true ]]; then
+  lock_file=${TMPDIR:-/tmp}/wamn-receiving-correctness.lock
+fi
 exec 9>"$lock_file"
 if ! flock -n 9; then
   echo "another Receiving cluster journey owns the fixed scratch name" >&2
@@ -568,9 +589,14 @@ if [[ "$standard_images" != true ]]; then
 fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor
-if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true ]]; then
+if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true ]]; then
   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
     cargo test --locked --offline -p wamn-proof-integration --test startup_burst_live --no-run
+fi
+if [[ "$receiving_correctness" == true ]]; then
+  run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo test --locked --offline -p wamn-proof-integration \
+      --test receiving_command_histories_live --no-run
 fi
 if [[ "$fresh_auth_bench" == true ]]; then
   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
@@ -891,9 +917,15 @@ install -d -m 0700 "$compilation_cache_directory"
 #
 # So the count is asserted at the invocation rather than inferred downstream.
 assert_one_test_ran() {
-  local log=$1 name=$2
-  grep -qE '^test result: ok\. 1 passed; 0 failed;' "$log" || {
-    echo "cargo test ran no matching test for $name -- an --exact name that does not exist exits 0 having executed nothing" >&2
+  local log=$1 name=$2 test_prefix=${3-route_authentication_live::}
+  awk -v selected="test $test_prefix$name ... " '
+    /^running 1 test$/ { runs++ }
+    index($0, selected) == 1 { matches++ }
+    /^test result:/ { summaries++ }
+    /^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured;/ { passed++ }
+    END { if (runs != 1 || matches != 1 || summaries != 1 || passed != 1) exit 1 }
+  ' "$log" || {
+    echo "cargo test did not run exactly one successful $name test" >&2
     grep -E '^(running|test result)' "$log" >&2 || true
     exit 1
   }
@@ -1026,7 +1058,7 @@ cdc_role_sql=$work_dir/cdc-role.sql
 cdc_sql=$work_dir/cdc.sql
 cdc_secret=$work_dir/cdc-reader.json
 registry_reader_secret=$work_dir/registry-reader.json
-if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true ]]; then
+if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true ]]; then
 cdc_password=$(openssl rand -hex 32)
 run_sensitive enable-cdc-project-env "$ctl" enable-cdc-project-env \
   --org "$app_org" --project "$app_project" --env "$app_environment" --schema "$app_schema" \
@@ -1117,7 +1149,7 @@ manifest_digest=${digest_lines[0]#*=}
 
 # Reuse the released closure and scoped generations before materializer traffic.
 # This proves real idle executor probes and shutdown, not queued delivery drain.
-if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true ]]; then
+if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true ]]; then
 record_command executor-native-lifecycle "$cargo_target_dir/debug/wamn-run-worker" \
   '<private fixture credentials>' "$manifest_digest" SIGTERM SIGINT
 python3 - "$cargo_target_dir/debug/wamn-run-worker" "$host_secret_directory" \
@@ -2207,6 +2239,122 @@ jq -e --slurpfile service "$evidence_dir/flow-http-service.json" \
    any($pods[0].items[];
      .metadata.name == $selected_hosts[0].hostname and .status.podIP == $address)))
 ' >/dev/null "$evidence_dir/flow-http-endpointslices.json"
+
+if [[ "$receiving_correctness" == true ]]; then
+  # Mirror the proven operator endpoint into a temporary selectorless NodePort.
+  correctness_nodeport=$work_dir/receiving-correctness-nodeport.json
+  jq --arg namespace "$namespace" \
+    --slurpfile service "$evidence_dir/flow-http-service.json" '
+    .items[0] as $slice |
+    {apiVersion:"v1",kind:"List",items:[
+      {apiVersion:"v1",kind:"Service",
+       metadata:{name:"receiving-correctness-nodeport",namespace:$namespace},
+       spec:{type:"NodePort",ports:[{name:"http",protocol:"TCP",
+         port:$service[0].spec.ports[0].port,targetPort:$slice.ports[0].port}]}},
+      {apiVersion:"discovery.k8s.io/v1",kind:"EndpointSlice",
+       metadata:{name:"receiving-correctness-nodeport",namespace:$namespace,
+         labels:{"kubernetes.io/service-name":"receiving-correctness-nodeport"}},
+       addressType:$slice.addressType,ports:$slice.ports,
+       endpoints:[$slice.endpoints[] | {addresses,conditions}]}]}
+  ' "$evidence_dir/flow-http-endpointslices.json" >"$correctness_nodeport"
+  run "${kube[@]}" apply -f "$correctness_nodeport"
+  cp "$correctness_nodeport" "$evidence_dir/receiving-correctness-nodeport.json"
+  "${kube[@]}" -n "$namespace" get service receiving-correctness-nodeport -o json \
+    >"$evidence_dir/receiving-correctness-service.json"
+  correctness_node_port=$(jq -er '.spec.ports[0].nodePort' \
+    "$evidence_dir/receiving-correctness-service.json")
+  correctness_node_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
+    "$cluster-control-plane")
+  [[ $correctness_node_port =~ ^[0-9]{4,5}$ && -n $correctness_node_ip ]] || {
+    echo "the correctness NodePort did not yield an endpoint" >&2
+    exit 1
+  }
+  correctness_endpoint=http://$correctness_node_ip:$correctness_node_port
+  correctness_digests='{}'
+  for component in "${app_components[@]}"; do
+    correctness_digest=$(sha256sum "$component_directory/$component.wasm")
+    correctness_digest=sha256:${correctness_digest%% *}
+    correctness_digests=$(jq -n --argjson digests "$correctness_digests" \
+      --arg component "$component" --arg digest "$correctness_digest" \
+      '$digests + {($component):$digest}')
+  done
+  correctness_corpus=$(jq -er \
+    '.application_sql_corpus_identity | select(test("^sha256:[0-9a-f]{64}$"))' \
+    "$repo_root/packages/receiving/generated/package-weld.json")
+  correctness_document=$work_dir/receiving-correctness.json
+  correctness_evidence=$evidence_dir/receiving-correctness.jsonl
+  (
+    umask 077
+    jq -n --arg project_url "$project_url" --arg endpoint "$correctness_endpoint" \
+      --arg host "$route_host" --arg secret "$route_caller_secret" --arg tenant "$app_tenant" \
+      --arg evidence "$correctness_evidence" --arg source "$head" \
+      --argjson components "$correctness_digests" --arg corpus "$correctness_corpus" '
+      {project_pg_url:$project_url,route_endpoint:$endpoint,route_host:$host,
+       route_caller_secret:$secret,tenant:$tenant,caller_role:"route-caller",
+       evidence_file:$evidence,source_commit:$source,component_digests:$components,
+       corpus_sha256:$corpus,seed:7701,cases:16,history:null}
+    ' >"$correctness_document"
+  )
+  [[ $(stat -c '%a' "$correctness_document") == 600 ]] || exit 1
+  # Reuse the observational reachability policy from wamn-0h0g.15.137.14.
+  # A refused connection returns immediately, before connect-timeout applies.
+  correctness_probe_exit=0
+  correctness_probe_status=$(timeout --signal=TERM --kill-after=2s 30s \
+    curl --silent --show-error --connect-timeout 5 --max-time 5 \
+      --retry 15 --retry-delay 1 --retry-connrefused --retry-max-time 20 \
+      --dump-header "$evidence_dir/receiving-correctness-probe.headers" \
+      --output "$evidence_dir/receiving-correctness-probe.body" --write-out '%{http_code}' \
+      --header "Host: $route_host" "$correctness_endpoint/" \
+      2>"$evidence_dir/receiving-correctness-probe.stderr") || correctness_probe_exit=$?
+  jq -n --arg endpoint "$correctness_endpoint" --arg host "$route_host" \
+    --arg status "$correctness_probe_status" --argjson exit_code "$correctness_probe_exit" \
+    '{endpoint:$endpoint,host:$host,http_status:$status,curl_exit_code:$exit_code}' \
+    >"$evidence_dir/receiving-correctness-endpoint.json"
+  correctness_content_type=$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' \
+    "$evidence_dir/receiving-correctness-probe.headers" | tr -d '\r' | tail -n 1)
+  if [[ "$correctness_probe_exit" -ne 0 || "$correctness_probe_status" != 404 ||
+        "$correctness_content_type" != application/json ]] ||
+     ! cmp -s <(printf '%s' '{"error":{"code":"route-not-found"}}') \
+       "$evidence_dir/receiving-correctness-probe.body"; then
+    echo "the correctness NodePort did not return the exact route-not-found response" >&2
+    "${kube[@]}" -n "$namespace" logs deployment/hostgroup-default \
+      --all-pods=true --all-containers=true --tail=200 \
+      >"$evidence_dir/receiving-correctness-host-failure.log" 2>&1 || true
+    "${kube[@]}" -n kube-system logs daemonset/kube-proxy --all-pods=true --tail=100 \
+      >"$evidence_dir/receiving-correctness-proxy-failure.log" 2>&1 || true
+    [[ "$correctness_probe_exit" -ne 0 ]] || correctness_probe_exit=1
+    exit "$correctness_probe_exit"
+  fi
+  record_command timeout --signal=TERM --kill-after=10s 600s \
+    env WAMN_RECEIVING_CORRECTNESS_DOCUMENT='<private-fixture-path>' \
+    CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo test --locked --offline -p wamn-proof-integration \
+    --test receiving_command_histories_live production_receiving_command_histories \
+    -- --exact --include-ignored --nocapture
+  timeout --signal=TERM --kill-after=10s 600s \
+    env WAMN_RECEIVING_CORRECTNESS_DOCUMENT="$correctness_document" \
+    CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo test --locked --offline -p wamn-proof-integration \
+    --test receiving_command_histories_live production_receiving_command_histories \
+    -- --exact --include-ignored --nocapture \
+    2>&1 | tee "$evidence_dir/receiving-correctness.log"
+  assert_one_test_ran "$evidence_dir/receiving-correctness.log" \
+    production_receiving_command_histories ''
+  [[ $(grep -Fxc 'RECEIVING_CORRECTNESS result=pass generated_cases=16 boundary_cases=7' \
+      "$evidence_dir/receiving-correctness.log") == 1 ]] || exit 1
+  jq -es '
+    [.[] | select(.case == "summary")] |
+    if length == 1 and .[0].result == "pass" and .[0].generated_cases == 16 and
+      (.[0].explicit_histories | type == "number" and . > 0) and
+      .[0].boundary_cases == 7 and (.[0].reproduction // false) == false
+    then .[0] else error("Receiving correctness summary is absent or incomplete") end
+  ' "$correctness_evidence" >"$evidence_dir/receiving-correctness-summary.json"
+  [[ $(git rev-parse HEAD) == "$head" ]] || exit 1
+  [[ -z $(git status --porcelain --untracked-files=normal -- . \
+      ':(exclude).beads/issues.jsonl' ':(exclude).beads/interactions.jsonl') ]] || exit 1
+  run_complete=true
+  exit 0
+fi
 
 if [[ "$membershipproof" == true ]]; then
   # URLs stay in the private scratch directory and an ephemeral Secret. Neither

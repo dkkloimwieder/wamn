@@ -3491,7 +3491,11 @@ async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyh
         &journey_scenario_worker_binary()?,
         &credentials,
         &credentials.management_admitter,
-        ROUTE_JOURNEY_GATE_BIND,
+        if inputs.host_secret_namespace == "wamn-receiving-correctness" {
+            "127.0.0.1:18090"
+        } else {
+            ROUTE_JOURNEY_GATE_BIND
+        },
     )
     .await?;
     let gate_reports = gate_journey_wirings(

@@ -1,0 +1,14 @@
+{
+  "result": "incomplete",
+  "classification": "curl could not connect to newly created correctness NodePort",
+  "exit_code": 7,
+  "source_commit": "9583520fec51c5c6a5e9f0de5114f6417ae07696",
+  "source_unchanged": true,
+  "live_receiving_history_tests_executed": 0,
+  "production_route_prerequisite": "pass: one exact test with13 PAT route cases",
+  "workload_ready": true,
+  "operator_endpoint_ownership": "pass",
+  "cleanup": "pass",
+  "cluster_created_and_deleted": true,
+  "root_cause": "undetermined; attempted endpoint and curl stderr were not retained"
+}

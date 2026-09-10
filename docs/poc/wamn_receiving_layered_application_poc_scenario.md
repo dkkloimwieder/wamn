@@ -1109,3 +1109,39 @@ platform-owned base package
 → exact application_package, component_artifact, ui_artifact, and typescript_facade binding
 → independently upgradeable when ownership and consumed contracts remain compatible
 ```
+
+
+## 15. Receiving correctness amendment (2026-09-09)
+
+The owner accepted [WAMN platform and application testing](wamn_testing_spec.md) and authorized Increment 1 under `wamn-10yt.77`.
+The invariants below belong to this application brief. Beads and executed receipts own their status.
+The original scenario above remains a historical snapshot. This amendment makes no completion claim or change to product contracts.
+
+The test owner is [receiving_command_histories_live.rs](../../tests/integration/tests/receiving_command_histories_live.rs), with entry point `production_receiving_command_histories`.
+Its `history` function executes generated histories and explicit examples through authenticated HTTP routes and the real Receiving guest.
+The [model](../../tests/integration/tests/receiving_history/model.rs) supplies independent expected outcomes.
+The [database helper](../../tests/integration/tests/receiving_history/database.rs) reads coherent snapshots and observes actual guest waits.
+These assertions remain unexecuted at this amendment. Their presence in source does not establish a pass.
+
+A business snapshot contains the fixture's `purchase_order`, `purchase_order_line`, `record_receipt_command`, `receipt`, and `receipt_line` rows.
+One SQL statement reads all five sets. Receipt-line sums are calculated independently of `purchase_order_line.received_quantity`.
+Fixture setup, observer authority, temporary failure controls, and permission changes remain separate from command execution.
+
+| ID | Rule and affected state | Observation and named case | Existing enforcer |
+|---|---|---|---|
+| `REC-HISTORY` | Received quantities and independent receipt sums agree. Order status, revision, claim counts, and receipt counts agree with the model. | After each settled step, `history` calls `snapshot` and `assert_state`. | [Command](../../components/data/receiving-data/src/record_receipt.rs), [quantity update](../../packages/receiving/command/record_receipt/update_purchase_order_line.sql), [order completion](../../packages/receiving/command/record_receipt/finish_purchase_order.sql), and the migration's quantity constraints. |
+| `REC-REFUSAL` | A confirmed refusal leaves the complete business snapshot unchanged. | `history` and `invalid_status` compare full snapshots before and after the response. | Command validation, [line validation](../../packages/receiving/command/record_receipt/validate_receipt_line.sql), and the [transaction boundary](../../components/data/postgres-statements/src/lib.rs). |
+| `REC-REPLAY` | The same key and body return the claim's original result without another receipt or changed business rows. Changed bodies refuse. | `history` compares the captured original result and full snapshot. `competing_receipts(true)` covers `overlapping-replay`. | [Claim](../../packages/receiving/command/record_receipt/claim_command.sql), [replay lookup](../../packages/receiving/command/record_receipt/find_replay.sql), and [stored result](../../packages/receiving/command/record_receipt/finalize_command.sql). |
+| `REC-CONTENTION` | Competing receipts cannot exceed ordered quantities. Exactly one of two individually valid excess-total calls commits. | `competing_receipts(false)` records `competing-receipts`. It observes two separate non-superuser guest connections blocked by the controller before releasing them. | [Order lock](../../packages/receiving/command/record_receipt/lock_purchase_order.sql), line locks in `validate_receipt_line.sql`, and `purchase_order_line_ordered_quantity_received_quantity_check`. |
+| `REC-ROLLBACK` | Failure after an intermediate receipt write rolls back the claim, receipt, and all other business changes. | `rollback_after_write` records `rollback-after-receipt-write`. A disposable `AFTER INSERT` trigger observes the receipt and matching claim inside the guest transaction. Its advisory barrier is observed before `P0001` raises the failure. | `record_receipt_item`, `run_transaction`, and [uncommitted transaction cleanup](../../crates/platform/runtime/src/plugins/wamn_postgres/resources.rs). The public item refusal remains `internal_error`. |
+| `REC-LOST-RESPONSE` | After independently observed commit, captured retry returns the original result without another business mutation. | `lost_response` records `commit-withheld-application-response`. The adapter receives HTTP bytes but withholds the result from the test application after the database snapshot confirms commit. | The same claim, replay lookup, and stored-result SQL as `REC-REPLAY`. |
+| `REC-REVISION` | A current `purchase_order.update` changes the supplier and advances the revision once. A stale revision refuses without changing business state. | Current and stale update steps run through `history`. | [Generated update SQL](../../packages/receiving/generated/sql/purchase_order/update.sql) locks the order and compares `expected_row_version`. |
+| `REC-AUTHORITY` | Removing the actual operation permission produces HTTP 403 without business mutation. Restoring that permission permits the same command. | `authority` records `denied-then-authorized`. The controller removes and restores one `app_system.permissions` row. | [Permission reader](../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs), [route authentication](../../crates/platform/runtime/src/plugins/flow_http_routing.rs), and `authorize_registered_operation` in the [driver](../../crates/execution/host/src/router_driver.rs). |
+
+The [exact migration](../../packages/receiving/migrations/0001_initial.sql) owns the quantity constraints, claim-key uniqueness, and receipt foreign keys named above.
+Snapshot comparisons establish named business state, not an audit of every physical write in PostgreSQL.
+The response control exercises application delivery after transport receipt. It does not claim a TCP-loss or process-kill test.
+
+The suite also requires deliberate business-defect evidence, including a contention-protection mutant, under the existing mutation rules.
+If another database constraint protects the invariant, record the surviving mutant. Do not weaken that constraint to force an unsafe result.
+Future overlay compatibility uses two independent fresh installations with identical overlay artifacts under `wamn-10yt.78`. It does not reopen in-place upgrades.

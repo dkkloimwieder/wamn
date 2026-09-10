@@ -225,6 +225,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
 fn build_graph_has_no_shared_or_retired_cook_leg() {
     assert!(DOCKERFILE.contains("cargo install cargo-chef --version 0.1.77 --locked"));
     assert!(DOCKERFILE.contains("COPY Cargo.toml Cargo.lock ./"));
+    assert!(stage("root-planner").contains("COPY packages ./packages"));
     assert!(
         DOCKERFILE.contains("COPY --from=root-planner /build/root-recipe.json ./root-recipe.json")
     );

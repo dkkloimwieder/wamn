@@ -1,5 +1,28 @@
 # Deterministic testing — replay in tests and simulation
 
+## Owner amendment (2026-09-09)
+
+The owner accepted [WAMN platform and application testing](wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
+That specification governs the changes below. Beads and executed evidence own implementation status.
+
+Application tests proceed through real commands, guests, capabilities, and authenticated routes without waiting for the complete deterministic simulation framework.
+D1 and D8a remain in place. D2b and D2 retain their existing owners.
+D3–D5 expand only to support a named guest test. No production effect capture or general test-definition language is authorized.
+
+Kani remains deferred. The retained Phase 3 numeric-bug trigger and Part C Kani items do not authorize implementation.
+Reopening requires an explicit owner decision. Do not add Kani dependencies, harnesses, or toolchain work.
+Coverage-guided fuzzing, Bolero, and production invariant tripwires remain deferred for this delivery.
+
+Keep real process-kill, connection-loss, and contention tests until another test covers each actual guarantee.
+A simulated crash alone does not justify retirement. No test retirement follows from this amendment.
+
+Future overlay compatibility uses two independent disposable installations: base A with overlay O, and base B with the same overlay artifacts.
+Additive and breaking candidates use separate comparisons. This authorizes no in-place upgrade or lifecycle change.
+
+## Original proposal snapshot
+
+The original proposal and its dated rulings remain below for historical context. The amendment above takes precedence where they conflict.
+
 Status: proposal for ruling. Beads become the record once ruled.
 Evidence: wamn `69f4281`; golem `d667fee`. A claim with no file:line is a design
 choice and says so.
