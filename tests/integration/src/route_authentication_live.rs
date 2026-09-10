@@ -2,7 +2,9 @@
 //! fresh disposable PostgreSQL 18 server.
 
 mod fresh_only;
+mod overlay_compatibility;
 mod p3_shell;
+mod postcommit;
 mod session_client;
 
 use std::collections::{BTreeSet, HashMap};
@@ -391,6 +393,13 @@ fn journey_package_root(package: JourneyPackage) -> PathBuf {
                 .file_name()
                 .expect("the proof package has a directory name"),
         );
+    }
+    if std::env::var_os(JOURNEY_DOCUMENT_ENV).is_some()
+        && let Some(phase) = JourneyDocument::required()
+            .expect("the compatibility proof requires a valid input document")
+            .overlay_compatibility
+    {
+        return overlay_compatibility::source(&phase, package);
     }
     source
 }
@@ -1228,6 +1237,10 @@ pub(crate) struct JourneyDocument {
     /// Copied package sources for the dedicated fresh-only proof.
     /// The initial phase creates this directory before any package admission.
     fresh_only_packages: Option<PathBuf>,
+    /// Fresh-install proof with unchanged overlay artifacts.
+    overlay_compatibility: Option<overlay_compatibility::CompatibilityPhase>,
+    /// Released materializer replay and retry proof.
+    postcommit: Option<postcommit::PostcommitPhase>,
     /// Known only after the route phase has provisioned the project
     /// environment and the materializer trigger has produced a receipt. The
     /// shell amends the document with it then; before that it is absent, and
@@ -1392,8 +1405,14 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
         assert!(properties.contains_key(field), "schema lacks {field}");
         assert!(required.contains(&field), "schema does not require {field}");
     }
-    assert_eq!(properties.len(), example.scalars().len() + 3);
-    for phase in ["materializer", "runtime", "fresh_only_packages"] {
+    assert_eq!(properties.len(), example.scalars().len() + 5);
+    for phase in [
+        "materializer",
+        "runtime",
+        "fresh_only_packages",
+        "overlay_compatibility",
+        "postcommit",
+    ] {
         assert!(properties.contains_key(phase));
         assert!(!required.contains(&phase));
     }
@@ -3592,6 +3611,13 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
     if let Some(root) = &inputs.fresh_only_packages {
         prepare_fresh_only_packages(root)?;
     }
+    if let Some(phase) = &inputs.overlay_compatibility {
+        anyhow::ensure!(
+            !fresh_only,
+            "overlay compatibility cannot combine with fresh-only"
+        );
+        overlay_compatibility::prepare(phase)?;
+    }
     let system_url = inputs.system_pg_url.clone();
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
@@ -4261,6 +4287,22 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
     reconcile_journey_data_access(&route.database_url).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     seed_materializer_trigger_rows(project.as_ref()).await?;
+    if let Some(phase) = &inputs.overlay_compatibility {
+        overlay_compatibility::after_install(
+            phase,
+            &route.database_url,
+            &inputs.component_directory,
+        )
+        .await?;
+        if phase.base == overlay_compatibility::BaseCandidate::Baseline {
+            overlay_compatibility::breaking_refusal(
+                phase,
+                &system_url,
+                &inputs.component_directory,
+            )
+            .await?;
+        }
+    }
 
     let gate_stop = management_server.shutdown().await;
     identity_task.abort();
