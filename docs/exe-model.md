@@ -189,6 +189,15 @@ Package application rows are tenant-scoped by database residency, not by column.
   See the [sqlx data-access specification](sqlx-data-access-spec.md),
   [base-application POC](poc/wamn_base_application_poc_revised.md), and
   [receiving scenario](poc/wamn_receiving_layered_application_poc_scenario.md).
+- WAMN retains one PostgreSQL implementation because commands require exclusive
+  held-session transactions. A held session keeps one connection throughout a
+  transaction. The host keeps the admitted statement set and exact SQL for
+  execution, commit, and rollback. An armed cancellation guard destroys an
+  unfinished connection instead of returning it to the pool. Native substitution,
+  a parallel read backend, and new database machinery are outside this decision.
+  See [native alignment F](architecture/wamn_native_alignment_plan.md#f-retain-one-wamn-postgresql-implementation),
+  [statement resolution](https://github.com/dkkloimwieder/wamn/blob/1d38b6da38a460753d89f877ec0a0c68345a7d60/crates/platform/runtime/src/plugins/wamn_postgres/statements.rs#L229),
+  and [transaction ownership and cancellation](https://github.com/dkkloimwieder/wamn/blob/1d38b6da38a460753d89f877ec0a0c68345a7d60/crates/platform/runtime/src/plugins/wamn_postgres/resources.rs#L43).
 - Runtime database identities are per project-environment and tenant. PostgreSQL
   `current_user`, backed by opaque bounded role names, is the RLS input; caller-
   settable tenant GUCs retire. `wamn_app` becomes a NOLOGIN ACL role inherited by

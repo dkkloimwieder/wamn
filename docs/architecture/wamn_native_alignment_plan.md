@@ -138,17 +138,25 @@ The P3 cutover owner is `wamn-0h0g.2.7.17`, under the cutover follow-ons. The su
 
 Remove P2-specific production wiring and tests when their subject is replaced; retain historical evidence. No permanent P2 compatibility track without a real consumer. Assess synchronous inner WAMN crossings separately: changing the outer shell does not establish end-to-end async behavior or a latency improvement. P3, native dispatch and HTTP transport reuse are separate decisions. [S1, S12]
 
-### F. One bounded probe of native PostgreSQL mechanics
+### F. Retain one WAMN PostgreSQL implementation
 
-Scope: `wamn-0ct2.5` owns one bounded probe under the native-alignment epic. Test whether WAMN's existing `wamn:postgres` boundary can reuse upstream pools, prepared execution and named routing through **public APIs**. Keep statement-by-reference admission, SQLx corpus identity, claim/causation binding, database identity, operation authorization and transaction ownership in WAMN. Host-resolved verified SQL may reach the native backend; guests gain no arbitrary-SQL import. [S13, S17]
+Accepted trade: retain one WAMN PostgreSQL implementation because commands require exclusive held-session transactions.
+A held session keeps one database connection throughout a transaction.
+Owner decision, 2026-09-10, supersedes the bounded native probe under `wamn-0ct2.5`.
+F has no native substitution, parallel read backend, or new database machinery.
 
-**First checkpoint — transaction access:** tagged `PgId` exposes `query` and `execute`, but acquires a connection per call; `client()` is `pub(super)`. Its prepared-token path also reacquires and re-prepares. Those APIs do not themselves expose the held session WAMN needs for several parameterized statements in one command transaction. Check other supported public entrypoints before attempting a wrapper. `BEGIN`, queries and `COMMIT` through separate checkouts are not a transaction boundary. [S17]
+The existing `wamn:postgres` boundary retains statement-by-reference admission, SQLx corpus identity, claim/causation binding, database identity, operation authorization, and transaction ownership.
+Guests name admitted statement digests, and the host resolves the exact SQL and parameter contract.
+The transaction retains its statement set and one connection through execution, commit, or rollback.
+An armed cancellation guard destroys an unfinished connection instead of returning it to the pool.
+See [statement resolution](https://github.com/dkkloimwieder/wamn/blob/1d38b6da38a460753d89f877ec0a0c68345a7d60/crates/platform/runtime/src/plugins/wamn_postgres/statements.rs#L229), [transaction creation](https://github.com/dkkloimwieder/wamn/blob/1d38b6da38a460753d89f877ec0a0c68345a7d60/crates/platform/runtime/src/plugins/wamn_postgres/resources.rs#L439), [transaction execution](https://github.com/dkkloimwieder/wamn/blob/1d38b6da38a460753d89f877ec0a0c68345a7d60/crates/platform/runtime/src/plugins/wamn_postgres/resources.rs#L1033), and the [cancellation guard](https://github.com/dkkloimwieder/wamn/blob/1d38b6da38a460753d89f877ec0a0c68345a7d60/crates/platform/runtime/src/plugins/wamn_postgres/resources.rs#L43).
 
 Source review at upstream `68ebece9` found no public held-session entrypoint in the named or async PostgreSQL modules. Public query and execution calls acquire connections separately. The async path streams results without exposing a public session across command statements. F records this source-level stop condition. No live probe or adapter ran. [S17]
 
-**Acceptance, if the checkpoint is viable:** one real verified query and one multi-statement command use native mechanics; committed results and rollback after an intermediate failure hold on the same session. Preserve credential-generation/authority-class routing, exactness checks, RLS, typed database errors, cancellation cleanup and statement isolation. Demonstrate actual reuse and identify WAMN pool/prepared/routing code that would be removed.
-
-**Stop condition:** public APIs cannot expose the necessary session, checks or cleanup without private access, a fork, concatenated SQL/value substitution or weakened authority. Record that specific result and stop; do not build a parallel read-only backend solely to claim reuse. A narrower substitution proceeds only if it demonstrably removes existing machinery without duplicating pool ownership. No new database objects, roles or proxy infrastructure.
+Completion test: the retained implementation keeps its admitted statements, exclusive transaction session, credential ownership, and cancellation guarantees.
+F changes documentation only and does not claim a new runtime proof or native transaction success.
+The earlier probe acceptance and automatic resume condition are retired by the owner decision.
+The [historical review §6](native-alignment-external-review-2026-09-10.md#6-f-command-transactions-need-one-held-database-session) retains the original API finding.
 
 ## 4. Retained boundaries and demand-gated work
 
@@ -157,7 +165,7 @@ Source review at upstream `68ebece9` found no public held-session entrypoint in 
 | **Warm guest reuse and idle reclamation** | B2 requires B and the correctness proofs. Its policy and mechanism land together. The throughput comparison follows that landing. Other components stay ephemeral. |
 | **Aggregate memory Enforce** | Retain production Count and existing Enforce proofs. A later rollout needs measured demand, host-memory headroom and explicit approval—not another accounting implementation. |
 | **Unified plugin configuration and named bindings** | Evaluate first in C, using the native `plugins` policy and stable `wasi:config` merge. Derive from WAMN facts; keep one authority. No standalone configuration framework. |
-| **PostgreSQL capability** | Retain WAMN's policy boundary; run bounded probe F for native mechanics. Correct the outdated guest-socket comparison. No broad PostgreSQL rewrite or automatic adoption. |
+| **PostgreSQL capability** | F retains one WAMN implementation for exclusive command transactions. No native substitution, parallel read backend, or new database machinery. Existing statement and cancellation guarantees remain in force. |
 | **Blobstore** | Retain WAMN's credential, bucket/prefix and explicit-commit policy. Revisit shared native mechanics only against a specific demonstrated replacement. |
 | **503 adapter and Events RBAC** | Keep the landed adapter and the scoped overlay while their documented residual/permission gaps remain. Do not reopen the fork or add routing infrastructure merely for exact status parity. |
 
@@ -172,12 +180,12 @@ B2 explicitly proposes changing the existing fresh-store adoption rule; the othe
 | **First** | Complete the descriptor hook and update stale ledger comparisons. Continue existing operational proofs under their owners. |
 | **Next native-alignment work** | B first proves native fresh-store dispatch and its explicit deletion targets; C evaluates native NATS and named configuration as a separately reviewable substitution. Serialize shared runtime/host edits. |
 | **Existing follow-ons** | Continue HTTP pooling and P3 under their current owners. Coordinate overlapping files rather than create duplicate epics. |
-| **Bounded probe** | Place F with the data-access owner after shared-file availability is confirmed; start with the public transaction/session checkpoint. No dependency on F for B/C or application delivery. |
+| **Retained PostgreSQL implementation** | F records the approved retention decision. The native probe is retired. F introduces no dependency for B/C or application delivery. |
 | **After B and correctness proofs** | B2 lands warm reuse, resource/admission rules, execution-model and row 4 together. The throughput comparison follows. Stateful affinity remains separate. |
 
 The tracker owns status and dependencies under epic `wamn-0ct2`. A is `wamn-0ct2.1`, B is `.2`, B2 is `.3`, C is `.4`, and F is `.5`. D references `wamn-ctc8.13` and `wamn-ctc8.16`. The closed P3 probe is `wamn-0h0g.17.26`. The P3 implementation owner is `wamn-0h0g.2.7.17`. The owner removed its ordering dependency on blocked B on 2026-09-10.
 
-Use separate worktrees and serialize A, B and C landings. The shared driver is `crates/execution/host/src/router_driver.rs`. Coordinate its edits with `services/host`, `services/executor`, `crates/platform/runtime`, affected manifests and shared proofs. Identity and TUI owners keep their current files and stay outside each active substitution boundary. Each owner rebases after the boundary lands. F waits for shared-file availability.
+Use separate worktrees and serialize A, B and C landings. The shared driver is `crates/execution/host/src/router_driver.rs`. Coordinate its edits with `services/host`, `services/executor`, `crates/platform/runtime`, affected manifests and shared proofs. Identity and TUI owners keep their current files and stay outside each active substitution boundary. Each owner rebases after the boundary lands. F requires only its scoped documentation landing.
 
 Keep the existing proof gaps visible: `wamn-10yt.74` owns the missing automation producer; `.75` owns dependent active-work shutdown evidence; `.76` owns the native startup-refusal/recovery gap. Do not fabricate an admission path to satisfy those tests. A path-dependent replacement needs its relevant proof, but unrelated application work does not wait for every gap. [S2]
 

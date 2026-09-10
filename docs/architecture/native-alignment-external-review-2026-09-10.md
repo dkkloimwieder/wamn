@@ -240,6 +240,10 @@ The [C receipts][c-report] retain that distinction.
 
 ## 6. F: command transactions need one held database session
 
+Superseding owner decision, 2026-09-10: [active plan F](wamn_native_alignment_plan.md#f-retain-one-wamn-postgresql-implementation) retains one WAMN PostgreSQL implementation for exclusive command transactions.
+F has no current native probe, parallel read backend, or new database machinery.
+The original finding and proposed resume conditions below remain historical evidence, without a claim of native transaction success.
+
 A transaction commits its statements together or rolls them back.
 WAMN commands use one held PostgreSQL session across claim creation, parameterized statements, result handling, and finalization.
 The guest names admitted statement digests. The host selects SQL and retains credentials, operation authority, and transaction ownership.
