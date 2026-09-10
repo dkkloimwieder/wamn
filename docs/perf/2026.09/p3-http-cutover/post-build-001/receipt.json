@@ -1,0 +1,144 @@
+{
+  "source": "a2ea0ef32dde01408521041c0657e944fccf649d",
+  "artifacts": {
+    "http_route": {
+      "path": "target/wasm32-wasip2/release/http_route.wasm",
+      "sha256": "33e08d96ece969573bb2dd153b8617d1d0755700fef168372a0d8b88a90b7da8",
+      "wit_command": [
+        "wasm-tools",
+        "component",
+        "wit",
+        "/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/wasm32-wasip2/release/http_route.wasm"
+      ],
+      "validation_command": [
+        "wasm-tools",
+        "validate",
+        "--features",
+        "all",
+        "/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/wasm32-wasip2/release/http_route.wasm"
+      ],
+      "validation_exit_code": 0,
+      "interfaces": [
+        "import wamn:flow-http-routing/routing@0.1.0;",
+        "import wamn:router-delivery/delivery@0.1.0;",
+        "import wasi:random/random@0.2.12;",
+        "import wasi:http/types@0.3.0;",
+        "import wasi:io/poll@0.2.9;",
+        "import wasi:clocks/monotonic-clock@0.2.9;",
+        "import wasi:io/error@0.2.9;",
+        "import wasi:io/streams@0.2.9;",
+        "import wasi:cli/stdout@0.2.9;",
+        "import wasi:cli/stderr@0.2.9;",
+        "import wasi:cli/stdin@0.2.9;",
+        "import wasi:cli/environment@0.2.9;",
+        "import wasi:cli/exit@0.2.9;",
+        "import wasi:cli/terminal-input@0.2.9;",
+        "import wasi:cli/terminal-output@0.2.9;",
+        "import wasi:cli/terminal-stdin@0.2.9;",
+        "import wasi:cli/terminal-stdout@0.2.9;",
+        "import wasi:cli/terminal-stderr@0.2.9;",
+        "export wasi:http/handler@0.3.0;"
+      ]
+    },
+    "receiving": {
+      "path": "target/virtualized/std-empty-environment/receiving.wasm",
+      "sha256": "cd494c3413f9987a645ea9320f64f3d9dc5b269296feb6a3289edb84ef065d2d",
+      "wit_command": [
+        "wasm-tools",
+        "component",
+        "wit",
+        "/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/virtualized/std-empty-environment/receiving.wasm"
+      ],
+      "validation_command": [
+        "wasm-tools",
+        "validate",
+        "--features",
+        "all",
+        "/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/virtualized/std-empty-environment/receiving.wasm"
+      ],
+      "validation_exit_code": 0,
+      "interfaces": [
+        "import wamn:postgres/types@0.1.0;",
+        "import wamn:postgres/statements@0.1.0;",
+        "import wamn:node/types@0.1.0;",
+        "import wasi:io/poll@0.2.12;",
+        "import wasi:clocks/monotonic-clock@0.2.12;",
+        "import wasi:clocks/wall-clock@0.2.12;",
+        "export wamn-receiving:location/%list@1.0.0;",
+        "export wamn-receiving:purchase-order/get@1.0.0;",
+        "export wamn-receiving:purchase-order/query@1.0.0;",
+        "export wamn-receiving:purchase-order/update@1.0.0;",
+        "export wamn-receiving:receipt/get@1.0.0;",
+        "export wamn-receiving:receipt/query@1.0.0;",
+        "export wamn-receiving:receiving/load-receipt-screen@1.0.0;",
+        "export wamn-receiving:receiving/record-receipt@1.0.0;"
+      ]
+    },
+    "client_acme_receiving": {
+      "path": "target/virtualized/std-empty-environment/client_acme_receiving.wasm",
+      "sha256": "075c21ccefc571f504022a47800b527405180f8976f8ef1830ee92136c13add4",
+      "wit_command": [
+        "wasm-tools",
+        "component",
+        "wit",
+        "/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/virtualized/std-empty-environment/client_acme_receiving.wasm"
+      ],
+      "validation_command": [
+        "wasm-tools",
+        "validate",
+        "--features",
+        "all",
+        "/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/virtualized/std-empty-environment/client_acme_receiving.wasm"
+      ],
+      "validation_exit_code": 0,
+      "interfaces": [
+        "import wamn:postgres/types@0.1.0;",
+        "import wamn:postgres/statements@0.1.0;",
+        "import wamn:node/types@0.1.0;",
+        "import wamn-receiving:receiving/record-receipt@1.0.0;",
+        "import wasi:io/poll@0.2.12;",
+        "import wasi:clocks/monotonic-clock@0.2.12;",
+        "import wasi:clocks/wall-clock@0.2.12;",
+        "export client-acme-receiving:purchase-order/get@3.0.0;",
+        "export client-acme-receiving:purchase-order/update@3.0.0;",
+        "export client-acme-receiving:quality/load-purchase-order-detail@3.0.0;",
+        "export client-acme-receiving:quality/approve-inspection@3.0.0;",
+        "export client-acme-receiving:quality/create-inspection@3.0.0;",
+        "export client-acme-receiving:receiving/record-receipt@3.0.0;"
+      ]
+    },
+    "wms": {
+      "path": "target/virtualized/std-empty-environment/wms.wasm",
+      "sha256": "a8cb208f652a078689da1d44b506b6601f8dacca2bc63d47b263ff3730371610",
+      "wit_command": [
+        "wasm-tools",
+        "component",
+        "wit",
+        "/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/virtualized/std-empty-environment/wms.wasm"
+      ],
+      "validation_command": [
+        "wasm-tools",
+        "validate",
+        "--features",
+        "all",
+        "/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/virtualized/std-empty-environment/wms.wasm"
+      ],
+      "validation_exit_code": 0,
+      "interfaces": [
+        "import wamn:postgres/types@0.1.0;",
+        "import wamn:postgres/statements@0.1.0;",
+        "import wamn:node/types@0.1.0;",
+        "import wasi:io/poll@0.2.12;",
+        "import wasi:clocks/monotonic-clock@0.2.12;",
+        "import wasi:clocks/wall-clock@0.2.12;",
+        "export wamn-wms:inventory/adjust@1.0.0;",
+        "export wamn-wms:inventory/aggregate@1.0.0;",
+        "export wamn-wms:inventory/merge@1.0.0;",
+        "export wamn-wms:inventory/move@1.0.0;",
+        "export wamn-wms:inventory/split@1.0.0;",
+        "export wamn-wms:pallet/get@1.0.0;",
+        "export wamn-wms:pallet/query@1.0.0;"
+      ]
+    }
+  }
+}

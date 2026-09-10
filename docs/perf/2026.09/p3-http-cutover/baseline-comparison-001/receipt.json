@@ -1,0 +1,50 @@
+{
+  "baseline": {
+    "path": "docs/perf/2026.09/receiving-correctness/restored-001/journey/receiving-correctness.jsonl",
+    "sha256": "1d660bf498bba1dcdcb1946fcc12fb8a92cd6a239166d6f5a7d06bb57d1a2cbd"
+  },
+  "p3": {
+    "path": "docs/perf/2026.09/p3-http-cutover/live-001/receiving-correctness.jsonl",
+    "sha256": "c01301df251a992fe199c6954c76308a6112e750fc55a30085803a76db22ea6b"
+  },
+  "identity_fields_unchanged": [
+    "case",
+    "corpus_sha256",
+    "generated_cases",
+    "generation_provenance",
+    "invariants",
+    "max_shrink_iterations",
+    "postgres_server_version_num",
+    "proof_compiler_version",
+    "schema_state_ids",
+    "seed"
+  ],
+  "changed_identity_fields": {
+    "component_digests": {
+      "baseline": {
+        "client_acme_receiving": "sha256:710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e",
+        "receiving": "sha256:5326f1a794dfe01736dbf08a41a73593a908f4551c76e116c2e9a79f3b6795b3"
+      },
+      "p3": {
+        "client_acme_receiving": "sha256:075c21ccefc571f504022a47800b527405180f8976f8ef1830ee92136c13add4",
+        "receiving": "sha256:cd494c3413f9987a645ea9320f64f3d9dc5b269296feb6a3289edb84ef065d2d"
+      }
+    },
+    "source_commit": {
+      "baseline": "0673f3f54f2db1250c6b023a11d7dc5877a944da",
+      "p3": "a2ea0ef32dde01408521041c0657e944fccf649d"
+    }
+  },
+  "histories_equal": true,
+  "history_count": 19,
+  "completed_steps": 129,
+  "summary_equal": true,
+  "summary": {
+    "boundary_cases": 7,
+    "case": "summary",
+    "explicit_histories": 3,
+    "generated_cases": 16,
+    "result": "pass"
+  },
+  "comparison_scope": "Correctness only. No performance measurement or improvement claim."
+}

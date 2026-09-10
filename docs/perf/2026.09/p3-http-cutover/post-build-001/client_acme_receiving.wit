@@ -1,0 +1,219 @@
+package root:component;
+
+world root {
+  import wamn:postgres/types@0.1.0;
+  import wamn:postgres/statements@0.1.0;
+  import wamn:node/types@0.1.0;
+  import wamn-receiving:receiving/record-receipt@1.0.0;
+  import wasi:io/poll@0.2.12;
+  import wasi:clocks/monotonic-clock@0.2.12;
+  import wasi:clocks/wall-clock@0.2.12;
+
+  export client-acme-receiving:purchase-order/get@3.0.0;
+  export client-acme-receiving:purchase-order/update@3.0.0;
+  export client-acme-receiving:quality/load-purchase-order-detail@3.0.0;
+  export client-acme-receiving:quality/approve-inspection@3.0.0;
+  export client-acme-receiving:quality/create-inspection@3.0.0;
+  export client-acme-receiving:receiving/record-receipt@3.0.0;
+}
+package wamn:postgres@0.1.0 {
+  interface types {
+    variant sql-value {
+      null,
+      boolean(bool),
+      int32(s32),
+      int64(s64),
+      %float64(f64),
+      text(string),
+      bytes(list<u8>),
+      numeric(string),
+      timestamptz(string),
+      json(string),
+      uuid(string),
+    }
+
+    record column {
+      name: string,
+      type-name: string,
+    }
+
+    record row-set {
+      columns: list<column>,
+      rows: list<list<sql-value>>,
+    }
+
+    variant pg-error {
+      serialization-failure,
+      connection-unavailable,
+      statement-timeout,
+      row-limit-exceeded(u64),
+      unique-violation(string),
+      foreign-key-violation(string),
+      check-violation(string),
+      exclusion-violation(string),
+      permission-denied,
+      query-error(tuple<string, string>),
+    }
+  }
+  interface statements {
+    use types.{sql-value, row-set, pg-error};
+
+    resource transaction {
+      run: func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+      commit: func() -> result<_, statement-error>;
+    }
+
+    enum contract-part {
+      binds,
+      columns,
+    }
+
+    record value-shape {
+      count: u32,
+      types: list<string>,
+    }
+
+    record contract-mismatch {
+      statement-digest: string,
+      part: contract-part,
+      expected: value-shape,
+      observed: value-shape,
+    }
+
+    variant statement-error {
+      unknown-statement(string),
+      statement-contract-mismatch(contract-mismatch),
+      postgres(pg-error),
+    }
+
+    run: func(statement-digest: string, binds: list<sql-value>) -> result<row-set, statement-error>;
+
+    begin: func() -> result<transaction, statement-error>;
+  }
+}
+
+
+package wamn:node@0.1.0 {
+  interface types {
+    type json = string;
+
+    record node-context {
+      wiring-id: string,
+      wiring-version: u32,
+      node-id: string,
+      delivery-id: string,
+      input-port: option<string>,
+      occurrence: u32,
+      traceparent: option<string>,
+      tracestate: option<string>,
+      deadline-ms: option<u64>,
+      config: json,
+    }
+
+    record emission {
+      payload: json,
+      port: option<string>,
+    }
+
+    record error-detail {
+      message: string,
+      code: option<string>,
+    }
+
+    record rate-limit-detail {
+      detail: error-detail,
+      retry-after-ms: option<u64>,
+    }
+
+    variant node-error {
+      retryable(error-detail),
+      rate-limited(rate-limit-detail),
+      terminal(error-detail),
+      invalid-input(error-detail),
+      cancelled,
+    }
+  }
+}
+
+
+package wamn-receiving:receiving@1.0.0 {
+  interface record-receipt {
+    use wamn:node/types@0.1.0.{node-context, json, emission, node-error};
+
+    run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+  }
+}
+
+
+package wasi:io@0.2.12 {
+  interface poll {
+    resource pollable;
+  }
+}
+
+
+package wasi:clocks@0.2.12 {
+  interface monotonic-clock {
+    use wasi:io/poll@0.2.12.{pollable};
+
+    type instant = u64;
+
+    type duration = u64;
+
+    now: func() -> instant;
+
+    resolution: func() -> duration;
+
+    subscribe-instant: func(when: instant) -> pollable;
+
+    subscribe-duration: func(when: duration) -> pollable;
+  }
+  interface wall-clock {
+    record datetime {
+      seconds: u64,
+      nanoseconds: u32,
+    }
+  }
+}
+
+
+package client-acme-receiving:purchase-order@3.0.0 {
+  interface get {
+    use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+    run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+  }
+  interface update {
+    use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+    run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+  }
+}
+
+
+package client-acme-receiving:quality@3.0.0 {
+  interface load-purchase-order-detail {
+    use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+    run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+  }
+  interface approve-inspection {
+    use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+    run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+  }
+  interface create-inspection {
+    use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+    run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+  }
+}
+
+
+package client-acme-receiving:receiving@3.0.0 {
+  interface record-receipt {
+    use wamn:node/types@0.1.0.{json, node-context, emission, node-error};
+
+    run: func(ctx: node-context, input: json) -> result<emission, node-error>;
+  }
+}

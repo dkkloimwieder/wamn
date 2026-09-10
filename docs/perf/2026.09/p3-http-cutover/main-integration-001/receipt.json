@@ -1,0 +1,18 @@
+{
+  "before": "4ad4ca84962d9b90c4dd5564c7d279c23be59bb0",
+  "after": "481d281ba8138c639345daa56b0bd2da0ff1952d",
+  "command": [
+    "git",
+    "merge",
+    "--ff-only",
+    "481d281ba8138c639345daa56b0bd2da0ff1952d"
+  ],
+  "exit_code": 0,
+  "preserved_dirty_files": 146,
+  "shared_files_changed": [],
+  "index_preserved": true,
+  "excluded_passive_exports": [
+    ".beads/issues.jsonl",
+    ".beads/interactions.jsonl"
+  ]
+}

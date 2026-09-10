@@ -53,7 +53,8 @@ The shell authenticates before reading its body and applies the selected route's
 P3 HTTP components retain fresh stores, and P3 service workloads remain refused.
 The tenant capability registry and virtualization pin remain unchanged.
 The owner permits P3 to proceed ahead of blocked B after B released the shared files.
-The report records the exact proof status and remaining acceptance work.
+The same published artifact passes 13 authenticated routes, eight P3 protocol cases, and the deployed Receiving correctness journey.
+The report records exact identities, baseline failures, and remaining deviations.
 
 `tools/wasmcloud-release-check` requires clean released source and retains the upstream runtime suite and isolated Git template fixtures.
 

@@ -246,6 +246,8 @@ A failed body after valid JSON must return `body-read-failed` and must not deliv
 The cancellation case requires charged guest memory before cancellation and zero retained memory afterward.
 The journey uses its private scratch cluster and must complete resource cleanup.
 This correctness mode runs no throughput benchmark.
+The [accepted run](../perf/2026.09/p3-http-cutover/live-001/receiving-correctness-journey.receipt) passes from clean source `a2ea0ef32dde01408521041c0657e944fccf649d`.
+Its report also records the integrated workspace sweep and classified baseline failures.
 
 ### Rebuilt host process lifecycle
 

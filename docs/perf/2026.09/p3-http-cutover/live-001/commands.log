@@ -1,0 +1,54 @@
+2026-09-10T14:58:14Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/tools/build-components m1 
+2026-09-10T14:59:49Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor 
+2026-09-10T15:01:20Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target RUSTC_WRAPPER= cargo test --locked --offline -p wamn-proof-integration --test receiving_command_histories_live --no-run 
+2026-09-10T15:01:43Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/Dockerfile --target host --tag wamn-host:receiving-a2ea0ef32dde-1685789-release --label wamn.dev/source-head=a2ea0ef32dde01408521041c0657e944fccf649d --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910 
+2026-09-10T15:07:43Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/Dockerfile --target gates --tag wamn-gates:receiving-a2ea0ef32dde-1685789-release --label wamn.dev/source-head=a2ea0ef32dde01408521041c0657e944fccf649d --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910 
+2026-09-10T15:26:27Z kind create cluster --name wamn-receiving-correctness --config /tmp/tmp.qdQAQoGs99/kind-config.yaml --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig 
+2026-09-10T15:26:56Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-10T15:27:09Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness create namespace wamn-receiving-correctness 
+2026-09-10T15:27:10Z kind load docker-image wamn-host:receiving-a2ea0ef32dde-1685789-release --name wamn-receiving-correctness 
+2026-09-10T15:27:19Z kind load docker-image wamn-gates:receiving-a2ea0ef32dde-1685789-release --name wamn-receiving-correctness 
+2026-09-10T15:27:39Z htpasswd \<credential-bearing\ arguments\ redacted\> 
+2026-09-10T15:27:41Z postgres \<credential-bearing\ arguments\ redacted\> 
+2026-09-10T15:27:42Z docker run --detach --name wamn-receiving-registry-a2ea0ef32dde-1685789 --network kind --env REGISTRY_AUTH=htpasswd --env REGISTRY_AUTH_HTPASSWD_REALM=WAMN\ Receiving\ cluster\ journey --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd --volume /tmp/tmp.qdQAQoGs99/htpasswd:/auth/htpasswd:ro registry:2 
+2026-09-10T15:27:42Z docker run --detach --name wamn-receiving-nats-a2ea0ef32dde-1685789 --network kind nats:2.10-alpine --jetstream --store_dir /data --http_port 8222 
+2026-09-10T15:27:46Z cargo test production_two_package_release_serves_all_thirteen_pat_routes \<journey\ document\ with\ disposable\ PostgreSQL\ and\ OCI\ inputs\ redacted\> 
+2026-09-10T15:28:24Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/route-caller-pat-kube.json 
+2026-09-10T15:28:27Z env DOCKER_CONFIG=\<private-registry-directory\> /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/.tools/wash/2.9.0/wash -o json oci push --insecure 172.28.0.9:5000/wamn/flow-http:receiving-a2ea0ef32dde-1685789-release /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/wasm32-wasip2/release/http_route.wasm 
+2026-09-10T15:28:27Z env DOCKER_CONFIG=\<private-registry-directory\> /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/.tools/wash/2.9.0/wash -o json oci push --insecure 172.28.0.9:5000/wamn/materializer:receiving-a2ea0ef32dde-1685789-release /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target/wasm32-wasip2/release/materializer.wasm 
+2026-09-10T15:28:28Z print-release-env \<credential-bearing\ arguments\ redacted\> 
+2026-09-10T15:28:28Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/host-secrets/guest-sql.json 
+2026-09-10T15:28:28Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/host-secrets/executor-platform.json 
+2026-09-10T15:28:28Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/host-secrets/identity-reader.json 
+2026-09-10T15:28:28Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/host-secrets/http-admitter.json 
+2026-09-10T15:28:28Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/host-secrets/event-materializer.json 
+2026-09-10T15:28:28Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n wamn-receiving-correctness create secret generic wamn-registry-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=\<redacted\> --dry-run=client -o yaml 
+2026-09-10T15:28:28Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/registry-pull.yaml 
+2026-09-10T15:28:28Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/deploy/infra/cert-manager.yaml 
+2026-09-10T15:28:30Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n cert-manager wait --for=condition=Available deployment --all --timeout=240s 
+2026-09-10T15:28:42Z helm upgrade --install --create-namespace --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --kube-context kind-wamn-receiving-correctness --namespace wamn-system wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 -f /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/deploy/infra/values-wamn.yaml -f /tmp/tmp.qdQAQoGs99/operator-values.yaml --wait --timeout 5m 
+2026-09-10T15:29:19Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n wamn-system get deployment runtime-operator -o json 
+2026-09-10T15:29:19Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/runtime-operator-events-rbac.yaml 
+2026-09-10T15:29:20Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n wamn-receiving-correctness get role wamn-runtime-operator-events -o json 
+2026-09-10T15:29:20Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n wamn-receiving-correctness get rolebinding wamn-runtime-operator-events -o json 
+2026-09-10T15:29:20Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/deploy/infra/tempo.yaml 
+2026-09-10T15:29:20Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/deploy/infra/otel-collector.yaml 
+2026-09-10T15:29:20Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n wamn-system wait --for=condition=Available deployment/tempo deployment/otel-collector --timeout=120s 
+2026-09-10T15:29:27Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/wasmcloud-ca-copy.json 
+2026-09-10T15:29:27Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/deploy/infra/wasmcloud-ca-issuer.yaml 
+2026-09-10T15:29:27Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s 
+2026-09-10T15:29:27Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/host-environment-certs.yaml 
+2026-09-10T15:29:27Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n wamn-receiving-correctness wait --for=condition=Ready certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s 
+2026-09-10T15:29:28Z helm upgrade --install --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --kube-context kind-wamn-receiving-correctness --namespace wamn-receiving-correctness wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 -f /tmp/tmp.qdQAQoGs99/host-base.yaml -f /tmp/tmp.qdQAQoGs99/host-overlay.yaml --wait --timeout 5m 
+2026-09-10T15:29:35Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n wamn-receiving-correctness rollout status deployment/hostgroup-default --timeout=240s 
+2026-09-10T15:29:36Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/flow-http.yaml 
+2026-09-10T15:29:36Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness -n wamn-receiving-correctness wait --for=condition=Ready workloaddeployment/flow-http --timeout=240s 
+2026-09-10T15:29:38Z kubectl --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig --context kind-wamn-receiving-correctness apply -f /tmp/tmp.qdQAQoGs99/receiving-correctness-nodeport.json 
+2026-09-10T15:29:40Z timeout --signal=TERM --kill-after=10s 600s env WAMN_RECEIVING_CORRECTNESS_DOCUMENT=\<private-fixture-path\> CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/target RUSTC_WRAPPER= cargo test --locked --offline -p wamn-proof-integration --test receiving_command_histories_live production_receiving_command_histories -- --exact --include-ignored --nocapture 
+2026-09-10T15:29:43Z kind delete cluster --name wamn-receiving-correctness --kubeconfig /tmp/tmp.qdQAQoGs99/kubeconfig 
+2026-09-10T15:29:45Z docker rm --force --volumes wamn-receiving-pg18-a2ea0ef32dde-1685789 
+2026-09-10T15:29:45Z docker rm --force --volumes wamn-receiving-registry-a2ea0ef32dde-1685789 
+2026-09-10T15:29:45Z docker rm --force --volumes wamn-receiving-nats-a2ea0ef32dde-1685789 
+2026-09-10T15:29:45Z docker image rm wamn-gates:receiving-a2ea0ef32dde-1685789-release 
+2026-09-10T15:29:45Z docker image rm wamn-host:receiving-a2ea0ef32dde-1685789-release 
+2026-09-10T15:29:45Z rm -rf -- /tmp/tmp.qdQAQoGs99 
