@@ -351,7 +351,6 @@ fn natural_status(status: ExitStatus, forced: bool) -> Option<ExitStatus> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::os::unix::fs::PermissionsExt as _;
     use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -375,16 +374,22 @@ mod tests {
 
         fn script(&self, name: &str, body: &str) -> PathBuf {
             let path = self.root.join(name);
-            fs::write(
-                &path,
-                format!(
+            // A concurrent fork can inherit a writable script descriptor before
+            // CLOEXEC closes it, so keep all executable writes in a child process.
+            let status = std::process::Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "umask 077; printf '%s' \"$2\" > \"$1\" && chmod 700 \"$1\"",
+                    "operator-fixture",
+                ])
+                .arg(&path)
+                .arg(format!(
                     "#!/bin/sh\ncd '{}' || exit 1\n{body}\n",
                     self.root.display()
-                ),
-            )
-            .expect("write the operator fixture");
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
-                .expect("make the fixture executable");
+                ))
+                .status()
+                .expect("start the isolated fixture writer");
+            assert!(status.success(), "write the executable operator fixture");
             path
         }
     }

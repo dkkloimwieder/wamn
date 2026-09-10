@@ -1,0 +1,19 @@
+{
+  "source_sha256": "e1821ad264675cbbb053af22c42b02310cc65337ac1e4cc59004fb5970d93287",
+  "fixture_sha256": "88c0b36c4df8f606b908a6ade17a1341f1b4b9a970c6c905c4b929550da2fd50",
+  "compile_command": [
+    "rustc",
+    "--edition=2024",
+    "/home/kaalin/.cache/wamn-lanes/tui-operator-fixture-20260910/target/operator-fixture-reproduction/main.rs",
+    "-o",
+    "/home/kaalin/.cache/wamn-lanes/tui-operator-fixture-20260910/target/operator-fixture-reproduction/reproduce"
+  ],
+  "compile_exit_code": 0,
+  "command": [
+    "/home/kaalin/.cache/wamn-lanes/tui-operator-fixture-20260910/target/operator-fixture-reproduction/reproduce",
+    "/tmp/wamn-operator-race-qa1newgo"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 10.807,
+  "cleanup_complete": true
+}

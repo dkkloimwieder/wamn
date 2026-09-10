@@ -1,0 +1,16 @@
+{
+  "command": [
+    "strace",
+    "-f",
+    "-yy",
+    "-e",
+    "trace=openat,close,clone,clone3,execve",
+    "-o",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/operator-fixture/baseline-trace-001/syscalls.log",
+    "/home/kaalin/.cache/wamn-lanes/tui-operator-fixture-20260910/target/operator-fixture-reproduction/reproduce",
+    "/tmp/wamn-operator-trace-pnoguurh"
+  ],
+  "exit_code": 26,
+  "elapsed_seconds": 0.032,
+  "cleanup_complete": true
+}
