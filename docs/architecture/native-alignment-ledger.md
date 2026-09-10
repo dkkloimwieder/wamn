@@ -2,6 +2,7 @@
 
 WAMN uses native capabilities first.
 Each WAMN deviation names its benefit and its condition for removal.
+Planned substitutions: see [plan §3](wamn_native_alignment_plan.md#3-recommended-changes).
 The active runtime source is direct upstream `v2.9.0` at
 `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`, with zero carried patches.
 The cutover owner is `wamn-0h0g.2.7`.
