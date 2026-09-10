@@ -50,6 +50,10 @@ spec:
               value: /var/run/wamn-identity/tls/tls.crt
             - name: WAMN_IDENTITY_TLS_KEY
               value: /var/run/wamn-identity/tls/tls.key
+            {{- if .Values.operatorCaSecret }}
+            - name: WAMN_IDENTITY_OPERATOR_CA
+              value: /var/run/wamn-identity/operator/ca.crt
+            {{- end }}
           ports:
             - name: https
               containerPort: 8443
@@ -62,6 +66,11 @@ spec:
             - name: serving-tls
               mountPath: /var/run/wamn-identity/tls
               readOnly: true
+            {{- if .Values.operatorCaSecret }}
+            - name: operator-ca
+              mountPath: /var/run/wamn-identity/operator
+              readOnly: true
+            {{- end }}
             {{- range $index, $secret := .Values.sessionTargetSecrets }}
             - name: {{ printf "session-target-%d" $index }}
               mountPath: {{ printf "/var/run/wamn-identity/targets/%d" $index | quote }}
@@ -80,6 +89,16 @@ spec:
                 path: tls.crt
               - key: tls.key
                 path: tls.key
+        {{- if .Values.operatorCaSecret }}
+        - name: operator-ca
+          secret:
+            secretName: {{ .Values.operatorCaSecret | quote }}
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
         {{- range $index, $secret := .Values.sessionTargetSecrets }}
         - name: {{ printf "session-target-%d" $index }}
           secret:

@@ -12,5 +12,8 @@
 issuer: ""
 databaseSecret: wamn-identity-db
 tlsSecret: ""
+# Dedicated operator CA Secret with ca.crt. Empty refuses POST /pats.
+# Restart the service after a CA change to close existing TLS connections.
+operatorCaSecret: ""
 # Add prepared SessionRoleReader Secrets to enable their exact session audiences.
 sessionTargetSecrets: []

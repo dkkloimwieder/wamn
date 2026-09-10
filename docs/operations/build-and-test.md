@@ -1757,6 +1757,14 @@ Without that file, the service refuses all PAT issuance.
 The service authenticates the operator certificate when it opens the TLS connection.
 After you change the trusted operator CA, restart the service to close existing connections and load the new roots.
 Anonymous clients retain the existing JWKS, health, and configured `/session` behavior.
+
+For Helm, install the dedicated operator CA as an existing Secret with a `ca.crt` key in the release namespace.
+Set `operatorCaSecret` to that Secret name.
+The chart mounts only `ca.crt`, read-only with mode `0400`, at `/var/run/wamn-identity/operator/ca.crt`.
+It sets `WAMN_IDENTITY_OPERATOR_CA` to that file.
+The default empty value keeps PAT issuance disabled without changing the public routes.
+The chart creates no CA or operator credential.
+
 The provisioning CLI uses `--pat-issuer`, `--pat-client-cert`, `--pat-client-key`, and optional `--pat-server-ca`.
 Disposable first-time setup starts the same native identity binary with temporary operator credentials.
 The separate identity process performs every PAT insert through its scoped database login.
@@ -1773,6 +1781,7 @@ cargo test --locked --offline -p wamn-identity --test pat_issuance \
   operator_ca_configuration_refuses_missing_or_malformed_roots
 cargo test --locked --offline -p wamn-ctl --lib pat_client
 cargo test --locked --offline -p wamn-control-provision --lib identity_issuer
+cargo test --locked --offline -p wamn-proof-system --test deploy_platform_inventory
 ```
 
 Use a separate, fresh PostgreSQL 18 server for each live command below.

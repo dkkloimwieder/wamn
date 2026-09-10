@@ -9,6 +9,10 @@ issuer: ""
 databaseSecret: ""
 tlsSecret: ""
 
+# Dedicated operator CA Secret with ca.crt. Empty refuses POST /pats.
+# Restart the service after a CA change to close existing TLS connections.
+operatorCaSecret: ""
+
 # Each Secret contains one provisioner-generated target.json document.
 # Empty keeps POST /session disabled. Restart after credential rotation.
 sessionTargetSecrets: []

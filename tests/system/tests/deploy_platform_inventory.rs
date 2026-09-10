@@ -408,7 +408,7 @@ fn platform_files(root: &Path) -> BTreeSet<String> {
 
 fn read(root: &Path, file: &str) -> String {
     if file == "identity" {
-        let output = render_identity(root, Some(IDENTITY_ISSUER), Some(IDENTITY_TLS_SECRET));
+        let output = render_identity(root, Some(IDENTITY_ISSUER), Some(IDENTITY_TLS_SECRET), None);
         assert!(
             output.status.success(),
             "render identity chart: {}",
@@ -420,7 +420,12 @@ fn read(root: &Path, file: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
 }
 
-fn render_identity(root: &Path, issuer: Option<&str>, tls_secret: Option<&str>) -> Output {
+fn render_identity(
+    root: &Path,
+    issuer: Option<&str>,
+    tls_secret: Option<&str>,
+    operator_ca_secret: Option<&str>,
+) -> Output {
     let mut command = Command::new("helm");
     command.current_dir(root).args([
         "template",
@@ -436,6 +441,12 @@ fn render_identity(root: &Path, issuer: Option<&str>, tls_secret: Option<&str>) 
     }
     if let Some(tls_secret) = tls_secret {
         command.args(["--set-string", &format!("tlsSecret={tls_secret}")]);
+    }
+    if let Some(operator_ca_secret) = operator_ca_secret {
+        command.args([
+            "--set-string",
+            &format!("operatorCaSecret={operator_ca_secret}"),
+        ]);
     }
     command
         .output()
@@ -477,7 +488,7 @@ fn the_identity_chart_requires_operator_inputs_and_renders_its_https_boundary() 
             "issuer must use HTTPS",
         ),
     ] {
-        let output = render_identity(&root, issuer, tls);
+        let output = render_identity(&root, issuer, tls, None);
         assert!(
             !output.status.success(),
             "missing or insecure identity input rendered"
@@ -555,6 +566,108 @@ fn the_identity_chart_requires_operator_inputs_and_renders_its_https_boundary() 
         .into_iter()
         .collect()
     );
+}
+
+#[test]
+fn identity_operator_ca_renders_only_when_explicitly_enabled() {
+    let root = repository_root();
+    for operator_ca in [None, Some("provisioning-operator-ca")] {
+        let output = render_identity(
+            &root,
+            Some(IDENTITY_ISSUER),
+            Some(IDENTITY_TLS_SECRET),
+            operator_ca,
+        );
+        assert!(
+            output.status.success(),
+            "render operator CA configuration: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let source = String::from_utf8(output.stdout).expect("UTF-8 rendered identity chart");
+        let rendered = documents(&source);
+        let deployment = rendered
+            .iter()
+            .find(|document| {
+                object(document, "identity").is_some_and(|object| object.kind == "Deployment")
+            })
+            .expect("rendered identity Deployment");
+        let containers = manifest_list(deployment, "containers");
+        assert_eq!(containers.len(), 1, "one identity process");
+        let environment = manifest_list(&containers[0], "env");
+        let mounts = manifest_list(&containers[0], "volumeMounts");
+        let volumes = manifest_list(deployment, "volumes");
+        let enabled = usize::from(operator_ca.is_some());
+        assert_eq!(environment.len(), 5 + enabled);
+        assert_eq!(mounts.len(), 1 + enabled);
+        assert_eq!(volumes.len(), 1 + enabled);
+
+        let operator_environment: Vec<_> = environment
+            .iter()
+            .filter(|entry| list_field(entry, "name") == Some("WAMN_IDENTITY_OPERATOR_CA"))
+            .collect();
+        let operator_mounts: Vec<_> = mounts
+            .iter()
+            .filter(|entry| list_field(entry, "name") == Some("operator-ca"))
+            .collect();
+        let operator_volumes: Vec<_> = volumes
+            .iter()
+            .filter(|entry| list_field(entry, "name") == Some("operator-ca"))
+            .collect();
+        assert_eq!(operator_environment.len(), enabled);
+        assert_eq!(operator_mounts.len(), enabled);
+        assert_eq!(operator_volumes.len(), enabled);
+        if let Some(secret_name) = operator_ca {
+            assert_eq!(
+                list_field(operator_environment[0], "value"),
+                Some("/var/run/wamn-identity/operator/ca.crt")
+            );
+            assert_eq!(
+                list_field(operator_mounts[0], "mountPath"),
+                Some("/var/run/wamn-identity/operator")
+            );
+            assert_eq!(list_field(operator_mounts[0], "readOnly"), Some("true"));
+            let volume = operator_volumes[0];
+            assert_eq!(list_field(volume, "secretName"), Some(secret_name));
+            assert_eq!(list_field(volume, "optional"), Some("false"));
+            assert_eq!(list_field(volume, "defaultMode"), Some("0400"));
+            let items = manifest_list(volume, "items");
+            assert_eq!(items.len(), 1, "mount only the operator CA certificate");
+            assert_eq!(list_field(&items[0], "key"), Some("ca.crt"));
+            assert_eq!(list_field(&items[0], "path"), Some("ca.crt"));
+        }
+    }
+}
+
+// Scope each entry to its own rendered list, so another volume cannot satisfy it.
+fn manifest_list<'a>(document: &[&'a str], field: &str) -> Vec<Vec<&'a str>> {
+    let start = document
+        .iter()
+        .position(|line| line.trim() == format!("{field}:"))
+        .unwrap_or_else(|| panic!("rendered manifest has no {field} list"));
+    let list_indent = indent(document[start]);
+    let mut entries: Vec<Vec<&str>> = Vec::new();
+    for line in &document[start + 1..] {
+        if indent(line) <= list_indent {
+            break;
+        }
+        if indent(line) == list_indent + 2 && line.trim().starts_with("- ") {
+            entries.push(Vec::new());
+        }
+        entries
+            .last_mut()
+            .expect("rendered list starts with an entry")
+            .push(line);
+    }
+    entries
+}
+
+fn list_field<'a>(entry: &[&'a str], key: &str) -> Option<&'a str> {
+    let values: Vec<_> = entry
+        .iter()
+        .filter_map(|line| manifest_field(line, key))
+        .collect();
+    assert!(values.len() <= 1, "rendered entry repeats {key}");
+    values.first().copied()
 }
 
 // Read fields from block or flow-style manifest lines, never from comments.
