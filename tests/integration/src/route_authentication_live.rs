@@ -2,6 +2,7 @@
 //! fresh disposable PostgreSQL 18 server.
 
 mod fresh_only;
+mod session_client;
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs::Permissions;
@@ -4434,20 +4435,31 @@ async fn production_receiving_session_host_fixture() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires the completed Receiving session fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
 async fn production_nested_session_call_preserves_original_caller() -> anyhow::Result<()> {
-    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(false))
-        .await
-        .context("nested session proof exceeded 180 seconds")?
+    tokio::time::timeout(
+        Duration::from_secs(180),
+        nested_session_caller(false, false),
+    )
+    .await
+    .context("nested session proof exceeded 180 seconds")?
 }
 
 #[tokio::test]
 #[ignore = "requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
 async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> anyhow::Result<()> {
-    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true))
+    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, false))
         .await
         .context("nested fresh-only proof exceeded 180 seconds")?
 }
 
-async fn nested_session_caller(fresh_only: bool) -> anyhow::Result<()> {
+#[tokio::test]
+#[ignore = "requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
+async fn production_session_client_login_and_fresh_selection() -> anyhow::Result<()> {
+    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, true))
+        .await
+        .context("session client proof exceeded 180 seconds")?
+}
+
+async fn nested_session_caller(fresh_only: bool, client_proof: bool) -> anyhow::Result<()> {
     const ROLE: &str = "session-nested-caller";
     let overlay_attachment = JOURNEY_ATTACHMENTS
         .iter()
@@ -4460,6 +4472,14 @@ async fn nested_session_caller(fresh_only: bool) -> anyhow::Result<()> {
     let mut selected_attachments = vec![overlay_attachment];
     if fresh_only {
         selected_attachments.push(direct_attachment);
+    }
+    if client_proof {
+        selected_attachments.push(
+            JOURNEY_ATTACHMENTS
+                .iter()
+                .find(|attachment| attachment.operation == OPERATION)
+                .context("the journey omitted the ordinary client GET route")?,
+        );
     }
     let mut inputs = JourneyDocument::required()?;
     let issuer = required_journey("WAMN_IDENTITY_ISSUER")?;
@@ -4648,7 +4668,11 @@ async fn nested_session_caller(fresh_only: bool) -> anyhow::Result<()> {
             &[&TENANT, &ROLE],
         )
         .await?;
-    for operation in [OVERLAY_RECORD_RECEIPT, BASE_RECORD_RECEIPT] {
+    let mut permitted_operations = vec![OVERLAY_RECORD_RECEIPT, BASE_RECORD_RECEIPT];
+    if client_proof {
+        permitted_operations.push(OPERATION);
+    }
+    for operation in permitted_operations {
         project.execute(
             "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
             &[&TENANT, &ROLE, &operation],
@@ -4672,37 +4696,51 @@ async fn nested_session_caller(fresh_only: bool) -> anyhow::Result<()> {
         Duration::from_secs(600),
     )
     .await?;
-    let mut response = http
-        .post(endpoint.join("/session")?)
-        .bearer_auth(pat.token())
-        .json(&serde_json::json!({"aud": audience}))
-        .send()
-        .await
-        .context("exchange nested caller PAT at the real identity service")?;
-    anyhow::ensure!(
-        response.status() == StatusCode::OK,
-        "nested session exchange refused"
-    );
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
+    let client_login = if client_proof {
+        Some(session_client::login(http.clone(), &endpoint, &audience, pat.token()).await?)
+    } else {
+        None
+    };
+    let (token, exchange) = if let Some(login) = &client_login {
+        (login.credentials.bearer().await?, None)
+    } else {
+        let mut response = http
+            .post(endpoint.join("/session")?)
+            .bearer_auth(pat.token())
+            .json(&serde_json::json!({"aud": audience}))
+            .send()
+            .await
+            .context("exchange nested caller PAT at the real identity service")?;
         anyhow::ensure!(
-            chunk.len() <= 65_536 - body.len(),
-            "nested session response exceeds bound"
+            response.status() == StatusCode::OK,
+            "nested session exchange refused"
         );
-        body.extend_from_slice(&chunk);
-    }
-    let exchange: Value = serde_json::from_slice(&body)
-        .map_err(|_| anyhow::anyhow!("nested session response is not JSON"))?;
-    let token = exchange["access_token"]
-        .as_str()
-        .context("nested session response omitted token")?;
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            anyhow::ensure!(
+                chunk.len() <= 65_536 - body.len(),
+                "nested session response exceeds bound"
+            );
+            body.extend_from_slice(&chunk);
+        }
+        let exchange: Value = serde_json::from_slice(&body)
+            .map_err(|_| anyhow::anyhow!("nested session response is not JSON"))?;
+        let token = exchange["access_token"]
+            .as_str()
+            .context("nested session response omitted token")?
+            .to_owned();
+        (token, Some(exchange))
+    };
+    let token = token.as_str();
     let verifier = SessionVerifier::new(keys, ORG, &audience)?;
     let verified = verifier.verify(token).await?;
     anyhow::ensure!(
         verified.claims().sub == human.id().as_str()
             && verified.claims().roles == [ROLE]
-            && exchange["token_type"] == "Bearer"
-            && exchange["expires_at"].as_i64() == Some(verified.claims().exp),
+            && exchange
+                .as_ref()
+                .is_none_or(|exchange| exchange["token_type"] == "Bearer"
+                    && exchange["expires_at"].as_i64() == Some(verified.claims().exp)),
         "real issuer changed the nested caller's signed identity"
     );
     let secret = |name: &str| {
@@ -4754,6 +4792,47 @@ async fn nested_session_caller(fresh_only: bool) -> anyhow::Result<()> {
     );
     let before = nested_receipt_state(project.as_ref()).await?;
     let request_body = Bytes::from_static(br#"[{"request_id":"session-nested-replay","value":{"idempotency_key":"receipt-command-2","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-2","occurred_at":"2026-08-31T12:31:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"7.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#);
+    if let Some(login) = client_login {
+        let expected_base = serde_json::json!({
+            "receipt_id": expected_replay["receipt_id"],
+            "purchase_order_id": expected_replay["purchase_order_id"],
+            "purchase_order_status": expected_replay["purchase_order_status"],
+            "row_version": expected_replay["row_version"],
+        });
+        let transport = session_client::RouteTransport::new(engine, flow_http, routing, bridge, 61);
+        let result = session_client::prove(
+            fresh_only::Proof {
+                inputs: &inputs,
+                credentials: &credentials,
+                project_url: project_url.as_str(),
+                project: project.as_ref(),
+                control: admin.as_ref(),
+                publisher: &publisher,
+                verifier,
+                session: token,
+                pat: pat.token(),
+                body: request_body,
+                expected_base: &expected_base,
+                human_id: human.id().as_str(),
+                traces: &traces,
+                client_credentials: Some(login.credentials.clone()),
+            },
+            &login,
+            transport,
+            &human,
+            &digests[BASE_PACKAGE_ID],
+            direct_attachment.path,
+        )
+        .await;
+        identity_task.abort();
+        project_task.abort();
+        admin_task.abort();
+        result?;
+        println!(
+            "HOST_SESSION_CLIENT result=pass login=pass ordinary=pass fresh=pass nested=pass prior_commit=pass expired_pat=refused revoked_pat=refused"
+        );
+        return Ok(());
+    }
     let (trace_id, traceparent) = journey_trace(31);
     // The existing command keeps the two-host GET fixture and event set unchanged.
     // A fresh-only refusal must stop before the base guest runs.
@@ -4897,6 +4976,7 @@ async fn nested_session_caller(fresh_only: bool) -> anyhow::Result<()> {
             expected_base: &expected_base,
             human_id: human.id().as_str(),
             traces: &traces,
+            client_credentials: None,
         })
         .await?;
 

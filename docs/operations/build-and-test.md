@@ -1517,6 +1517,52 @@ The runner uses the same disposable identity service and two-host infrastructure
 It keeps private credentials outside the retained evidence and removes only its own resources.
 Keep ordinary routes PAT-only until their operation policy and all required proofs permit session access.
 
+### `[SESSION-CLIENT]` session login and credential selection
+
+This gate covers the client work in `wamn-ctc8.15.5`.
+Receiving uses `WAMN_TOKEN` as its PAT source.
+Set both `WAMN_SESSION_ISSUER` and `WAMN_SESSION_AUDIENCE` to enable session login.
+The issuer must be an HTTPS URL.
+The audience identifies the intended project-environment.
+The identity service decides whether the principal can access that audience.
+If both variables are absent, Receiving keeps PAT-only startup.
+An incomplete pair or a failed exchange refuses startup before terminal entry.
+The client stores sessions only in memory and renews them at expiry.
+Generated calls use a PAT when their operation declares `fresh_only`.
+The client shows a late nested refusal without an automatic retry.
+
+Run the focused functional gates:
+
+```bash
+cargo test --locked --offline -p wamn-client -p wamn-receiving-tui --all-targets
+cargo test --locked --offline -p wamn-schema-generator --lib client_rust::tests
+cargo clippy --locked --offline -p wamn-client -p wamn-receiving-tui \
+  --all-targets --no-deps -- -D warnings
+```
+
+The renewal tests use a controlled clock.
+They do not change the issuer lifetime or wait for a real session to expire.
+
+Run the live proof from a clean source worktree:
+
+```bash
+tools/receiving-cluster-journey-run --session-client-proof --apply \
+  --evidence-dir "$WAMN_SESSION_CLIENT_EVIDENCE"
+```
+
+Set `WAMN_SESSION_CLIENT_EVIDENCE` to a new absolute directory outside that source worktree.
+Use the `docs/perf/2026.09/ctc8-15-5-session-client/` parent in the main checkout.
+Create the parent directory first.
+The runner reuses the disposable Receiving fixture and the real identity service over HTTPS.
+The application calls use the actual client, route authentication, router, and guest components within the test process.
+They are not HTTP requests to the deployed hosts.
+The proof covers session login, ordinary session calls, explicit fresh PAT calls, and expired or revoked PAT refusal.
+The nested counter must remain at one after a session refusal.
+Only an explicit PAT call can move it to two.
+The runner retains separate client receipts and removes only its own resources.
+It does not repeat the two-host key-removal windows or run a benchmark.
+This gate does not waive the existing benchmark acceptance or authorize session access on ordinary production routes.
+
 ### Identity foundation rollout
 
 For an existing database, install the two key tables as the `wamn_system` owner.

@@ -5970,6 +5970,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "async-trait",
  "bytes",
  "chrono",
  "clap",
@@ -5994,6 +5995,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "wamn-catalog",
+ "wamn-client",
  "wamn-component-policy",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -6004,6 +6006,7 @@ dependencies = [
  "wamn-execution-host",
  "wamn-gate-harness",
  "wamn-platform-identity",
+ "wamn-receiving-tui",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-scenario-worker",
