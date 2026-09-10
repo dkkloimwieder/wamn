@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::router_response::{PartialEvidence, PreparedResponse, ResponseState};
 use anyhow::Context as _;
 use futures_util::{StreamExt as _, stream};
 use opentelemetry::propagation::Extractor;
@@ -29,6 +30,7 @@ use wamn_runtime::component_artifact_source::{
     ComponentArtifactFetchErrorKind, ComponentArtifactSource,
 };
 use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
+use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::{
     self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
 };
@@ -484,6 +486,7 @@ pub struct RouterDelivery {
     pub wiring_version: u32,
     pub graph_hash: Arc<str>,
     pub outcome: Outcome,
+    pub(crate) partial: Option<PartialEvidence>,
 }
 
 /// Read-only lifecycle totals for the bounded driver store.
@@ -503,14 +506,16 @@ pub(crate) struct PreparedReleaseReadiness {
 struct CatalogFacts {
     effective_release_id: u32,
     components: Arc<[AdmittedComponent]>,
+    response: Option<Arc<PreparedResponse>>,
 }
 
 impl CatalogFacts {
-    fn from_resolved(resolved: &ResolvedActiveWiring) -> Self {
-        Self {
+    fn from_resolved(resolved: &ResolvedActiveWiring) -> anyhow::Result<Self> {
+        Ok(Self {
             effective_release_id: resolved.effective_release_id,
             components: Arc::clone(&resolved.components),
-        }
+            response: PreparedResponse::from_resolved(resolved)?.map(Arc::new),
+        })
     }
 
     fn component(&self, digest: &str) -> Option<&AdmittedComponent> {
@@ -933,13 +938,24 @@ impl RouterDriver {
             payload: request.payload.clone(),
             caller_attached: request.caller_attached,
         });
+        let mut response =
+            ResponseState::new(active.facts.response.as_deref(), request.caller_attached);
         loop {
             let now_ms = self.now_ms();
             match wiring.next(&mut walk, now_ms) {
                 Step::Done(status) => {
+                    let partial = if matches!(
+                        status,
+                        wamn_router::WalkStatus::Failed | wamn_router::WalkStatus::Cancelled
+                    ) {
+                        response.evidence(status, walk.failure(), walk.verdict())
+                    } else {
+                        None
+                    };
                     return Ok(RouterDelivery {
                         wiring_version: active.version,
                         graph_hash: Arc::clone(&active.graph_hash),
+                        partial,
                         outcome: Outcome {
                             status,
                             result: walk.result().clone(),
@@ -954,31 +970,65 @@ impl RouterDriver {
                     tokio::time::sleep(Duration::from_millis(remaining)).await;
                 }
                 Step::Invoke(call) => {
-                    let component = active
-                        .facts
-                        .component(&call.component)
-                        .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
-                    let operation = component
-                        .operation(&call.operation)
-                        .ok_or_else(|| anyhow::anyhow!("router-node-operation-fact-missing"))?;
-                    authorize_registered_operation(
-                        request.caller.as_ref(),
-                        operation.registered_operation.as_deref(),
-                        operation.fresh_only,
-                    )?;
-                    let span = component_invocation_span(
-                        &request,
-                        &self.config.project,
-                        active.version,
-                        &component.component_digest,
-                        &call,
-                        remote_parent.as_ref(),
-                    );
-                    let outcome = self
-                        .invoke_node(&request, &active, &call, closure, causation.as_ref())
-                        .instrument(span)
-                        .await
-                        .with_context(|| format!("invoke wiring node {:?}", call.node))?;
+                    let effects = response.effect_evidence();
+                    let result = async {
+                        let component = active
+                            .facts
+                            .component(&call.component)
+                            .ok_or_else(|| anyhow::anyhow!("router-node-component-fact-missing"))?;
+                        let operation = component
+                            .operation(&call.operation)
+                            .ok_or_else(|| anyhow::anyhow!("router-node-operation-fact-missing"))?;
+                        authorize_registered_operation(
+                            request.caller.as_ref(),
+                            operation.registered_operation.as_deref(),
+                            operation.fresh_only,
+                        )?;
+                        let span = component_invocation_span(
+                            &request,
+                            &self.config.project,
+                            active.version,
+                            &component.component_digest,
+                            &call,
+                            remote_parent.as_ref(),
+                        );
+                        let outcome = self
+                            .invoke_node(
+                                &request,
+                                &active,
+                                &call,
+                                closure,
+                                causation.as_ref(),
+                                effects.clone(),
+                            )
+                            .instrument(span)
+                            .await
+                            .with_context(|| format!("invoke wiring node {:?}", call.node))?;
+                        response.observe(&call.node, &outcome, effects.as_ref())?;
+                        anyhow::Ok(outcome)
+                    }
+                    .await;
+                    let outcome = match result {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            if walk.verdict().is_some() {
+                                tracing::warn!(error = %format_args!("{error:#}"), "router invocation failed after its terminal verdict; first verdict stands");
+                                return Ok(RouterDelivery {
+                                    wiring_version: active.version,
+                                    graph_hash: Arc::clone(&active.graph_hash),
+                                    partial: None,
+                                    outcome: Outcome {
+                                        status: wamn_router::WalkStatus::Failed,
+                                        result: walk.result().clone(),
+                                        failure: None,
+                                        hops: walk.hops(),
+                                        verdict: walk.verdict().cloned(),
+                                    },
+                                });
+                            }
+                            return Err(response.interrupted(error, effects.as_ref()));
+                        }
+                    };
                     if let Err(refusal) = wiring.apply(&mut walk, &call, outcome, self.now_ms()) {
                         wiring
                             .fail_on_node_data(&mut walk, &call.node, refusal)
@@ -1039,7 +1089,7 @@ impl RouterDriver {
                 .into());
             }
         };
-        let facts = CatalogFacts::from_resolved(&resolved);
+        let facts = CatalogFacts::from_resolved(&resolved)?;
         if let Some(active) = self.cache.get_version(
             &target.tenant_id,
             &target.package_id,
@@ -1132,7 +1182,7 @@ impl RouterDriver {
                 resolved.effective_release_id == mounted_effective_release_id,
                 "active-wiring-effective-release-mismatch"
             );
-            let facts = CatalogFacts::from_resolved(&resolved);
+            let facts = CatalogFacts::from_resolved(&resolved)?;
             match self.cache.insert(
                 &request.tenant_id,
                 &request.package_id,
@@ -1183,7 +1233,7 @@ impl RouterDriver {
             )
             .await?
             .ok_or_else(|| anyhow::anyhow!("release-wiring-not-found"))?;
-        let facts = CatalogFacts::from_resolved(&resolved);
+        let facts = CatalogFacts::from_resolved(&resolved)?;
         match self.cache.insert_version(
             &request.tenant_id,
             &request.package_id,
@@ -1401,6 +1451,7 @@ impl RouterDriver {
         call: &wamn_router::NodeCall,
         closure: ExecutionClosure<'_>,
         causation: Option<&Causation>,
+        effects: Option<EffectEvidence>,
     ) -> anyhow::Result<NodeOutcome> {
         let component = active
             .facts
@@ -1456,6 +1507,7 @@ impl RouterDriver {
                 component: component.component.clone(),
                 operation: call.operation.clone(),
                 closure: connection_closure,
+                effects,
             },
             causation: causation.cloned(),
         };
@@ -1582,6 +1634,14 @@ fn validate_component_in_release(
                     ServingComponentOperation {
                         registered_operation: operation.registered_operation.clone(),
                         fresh_only: operation.fresh_only,
+                        committed_result_schema: operation.committed_result_schema.as_ref().map(
+                            |schema| {
+                                String::from_utf8(wamn_execution_contract::canonical_json_bytes(
+                                    &schema.schema,
+                                ))
+                                .expect("canonical JSON is UTF-8")
+                            },
+                        ),
                         dependencies: operation.dependencies.clone(),
                         statements: operation.statements.clone(),
                     },
@@ -2932,6 +2992,7 @@ mod tests {
         AdmittedComponentOperation {
             registered_operation: None,
             fresh_only: false,
+            committed_result_schema: None,
             dependencies: Vec::new(),
             input_ports: Vec::new(),
             output_ports: Vec::new(),
@@ -3212,6 +3273,7 @@ mod tests {
                     component: "overlay".to_owned(),
                     operation: "client-acme-receiving:receiving/record-receipt@1.0.0".to_owned(),
                     closure: ConnectionExecutionClosure::Released,
+                    effects: None,
                 },
                 causation: Some(causation.clone()),
             },
@@ -3275,6 +3337,7 @@ mod tests {
                 AdmittedComponentOperation {
                     registered_operation: Some(operation.to_owned()),
                     fresh_only: false,
+                    committed_result_schema: None,
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
@@ -3311,6 +3374,7 @@ mod tests {
             AdmittedComponentOperation {
                 registered_operation: Some(leaf_operation.to_owned()),
                 fresh_only: false,
+                committed_result_schema: None,
                 dependencies: Vec::new(),
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
@@ -3341,6 +3405,7 @@ mod tests {
             AdmittedComponentOperation {
                 registered_operation: Some(root_operation.to_owned()),
                 fresh_only: false,
+                committed_result_schema: None,
                 dependencies: vec![dependency.clone()],
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
@@ -3368,6 +3433,7 @@ mod tests {
         let declaration = AdmittedComponentOperation {
             registered_operation: None,
             fresh_only: false,
+            committed_result_schema: None,
             dependencies: vec![dependency],
             input_ports: Vec::new(),
             output_ports: Vec::new(),

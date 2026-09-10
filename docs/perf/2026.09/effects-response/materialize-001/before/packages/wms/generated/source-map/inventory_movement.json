@@ -1,0 +1,1 @@
+{"manifest":"wamn.json#/models/inventory_movement","model":"inventory_movement","native_bind_fixtures":[],"native_operation_rows":[],"operations":{},"relation":"catalog-ir://wms.inventory_movement","wamn_api":{"accessors":[],"mutation_constraints":[],"operation_rows":[],"statement_digest_visibility":"crate"}}

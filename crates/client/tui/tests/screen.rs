@@ -78,6 +78,7 @@ const READ: ScreenSpec = ScreenSpec {
     input_schema: None,
     response: ResponseContract {
         schema: None,
+        partial_schema: None,
         fields: RESULT,
         result_class: Some("one"),
         errors: &[],

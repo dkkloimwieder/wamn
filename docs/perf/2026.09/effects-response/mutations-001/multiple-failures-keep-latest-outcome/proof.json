@@ -1,0 +1,15 @@
+{
+  "baseline_passed": true,
+  "mutant_assertion_failed": true,
+  "mutant_sha256": "be1692dcdff0a76068481897925ffb2a6a59f664d347747b5c731410b5e2d07b",
+  "original_atime_ns": 1789000126526469849,
+  "original_mode": 436,
+  "original_mtime_ns": 1788999751132635999,
+  "original_sha256": "5e0bee7fa88606095c0f1e78c2b3384042312efc10fd89d150d4e496b2e2905d",
+  "replacement_count": 1,
+  "restored_mtime_ns": 1789003722996175083,
+  "restored_passed": true,
+  "source": "crates/platform/runtime/src/plugins/effect_span.rs",
+  "source_restored": true,
+  "test": "plugins::effect_span::tests::one_failure_survives_successes_but_never_another_failure"
+}

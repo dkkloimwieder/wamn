@@ -38,5 +38,124 @@
       "from": "label",
       "to": "store"
     }
-  ]
+  ],
+  "response": {
+    "node": "store",
+    "schema": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": "object",
+            "required": [
+              "movement_id",
+              "pallet_id",
+              "location_id",
+              "pallet_status",
+              "row_version",
+              "zpl",
+              "stored"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "movement_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "pallet_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "location_id": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "pallet_status": {
+                "type": "string",
+                "enum": [
+                  "available",
+                  "held",
+                  "consumed"
+                ]
+              },
+              "row_version": {
+                "type": "integer"
+              },
+              "zpl": {
+                "type": "string"
+              },
+              "stored": {
+                "type": "object",
+                "required": [
+                  "container",
+                  "key"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "container": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "error": {
+            "type": "object",
+            "required": [
+              "code"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detail": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "value"
+            ],
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          },
+          {
+            "required": [
+              "error"
+            ],
+            "not": {
+              "required": [
+                "value"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "committed-result": "move"
+  }
 }

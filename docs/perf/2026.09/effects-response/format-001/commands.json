@@ -1,0 +1,482 @@
+[
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "components/execution/contract/src/effect_outcome.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "components/execution/contract/src/lib.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "components/execution/materializer/src/main.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "components/ingress/http-route/src/guest.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "components/ingress/http-route/src/lib.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "components/ingress/http-route/tests/adversarial.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/catalog/model/src/component_library.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/catalog/model/src/lib.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/catalog/model/src/serving_manifest.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/catalog/model/src/wiring.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/catalog/model/src/wiring_compatibility.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/catalog/model/tests/serving_manifest_digest.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/client/core/src/request.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/client/core/tests/request.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/client/terminal/src/operator_tests.rs"
+    ],
+    "exit_code": 1
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/client/tui/src/submission.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/client/tui/tests/screen.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/client/tui/tests/submission.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/execution/host/src/lib.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/execution/host/src/router_delivery.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/execution/host/src/router_driver.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/execution/host/src/router_response.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/execution/host/src/router_response_tests.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/component_admission.rs"
+    ],
+    "exit_code": 1
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/component_artifact.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/component_artifact_source.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/plugins/connection_http.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/plugins/effect_span.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/plugins/flow_http_routing.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/plugins/mod.rs"
+    ],
+    "exit_code": 1
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/plugins/wamn_blobstore/host.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/plugins/wamn_blobstore/plugin.rs"
+    ],
+    "exit_code": 1
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/platform/runtime/src/release_manifest.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/schema/generator/src/client_ir.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/schema/generator/src/client_route.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/schema/generator/src/client_tui.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/schema/generator/tests/client_projection.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "crates/schema/generator/tests/tui_emitter.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/ctl/src/author_wiring.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/ctl/src/dev/read.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/ctl/src/dev/tui.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/ctl/src/publish_release.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/ctl/src/push_component.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/ctl/tests/author_wiring_gate_report_live.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "services/ctl/tests/bind_connection_live.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/integration/src/trusted_http_route.rs"
+    ],
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "--edition",
+      "2024",
+      "--check",
+      "tests/integration/src/wms_runtime_live.rs"
+    ],
+    "exit_code": 0
+  }
+]

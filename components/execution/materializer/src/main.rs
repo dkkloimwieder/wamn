@@ -494,6 +494,10 @@ fn delivery_disposition(result: &Result<DeliveryOutcome, DeliveryError>) -> Deli
         Ok(DeliveryOutcome::Respond(_) | DeliveryOutcome::Emit(_) | DeliveryOutcome::Discard) => {
             DeliveryDisposition::Ack
         }
+        // Partial completion never permits repeating the whole delivery.
+        Ok(DeliveryOutcome::PartiallyCompleted(_)) => {
+            DeliveryDisposition::DeadLetter("router-terminal")
+        }
         Ok(DeliveryOutcome::Failed(failure)) => {
             DeliveryDisposition::DeadLetter(match failure.kind {
                 delivery::FailureKind::Terminal => "router-terminal",

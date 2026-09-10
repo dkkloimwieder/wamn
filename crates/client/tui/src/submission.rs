@@ -41,6 +41,7 @@ pub struct ErrorCase {
 #[derive(Debug, Clone, Copy)]
 pub struct ResponseContract {
     pub schema: Option<&'static str>,
+    pub partial_schema: Option<&'static str>,
     pub fields: &'static [wamn_client::descriptor::FieldSchema],
     pub result_class: Option<&'static str>,
     pub errors: &'static [ErrorCase],
@@ -339,6 +340,12 @@ pub fn classify(
         Err(_) => return unknown("the response is not valid JSON"),
     };
     let uncertain = |reason| unknown_with_literal(reason, &document);
+    if document.get("committed_result").is_some() || document.get("failed_outcome").is_some() {
+        if !(400..600).contains(&response.status) {
+            return unknown("partial completion requires an HTTP error response");
+        }
+        return classify_partial(contract, request_id, &document);
+    }
     // These complete envelopes originate before ingress calls deliver. A
     // downstream failure carrying the same code includes error.message.
     for (status, code) in [
@@ -395,6 +402,40 @@ pub fn classify(
         // Neither member, both members, and unknown error cases establish no
         // completion fact. A value beside an error is not a partial contract.
         _ => uncertain("the response does not establish the submission outcome"),
+    }
+}
+
+fn classify_partial(contract: &ResponseContract, request_id: &str, document: &Value) -> Evidence {
+    let Some(schema) = contract.partial_schema else {
+        return unknown("the route declares no partial completion contract");
+    };
+    let Ok(schema) = serde_json::from_str(schema) else {
+        return unknown("the partial completion contract is invalid");
+    };
+    if validate_schema(&schema, document).is_err() {
+        return unknown("the response violates the partial completion contract");
+    }
+    let Some(items) = document
+        .get("committed_result")
+        .and_then(Value::as_array)
+        .filter(|items| items.len() == 1)
+    else {
+        return unknown("the committed result must contain exactly one outcome");
+    };
+    let item = &items[0];
+    if request_id.is_empty() || item.get("request_id").and_then(Value::as_str) != Some(request_id) {
+        return unknown("the committed result does not match the submitted request");
+    }
+    let (Some(value), None, Some(failed_outcome)) = (
+        item.get("value"),
+        item.get("error"),
+        document.get("failed_outcome"),
+    ) else {
+        return unknown("the response does not establish partial completion");
+    };
+    Evidence::PartiallyCompleted {
+        committed_result: value.clone(),
+        failed_outcome: failed_outcome.clone(),
     }
 }
 

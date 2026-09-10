@@ -1,0 +1,156 @@
+// @generated from migration IR; do not edit.
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct AddToTargetRow {
+    pub id: uuid::Uuid,
+    pub quantity: rust_decimal::Decimal,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct ClaimCommandRow {
+    pub movement_id: uuid::Uuid,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct ConsumeSourceRow {
+    pub row_version: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct FinalizeCommandRow {
+    pub row_version: Option<i64>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct FindReplayRow {
+    pub canonical_command: Vec<u8>,
+    pub movement_id: uuid::Uuid,
+    pub source_pallet_id: uuid::Uuid,
+    pub target_pallet_id: uuid::Uuid,
+    pub row_version: Option<i64>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct InsertMovementRow {
+    pub id: uuid::Uuid,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct LockBothPalletsRow {
+    pub id: uuid::Uuid,
+    pub location_id: uuid::Uuid,
+    pub row_version: i64,
+    pub status: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct PlaceOnTargetRow {
+    pub id: uuid::Uuid,
+    pub quantity: rust_decimal::Decimal,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct SelectSourceQuantityRow {
+    pub product_id: uuid::Uuid,
+    pub quantity: rust_decimal::Decimal,
+    pub status: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub(crate) struct TouchTargetRow {
+    pub row_version: i64,
+    pub status: String,
+}
+
+pub(crate) const ADD_TO_TARGET_SQL: &str = include_str!("../../command/inventory_merge/add_to_target.sql");
+pub(crate) const CLAIM_COMMAND_SQL: &str = include_str!("../../command/inventory_merge/claim_command.sql");
+pub(crate) const CONSUME_SOURCE_SQL: &str = include_str!("../../command/inventory_merge/consume_source.sql");
+pub(crate) const FINALIZE_COMMAND_SQL: &str = include_str!("../../command/inventory_merge/finalize_command.sql");
+pub(crate) const FIND_REPLAY_SQL: &str = include_str!("../../command/inventory_merge/find_replay.sql");
+pub(crate) const INSERT_MOVEMENT_SQL: &str = include_str!("../../command/inventory_merge/insert_movement.sql");
+pub(crate) const LOCK_BOTH_PALLETS_SQL: &str = include_str!("../../command/inventory_merge/lock_both_pallets.sql");
+pub(crate) const PLACE_ON_TARGET_SQL: &str = include_str!("../../command/inventory_merge/place_on_target.sql");
+pub(crate) const SELECT_SOURCE_QUANTITY_SQL: &str = include_str!("../../command/inventory_merge/select_source_quantity.sql");
+pub(crate) const TOUCH_TARGET_SQL: &str = include_str!("../../command/inventory_merge/touch_target.sql");
+
+pub(crate) fn add_to_target_target_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn add_to_target_product_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn add_to_target_status_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn add_to_target_quantity_bind_fixture() -> rust_decimal::Decimal {
+    rust_decimal::Decimal::ZERO
+}
+pub(crate) fn claim_command_idempotency_key_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn claim_command_canonical_command_bind_fixture() -> Vec<u8> {
+    Vec::new()
+}
+pub(crate) fn claim_command_source_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn claim_command_target_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn consume_source_source_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn finalize_command_idempotency_key_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn finalize_command_canonical_command_bind_fixture() -> Vec<u8> {
+    Vec::new()
+}
+pub(crate) fn finalize_command_movement_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn finalize_command_row_version_bind_fixture() -> i64 {
+    0_i64
+}
+pub(crate) fn find_replay_idempotency_key_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn insert_movement_idempotency_key_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn insert_movement_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn insert_movement_product_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn insert_movement_quantity_bind_fixture() -> rust_decimal::Decimal {
+    rust_decimal::Decimal::ZERO
+}
+pub(crate) fn insert_movement_occurred_at_bind_fixture() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::<chrono::Utc>::UNIX_EPOCH
+}
+pub(crate) fn lock_both_pallets_source_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn lock_both_pallets_target_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn place_on_target_target_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn place_on_target_product_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn place_on_target_status_bind_fixture() -> String {
+    String::new()
+}
+pub(crate) fn place_on_target_quantity_bind_fixture() -> rust_decimal::Decimal {
+    rust_decimal::Decimal::ZERO
+}
+pub(crate) fn select_source_quantity_source_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}
+pub(crate) fn touch_target_target_pallet_id_bind_fixture() -> uuid::Uuid {
+    uuid::Uuid::nil()
+}

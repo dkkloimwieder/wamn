@@ -227,6 +227,7 @@ fn validate_result_field(
             let matches_wire = match name {
                 "boolean" => value.is_boolean(),
                 "int32" | "float64" => value.is_number(),
+                "int64" => value.is_i64() || value.is_string(),
                 _ => value.is_string(),
             };
             if !matches_wire {

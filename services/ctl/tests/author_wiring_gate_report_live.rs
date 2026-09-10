@@ -166,6 +166,7 @@ async fn provision_project(project: &Client, project_url: &str) {
         operations: BTreeMap::from([(
             "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
             AdmittedComponentOperation {
+                committed_result_schema: None,
                 fresh_only: false,
                 registered_operation: Some("wamn-receiving:purchase-order/get@1.0.0".to_owned()),
                 dependencies: Vec::new(),

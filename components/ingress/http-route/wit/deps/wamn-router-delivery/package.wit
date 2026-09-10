@@ -68,6 +68,7 @@ interface delivery {
     emit(emission),
     discard,
     failed(delivery-failure),
+    partially-completed(partial-completion),
     cancelled,
   }
 
@@ -85,6 +86,30 @@ interface delivery {
     permission-denied(permission-denial),
     /// A session caller reached an operation that requires a fresh credential.
     fresh-credential-required(permission-denial),
+  }
+
+  /// An existing failure without a new failure taxonomy.
+  variant failed-outcome {
+    failed(delivery-failure),
+    error(delivery-error),
+    cancelled,
+  }
+
+  /// The same six outcomes as the platform effect observation contract.
+  enum effect-outcome {
+    refused-before-dispatch,
+    responded,
+    timeout,
+    cancelled,
+    effect-uncertain,
+    response-lost,
+  }
+
+  /// Only the selected declared committed result and the later failure.
+  record partial-completion {
+    committed-result: string,
+    failed-outcome: failed-outcome,
+    effect-outcome: option<effect-outcome>,
   }
 
   deliver: func(request: delivery-request) -> result<delivery-outcome, delivery-error>;

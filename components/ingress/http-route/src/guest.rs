@@ -14,9 +14,9 @@ use wasi::io::streams::{InputStream, StreamError};
 
 use super::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
-    DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission, Header,
-    HttpResponse, Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition,
-    handle_request,
+    DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission,
+    FailedOutcome, Header, HttpResponse, Mapping, MappingSource, PartialCompletion, ProviderError,
+    RequestHead, RouteDefinition, handle_request,
 };
 
 struct Component;
@@ -133,23 +133,66 @@ fn convert_delivery_outcome(
             dedup_id: emission.dedup_id,
         }),
         delivery::DeliveryOutcome::Discard => DeliveryOutcome::Discard,
-        delivery::DeliveryOutcome::Failed(failure) => DeliveryOutcome::Failed(DeliveryFailure {
-            kind: match failure.kind {
-                delivery::FailureKind::Terminal => DeliveryFailureKind::Terminal,
-                delivery::FailureKind::RetryExhausted => DeliveryFailureKind::RetryExhausted,
-                delivery::FailureKind::InvalidInput => DeliveryFailureKind::InvalidInput,
-                delivery::FailureKind::HopLimit => DeliveryFailureKind::HopLimit,
-                delivery::FailureKind::UnreleasedCaller => DeliveryFailureKind::UnreleasedCaller,
-                delivery::FailureKind::MissingDedupId => DeliveryFailureKind::MissingDedupId,
-                delivery::FailureKind::RespondWithoutCaller => {
-                    DeliveryFailureKind::RespondWithoutCaller
-                }
-                delivery::FailureKind::SecondVerdict => DeliveryFailureKind::SecondVerdict,
-            },
-            code: failure.code,
-            message: failure.message,
-        }),
+        delivery::DeliveryOutcome::Failed(failure) => {
+            DeliveryOutcome::Failed(convert_delivery_failure(failure))
+        }
+        delivery::DeliveryOutcome::PartiallyCompleted(partial) => {
+            DeliveryOutcome::PartiallyCompleted(PartialCompletion {
+                committed_result: partial.committed_result,
+                failed_outcome: match partial.failed_outcome {
+                    delivery::FailedOutcome::Failed(failure) => {
+                        FailedOutcome::Failed(convert_delivery_failure(failure))
+                    }
+                    delivery::FailedOutcome::Error(error) => {
+                        FailedOutcome::Error(convert_delivery_error(error))
+                    }
+                    delivery::FailedOutcome::Cancelled => FailedOutcome::Cancelled,
+                },
+                effect_outcome: partial.effect_outcome.map(|outcome| match outcome {
+                    delivery::EffectOutcome::RefusedBeforeDispatch => {
+                        wamn_execution_contract::EffectOutcome::RefusedBeforeDispatch
+                    }
+                    delivery::EffectOutcome::Responded => {
+                        wamn_execution_contract::EffectOutcome::Responded
+                    }
+                    delivery::EffectOutcome::Timeout => {
+                        wamn_execution_contract::EffectOutcome::Timeout
+                    }
+                    delivery::EffectOutcome::Cancelled => {
+                        wamn_execution_contract::EffectOutcome::Cancelled
+                    }
+                    delivery::EffectOutcome::EffectUncertain => {
+                        wamn_execution_contract::EffectOutcome::EffectUncertain
+                    }
+                    delivery::EffectOutcome::ResponseLost => {
+                        wamn_execution_contract::EffectOutcome::ResponseLost
+                    }
+                }),
+            })
+        }
         delivery::DeliveryOutcome::Cancelled => DeliveryOutcome::Cancelled,
+    }
+}
+
+fn convert_delivery_failure(
+    failure: wamn::router_delivery::delivery::DeliveryFailure,
+) -> DeliveryFailure {
+    use wamn::router_delivery::delivery;
+    DeliveryFailure {
+        kind: match failure.kind {
+            delivery::FailureKind::Terminal => DeliveryFailureKind::Terminal,
+            delivery::FailureKind::RetryExhausted => DeliveryFailureKind::RetryExhausted,
+            delivery::FailureKind::InvalidInput => DeliveryFailureKind::InvalidInput,
+            delivery::FailureKind::HopLimit => DeliveryFailureKind::HopLimit,
+            delivery::FailureKind::UnreleasedCaller => DeliveryFailureKind::UnreleasedCaller,
+            delivery::FailureKind::MissingDedupId => DeliveryFailureKind::MissingDedupId,
+            delivery::FailureKind::RespondWithoutCaller => {
+                DeliveryFailureKind::RespondWithoutCaller
+            }
+            delivery::FailureKind::SecondVerdict => DeliveryFailureKind::SecondVerdict,
+        },
+        code: failure.code,
+        message: failure.message,
     }
 }
 

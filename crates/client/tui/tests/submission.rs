@@ -5,6 +5,37 @@ use wamn_client::{ClientError, FieldDescriptor, HttpResponse};
 use wamn_client_tui::submission::{
     ErrorCase, Evidence, Replay, ResponseContract, SessionBinding, State, Submission, classify,
 };
+use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr};
+
+// Runtime projection in this test supplies the same static descriptors that
+// generated bindings contain; production screens never allocate schemas.
+fn runtime_fields(fields: &[FieldIr]) -> &'static [FieldSchema] {
+    Box::leak(
+        fields
+            .iter()
+            .map(|field| {
+                let values: Vec<&'static str> = field
+                    .values
+                    .iter()
+                    .map(|value| &*Box::leak(value.clone().into_boxed_str()))
+                    .collect();
+                FieldSchema {
+                    field: FieldDescriptor {
+                        path: Box::leak(field.path.clone().into_boxed_str()),
+                        type_name: Box::leak(field.type_name.clone().into_boxed_str()),
+                        nullable: field.nullable,
+                        values: Box::leak(values.into_boxed_slice()),
+                    },
+                    required: field.required,
+                    children: runtime_fields(&field.children),
+                    minimum: field.minimum,
+                    maximum: field.maximum,
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    )
+}
 
 const INPUT: &[FieldSchema] = &[FieldSchema {
     field: FieldDescriptor {
@@ -45,6 +76,7 @@ const ERRORS: &[ErrorCase] = &[
 fn contract(replay: Replay) -> ResponseContract {
     ResponseContract {
         schema: Some(r#"{"type":"array"}"#),
+        partial_schema: None,
         fields: OUTPUT,
         result_class: Some("one"),
         errors: ERRORS,
@@ -417,37 +449,6 @@ fn schema_and_correlation_failures_preserve_literals_without_proving_refusal() {
 fn receiving_update_validates_the_public_success_row_without_sql_bookkeeping_columns() {
     use std::path::Path;
 
-    use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr};
-
-    // Runtime projection in this test supplies the same static descriptors that
-    // generated bindings contain; production screens never allocate schemas.
-    fn runtime_fields(fields: &[FieldIr]) -> &'static [FieldSchema] {
-        Box::leak(
-            fields
-                .iter()
-                .map(|field| {
-                    let values: Vec<&'static str> = field
-                        .values
-                        .iter()
-                        .map(|value| &*Box::leak(value.clone().into_boxed_str()))
-                        .collect();
-                    FieldSchema {
-                        field: FieldDescriptor {
-                            path: Box::leak(field.path.clone().into_boxed_str()),
-                            type_name: Box::leak(field.type_name.clone().into_boxed_str()),
-                            nullable: field.nullable,
-                            values: Box::leak(values.into_boxed_slice()),
-                        },
-                        required: field.required,
-                        children: runtime_fields(&field.children),
-                        minimum: field.minimum,
-                        maximum: field.maximum,
-                    }
-                })
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
-        )
-    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let ir = ClientContractIr::from_release(
         "receiving",
@@ -463,6 +464,7 @@ fn receiving_update_validates_the_public_success_row_without_sql_bookkeeping_col
         .expect("Receiving update operation");
     let route = operation.route.as_ref().expect("served update route");
     let contract = ResponseContract {
+        partial_schema: None,
         schema: route
             .response
             .schema
@@ -685,4 +687,241 @@ fn unknown_cardinality_does_not_invent_object_or_collection_requirements() {
             }
         );
     }
+}
+
+fn wms_move_contract() -> ResponseContract {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let ir = ClientContractIr::from_release(
+        "wms",
+        &root.join("packages/wms/generated/contracts"),
+        &root.join("packages/wms/publication/attachments.json"),
+    )
+    .expect("project WMS served response declarations");
+    let operation = ir
+        .models
+        .iter()
+        .flat_map(|model| &model.operations)
+        .find(|operation| operation.operation == "wamn-wms:inventory/move@1.0.0")
+        .expect("WMS move operation");
+    let route = operation.route.as_ref().expect("composed move route");
+    assert!(!route.direct);
+    assert!(route.replay.is_none());
+    ResponseContract {
+        schema: route
+            .response
+            .schema
+            .as_ref()
+            .map(|schema| &*Box::leak(schema.to_string().into_boxed_str())),
+        partial_schema: route
+            .response
+            .partial_schema
+            .as_ref()
+            .map(|schema| &*Box::leak(schema.to_string().into_boxed_str())),
+        fields: runtime_fields(&route.response.fields),
+        result_class: route
+            .response
+            .result_class
+            .as_ref()
+            .map(|class| &*Box::leak(class.clone().into_boxed_str())),
+        errors: &[],
+        kind: "command",
+        transaction: Some("explicit_per_input"),
+        direct: false,
+        replay: Replay::Unknown,
+    }
+}
+
+fn movement_result() -> Value {
+    json!({
+        "movement_id":"33333333-0000-0000-0000-000000000009",
+        "pallet_id":"33333333-0000-0000-0000-000000000002",
+        "location_id":"33333333-0000-0000-0000-000000000003",
+        "pallet_status":"available",
+        "row_version":8
+    })
+}
+
+fn partial_body() -> Value {
+    json!({
+        "committed_result":[{"request_id":"intent-1","value":movement_result()}],
+        "failed_outcome":{"code":"write_failed","message":"storage request failed","operation":"wamn:node/async-handler@0.1.0"}
+    })
+}
+
+#[test]
+fn declared_partial_http_bytes_preserve_the_commit_and_disable_composed_replay() {
+    let contract = wms_move_contract();
+    for effect in [
+        None,
+        Some("refused-before-dispatch"),
+        Some("responded"),
+        Some("timeout"),
+        Some("cancelled"),
+        Some("effect-uncertain"),
+        Some("response-lost"),
+    ] {
+        let mut body = partial_body();
+        if let Some(effect) = effect {
+            body["failed_outcome"]["effect_outcome"] = json!(effect);
+        }
+        let mut submission = Submission::new(binding("one"));
+        let attempt = submission.begin(request(), &contract).unwrap();
+        assert!(submission.resolve(attempt, &contract, response(500, body.clone())));
+        assert_eq!(
+            submission.state(),
+            &State::PartiallyCompleted {
+                committed_result: movement_result(),
+                failed_outcome: body["failed_outcome"].clone()
+            }
+        );
+        assert!(submission.retry().is_err());
+        assert!(submission.begin(request(), &contract).is_err());
+    }
+    let mut denied_after_commit = partial_body();
+    denied_after_commit["failed_outcome"] =
+        json!({"code":"permission-denied","operation":"downstream"});
+    assert!(matches!(
+        classify(&contract, "intent-1", response(403, denied_after_commit)),
+        Evidence::PartiallyCompleted { .. }
+    ));
+}
+
+#[test]
+fn partial_bytes_require_the_declared_shape_and_one_matching_successful_commit() {
+    let contract = wms_move_contract();
+    let good = partial_body();
+    let mut malformed = Vec::new();
+    for key in ["committed_result", "failed_outcome"] {
+        let mut body = good.clone();
+        body.as_object_mut().unwrap().remove(key);
+        malformed.push(body);
+    }
+    for (pointer, value) in [
+        ("/committed_result", json!([])),
+        (
+            "/committed_result",
+            json!([good["committed_result"][0], good["committed_result"][0]]),
+        ),
+        ("/committed_result/0/request_id", json!("another-intent")),
+        ("/committed_result/0/value/movement_id", json!(7)),
+        ("/committed_result/0/value/row_version", json!("8")),
+        ("/failed_outcome/code", json!("")),
+    ] {
+        let mut body = good.clone();
+        *body.pointer_mut(pointer).unwrap() = value;
+        malformed.push(body);
+    }
+    let mut mixed = good.clone();
+    mixed["committed_result"][0]["error"] = json!({"code":"timeout"});
+    malformed.push(mixed);
+    let mut unobserved = good.clone();
+    unobserved["failed_outcome"]["effect_outcome"] = json!("rolled-back");
+    malformed.push(unobserved);
+    let mut all_results = good.clone();
+    all_results["node_results"] = json!({"label":{"zpl":"private"}});
+    malformed.push(all_results);
+    let mut extra_failure = good.clone();
+    extra_failure["failed_outcome"]["trace"] = json!({"private":true});
+    malformed.push(extra_failure);
+    for body in malformed {
+        let mut submission = Submission::new(binding("one"));
+        let attempt = submission.begin(request(), &contract).unwrap();
+        assert!(submission.resolve(attempt, &contract, response(500, body.clone())));
+        assert!(
+            matches!(submission.state(), State::Uncertain { .. }),
+            "{body}"
+        );
+        assert!(submission.retry().is_err());
+    }
+    for schema in [None, Some("{")] {
+        let mut undeclared = contract;
+        undeclared.partial_schema = schema;
+        assert!(matches!(
+            classify(&undeclared, "intent-1", response(500, good.clone())),
+            Evidence::Uncertain(_)
+        ));
+    }
+    for status in [200, 302] {
+        assert!(matches!(
+            classify(&contract, "intent-1", response(status, good.clone())),
+            Evidence::Uncertain(_)
+        ));
+    }
+    assert!(matches!(
+        classify(&contract, "", response(500, good)),
+        Evidence::Uncertain(_)
+    ));
+    assert!(matches!(
+        classify(&contract, "intent-1", lost()),
+        Evidence::Uncertain(_)
+    ));
+    assert!(matches!(
+        classify(
+            &contract,
+            "intent-1",
+            response(500, json!({"error":{"code":"timeout"}}))
+        ),
+        Evidence::Uncertain(_)
+    ));
+}
+
+#[test]
+fn wms_normal_bytes_use_the_terminal_label_result_and_keep_passed_errors_uncertain() {
+    let contract = wms_move_contract();
+    let mut value = movement_result();
+    value["zpl"] = json!("^XA^XZ");
+    value["stored"] = json!({"container":"labels","key":"movement-label"});
+    let body = json!([{"request_id":"intent-1","value":value}]);
+    assert_eq!(
+        classify(&contract, "intent-1", response(200, body.clone())),
+        Evidence::Succeeded {
+            value: value.clone(),
+            opaque: false
+        }
+    );
+    for path in [
+        "/0/value/stored/key",
+        "/0/value/stored/container",
+        "/0/value/zpl",
+    ] {
+        let mut malformed = body.clone();
+        *malformed.pointer_mut(path).unwrap() = json!(7);
+        assert!(
+            matches!(
+                classify(&contract, "intent-1", response(200, malformed)),
+                Evidence::Uncertain(_)
+            ),
+            "{path}"
+        );
+    }
+    for revision in [json!("8"), json!(8.5), json!(u64::MAX)] {
+        let mut malformed = body.clone();
+        malformed[0]["value"]["row_version"] = revision;
+        assert!(matches!(
+            classify(&contract, "intent-1", response(200, malformed)),
+            Evidence::Uncertain(_)
+        ));
+    }
+    assert!(matches!(
+        classify(
+            &contract,
+            "intent-1",
+            response(
+                200,
+                json!([{
+                    "request_id":"intent-1","value":movement_result()
+                }])
+            )
+        ),
+        Evidence::Uncertain(_)
+    ));
+    let refusal =
+        json!([{"request_id":"intent-1","error":{"code":"concurrency_conflict","detail":{}}}]);
+    let schema: Value = serde_json::from_str(contract.schema.unwrap()).unwrap();
+    wamn_client::request::validate_schema(&schema, &refusal)
+        .expect("palette error items pass through the declared normal envelope");
+    assert!(matches!(
+        classify(&contract, "intent-1", response(200, refusal)),
+        Evidence::Uncertain(_)
+    ));
 }

@@ -134,6 +134,9 @@ pub struct ComponentOperationDeclaration {
     /// Require a fresh originating credential for this registered operation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_only: bool,
+    /// A matching successful payload proves that this registered command committed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_result_schema: Option<Value>,
     /// Closed exact operation imports assigned to this exported operation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<ComponentOperationDependency>,
@@ -272,6 +275,9 @@ pub struct AdmittedComponentOperation {
     /// Released credential requirement, absent for unregistered exports.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_only: bool,
+    /// The admitted success schema for this registered command's committed result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_result_schema: Option<ComponentSchema>,
     /// Imports assigned to this export and byte-verified in the component inventory.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<ComponentOperationDependency>,
@@ -430,6 +436,14 @@ pub fn normalize_component_fact(
             operation.registered_operation.as_deref(),
             operation.fresh_only,
         )?;
+        let committed_result_schema = operation
+            .committed_result_schema
+            .map(|schema| normalize_schema(schema, "committed-result"))
+            .transpose()?;
+        validate_committed_result_schema(
+            operation.registered_operation.as_deref(),
+            committed_result_schema.as_ref(),
+        )?;
         let dependencies = normalize_operation_dependencies(operation.dependencies)?;
         let input_ports = normalize_ports(
             operation.input_ports,
@@ -445,6 +459,7 @@ pub fn normalize_component_fact(
         operations.insert(
             export,
             AdmittedComponentOperation {
+                committed_result_schema,
                 registered_operation: operation.registered_operation,
                 fresh_only: operation.fresh_only,
                 dependencies,
@@ -527,6 +542,10 @@ pub fn verify_stored_effect_projection(
             export,
             operation.registered_operation.as_deref(),
             operation.fresh_only,
+        )?;
+        validate_committed_result_schema(
+            operation.registered_operation.as_deref(),
+            operation.committed_result_schema.as_ref(),
         )?;
         let dependencies = normalize_operation_dependencies(operation.dependencies.clone())?;
         if dependencies != operation.dependencies {
@@ -1017,7 +1036,33 @@ fn normalize_parameters(
     Ok(parameters)
 }
 
-fn normalize_schema(schema: Value, field: &str) -> Result<ComponentSchema, ComponentFactError> {
+pub(crate) fn validate_committed_result_schema(
+    registered_operation: Option<&str>,
+    schema: Option<&ComponentSchema>,
+) -> Result<(), ComponentFactError> {
+    let Some(schema) = schema else {
+        return Ok(());
+    };
+    if registered_operation.is_none() {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorKind::RegisteredOperationMismatch,
+            "only a registered operation can declare a committed result",
+        ));
+    }
+    let normalized = normalize_schema(schema.schema.clone(), "committed-result")?;
+    if normalized != *schema {
+        return Err(ComponentFactError::new(
+            ComponentFactErrorKind::InvalidSchema,
+            "committed-result schema digest differs from its schema",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn normalize_schema(
+    schema: Value,
+    field: &str,
+) -> Result<ComponentSchema, ComponentFactError> {
     if let Some(declared) = schema.get("$schema")
         && declared.as_str() != Some(JSON_SCHEMA_2020_12)
     {
@@ -1117,6 +1162,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_string(),
                 ComponentOperationDeclaration {
+                    committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
@@ -1337,6 +1383,90 @@ mod tests {
     }
 
     #[test]
+    fn committed_results_require_registered_operations_and_valid_schema_facts() {
+        let success = json!({"type": "array", "items": {"type": "object"}});
+        let mut palette = declaration();
+        operation_mut(&mut palette).committed_result_schema = Some(success.clone());
+        assert_eq!(
+            normalize_component_fact(
+                palette.clone(),
+                format!("sha256:{}", "a".repeat(64)),
+                Vec::new(),
+                Vec::new(),
+            )
+            .unwrap_err()
+            .kind(),
+            ComponentFactErrorKind::RegisteredOperationMismatch,
+        );
+
+        let registered = "orders:purchase-order/create@1.2.0";
+        let mut operation = palette.operations.remove("map").unwrap();
+        operation.registered_operation = Some(registered.to_owned());
+        palette.operations.insert(registered.to_owned(), operation);
+        let facts = normalize_component_fact(
+            palette.clone(),
+            format!("sha256:{}", "a".repeat(64)),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("a declared committed result admits");
+        let schema = facts.component.operations[registered]
+            .committed_result_schema
+            .as_ref()
+            .unwrap();
+        assert_eq!(schema.schema, success);
+        assert_eq!(
+            schema.schema_digest,
+            wamn_execution_contract::canonical_json_sha256(&success)
+        );
+        verify_stored_effect_projection(&facts.component)
+            .expect("stored committed facts remain valid");
+        let mut corrupted = facts.component;
+        corrupted
+            .operations
+            .get_mut(registered)
+            .unwrap()
+            .committed_result_schema
+            .as_mut()
+            .unwrap()
+            .schema_digest = format!("sha256:{}", "b".repeat(64));
+        assert_eq!(
+            verify_stored_effect_projection(&corrupted)
+                .unwrap_err()
+                .kind(),
+            ComponentFactErrorKind::InvalidSchema
+        );
+
+        for (schema, kind) in [
+            (
+                json!({"type": "not-a-type"}),
+                ComponentFactErrorKind::InvalidSchema,
+            ),
+            (
+                json!({"$ref": "https://example.invalid/schema"}),
+                ComponentFactErrorKind::RemoteSchemaReference,
+            ),
+        ] {
+            palette
+                .operations
+                .get_mut(registered)
+                .unwrap()
+                .committed_result_schema = Some(schema);
+            assert_eq!(
+                normalize_component_fact(
+                    palette.clone(),
+                    format!("sha256:{}", "a".repeat(64)),
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .unwrap_err()
+                .kind(),
+                kind
+            );
+        }
+    }
+
+    #[test]
     fn fresh_only_is_preserved_only_for_registered_operations() {
         let mut declared = declaration();
         let registered = "orders:purchase-order/get@1.2.0";
@@ -1499,6 +1629,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_string(),
                 AdmittedComponentOperation {
+                    committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),

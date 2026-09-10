@@ -3,6 +3,7 @@
 mod readiness;
 mod router_delivery;
 mod router_driver;
+mod router_response;
 
 pub use readiness::{
     RELEASE_READINESS_CHECK_FAILED, RELEASE_READINESS_INVALIDATED, RouterReadinessProbe,
