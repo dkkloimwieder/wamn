@@ -813,11 +813,13 @@ tools/repo-lint dry-run   # prints every leg's exact argv, runs nothing
 tools/repo-lint run       # runs all ten legs, reports PASS/FAIL per leg
 ```
 
-`repo-lint` runs one grep-based guard over
-`crates/platform/runtime/src/plugins/connection_http.rs` and nine Cargo legs:
-rustfmt and Clippy across the root workspace, the components workspace (native
-and wasm), and the `no-std` workspace (native and wasm). It reports every leg
-and exits non-zero if any failed, rather than stopping at the first.
+`repo-lint` runs one HTTP isolation guard and nine Cargo legs.
+The guard reads `connection_http.rs` and its `transport.rs` module with Python 3.
+It refuses invocation identity in client keys and retained clients outside the complete isolation key.
+That key covers tenant, project, environment, binding, credential generation, destination, and TLS identity.
+Runtime isolation tests prove the behavior, while the guard prevents changes to the required structure.
+The Cargo legs run rustfmt and Clippy across the root, components, and `no-std` workspaces, including native and Wasm targets.
+The runner reports every leg and exits nonzero if any leg fails.
 
 **`tools/repo-lint run` has never been green.** Measured at `1bffa614`, unpiped:
 
@@ -3886,6 +3888,61 @@ The completed 2.9 cutover measurements are retained under `performance-baseline-
 The [comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) preserves the existing reducer results and their spread.
 The [candidate map](../perf/2026.09/wasmcloud-2-9-cutover/performance-candidate-evidence-001/evidence-map.json) records matching guest hashes, resource identity, and startup/cache limits.
 The redundant baseline and upstream test checkouts were removed after evidence capture. The migration worktree remains.
+
+### Bounded HTTP reuse
+
+`wamn-ctc8.16` owns HTTP reuse, authority isolation, and resource limits.
+The [report](../perf/2026.09/ctc8-16-http-reuse/README.md) records the limits and evidence.
+These commands test correctness, not throughput.
+
+Run the scope guard tests:
+
+```bash
+cargo test --locked --offline -p wamn-proof-conformance --test repo_lint -- --nocapture --test-threads=1
+```
+
+These tests exercise the real guard with unsafe source mutations and fake Cargo steps.
+They do not replace the socket tests or the full lint run.
+
+Run the socket tests:
+
+```bash
+cargo test --locked --offline -p wamn-runtime --lib plugins::connection_http:: -- --include-ignored --nocapture --test-threads=1
+```
+
+Build the real HTTP guest:
+
+```bash
+cargo build --manifest-path components/no-std/Cargo.toml -p http-request --target wasm32-wasip2 --locked --offline
+```
+
+Build the integration tests:
+
+```bash
+cargo test --locked --offline -p wamn-proof-integration --lib --no-run
+```
+
+Run each live proof with a fresh PostgreSQL 18 server and OCI registry:
+
+```bash
+bash docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority
+bash docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority
+```
+
+The runner uses existing debug artifacts and refuses unnamed tests.
+If several integration binaries exist, set `WAMN_HTTP_REUSE_TEST_BINARY` to the exact executable printed by the build command.
+It creates temporary containers, runs one test, and removes only its own containers and volumes.
+The nested proof preserves the current refusal under `wamn-ctc8.33`.
+It does not prove successful nested HTTP dispatch.
+
+From a clean committed worktree, run the deployed HTTP regression gate with a new evidence directory:
+
+```bash
+tools/receiving-cluster-journey-run --apply --membershipproof --evidence-dir NEW_EVIDENCE_DIRECTORY
+```
+
+This gate rebuilds the standard host and test images and uses its own disposable cluster.
+It tests deployed route authentication, not outbound connection reuse or performance.
 
 ### Other live gates that carry their command in-source
 

@@ -1,0 +1,48 @@
+
+running 13 tests
+test plugins::wamn_blobstore::plugin::tests::a_blobstore_effect_span_names_the_invocation_it_was_raised_under ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_carries_its_own_coordinates ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_handed_a_manifest_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_with_no_frozen_binding_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_from_another_wiring_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_disagrees_with_the_frozen_binding_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_matches_the_frozen_binding_is_admitted ... ok
+test plugins::wamn_blobstore::plugin::tests::a_manifest_for_another_tenant_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_manifest_without_the_invoked_package_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_resolves_through_the_mounted_manifest ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_the_manifest_carries_is_admitted ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_the_manifest_does_not_carry_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_without_a_manifest_refuses ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 319 filtered out; finished in 0.00s
+
+
+running 17 tests
+test router_driver::tests::admitted_statement_types_lower_exhaustively_to_the_runtime_vocabulary ... ok
+test router_driver::tests::candidate_refusal_preserves_class_and_frozen_literal ... ok
+test router_driver::tests::component_span_adopts_remote_traceparent_and_host_identity ... ok
+test router_driver::tests::every_registered_invocation_requires_the_exact_operation_grant ... ok
+test router_driver::tests::malformed_traceparent_is_ignored_without_suppressing_the_span ... ok
+test router_driver::tests::nested_acquisition_preserves_causation_without_minting_a_caller ... ok
+test router_driver::tests::nested_permission_denial_survives_the_real_component_boundary ... ok
+test router_driver::tests::nested_target_resolution_requires_the_exact_released_coordinate ... ok
+test router_driver::tests::node_context_carries_the_component_span_not_the_ingress_header ... ok
+test router_driver::tests::node_deadline_is_nonzero_and_host_bounded ... ok
+test router_driver::tests::partial_statement_binding_failure_cleans_earlier_operations ... ok
+test router_driver::tests::plugin_bind_registers_per_request_and_links_per_digest ... ok
+test router_driver::tests::queue_component_span_inherits_the_host_created_root ... ok
+test router_driver::tests::queue_node_context_derives_a_traceparent_from_the_host_scoped_root ... ok
+test router_driver::tests::readiness_closure_contains_only_distinct_request_attachment_targets ... ok
+test router_driver::tests::statement_scope_binds_empty_operations_and_cleans_on_drop ... ok
+test router_driver::tests::without_an_otel_layer_the_ingress_header_passes_through ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.07s
+
+
+running 3 tests
+test connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap ... ok
+test wamn_logging_absorbs_a_garbage_guest_context_without_trapping_the_guest ... ok
+test wamn_postgres_maps_an_unresolvable_project_to_connection_unavailable_not_a_trap ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+

@@ -28,6 +28,12 @@ The surviving setup, scheduler, wire, gate, management, proof and schema work
 under `.1`, `.2`, `.5`, and `.7`–`.15` remains cross-cutting input to these rows;
 it is not a separate architecture.
 
+HTTP transport reuse continues independently under `wamn-ctc8.16`, the native-alignment plan's D work.
+The owner retains WAMN's pinned-address transport with bounded reuse and excludes an upstream patch.
+Serialize its shared host, executor, and driver edits with native-dispatch work.
+Its [report](../perf/2026.09/ctc8-16-http-reuse/README.md) records correctness evidence without a performance claim.
+The origin/executor authorization correction under `wamn-ctc8.33` follows pooling immediately.
+
 ## Exploration or decision required
 
 Do not claim the dependent implementation until its row is resolved in Beads.

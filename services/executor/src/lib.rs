@@ -28,6 +28,7 @@ use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::engine::{DEFAULT_CORE_INSTANCES, build_engine_with_host_memory};
+use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::{DerivedPublishRequest, WamnJetstream};
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
@@ -468,9 +469,11 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     .context("trust the configured OCI CA bundles for component pulls")?;
     let source = ComponentArtifactSource::new(source_config);
     let engine = Arc::new(build_engine_with_host_memory(&[], host_memory(&args)?)?);
+    let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let driver = Arc::new(RouterDriver::new(
         engine,
         Arc::clone(&postgres),
+        Arc::clone(&http_transport),
         credentials,
         logging,
         allowed_hosts,

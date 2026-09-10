@@ -35,22 +35,10 @@ readonly WAMN_CARGO="${CARGO:-cargo}"
 readonly WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS='-C panic=abort'
 readonly WAMN_NO_STD_NATIVE_RUSTFLAGS='-C panic=abort'
 
-# The trusted HTTP connection effect must construct one client per invocation
-# and drop it at function exit. The wash-runtime pooled egress path keys its
-# connection pool by workload_id alone, so any client that outlives a single
-# invocation would let two credential generations share one connection.
+# The retained client owner must keep the complete approved authority scope.
+# Runtime isolation tests prove behavior; this leg guards its source structure.
 readonly WAMN_CONNECTION_HTTP_SOURCE="$WAMN_REPOSITORY_ROOT/crates/platform/runtime/src/plugins/connection_http.rs"
-readonly WAMN_CONNECTION_HTTP_BUILDER='reqwest::Client::builder('
-readonly -a WAMN_CONNECTION_HTTP_REFUSED_PATTERN=(
-  '^[[:space:]]+[A-Za-z_]+:[^=]*Client'
-  '(^|[[:space:]])static[[:space:]]|OnceLock|OnceCell|LazyLock|lazy_static|once_cell'
-  'OutgoingHandler|send_request|wasmtime_wasi_http|wasi_http|wasi:http'
-)
-readonly -a WAMN_CONNECTION_HTTP_REFUSED_REASON=(
-  'holds an HTTP client in a struct field'
-  'holds an HTTP client in a process-wide or lazily initialized cell'
-  'reaches the wash-runtime pooled egress path, keyed by workload_id alone'
-)
+readonly WAMN_CONNECTION_HTTP_TRANSPORT="$WAMN_REPOSITORY_ROOT/crates/platform/runtime/src/plugins/connection_http/transport.rs"
 
 readonly -a WAMN_ROOT_FORMAT=(
   fmt --manifest-path "$WAMN_ROOT_MANIFEST" --all -- --check
@@ -103,7 +91,8 @@ wamn_print_plan() {
 
 wamn_dry_run() {
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
-  printf 'connection-http-construction: %q\n' "$WAMN_CONNECTION_HTTP_SOURCE"
+  printf 'connection-http-scope: %q %q\n' \
+    "$WAMN_CONNECTION_HTTP_SOURCE" "$WAMN_CONNECTION_HTTP_TRANSPORT"
   wamn_print_plan 'root-rustfmt' "${WAMN_ROOT_FORMAT[@]}"
   wamn_print_plan 'components-rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
   wamn_print_plan 'no-std-rustfmt' "${WAMN_NO_STD_FORMAT[@]}"
@@ -172,44 +161,107 @@ wamn_run_no_std_native_clippy() {
   wamn_report_leg "$label" "$exit_code"
 }
 
-# Pin the per-invocation client construction that keeps credentialed HTTP
-# egress free of cross-generation connection reuse.
-wamn_connection_http_construction() {
-  local -r label='connection HTTP per-invocation client'
+# Deliberately recognizes these concrete declarations, not arbitrary Rust.
+# A different representation requires an explicit guard update and runtime proof.
+wamn_connection_http_scope() {
+  local -r label='connection HTTP scoped retained clients'
   printf 'repo-lint: %s\n' "$label" >&2
-  if [[ ! -r "$WAMN_CONNECTION_HTTP_SOURCE" ]]; then
-    printf 'repo-lint: connection HTTP source is unreadable: %s\n' \
-      "$WAMN_CONNECTION_HTTP_SOURCE" >&2
-    wamn_report_leg "$label" 65
-    return
-  fi
+  local exit_code=0
+  python3 - "$WAMN_CONNECTION_HTTP_SOURCE" "$WAMN_CONNECTION_HTTP_TRANSPORT" <<'PY' || exit_code=$?
+import pathlib
+import re
+import sys
 
-  local builders
-  builders="$(
-    { grep -o -F -e "$WAMN_CONNECTION_HTTP_BUILDER" -- "$WAMN_CONNECTION_HTTP_SOURCE" || true; } |
-      wc -l
-  )"
-  if ((builders != 1)); then
-    printf 'repo-lint: connection_http.rs must contain exactly one %s) construction; found %d\n' \
-      "$WAMN_CONNECTION_HTTP_BUILDER" "$builders" >&2
-    wamn_report_leg "$label" 65
-    return
-  fi
 
-  local index found
-  for index in "${!WAMN_CONNECTION_HTTP_REFUSED_PATTERN[@]}"; do
-    found="$({
-      grep -n -E -e "${WAMN_CONNECTION_HTTP_REFUSED_PATTERN[index]}" \
-        -- "$WAMN_CONNECTION_HTTP_SOURCE" || true
-    })"
-    if [[ -n "$found" ]]; then
-      printf 'repo-lint: connection_http.rs %s: %s\n' \
-        "${WAMN_CONNECTION_HTTP_REFUSED_REASON[index]}" "$found" >&2
-      wamn_report_leg "$label" 65
-      return
-    fi
-  done
-  wamn_report_leg "$label" 0
+def refuse(reason):
+    print(f"repo-lint: connection HTTP scope: {reason}", file=sys.stderr)
+    sys.exit(65)
+
+
+def source(path):
+    try:
+        text = pathlib.Path(path).read_text()
+    except (OSError, UnicodeError):
+        refuse("source is unreadable")
+    # Comments and string literals cannot stand in for required declarations.
+    text = re.sub(r'/\*.*?\*/|//[^\n]*|r(#+)".*?"\1|"(?:\\.|[^"\\])*"',
+                  " ", text, flags=re.S)
+    return text.split("#[cfg(test)]", 1)[0]
+
+
+def compact(text):
+    return re.sub(r"\s+", "", re.sub(r"\bpub(?:\([^)]*\))?\s+", "", text))
+
+
+parent, transport = map(source, sys.argv[1:])
+declarations = list(re.finditer(
+    r"((?:#\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?struct\s+(\w+)\s*\{([^{}]*)\}",
+    parent + "\n" + transport))
+structs = {}
+for declaration in declarations:
+    attributes, name, body = declaration.groups()
+    if name in structs:
+        refuse(f"duplicate {name} declaration")
+    structs[name] = (attributes, compact(body))
+
+expected = {
+    "ConnectionScope": "tenant:Box<str>,project:Box<str>,environment:Box<str>,instance:Box<str>,",
+    "ClientScope": "connection:ConnectionScope,package:Box<str>,component_digest:Box<str>,"
+                   "requirement:Box<str>,binding_hash:Box<str>,definition_hash:Box<str>,generation:i64,",
+    "ClientKey": "scope:ClientScope,target:Target,",
+    "Target": "authority:Box<str>,peer:SocketAddr,tls_name:Option<Box<str>>,",
+    "State": "clients:HashMap<ClientKey,CachedClient>,scopes:HashMap<ConnectionScope,Weak<ScopeQuota>>,",
+    "CachedClient": "http:HttpClient,life:Arc<ClientLife>,used:Instant,",
+}
+for name, fields in expected.items():
+    if name not in structs:
+        refuse(f"missing or unsupported {name} declaration")
+    attributes, actual = structs[name]
+    if "invocation" in actual.lower():
+        refuse(f"{name} must not retain invocation identity")
+    # Fields can have generic commas; only a following field name ends a type.
+    wanted = dict(re.findall(r"(\w+):(.+?),(?=\w+:|$)", fields))
+    found = dict(re.findall(r"(\w+):(.+?),(?=\w+:|$)", actual))
+    for field, kind in wanted.items():
+        if found.get(field) != kind:
+            refuse(f"{name}.{field} must remain {kind}")
+    if actual != fields:
+        refuse(f"unsupported extra, reordered, or duplicate {name} fields")
+    if name not in ("State", "CachedClient"):
+        derives = re.findall(r"#\[derive\(([^)]*)\)\]", attributes)
+        if not {"Eq", "Hash", "PartialEq"} <= set(",".join(derives).replace(" ", "").split(",")):
+            refuse(f"{name} must derive Eq, Hash, and PartialEq over its complete scope")
+
+client_type = re.compile(r"\b(?:HttpClient|CachedClient|Client)\b")
+for name, (_, fields) in structs.items():
+    if client_type.search(fields) and name not in ("State", "CachedClient"):
+        refuse(f"unscoped retained HTTP client in {name}")
+# Tuple/enum/alias retention and static cells are unsupported, not silently skipped.
+without_structs = re.sub(
+    r"(?:pub(?:\([^)]*\))?\s+)?struct\s+\w+\s*\{[^{}]*\}", "", parent + "\n" + transport)
+without_structs = without_structs.replace("type HttpClient = Client<PinnedConnector, Full<Bytes>>;", "")
+if re.search(r"\b(?:struct|enum|type|static|const)\s+\w+[^;{}]*\b(?:HttpClient|CachedClient|Client)\b",
+             without_structs):
+    refuse("unsupported HTTP client retention declaration")
+for declaration in re.findall(r"\b(?:struct|enum)\s+\w+[^;{]*\{[^}]*\}", without_structs):
+    if client_type.search(declaration):
+        refuse("unsupported HTTP client retention declaration")
+acquisitions = re.findall(r"let scope = ClientScope \{(.*?)\n        \};", parent, re.S)
+expected_acquisition = """
+connection:ConnectionScope{tenant:self.tenant.clone(),project:self.project.clone(),
+environment:environment.into(),instance:snapshot.instance_id.as_deref().ok_or(ConnectionError::Unbound)?.into(),},
+package:invocation.package_id.clone().into(),component_digest:invocation.component_digest.clone().into(),
+requirement:request.requirement.clone().into(),
+binding_hash:snapshot.validation_hash.as_deref().ok_or(ConnectionError::Unbound)?.into(),
+definition_hash:snapshot.definition_hash.as_deref().ok_or(ConnectionError::CredentialUnavailable)?.into(),
+generation:snapshot.generation.ok_or(ConnectionError::CredentialUnavailable)?,
+"""
+if len(acquisitions) != 1 or compact(acquisitions[0]) != compact(expected_acquisition):
+    refuse("ClientScope acquisition must use the attested tenant/project/environment/binding/generation values")
+if compact(transport).count("letkey=ClientKey{scope,target};") != 1:
+    refuse("ClientKey acquisition must retain both supplied scope and approved target")
+PY
+  wamn_report_leg "$label" "$exit_code"
 }
 
 (($# <= 1)) || wamn_usage_error 'expected at most one command'
@@ -222,7 +274,7 @@ case "$WAMN_COMMAND" in
   run)
     wamn_require_cargo
     cd -- "$WAMN_REPOSITORY_ROOT"
-    wamn_connection_http_construction
+    wamn_connection_http_scope
     wamn_run 'root rustfmt' "${WAMN_ROOT_FORMAT[@]}"
     wamn_run 'components rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
     wamn_run 'no-std rustfmt' "${WAMN_NO_STD_FORMAT[@]}"

@@ -1,4 +1,5 @@
 //! Exact repo-local lint coverage over all three Cargo workspaces.
+//! Fake Cargo covers runner argv and reporting, not runtime isolation behavior.
 
 use serde_json::Value;
 use std::fs;
@@ -9,6 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use wamn_proof_conformance::package_inventory;
 
 const TOOL: &str = "tools/repo-lint";
+const HTTP_SOURCE: &str = "crates/platform/runtime/src/plugins/connection_http.rs";
+const HTTP_TRANSPORT: &str = "crates/platform/runtime/src/plugins/connection_http/transport.rs";
 const ROOT_MEMBER_COUNT: usize = 40;
 /// The component member counts are the PLATFORM half. A package declares its
 /// own components, so a component workspace also holds however many of those
@@ -19,7 +22,7 @@ const COMPONENT_MEMBER_COUNT: usize = 17;
 const NO_STD_MANIFEST: &str = "components/no-std/Cargo.toml";
 const NO_STD_MEMBER_COUNT: usize = 4;
 const LEG_LABELS: [&str; 10] = [
-    "connection HTTP per-invocation client",
+    "connection HTTP scoped retained clients",
     "root rustfmt",
     "components rustfmt",
     "no-std rustfmt",
@@ -373,30 +376,175 @@ fn repo_lint_reports_every_leg_when_an_early_leg_fails() {
     assert_leg_statuses(&output, Some(("root rustfmt", 23)));
 }
 
-#[test]
-fn repo_lint_reports_every_cargo_leg_when_the_static_leg_fails() {
-    let root = repository_root();
+fn scope_fixture_output(relative: &str, before: &str, after: &str) -> Output {
     let directory = TestDirectory::new();
-    executable(&directory.path("fake cargo"), FAKE_CARGO);
-    executable(&directory.path("grep"), "#!/usr/bin/env bash\nexit 1\n");
-
-    let path = format!(
-        "{}:{}",
-        directory.0.display(),
-        std::env::var("PATH").expect("test process must have PATH")
+    let root = directory.path("repository");
+    for relative in [TOOL, HTTP_SOURCE, HTTP_TRANSPORT] {
+        let destination = root.join(relative);
+        fs::create_dir_all(destination.parent().expect("fixture file parent"))
+            .expect("create isolated source fixture");
+        fs::copy(repository_root().join(relative), destination).expect("copy source fixture");
+    }
+    let changed = root.join(relative);
+    let source = fs::read_to_string(&changed).expect("read source fixture");
+    assert_eq!(
+        source.matches(before).count(),
+        1,
+        "mutation must target one site"
     );
-    let output = tool_command(&root, &directory)
-        .env("PATH", path)
-        .arg("run")
-        .output()
-        .expect("run failing repo-lint tool");
-    assert_eq!(output.status.code(), Some(1));
+    fs::write(changed, source.replacen(before, after, 1)).expect("mutate isolated source fixture");
+    executable(&directory.path("fake cargo"), FAKE_CARGO);
+    let output = run_tool(&root, &directory, &["run"]);
     assert_eq!(
         captured_invocations(&directory.path("cargo calls")).len(),
         9,
         "a static-leg failure must not hide any Cargo leg"
     );
-    assert_leg_statuses(&output, Some(("connection HTTP per-invocation client", 65)));
+    output
+}
+
+fn assert_scope_refusal(relative: &str, before: &str, after: &str, reason: &str) {
+    let output = scope_fixture_output(relative, before, after);
+    assert_eq!(output.status.code(), Some(1));
+    assert_leg_statuses(
+        &output,
+        Some(("connection HTTP scoped retained clients", 65)),
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(reason),
+        "guard omitted {reason}:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn repo_lint_refuses_invocation_identity_in_the_pool_key() {
+    assert_scope_refusal(
+        HTTP_TRANSPORT,
+        "struct ClientKey {\n",
+        "struct ClientKey {\n    invocation_id: String,\n",
+        "ClientKey must not retain invocation identity",
+    );
+}
+
+#[test]
+fn repo_lint_refuses_each_omitted_scope_dimension() {
+    for (declaration, field, kind) in [
+        ("ConnectionScope", "tenant", "Box<str>"),
+        ("ConnectionScope", "project", "Box<str>"),
+        ("ConnectionScope", "environment", "Box<str>"),
+        ("ConnectionScope", "instance", "Box<str>"),
+        ("ClientScope", "connection", "ConnectionScope"),
+        ("ClientScope", "package", "Box<str>"),
+        ("ClientScope", "component_digest", "Box<str>"),
+        ("ClientScope", "requirement", "Box<str>"),
+        ("ClientScope", "binding_hash", "Box<str>"),
+        ("ClientScope", "definition_hash", "Box<str>"),
+        ("ClientScope", "generation", "i64"),
+        ("Target", "authority", "Box<str>"),
+        ("Target", "peer", "SocketAddr"),
+        ("Target", "tls_name", "Option<Box<str>>"),
+    ] {
+        let visibility = if declaration == "Target" {
+            ""
+        } else {
+            "pub(crate) "
+        };
+        let mut field_source = format!("    {visibility}{field}: {kind},\n");
+        if declaration == "Target" && field == "peer" {
+            field_source.push_str("    tls_name: Option<Box<str>>,\n");
+        }
+        // A commented declaration must not satisfy the required field.
+        assert_scope_refusal(
+            HTTP_TRANSPORT,
+            &field_source,
+            &format!("// {field_source}"),
+            &format!("{declaration}.{field} must remain {kind}"),
+        );
+    }
+}
+
+#[test]
+fn repo_lint_refuses_unscoped_retained_clients() {
+    assert_scope_refusal(
+        HTTP_TRANSPORT,
+        "struct Inner {\n",
+        "struct Inner {\n    fallback: HttpClient,\n",
+        "unscoped retained HTTP client in Inner",
+    );
+    assert_scope_refusal(
+        HTTP_TRANSPORT,
+        "clients: HashMap<ClientKey, CachedClient>,",
+        "clients: HashMap<String, CachedClient>,",
+        "State.clients must remain HashMap<ClientKey,CachedClient>",
+    );
+    assert_scope_refusal(
+        HTTP_TRANSPORT,
+        "struct Inner {\n",
+        "struct Unscoped(HttpClient);\nstruct Inner {\n",
+        "unsupported HTTP client retention declaration",
+    );
+}
+
+#[test]
+fn repo_lint_refuses_client_cells_but_accepts_unrelated_cells() {
+    assert_scope_refusal(
+        HTTP_TRANSPORT,
+        "struct Inner {\n",
+        "static HTTP: std::sync::OnceLock<HttpClient> = std::sync::OnceLock::new();\nstruct Inner {\n",
+        "unsupported HTTP client retention declaration",
+    );
+    let output = scope_fixture_output(
+        HTTP_TRANSPORT,
+        "struct Inner {\n",
+        "static COUNT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();\nstruct Inner {\n",
+    );
+    assert!(
+        output.status.success(),
+        "unrelated cell must not fail the guard"
+    );
+    assert_leg_statuses(&output, None);
+}
+
+#[test]
+fn repo_lint_refuses_partial_hashing_and_unsupported_keys() {
+    assert_scope_refusal(
+        HTTP_TRANSPORT,
+        "#[derive(Clone, Eq, Hash, PartialEq)]\nstruct ClientKey",
+        "#[derive(Clone, Eq, PartialEq)]\nstruct ClientKey",
+        "ClientKey must derive Eq, Hash, and PartialEq",
+    );
+    assert_scope_refusal(
+        HTTP_TRANSPORT,
+        "struct ClientKey {\n    scope: ClientScope,\n    target: Target,\n}",
+        "struct ClientKey(ClientScope, Target);",
+        "missing or unsupported ClientKey declaration",
+    );
+}
+
+#[test]
+fn repo_lint_refuses_constant_or_invocation_substitutes_at_acquisition() {
+    for (before, after) in [
+        (
+            "tenant: self.tenant.clone(),",
+            "tenant: String::new().into(),",
+        ),
+        (
+            "package: invocation.package_id.clone().into(),",
+            "package: invocation.node_id.clone().into(),",
+        ),
+        (
+            "generation: snapshot\n                .generation\n                .ok_or(ConnectionError::CredentialUnavailable)?,",
+            "generation: 0,",
+        ),
+    ] {
+        assert_scope_refusal(
+            HTTP_SOURCE,
+            before,
+            after,
+            "ClientScope acquisition must use the attested",
+        );
+    }
 }
 
 #[test]
@@ -432,6 +580,7 @@ fn dry_run_is_side_effect_free_and_invalid_commands_are_refused() {
     assert!(plan.contains("connection-http-native-clippy: RUSTFLAGS=-C\\ panic=abort"));
     assert!(plan.contains("no-std-native-clippy: RUSTFLAGS=-C\\ panic=abort"));
     for label in [
+        "connection-http-scope:",
         "root-rustfmt:",
         "components-rustfmt:",
         "no-std-rustfmt:",

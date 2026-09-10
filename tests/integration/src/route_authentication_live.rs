@@ -3050,6 +3050,7 @@ async fn build_journey_runtime(
     let driver = Arc::new(RouterDriver::new(
         Arc::clone(&engine),
         Arc::clone(&postgres),
+        Arc::new(wamn_runtime::plugins::connection_http::transport::HttpTransport::new()?),
         Arc::new(WamnCredentials::empty()),
         Arc::new(WamnLogging::new(WamnLoggingConfig::default())?),
         Arc::from(Vec::<AllowedHost>::new()),

@@ -6018,6 +6018,8 @@ dependencies = [
  "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wash-runtime",
+ "wasm-encoder 0.251.0",
+ "wasmparser 0.251.0",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wat",
@@ -6101,7 +6103,9 @@ dependencies = [
  "deadpool-postgres",
  "futures-util",
  "hex",
+ "http-body-util",
  "hyper",
+ "hyper-util",
  "object_store",
  "oci-client",
  "opentelemetry",
@@ -6112,12 +6116,14 @@ dependencies = [
  "reqwest",
  "ring",
  "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
  "tokio-rustls",
+ "tower-service",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -6608,8 +6614,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "437970b35b1a85cfde9c74b2398352d8d653f3bd8e3a3db0c063ea8f5b4b36ff"
 dependencies = [
  "bitflags",
+ "hashbrown 0.17.1",
  "indexmap",
  "semver",
+ "serde",
 ]
 
 [[package]]

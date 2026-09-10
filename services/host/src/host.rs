@@ -35,6 +35,7 @@ use wamn_runtime::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
     build_engine_with_host_memory_and_compilation_cache,
 };
+use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::flow_http_routing::{
     FlowHttpRouting, RouteAuthentication, SessionRouteAuthentication,
     requires_pat_route_authentication, requires_session_route_authentication,
@@ -710,6 +711,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .context("wamn:postgres plugin init")?,
     );
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
+    let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let router_driver = match release.as_ref() {
         Some(release) => {
             let artifact_base = args
@@ -742,6 +744,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             Some(Arc::new(RouterDriver::new(
                 Arc::clone(&engine),
                 Arc::clone(&postgres),
+                Arc::clone(&http_transport),
                 credentials,
                 Arc::clone(&logging),
                 allowed_hosts.into(),

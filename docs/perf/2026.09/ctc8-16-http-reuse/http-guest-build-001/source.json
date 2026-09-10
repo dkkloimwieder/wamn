@@ -1,0 +1,19 @@
+{
+  "changed_source_sha256": {
+    "Cargo.lock": "097dd7737e26bc2a85afa3e4daf6fec5c493d4a0ff2e9310966124c113bf3732",
+    "Cargo.toml": "5217283bbe4148ef3cd32a5a5005910aa8eaa9a0f3bf12775aa2f0cb77cfb725",
+    "crates/execution/host/src/router_driver.rs": "b8d13e1b81cb6e680ad0b47e37c042f09c43d4f1d4ce9970bd462d0577598a93",
+    "crates/platform/runtime/Cargo.toml": "3f3d0009417f831e10b66009f7c907fe848ed3c8dbd3e324339380e160034ff6",
+    "crates/platform/runtime/src/plugins/connection_http.rs": "e7dda45c5a9a650e9f78e8cbc6bb2930ce6beb1bd0aa915a29256b14e3d9d145",
+    "crates/platform/runtime/src/plugins/connection_http/transport.rs": "8b946b1137fe0b8a8b88246a06d9f4483d7dbf7c64591c7ecdcab7e2bdc57858",
+    "crates/platform/runtime/src/plugins/connection_http/transport/tests.rs": "f0a87f3b1d2d0d6406c0ab338e3cbd831b24e4bb8fa922e1e3e82bbed7a08654",
+    "crates/platform/runtime/tests/executor_plugin_no_trap_live.rs": "edcd1f5b69bc1f6e269e610cc9f0a069254066ae11b2a1a6665df6e3caf177f1",
+    "docs/architecture/native-alignment-ledger.md": "debd50d3df93e556b717100e841a3f7681670887cf3d1fa5e6b275a7213fdd89",
+    "services/executor/src/lib.rs": "57ceb8d965157eb3a09bf4ba2b695d0d8cc5bf3ad7c470eeaeecb68a3c404f51",
+    "services/host/src/host.rs": "405fa071c294ed2ce2c39003af3683d0e77e4f84449ab684e2bde0e4fba656a8",
+    "tests/integration/Cargo.toml": "4aac1599b454863e2dbb27d898525804f3f18b57a280190035631bbc6714ee76",
+    "tests/integration/src/route_authentication_live.rs": "b0b608b5ca1870ad13ca79c2808cb330cb8586bb19996fb86a97f09914d2dc31",
+    "tests/integration/src/trusted_http_route.rs": "717c1ebaba9f63eaeb3708354d87d440ac84fc4aa79d668ea8644ac7e580aafd"
+  },
+  "head": "0cdb9af37e065af305c089e9035526384ae24844"
+}

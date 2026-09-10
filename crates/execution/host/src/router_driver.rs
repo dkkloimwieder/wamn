@@ -31,6 +31,7 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_runtime::engine::MAX_HOST_CALL_DURATION;
 use wamn_runtime::plugins::EffectEvidence;
+use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
 };
@@ -540,6 +541,8 @@ enum ExecutionClosure<'a> {
 pub struct RouterDriver {
     engine: Arc<Engine>,
     postgres: Arc<WamnPostgres>,
+    /// Shared by every driver in this process, independently of fresh stores.
+    http_transport: Arc<HttpTransport>,
     credentials: Arc<WamnCredentials>,
     logging: Arc<WamnLogging>,
     allowed_hosts: Arc<[AllowedHost]>,
@@ -577,6 +580,8 @@ impl fmt::Debug for RouterDriver {
 }
 
 impl RouterDriver {
+    /// Bind one release to the process-owned capabilities.
+    /// Every driver in the same process must receive the same HTTP transport.
     #[expect(
         clippy::too_many_arguments,
         reason = "each host-owned capability is an independent production dependency"
@@ -584,6 +589,7 @@ impl RouterDriver {
     pub fn new(
         engine: Arc<Engine>,
         postgres: Arc<WamnPostgres>,
+        http_transport: Arc<HttpTransport>,
         credentials: Arc<WamnCredentials>,
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
@@ -619,6 +625,7 @@ impl RouterDriver {
         Ok(Self {
             engine,
             postgres,
+            http_transport,
             credentials,
             logging,
             allowed_hosts,
@@ -779,6 +786,7 @@ impl RouterDriver {
                 &self.base_linker,
                 compiled,
                 Arc::clone(&self.postgres),
+                Arc::clone(&self.http_transport),
                 Arc::clone(&self.credentials),
                 Arc::clone(&self.logging),
                 Arc::clone(&self.allowed_hosts),
@@ -1544,6 +1552,7 @@ impl RouterDriver {
                 &self.base_linker,
                 bytes,
                 Arc::clone(&self.postgres),
+                Arc::clone(&self.http_transport),
                 Arc::clone(&self.credentials),
                 Arc::clone(&self.logging),
                 Arc::clone(&self.allowed_hosts),
@@ -1566,6 +1575,7 @@ impl RouterDriver {
                 &self.base_linker,
                 compiled,
                 Arc::clone(&self.postgres),
+                Arc::clone(&self.http_transport),
                 Arc::clone(&self.credentials),
                 Arc::clone(&self.logging),
                 Arc::clone(&self.allowed_hosts),
@@ -1727,6 +1737,7 @@ struct NestedOperationHost {
     /// than rebuilding the surface for the child.
     base_linker: Arc<Linker<SharedCtx>>,
     postgres: Arc<WamnPostgres>,
+    http_transport: Arc<HttpTransport>,
     credentials: Arc<WamnCredentials>,
     logging: Arc<WamnLogging>,
     allowed_hosts: Arc<[AllowedHost]>,
@@ -1935,6 +1946,7 @@ impl NestedOperationHost {
             &self.base_linker,
             compiled,
             Arc::clone(&self.postgres),
+            Arc::clone(&self.http_transport),
             Arc::clone(&self.credentials),
             Arc::clone(&self.logging),
             Arc::clone(&self.allowed_hosts),
@@ -2332,6 +2344,7 @@ impl NodeInstance {
         base_linker: &Arc<Linker<SharedCtx>>,
         bytes: &[u8],
         postgres: Arc<WamnPostgres>,
+        http_transport: Arc<HttpTransport>,
         credentials: Arc<WamnCredentials>,
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
@@ -2363,6 +2376,7 @@ impl NodeInstance {
             base_linker,
             prepared_component,
             postgres,
+            http_transport,
             credentials,
             logging,
             allowed_hosts,
@@ -2386,6 +2400,7 @@ impl NodeInstance {
         base_linker: &Arc<Linker<SharedCtx>>,
         component: Component,
         postgres: Arc<WamnPostgres>,
+        http_transport: Arc<HttpTransport>,
         credentials: Arc<WamnCredentials>,
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
@@ -2441,6 +2456,7 @@ impl NodeInstance {
             base_linker,
             prepared_component,
             postgres,
+            http_transport,
             credentials,
             logging,
             allowed_hosts,
@@ -2556,6 +2572,7 @@ impl NodeInstance {
         base_linker: &Arc<Linker<SharedCtx>>,
         prepared_component: PreparedComponent,
         postgres: Arc<WamnPostgres>,
+        http_transport: Arc<HttpTransport>,
         credentials: Arc<WamnCredentials>,
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
@@ -2580,6 +2597,7 @@ impl NodeInstance {
             let hosts_entered = hosts_span.enter();
             let connection_http = Arc::new(ConnectionHttp::new(
                 Arc::clone(&postgres),
+                Arc::clone(&http_transport),
                 Arc::clone(&credentials),
                 tenant_id,
                 config.project.as_str(),
@@ -2602,6 +2620,7 @@ impl NodeInstance {
                 engine: Arc::new(engine.clone()),
                 base_linker: Arc::clone(base_linker),
                 postgres: Arc::clone(&postgres),
+                http_transport,
                 credentials: Arc::clone(&credentials),
                 logging: Arc::clone(&logging),
                 allowed_hosts: Arc::clone(&allowed_hosts),
@@ -3704,6 +3723,7 @@ mod tests {
         let logging =
             Arc::new(WamnLogging::new(WamnLoggingConfig::default()).expect("logging plugin"));
         let credentials = Arc::new(WamnCredentials::from_projects(HashMap::new()));
+        let http_transport = Arc::new(HttpTransport::new().expect("HTTP transport"));
         let allowed_hosts: Arc<[AllowedHost]> = Arc::from(Vec::new());
         let manifest = ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -3771,6 +3791,7 @@ mod tests {
                 &base_linker,
                 compiled.clone(),
                 Arc::clone(&postgres),
+                Arc::clone(&http_transport),
                 Arc::clone(&credentials),
                 Arc::clone(&logging),
                 Arc::clone(&allowed_hosts),
@@ -3789,8 +3810,17 @@ mod tests {
                 engine.guest_memory(),
                 instance.nested.engine.guest_memory(),
             ));
+            assert!(Arc::ptr_eq(
+                &http_transport,
+                &instance.nested.http_transport,
+            ));
             drop(instance);
             assert_eq!(engine.guest_memory().in_use(), 0);
+            assert_eq!(
+                Arc::strong_count(&http_transport),
+                1,
+                "fresh-store teardown must release its transport references, not the process owner"
+            );
             assert_eq!(
                 counts(),
                 expected,

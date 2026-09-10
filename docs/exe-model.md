@@ -175,6 +175,28 @@ ledger.
    **shelved**: it is specified, it is not the default tier, and no work depends
    on it today.
 
+### Outbound HTTP reuse
+
+The owner retains WAMN's pinned-address HTTP transport and permits bounded connection reuse under `wamn-ctc8.16`.
+The public native connector does not accept WAMN's approved peer before dispatch.
+The transport uses Hyper directly without an upstream patch or a second production HTTP path.
+
+One process-owned transport serves the invocation-local plugins.
+Each request still authorizes its invocation, release, binding, credentials, and destination before selecting a reusable client.
+The client separates tenant, project, environment, connection instance, binding, credential generation, approved peer, and TLS identity.
+Caller claims, credential headers, bodies, and trace context belong to individual requests, not retained clients.
+
+Bindings and credential generations share the quota for their logical connection.
+Retained clients and sockets remain charged while active, idle, or draining.
+The transport also bounds concurrent requests, headers, bodies, and total duration.
+Full capacity refuses before dispatch without a waiting queue.
+The [HTTP report](perf/2026.09/ctc8-16-http-reuse/README.md) records the initial limits and proof gaps.
+
+The existing effect outcomes remain unchanged.
+The transport does not retry requests internally.
+A timeout or cancellation does not prove that the remote operation did nothing.
+The transport change does not alter nested-operation authority or admit standard WASI HTTP.
+
 ## Data, identity and generated APIs
 
 Package application rows are tenant-scoped by database residency, not by column.

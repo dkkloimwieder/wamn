@@ -586,6 +586,10 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
     let allowed_hosts: Arc<[AllowedHost]> = Vec::new().into();
     let effect = Arc::new(ConnectionHttp::new(
         postgres,
+        Arc::new(
+            wamn_runtime::plugins::connection_http::transport::HttpTransport::new()
+                .expect("HTTP transport"),
+        ),
         Arc::new(WamnCredentials::empty()),
         "acme",
         "receiving",

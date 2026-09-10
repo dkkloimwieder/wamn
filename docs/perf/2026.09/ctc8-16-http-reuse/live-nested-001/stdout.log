@@ -1,0 +1,25 @@
+test=trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority
+postgres=wamn-http-reuse.btF769xQ-pg
+registry=wamn-http-reuse.btF769xQ-registry
+/wamn-http-reuse.btF769xQ-pg sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14
+/wamn-http-reuse.btF769xQ-registry sha256:26b2eb03618e749084668eaff68cff8f81dda12d06ac641be7a6398b82a6f25b
+398c413d993d1d81071c4500f36b5436a82ce6673092f19d0fc2bfc9cebbd121  /home/kaalin/.cache/wamn-lanes/ctc8-16-http-reuse-20260910/target/debug/deps/wamn_proof_integration-81033a58548f4900
+d3e161308374d7dbb8d4d6a28267b63218d7492c9c7ed5ffe0475bbfacabdfa6  /home/kaalin/.cache/wamn-lanes/ctc8-16-http-reuse-20260910/components/no-std/target/wasm32-wasip2/debug/http_request.wasm
+c7adab66f65db52e891b9be8e5ac1a3cfaec9a7d6243198326b2833b62f41b62  /home/kaalin/.cache/wamn-lanes/ctc8-16-http-reuse-20260910/docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh
+
+running 1 test
+test trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority ... Error: db error
+
+Caused by:
+    ERROR: effective-release-snapshot-already-sealed
+FAILED
+
+failures:
+
+failures:
+    trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 76 filtered out; finished in 3.14s
+
+removed owned container and anonymous volumes: wamn-http-reuse.btF769xQ-registry
+removed owned container and anonymous volumes: wamn-http-reuse.btF769xQ-pg

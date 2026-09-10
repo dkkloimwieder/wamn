@@ -1,0 +1,17 @@
+test=trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority
+postgres=wamn-http-reuse.51TIdSCZ-pg
+registry=wamn-http-reuse.51TIdSCZ-registry
+/wamn-http-reuse.51TIdSCZ-pg sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14
+/wamn-http-reuse.51TIdSCZ-registry sha256:26b2eb03618e749084668eaff68cff8f81dda12d06ac641be7a6398b82a6f25b
+45ef0e7dc8612fe9189a1cdcd69808587ecc72fecdcf0e109eb12e94c25c26f1  /home/kaalin/.cache/wamn-lanes/ctc8-16-http-reuse-20260910/target/debug/deps/wamn_proof_integration-4f3e76711eea95e8
+d3e161308374d7dbb8d4d6a28267b63218d7492c9c7ed5ffe0475bbfacabdfa6  /home/kaalin/.cache/wamn-lanes/ctc8-16-http-reuse-20260910/components/no-std/target/wasm32-wasip2/debug/http_request.wasm
+c7adab66f65db52e891b9be8e5ac1a3cfaec9a7d6243198326b2833b62f41b62  /home/kaalin/.cache/wamn-lanes/ctc8-16-http-reuse-20260910/docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh
+
+running 1 test
+test trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 76 filtered out; finished in 14.18s
+
+PASS exact named live test: trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority
+removed owned container and anonymous volumes: wamn-http-reuse.51TIdSCZ-registry
+removed owned container and anonymous volumes: wamn-http-reuse.51TIdSCZ-pg

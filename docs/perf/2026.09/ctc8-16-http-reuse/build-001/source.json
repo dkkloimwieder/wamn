@@ -1,0 +1,15 @@
+{
+  "changed_source_sha256": {
+    "Cargo.lock": "99a6a76395741a2c126d50ac4d2b6c4ad2e58b605881b25b3a766d33d4a329df",
+    "Cargo.toml": "5591c00bc83156f6c5c5aa792f50f71556396d671fb143390073ad2d421b201c",
+    "crates/execution/host/src/router_driver.rs": "b8d13e1b81cb6e680ad0b47e37c042f09c43d4f1d4ce9970bd462d0577598a93",
+    "crates/platform/runtime/Cargo.toml": "6ae0ffb2aedb78276cff0893bfbc6125603c9e903d3733ee1fe34f7020e4e588",
+    "crates/platform/runtime/src/plugins/connection_http.rs": "3750dbf37292c3046943ee0534c2c33baa0fe318de839cface8d0938097d4cbe",
+    "crates/platform/runtime/tests/executor_plugin_no_trap_live.rs": "edcd1f5b69bc1f6e269e610cc9f0a069254066ae11b2a1a6665df6e3caf177f1",
+    "services/executor/src/lib.rs": "57ceb8d965157eb3a09bf4ba2b695d0d8cc5bf3ad7c470eeaeecb68a3c404f51",
+    "services/host/src/host.rs": "405fa071c294ed2ce2c39003af3683d0e77e4f84449ab684e2bde0e4fba656a8",
+    "tests/integration/src/route_authentication_live.rs": "b0b608b5ca1870ad13ca79c2808cb330cb8586bb19996fb86a97f09914d2dc31",
+    "tests/integration/src/trusted_http_route.rs": "fe37809a34596ae7177eeb86f389f480e67afa6f0a894729c837f93860b5ad2e"
+  },
+  "head": "0cdb9af37e065af305c089e9035526384ae24844"
+}

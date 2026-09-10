@@ -1,0 +1,150 @@
+# Bounded HTTP reuse
+
+`wamn-ctc8.16` owns this implementation and its proofs.
+The work starts from main `0cdb9af37e065af305c089e9035526384ae24844`.
+The owner directs correctness work without benchmarks.
+This report makes no latency or throughput claim.
+
+## Transport boundary
+
+The native 2.9 connector does not accept WAMN's approved address through its public interface.
+The existing Reqwest wrapper also hides the connection lifetime required for hard socket accounting.
+The replacement uses the existing Hyper and Rustls libraries directly, without an upstream patch.
+
+The connector opens only the approved address.
+TLS still authenticates the logical server name with the platform trust verifier.
+The transport does not follow redirects, use ambient proxies, or retry requests internally.
+HTTP/1.1 and TLS-negotiated HTTP/2 use the same authority and quota path.
+The change does not admit new guest interfaces.
+
+Every request retains the existing invocation, release, binding, credential, and destination authorization.
+The retained client stores transport state, not caller claims, credential headers, bodies, or trace context.
+Each request carries its own headers and trace context.
+Each component invocation still receives a fresh store.
+
+## Resource limits
+
+A socket is one network connection.
+A retained client can own several sockets.
+A logical connection is the tuple of tenant, project, environment, and connection instance.
+Its quota covers all bindings and credential generations in one process.
+These limits do not establish a distributed quota across service replicas.
+
+| Resource | Initial limit | Scope |
+| --- | --- | --- |
+| Retained clients | 128 | Process, including retired clients with live tasks |
+| Sockets | 64 | Process, including connections in setup, use, idle state, or drain |
+| Concurrent requests | 32 | Process, through response collection |
+| Sockets | 8 | Logical connection, across generations |
+| Concurrent requests | 8 | Logical connection, across generations |
+| Idle sockets | 2 | Client |
+| Idle expiration | 30 seconds | Client pool |
+| Request body | 8 MiB | Request, before copying into owned transport storage |
+| Response body | 8 MiB | Response, enforced during reading |
+| Header bytes | 32 KiB | Request or response, including response trailers |
+| Header fields | 100 | Request or response, including response trailers |
+| Transport deadline | 30 seconds | Request, including connection setup and body collection |
+
+The limits bound connection retention and buffer use.
+They are starting product limits, not measured machine capacity.
+Larger transfers refuse or lose their response under the existing outcome contract.
+At capacity, new work refuses before dispatch without a waiting queue.
+Retiring a client does not refund its permits while its sockets or tasks remain alive.
+The pool refuses reuse after 30 idle seconds.
+Hyper checks idle sockets on a 30-second timer, so physical closure can take about 60 seconds.
+Those sockets retain their permits until closure.
+
+## Outcome boundary
+
+Unavailable capacity maps to the existing refusal before dispatch.
+A deadline before the response head maps to timeout.
+A body failure after the response head maps to response loss.
+Other failures in flight remain uncertain.
+Cancellation retains the existing effect guard.
+A timeout or cancellation does not prove that the remote operation did nothing.
+
+## Evidence
+
+The first diagnostic compilation passed for the runtime and execution driver libraries.
+It took 380.839 seconds in a new debug target directory.
+Source edits continued during this compilation, so it is not a frozen-source runtime proof.
+Its exact command and output live in `build-001`.
+
+All three targeted HTTP runs passed all 35 tests, including 15 transport tests.
+The runs used real TCP and TLS sockets for reuse, protocol, generation, quota, cancellation, and failure assertions.
+Their exact commands and output live in `native-001`, `native-002`, and `native-003`.
+The final two runs also vary tenant, project, and environment independently.
+It tests disconnect, redirect, and unavailable responses across cleartext HTTP/1.1, TLS HTTP/1.1, and HTTP/2.
+Each case observes exactly one socket and one POST request.
+
+The related regression run passed 13 blobstore tests, 17 router tests, and three guest error tests.
+These tests retain frozen candidate bindings, original caller identity, fresh stores, shared transport ownership, and errors without guest traps.
+The commands and output live in `regression-001`.
+
+The real `http-request` guest built successfully in its separate debug workspace.
+Its command and output live in `http-guest-build-001`.
+This build does not prove execution through the production driver.
+
+The integration and service test compilation passed in `integration-build-001`.
+The first live runs each executed one named test and failed during fixture setup or mutation.
+The reuse fixture tried to update an immutable connection binding.
+The nested fixture tried to extend a sealed release.
+Both runs removed their own PostgreSQL and registry containers and anonymous volumes.
+Their commands, failures, and cleanup records remain in `live-reuse-001` and `live-nested-001`.
+The fixture corrections retain the database guards.
+The second live runs reached the intended refusals but failed because expected messages omitted the generated `ConnectionError::` prefix.
+Those failures remain in `live-reuse-002` and `live-nested-002`.
+The corrected assertions retain exact equality and the existing error classes.
+
+The final integration compilation passed in `integration-build-003`.
+Both final live proofs passed through the production driver with fresh PostgreSQL 18 and registry containers.
+Each run executed exactly one named test, with no ignored tests or self-skip.
+Each runner removed only its own containers and anonymous volumes.
+
+| Evidence | Result | Scope |
+| --- | --- | --- |
+| `native-003` | 35 passed | HTTP authority helpers and real socket, TLS, generation, quota, and outcome tests |
+| `regression-001` | 33 passed | Blobstore candidate authority, router identity and lifecycle, and guest error handling |
+| `live-reuse-003` | 1 passed | Real guest reuse, connection disablement, frozen candidate drift, and credential generation changes |
+| `live-nested-003` | 1 passed | Warm direct child, nested refusal, original caller and child identity, and no extra network request |
+| `clippy-002` | Exit 0 | Scoped library lint, with existing warnings |
+| `static-001` | Exit 0 | Changed Rust formatting, shell syntax, whitespace, and source hashes against the final live proof |
+| `guard-002` | 10 passed | Scope guard, 24 unsafe mutations, one unrelated-counter control, and all nine Cargo steps |
+
+These results total 80 distinct targeted tests.
+The live proofs use cleartext HTTP/1.1.
+The socket tests separately cover TLS HTTP/1.1 and HTTP/2.
+The final integration binary hash is `45ef0e7dc8612fe9189a1cdcd69808587ecc72fecdcf0e109eb12e94c25c26f1`.
+The HTTP guest hash is `d3e161308374d7dbb8d4d6a28267b63218d7492c9c7ed5ffe0475bbfacabdfa6`.
+
+The all-target lint in `clippy-001` failed on the existing `wamn-10yt.80` error in `receiving_command_histories_live.rs`.
+The HTTP change leaves that peer-owned file untouched.
+Main commit `1d38b6da38a460753d89f877ec0a0c68345a7d60` carries its separate fix.
+The HTTP worktree does not yet include that commit.
+Library lint does not replace the unfinished integrated merge gates.
+
+The approval check rejected two earlier attempts to replace the fresh-client guard with runtime tests alone.
+The owner now directs a preventive guard for the complete client isolation key.
+It must refuse invocation identity in that key and retained clients outside it.
+The guard now enforces the complete key, derived equality and hashing, scoped client storage, and attested scope inputs.
+It accepts an unrelated static counter and refuses an unscoped static client.
+The nine Cargo steps remain unchanged.
+The first compiled guard run passed eight tests and failed two mutation fixtures.
+One fixture matched two peer fields, and another moved a derive attribute onto its inserted type.
+The corrected fixtures retain exact one-site mutations and require the intended refusal.
+The final frozen run passed all ten tests in `guard-002`.
+The earlier run remains in `guard-001` and does not establish a frozen-source proof.
+These runner tests use fake Cargo for the nine steps and do not claim that those lint steps pass.
+
+Source inspection also found a separate nested authority mismatch, tracked by `wamn-ctc8.33`.
+Retargeting changes the executing child identity but retains the parent wiring and node.
+The existing HTTP and blobstore snapshot compares those different identities.
+Pooling does not correct that authority model.
+The owner directs pooling to land first with the existing fail-closed denial unchanged.
+The correction follows immediately under `wamn-ctc8.33`.
+It authorizes the executing child as B and preserves A as the origin, following the existing origin/executor ruling.
+The passing nested proof establishes refusal and identity preservation, not successful nested HTTP dispatch.
+
+The issue remains in progress.
+No HTTP source commit, merge, or Git push occurs at this checkpoint.
+The benchmark acceptance remains unclaimed under the owner's no-benchmark instruction.

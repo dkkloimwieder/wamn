@@ -47,6 +47,8 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+wasm-encoder = { workspace = true, features = ["wasmparser"] }
+wasmparser = { workspace = true }
 async-trait = { workspace = true }
 proptest.workspace = true
 wamn-client = { workspace = true }

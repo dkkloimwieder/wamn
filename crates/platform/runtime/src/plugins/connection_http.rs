@@ -9,7 +9,6 @@
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tracing::Instrument as _;
 use wamn_catalog::{
@@ -24,8 +23,8 @@ use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::connection_authority::{
-    AuthorityError, NetworkPolicy, TlsPolicy, TokioDnsResolver, TransportDecision,
-    parse_http_connection_authority, resolve_http_request,
+    AuthorityError, NetworkPolicy, TlsPolicy, TokioDnsResolver, parse_http_connection_authority,
+    resolve_http_request,
 };
 use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
@@ -37,6 +36,10 @@ use super::wamn_credentials::WamnCredentials;
 use super::wamn_postgres::{
     CandidateBindingWorld, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
 };
+
+pub mod transport;
+
+use transport::{ClientScope, ConnectionScope, HttpTransport};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -51,9 +54,8 @@ use bindings::wamn::connection::http::{self, ConnectionError, Header, Request, R
 pub const CONNECTION_HTTP_ID: &str = "wamn-connection-http";
 const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
 const AUTHORITY_SNAPSHOT_UNAVAILABLE: &str = "connection-authority-unavailable";
-/// The transport detail for an HTTP client that never built. One of the three
-/// details this file mints itself, so [`http_outcome`] can place it before
-/// dispatch instead of guessing at a rendered error string.
+/// The transport detail for unavailable client capacity or construction.
+/// These failures dispatch nothing, including refusal by a shared quota.
 const HTTP_CLIENT_UNAVAILABLE: &str = "connection-client-unavailable";
 /// The transport detail for a response the far side sent and the host never
 /// finished reading. Minted for the same reason as the other two: only this
@@ -113,6 +115,7 @@ impl NetworkPolicy for ExternallyEnforcedNetworkPolicy {
 /// Host-owned services and claims for the trusted HTTP effect.
 pub struct ConnectionHttp {
     postgres: Arc<WamnPostgres>,
+    transport: Arc<HttpTransport>,
     vault: Arc<WamnCredentials>,
     tenant: Box<str>,
     project: Box<str>,
@@ -136,6 +139,7 @@ pub struct ConnectionHttp {
 impl ConnectionHttp {
     pub fn new(
         postgres: Arc<WamnPostgres>,
+        transport: Arc<HttpTransport>,
         vault: Arc<WamnCredentials>,
         tenant: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
@@ -144,6 +148,7 @@ impl ConnectionHttp {
     ) -> Self {
         Self {
             postgres,
+            transport,
             vault,
             tenant: tenant.into(),
             project: project.into(),
@@ -374,7 +379,42 @@ impl ConnectionHttp {
             .lookup(&self.project, handle)
             .ok_or(ConnectionError::CredentialUnavailable)?;
         let credential_headers = credential_headers(&secret)?;
-        execute(decision, request, credential_headers).await
+        let scope = ClientScope {
+            connection: ConnectionScope {
+                tenant: self.tenant.clone(),
+                project: self.project.clone(),
+                environment: environment.into(),
+                instance: snapshot
+                    .instance_id
+                    .as_deref()
+                    .ok_or(ConnectionError::Unbound)?
+                    .into(),
+            },
+            package: invocation.package_id.clone().into(),
+            component_digest: invocation.component_digest.clone().into(),
+            requirement: request.requirement.clone().into(),
+            binding_hash: snapshot
+                .validation_hash
+                .as_deref()
+                .ok_or(ConnectionError::Unbound)?
+                .into(),
+            definition_hash: snapshot
+                .definition_hash
+                .as_deref()
+                .ok_or(ConnectionError::CredentialUnavailable)?
+                .into(),
+            generation: snapshot
+                .generation
+                .ok_or(ConnectionError::CredentialUnavailable)?,
+        };
+        execute(
+            &self.transport,
+            scope,
+            decision,
+            request,
+            credential_headers,
+        )
+        .await
     }
 }
 
@@ -486,12 +526,9 @@ pub(crate) fn authorize_candidate_closure(
 
 /// The HTTP connection's own descriptor.
 ///
-/// Built PER CALL, never cached in a process-wide cell. `repo-lint`'s
-/// per-invocation-client leg refuses deferred-initialisation state anywhere in
-/// this file, and it is right to refuse it bluntly: the guard exists so a
-/// credentialed HTTP path cannot acquire cross-generation reuse, and a guard
-/// that accepts "but mine is only a descriptor" stops guarding. Constructing
-/// nine small ownership entries is nothing beside the request it authorizes.
+/// Each call builds its descriptor and authorizes the effect again.
+/// The shared transport retains clients only under the complete isolation key.
+/// `repo-lint` guards that key and refuses unscoped client retention.
 fn http_descriptor() -> ConnectionTypeDescriptor {
     ConnectionTypeDescriptor::http_v1()
 }
@@ -682,46 +719,61 @@ pub fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
 }
 
 async fn execute(
+    transport: &HttpTransport,
+    scope: ClientScope,
     decision: crate::connection_authority::AuthorityDecision,
     request: &Request,
     credentials: HashMap<String, String>,
 ) -> Result<Response, ConnectionError> {
+    if request
+        .body
+        .as_ref()
+        .is_some_and(|body| body.len() > transport::MAX_BODY_BYTES)
+    {
+        return Err(ConnectionError::Incompatible);
+    }
+    // Bound guest-controlled fields before copying them into a HeaderMap.
+    // The transport repeats these bounds after credentials and trace injection.
+    let header_bytes = request.headers.iter().try_fold(0usize, |total, header| {
+        total
+            .checked_add(header.name.len())?
+            .checked_add(header.value.len())
+    });
+    if request.headers.len() > transport::MAX_HEADERS
+        || header_bytes.is_none_or(|size| size > transport::MAX_HEADER_BYTES)
+        || request
+            .idempotency_key
+            .as_ref()
+            .is_some_and(|key| key.len() > transport::MAX_HEADER_BYTES)
+    {
+        return Err(ConnectionError::Incompatible);
+    }
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|_| ConnectionError::Incompatible)?;
     let headers = outbound_headers(request, credentials)
         .map_err(|error| log_effect_authority_denied("outbound-headers", error))?;
-    let mut builder = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .timeout(Duration::from_secs(30));
-    let host = decision.logical_authority.host();
-    match &decision.transport {
-        TransportDecision::Direct { origin } => {
-            builder = builder.resolve(host, origin.address);
-        }
-        TransportDecision::Proxy { .. } => return Err(ConnectionError::Incompatible),
-    }
-    // A named detail, not the rendered error, for the same reason the authority
-    // snapshot uses one: this failure provably dispatched nothing, and
-    // `http_outcome` has no other way to tell it apart from a failure in flight.
-    // The rendered error stays host-side in the log.
-    let client = builder.build().map_err(|error| {
-        tracing::warn!(error = %error, "trusted HTTP client construction failed");
-        ConnectionError::Transport(HTTP_CLIENT_UNAVAILABLE.to_string())
-    })?;
-    let mut outbound = client
-        .request(method, decision.logical_url.as_ref())
-        .headers(headers);
-    if let Some(body) = &request.body {
-        outbound = outbound.body(body.clone());
-    }
-    let response = outbound.send().await.map_err(|error| {
-        if error.is_timeout() {
-            ConnectionError::Timeout
-        } else {
-            ConnectionError::Transport(error.to_string())
-        }
-    })?;
+    let body = request.body.as_deref().unwrap_or_default();
+    let mut outbound = hyper::Request::builder()
+        .method(method)
+        .uri(decision.logical_url.as_ref())
+        .body(body)
+        .map_err(|_| ConnectionError::Incompatible)?;
+    *outbound.headers_mut() = headers;
+    let response = transport
+        .execute(scope, &decision, outbound)
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error, "trusted HTTP transport failed");
+            if error.is_before_dispatch() {
+                ConnectionError::Transport(HTTP_CLIENT_UNAVAILABLE.to_string())
+            } else if error.is_response_lost() {
+                ConnectionError::Transport(RESPONSE_BODY_LOST.to_string())
+            } else if error.is_timeout() {
+                ConnectionError::Timeout
+            } else {
+                ConnectionError::Transport(error.to_string())
+            }
+        })?;
     let status = response.status().as_u16();
     let headers = response
         .headers()
@@ -731,17 +783,7 @@ async fn execute(
             value: value.as_bytes().to_vec(),
         })
         .collect();
-    // The status line and headers are already in hand here, so the far side
-    // acted. Only the body was lost. A named detail carries that fact to
-    // `http_outcome`, which the rendered error cannot.
-    let body = response
-        .bytes()
-        .await
-        .map_err(|error| {
-            tracing::warn!(error = %error, status, "trusted HTTP response body was lost");
-            ConnectionError::Transport(RESPONSE_BODY_LOST.to_string())
-        })?
-        .to_vec();
+    let body = response.into_body().to_vec();
     Ok(Response {
         status,
         headers,
@@ -827,13 +869,13 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
 /// `Transport` carries four different facts, and the wire enum names none of
 /// them. Three of them this file mints itself and therefore recognises:
 ///
-/// * the authority read and the client that never built, which dispatched
+/// * the authority read and unavailable client capacity, which dispatched
 ///   nothing, so both are refused before dispatch,
 /// * the response body the host never finished reading, which is
 ///   [`EffectOutcome::ResponseLost`], because the status line proves the far
 ///   side acted and the guest still got nothing.
 ///
-/// The fourth is a rendered `reqwest` error from a request that failed in
+/// The fourth is a rendered transport error from a request that failed in
 /// flight. It records [`EffectOutcome::EffectUncertain`], because the platform
 /// sent an attempt and holds no outcome for it. `Timeout` is wrong for it, since
 /// it names a deadline that never elapsed, and refused before dispatch is wrong
@@ -954,6 +996,7 @@ mod tests {
     async fn revoked_invocation_refuses_send_and_can_be_rebound() {
         let plugin = ConnectionHttp::new(
             Arc::new(offline_postgres()),
+            Arc::new(HttpTransport::new().expect("HTTP transport")),
             Arc::new(WamnCredentials::empty()),
             "tenant-a",
             "project-a",
@@ -1244,6 +1287,7 @@ mod tests {
     fn offline_plugin() -> ConnectionHttp {
         ConnectionHttp::new(
             Arc::new(offline_postgres()),
+            Arc::new(HttpTransport::new().expect("HTTP transport")),
             Arc::new(WamnCredentials::empty()),
             "tenant-a",
             "project-a",

@@ -168,6 +168,7 @@ reqwest = { version = "0.13", default-features = false }
 ring = "0.17"
 rcgen = "0.14.8"
 rustls = { version = "0.23", default-features = false }
+rustls-platform-verifier = "0.7"
 rustix = { version = "1", features = ["fs", "process"] }
 schemars = "0.8"
 serde = "1"
@@ -177,11 +178,13 @@ subtle = "2"
 tokio = "1"
 tokio-postgres = "0.7"
 tokio-rustls = "0.26"
+tower-service = "0.3"
 tracing = "0.1"
 tracing-opentelemetry = { version = "0.32", default-features = false }
 tracing-subscriber = "0.3"
 async-trait = "0.1"
 wasm-encoder = "0.251"
+wasmparser = "0.251"
 # Post-link normalization uses one immutable upstream adapter. Its embedded
 # `virtual_adapter-wasip2.wasm` is sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632.
 wasi-virt = { version = "=0.2.0", git = "https://github.com/bytecodealliance/WASI-Virt.git", rev = "448f6df8f688cee5d6995e96b1ffc31f9bf00742", default-features = false }

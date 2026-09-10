@@ -116,17 +116,30 @@ B2 still requires B.
 
 ### D. Finish HTTP transport reuse without weakening destination authority
 
-**Observation:** the retained native-pooling probe ran on 2.8. It demonstrated reuse, but also sent to an address different from WAMN's approved peer. Tagged 2.9 still constructs its connector privately. Production `ConnectionHttp` continues to build a client per call and collect the response body in full. The historical probe is not an executed 2.9 adoption proof. [S10, S11]
+The owner retains WAMN's pinned-address transport with bounded reuse under `wamn-ctc8.16`.
+This decision excludes an upstream patch and a second production HTTP path.
+The implementation uses Hyper directly because the Reqwest wrapper hides the socket lifetime needed for aggregate accounting.
 
-**Decision path:** recheck the public 2.9 integration for the specific blocker. Prefer native transport only if the approved endpoint is enforced **before dispatch**. Observing a mismatch afterward is insufficient. Standard WASI HTTP remains a separate interface option, not a prerequisite or authority bypass.
+The retained native-pooling probe demonstrated reuse on 2.8, but it sent to an address different from WAMN's approved peer.
+Tagged 2.9 still constructs its connector privately.
+Its public API does not accept WAMN's approved peer before dispatch.
+The historical probe is not an executed 2.9 adoption proof. [S10, S11]
 
-If the public native path remains unsuitable, use bounded reuse around WAMN's existing pinned-destination transport. This fallback belongs to the existing HTTP work, not a second runtime. Reusable clients must live above the invocation-local plugin/store lifetime; placing a cache inside an object rebuilt per request does not provide cross-request reuse.
+Reusable clients live above the invocation-local plugin and store lifetime.
+The [HTTP report](../perf/2026.09/ctc8-16-http-reuse/README.md) records the limits, exact commands, and proof gaps.
+Standard WASI HTTP remains a separate interface option.
+Revisit native adoption only when its public API preserves the approved peer, isolation, aggregate limits, and existing effect outcomes.
 
 The reuse boundary must preserve tenant/project/environment, binding and credential generation, approved destination and TLS policy. Invocation IDs are not pool keys. Keep authority checks on every request, including hits. Retired clients drain without lending their authority to a new generation, and overlapping generations must not each receive an independent copy of the same logical quota.
 
 **Acceptance:** warm reuse plus denied-access controls; generation/policy changes; released and candidate bindings; nested callers; actual connected peer; and all supported HTTP/TLS/protocol paths. Bound retained clients/connections, concurrent requests, headers, body bytes and total duration. A connection quota is not a request quota. Observe mutation dispatch counts and response-loss handling; do not add hidden mutation retries or claim that a timeout proves non-dispatch.
 
-Select either native adoption or the scoped fallback, with measured evidence, under existing `wamn-ctc8.13` / `wamn-ctc8.16` ownership after checking current tracker status. Delete the replaced per-call construction path. [S10]
+Delete the replaced per-call construction path under `wamn-ctc8.16`. [S10]
+Repurpose `repo-lint` to refuse invocation identity in pool keys and retained clients outside the complete isolation key.
+Keep runtime isolation tests as the behavioral proof.
+The owner directs pooling to land before the existing fail-closed nested authorization defect is fixed.
+Fix that defect immediately next under `wamn-ctc8.33`, with B as the executor and A preserved as the origin.
+The owner prohibits benchmarking in this wave, so correctness evidence does not establish a performance improvement.
 
 ### E. Complete the separate P3 HTTP cutover
 
