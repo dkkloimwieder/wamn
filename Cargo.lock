@@ -5979,6 +5979,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
  "pg_walstream",
+ "proptest",
  "reqwest",
  "schemars",
  "serde",

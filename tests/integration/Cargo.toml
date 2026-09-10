@@ -47,6 +47,7 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+proptest.workspace = true
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 uuid = { workspace = true }

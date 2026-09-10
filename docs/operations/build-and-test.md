@@ -2693,6 +2693,90 @@ declined), or the same member set under both profiles, or a `sqlx-core` fork, or
 profile-scoped pins. Until then, mint every pin under `m1`, which is what
 `[EFFECTIVE-RELEASE-POC]` and `[RECEIVING-ROUTE-JOURNEY]` both build.
 
+### `[RECEIVING-CORRECTNESS]` — real Receiving command histories
+
+`wamn-10yt.77` owns this proof. The application brief names its eight invariants.
+The proof calls the deployed Receiving guest through the existing authenticated HTTP route.
+It uses separate fixture and observer connections to disposable PostgreSQL 18.
+It does not run benchmarks.
+
+Run the pure model and shrinking tests through the normal Cargo test target:
+
+```bash
+cargo test --locked --offline -p wamn-proof-integration \
+  --test receiving_command_histories_live -- --nocapture
+```
+
+Run the complete live proof through the existing disposable journey:
+
+```bash
+tools/receiving-cluster-journey-run --apply --receiving-correctness \
+  --evidence-dir /absolute/path/to/main/docs/perf/2026.09/receiving-correctness/live-001
+```
+
+Use a new evidence directory for each run.
+The runner owns the cluster, PostgreSQL, registry, broker, images, and cleanup.
+The frozen `kind-wamn` cluster remains outside this recipe.
+The runner uses the standard host image and debug test executable.
+It stops after the Receiving assertions and resource cleanup.
+
+The suite runs three explicit histories and 16 generated histories at seed 7701.
+Each generated history contains one to twelve commands.
+Each shrink attempt starts from a new fixture with fresh UUIDs.
+The generator retains stable line indices and key slots across shrink attempts.
+A shrink must retain the same business property and response outcome.
+A transport or database failure invalidates the attempt.
+The suite repeats the final failing history once on a fresh fixture and records whether the same failure recurs.
+The suite limits shrinking to 64 attempts and the complete live test to 600 seconds.
+
+The seven boundary cases cover cancelled orders, mixed command envelopes, competing receipts,
+overlapping replay, rollback, a withheld application response, and denied authority.
+For competing calls, the controller releases its lock only after PostgreSQL reports separate blocked guest backends.
+The observer follows blocker chains for same-key calls.
+The proof permits either caller to win.
+
+For rollback, a disposable trigger finds the inserted receipt and claim inside the guest transaction.
+The trigger then blocks on an advisory lock that the observer can see.
+After the controller releases that lock, the trigger raises the injected error.
+The complete business snapshot must equal the snapshot before the call.
+The suite removes this trigger before it continues.
+
+For the lost-response case, the HTTP adapter withholds the result from the application.
+The observer establishes the committed receipt before the adapter discards the response.
+The application receives no first result and retries the captured command.
+The retry must return the independently observed original result without another write.
+This case does not establish behavior under a real TCP connection failure.
+
+The private fixture document carries credentials and never enters the evidence directory.
+The `WAMN_RECEIVING_CORRECTNESS_DOCUMENT` variable names that file.
+The evidence records source, component and SQL corpus identities, fixture IDs, histories, executed steps, and boundary results.
+A successful run requires the exact test, its structured summary, and the final cleanup receipt.
+An ignored, missing, zero-case, or unarmed leg does not pass.
+
+To reproduce a history, copy its JSON into the private document's `history` field.
+Set `evidence_file` to a new path, then run the exact live test while the disposable release is active:
+
+```bash
+WAMN_RECEIVING_CORRECTNESS_DOCUMENT=/absolute/private/fixture.json \
+  cargo test --locked --offline -p wamn-proof-integration \
+  --test receiving_command_histories_live production_receiving_command_histories \
+  -- --exact --include-ignored --nocapture
+```
+
+A selected history runs alone and reports reproduction status.
+It does not satisfy the full suite's completion criteria.
+Retain the original generated failure, its minimized history, and the reproduction receipt.
+
+Apply the mutation rules in **Traps** below.
+Run the unchanged suite first, then apply one counted production mutation.
+The business control disables canonical-body comparison in `record_receipt::replay_result`.
+The contention control substitutes the existing unlocked purchase-order read for the command's purchase-order lock.
+Each control requires changed guest bytes and the exact named live test.
+A build or earlier journey failure does not kill either mutant.
+Record any surviving protection from line locks or database constraints.
+Restore the exact source bytes with a new modification time before rebuilding.
+Run the restored suite before closing the bead.
+
 ### `[RECEIVING-ROUTE-JOURNEY]` — published base + overlay routes and traces
 
 This gate builds the virtualized Receiving base and Acme overlay components

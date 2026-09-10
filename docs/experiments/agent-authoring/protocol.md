@@ -201,6 +201,24 @@ variable.
 
 ### 4.6 Author testing procedure — what the platform offers today
 
+#### Accepted testing amendment (2026-09-09)
+
+The owner accepted [WAMN platform and application testing](../../poc/wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
+Application testing proceeds without the complete deterministic simulation framework. Beads and executed receipts own completion.
+
+Application briefs own fixtures, expected outcomes, and invariant IDs. Each invariant records its rule, affected state, observation boundary, enforcing code or constraint, and named tests.
+Extend existing support to execute real commands through guest, capability, transaction, and authenticated route boundaries.
+Generated histories require an independent model and coherent state observations. Build checks and generated claim tests do not replace full-command execution.
+
+Keep real process-kill, connection-loss, and contention tests until another test covers each actual guarantee.
+Simulation alone does not retire those tests. Kani remains deferred without an automatic trigger and requires explicit owner approval to reopen.
+
+Future overlay compatibility compares two independent fresh installations with identical overlay artifacts. This authorizes no in-place upgrade or lifecycle change.
+The experiment's pinned briefs, arms, historical observations, and grading rubric remain unchanged.
+The procedure below retains the experiment's original baseline and does not define the new increment's completion status.
+
+#### Original authoring baseline
+
 What an author can run at the pinned commit, and what has no verifier. The
 baseline brief asks only for tests, the loop, the scenario's operations, and an
 honest omission list. The ordered procedure below, including the four named
