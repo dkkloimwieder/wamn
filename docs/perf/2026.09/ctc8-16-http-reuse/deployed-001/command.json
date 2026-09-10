@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "tools/receiving-cluster-journey-run",
+    "--apply",
+    "--membershipproof",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-16-http-reuse/cluster-membership-001"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/ctc8-16-http-reuse-20260910"
+}

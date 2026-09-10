@@ -111,10 +111,10 @@ impl Server {
     }
 
     fn transport(&self) -> HttpTransport {
-        self.tls
-            .clone()
-            .map(HttpTransport::from_tls)
-            .unwrap_or_else(|| HttpTransport::new().expect("platform TLS"))
+        self.tls.clone().map_or_else(
+            || HttpTransport::new().expect("platform TLS"),
+            HttpTransport::from_tls,
+        )
     }
 
     fn decision(&self) -> AuthorityDecision {
@@ -255,7 +255,7 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
                 return;
             }
             Reply::ManyHeaders | Reply::ManyTrailers => {
-                for _ in 0..MAX_HEADERS + 1 {
+                for _ in 0..=MAX_HEADERS {
                     if io.write_all(b"X-Repeated: x\r\n").await.is_err() {
                         return;
                     }
@@ -331,7 +331,7 @@ async fn serve_h2<I: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                 );
             }
             if matches!(reply, Reply::ManyHeaders) {
-                for _ in 0..MAX_HEADERS + 1 {
+                for _ in 0..=MAX_HEADERS {
                     response
                         .headers_mut()
                         .append("x-repeated", header::HeaderValue::from_static("x"));
@@ -755,11 +755,12 @@ async fn scoped_requests_are_shared_across_generations_until_bodies_finish() {
     let decision = server.decision();
     let mut requests = JoinSet::new();
     for generation in 0..MAX_SCOPE_REQUESTS {
+        let generation = i64::try_from(generation).expect("test generation fits i64");
         let transport = transport.clone();
         let decision = decision.clone();
         requests.spawn(async move {
             transport
-                .execute(scope(generation as i64), &decision, request(&decision))
+                .execute(scope(generation), &decision, request(&decision))
                 .await
         });
     }
@@ -788,7 +789,7 @@ async fn global_requests_refuse_without_queued_work_or_client_creation() {
     let decision = server.decision();
     let mut requests = JoinSet::new();
     for index in 0..MAX_REQUESTS {
-        let mut scope = scope(index as i64);
+        let mut scope = scope(i64::try_from(index).expect("test index fits i64"));
         scope.connection.instance = format!("connection-{}", index / MAX_SCOPE_REQUESTS).into();
         let transport = transport.clone();
         let decision = decision.clone();
@@ -820,7 +821,7 @@ async fn socket_limits_include_idle_connections_and_all_generations() {
     let transport = server.transport();
     let decision = server.decision();
     for index in 0..MAX_SOCKETS {
-        let mut client_scope = scope(index as i64);
+        let mut client_scope = scope(i64::try_from(index).expect("test index fits i64"));
         client_scope.connection.instance =
             format!("connection-{}", index / MAX_SCOPE_SOCKETS).into();
         transport
@@ -893,8 +894,9 @@ async fn retired_client_leases_outlive_cache_entries_and_body_cancellation() {
     wait_for(|| server.requests.load(Ordering::SeqCst) == 1).await;
     let target = target(&decision, &decision.logical_url.parse().expect("URI")).expect("target");
     for generation in 1..MAX_CLIENTS {
+        let generation = i64::try_from(generation).expect("test generation fits i64");
         transport
-            .client(scope(generation as i64), target.clone())
+            .client(scope(generation), target.clone())
             .expect("retain client");
     }
     assert_eq!(transport.inner.clients.available_permits(), 0);

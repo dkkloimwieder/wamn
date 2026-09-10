@@ -2,6 +2,8 @@
 
 `wamn-ctc8.16` owns this implementation and its proofs.
 The work starts from main `0cdb9af37e065af305c089e9035526384ae24844`.
+The approved implementation commit is `bbcdbecd3160377f7d8d5f0ebe2186754e198afe`.
+It contains the same patch as `2d1e2468`, rebased onto main `b8c527975028931386cf11849a8e6144e9f14848`.
 The owner directs correctness work without benchmarks.
 This report makes no latency or throughput claim.
 
@@ -110,6 +112,10 @@ Each runner removed only its own containers and anonymous volumes.
 | `clippy-002` | Exit 0 | Scoped library lint, with existing warnings |
 | `static-001` | Exit 0 | Changed Rust formatting, shell syntax, whitespace, and source hashes against the final live proof |
 | `guard-002` | 10 passed | Scope guard, 24 unsafe mutations, one unrelated-counter control, and all nine Cargo steps |
+| `native-004` | 35 passed | HTTP tests after seven test-only lint corrections |
+| `clippy-003` | Exit 0 | All targets in six affected crates, with existing warnings and seven new test warnings |
+| `clippy-004` | Exit 0 | Runtime all-target lint after the narrow correction, with no transport warnings |
+| `deployed-001` | Exit 0 | Canonical host and gate images, the deployed membership Job, and exact cleanup |
 
 These results total 80 distinct targeted tests.
 The live proofs use cleartext HTTP/1.1.
@@ -120,8 +126,31 @@ The HTTP guest hash is `d3e161308374d7dbb8d4d6a28267b63218d7492c9c7ed5ffe0475bbf
 The all-target lint in `clippy-001` failed on the existing `wamn-10yt.80` error in `receiving_command_histories_live.rs`.
 The HTTP change leaves that peer-owned file untouched.
 Main commit `1d38b6da38a460753d89f877ec0a0c68345a7d60` carries its separate fix.
-The HTTP worktree does not yet include that commit.
-Library lint does not replace the unfinished integrated merge gates.
+The rebased HTTP commit includes that fix.
+The all-target run in `clippy-003` passes, but reports seven style warnings in the new transport tests.
+The narrow test correction changes no production code or test assertions.
+The subsequent `native-004` run passes all 35 HTTP tests.
+The `clippy-004` run passes with no diagnostics in the transport module or its tests.
+Scoped lint does not replace the final integrated workspace run.
+
+The deployed run uses clean source `bbcdbecd3160377f7d8d5f0ebe2186754e198afe`.
+It builds the standard Dockerfile `host` and `gates` stages and deploys one rebuilt host through the 2.9 operator.
+The route fixture passes its eight P3 protocol cases before deployment.
+The in-cluster Job then proves seven membership cases through the real provisioning CLI and HTTP route.
+Absent membership returns 401, grants return 200, removed roles return 403, and membership revocation returns 401.
+Repeated grants and revocations retain their expected results.
+The Job receipt, deployed image identities, and cleanup receipt live in `cluster-membership-001`.
+Every file in its `evidence.sha256` matches the recorded hash.
+The runner removes its own cluster, containers, images, and private scratch directory.
+The existing `wamn` cluster remains outside the run.
+This is a deployed authentication regression, not an outbound pooling or performance proof.
+
+The workspace comparison helper imports only committed classifier and failure-cause helpers.
+Its offline `comparison-selfcheck-002.json` reproduces all 75 P3 and 78 PAT failure identities and causes.
+It also preserves target counts, explicit self-skips, unresolved results, and the original Cargo exit.
+The earlier `comparison-selfcheck-001.json` remains diagnostic evidence from the helper that used an uncommitted peer dependency.
+The final helper removes that dependency and refuses to overwrite existing comparison output.
+These offline checks do not execute workspace tests or decide acceptance.
 
 The approval check rejected two earlier attempts to replace the fresh-client guard with runtime tests alone.
 The owner now directs a preventive guard for the complete client isolation key.
@@ -146,5 +175,6 @@ It authorizes the executing child as B and preserves A as the origin, following 
 The passing nested proof establishes refusal and identity preservation, not successful nested HTTP dispatch.
 
 The issue remains in progress.
-No HTTP source commit, merge, or Git push occurs at this checkpoint.
-The benchmark acceptance remains unclaimed under the owner's no-benchmark instruction.
+The source is committed, but main integration and its workspace run remain pending at this checkpoint.
+The owner removes benchmarks as a condition for this correctness landing.
+Performance evidence remains deferred and unclaimed.
