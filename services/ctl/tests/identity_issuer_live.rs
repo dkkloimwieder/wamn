@@ -20,6 +20,7 @@ use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, identity_issuer_generation_role, parse_identity_issuer_url,
 };
 use wamn_control_provision::{CredentialGeneration, SYSTEM_SCHEMA_SQL, sql};
+use wamn_platform_identity::{PrincipalId, authenticate_pat, issue_pat};
 
 const ISSUER: &str = "https://identity-issuer-cli-proof.wamn-system.svc";
 
@@ -188,13 +189,14 @@ async fn upgrade_foundation_surface(
 ) -> anyhow::Result<()> {
     let current = stable_acl(admin).await?;
     anyhow::ensure!(
-        current.len() == 28,
+        current.len() == 36,
         "current issuer must hold exactly the approved expanded ACL"
     );
     // Reproduce the installed foundation's actual privileges, not its SQL text.
     admin.batch_execute(
         "REVOKE SELECT (id,kind,subject,display_name,status) ON identity.principals FROM wamn_identity_issuer; \
-         REVOKE SELECT (principal_id,token_prefix,token_hash,revoked_at,expires_at) ON identity.pats FROM wamn_identity_issuer; \
+         REVOKE SELECT (id,principal_id,token_prefix,token_hash,label,created_at,revoked_at,expires_at) ON identity.pats FROM wamn_identity_issuer; \
+         REVOKE INSERT (principal_id,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,project,env) ON identity.project_env_memberships FROM wamn_identity_issuer; \
          REVOKE SELECT (org,project,env,instance_suffix) ON registry.project_envs FROM wamn_identity_issuer; \
          REVOKE USAGE ON SCHEMA registry FROM wamn_identity_issuer;"
@@ -254,6 +256,142 @@ async fn upgrade_foundation_surface(
         stable_acl(admin).await? == current,
         "foundation issuer upgrade must restore exactly the approved current ACL and no extras"
     );
+    Ok(())
+}
+
+/// Upgrade the installed exchange surface while the A credential stays active.
+async fn upgrade_read_only_pat_surface(
+    admin: &Client,
+    admin_url: &str,
+    b_path: &Path,
+) -> anyhow::Result<()> {
+    let current = stable_acl(admin).await?;
+    success(&cli(admin_url, "--abort-generation", "b", None).await?)?;
+    fs::remove_file(b_path)?;
+    admin.batch_execute(
+        "REVOKE SELECT (id,label,created_at) ON identity.pats FROM wamn_identity_issuer; \
+         REVOKE INSERT (principal_id,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer;"
+    ).await?;
+    let previous = stable_acl(admin).await?;
+    anyhow::ensure!(
+        previous.len() == 28,
+        "exchange fixture must retain its 28 grants"
+    );
+    for (grant, revoke) in [
+        (
+            "GRANT INSERT (principal_id) ON identity.pats TO wamn_identity_issuer;",
+            "REVOKE INSERT (principal_id) ON identity.pats FROM wamn_identity_issuer;",
+        ),
+        (
+            "GRANT SELECT (id) ON identity.pats TO wamn_identity_issuer;",
+            "REVOKE SELECT (id) ON identity.pats FROM wamn_identity_issuer;",
+        ),
+        (
+            "GRANT UPDATE ON identity.pats TO wamn_identity_issuer;",
+            "REVOKE UPDATE ON identity.pats FROM wamn_identity_issuer;",
+        ),
+    ] {
+        admin.batch_execute(grant).await?;
+        let drifted = stable_acl(admin).await?;
+        refusal(
+            &cli(admin_url, "--prepare-generation", "b", Some(b_path)).await?,
+            "identity role has unexpected direct privileges",
+        )?;
+        anyhow::ensure!(!b_path.exists(), "refused PAT upgrade published a Secret");
+        anyhow::ensure!(
+            stable_acl(admin).await? == drifted,
+            "refused PAT upgrade changed its grants"
+        );
+        inactive(admin, CredentialGeneration::B).await?;
+        admin.batch_execute(revoke).await?;
+        anyhow::ensure!(
+            stable_acl(admin).await? == previous,
+            "exchange grants did not restore exactly"
+        );
+    }
+    success(&cli(admin_url, "--prepare-generation", "b", Some(b_path)).await?)?;
+    anyhow::ensure!(
+        stable_acl(admin).await? == current,
+        "PAT upgrade did not restore the exact current grants"
+    );
+    Ok(())
+}
+
+async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result<()> {
+    let untouched: bool = admin.query_one(
+        "SELECT NOT EXISTS (SELECT FROM identity.pats) AND NOT EXISTS (SELECT FROM identity.principals)", &[]
+    ).await?.get(0);
+    anyhow::ensure!(
+        untouched,
+        "credential provisioning created identity records"
+    );
+    let id: String = admin
+        .query_one(
+            "INSERT INTO identity.principals (kind,subject,display_name) \
+         VALUES ('human','issuer-pat-proof','Issuer PAT proof') RETURNING id::text",
+            &[],
+        )
+        .await?
+        .get(0);
+    let principal: PrincipalId = id.parse()?;
+    for issuer in [a, b] {
+        let issued = issue_pat(
+            issuer,
+            &principal,
+            "scoped issuer proof",
+            Duration::from_secs(60),
+        )
+        .await
+        .context("issue PAT through the scoped identity credential")?;
+        anyhow::ensure!(
+            issued.record().label() == "scoped issuer proof"
+                && issued.record().revoked_at().is_none(),
+            "PAT issuance returned unexpected metadata"
+        );
+        anyhow::ensure!(
+            authenticate_pat(issuer, issued.token()).await?.is_some(),
+            "scoped issuer cannot authenticate its stored PAT"
+        );
+        for statement in [
+            "UPDATE identity.pats SET revoked_at = now()",
+            "UPDATE identity.pats SET token_hash = repeat('0', 64)",
+            "DELETE FROM identity.pats",
+            "INSERT INTO identity.pats (id) VALUES (DEFAULT)",
+            "INSERT INTO identity.pats (created_at) VALUES (DEFAULT)",
+            "INSERT INTO identity.pats (revoked_at) VALUES (NULL)",
+            "UPDATE identity.principals SET display_name = 'Escape'",
+            "INSERT INTO identity.principals (kind,subject,display_name) VALUES ('human','escape','Escape')",
+            "DELETE FROM identity.project_env_memberships",
+            "INSERT INTO identity.project_env_memberships (principal_id,org,project,env) VALUES ('00000000-0000-0000-0000-000000000001','acme','receiving','dev')",
+            "INSERT INTO identity.project_roles (principal_id,org,project,role) VALUES ('00000000-0000-0000-0000-000000000001','acme','receiving','owner')",
+        ] {
+            let error = issuer
+                .batch_execute(statement)
+                .await
+                .expect_err("issuer must not gain unrelated mutation authority");
+            anyhow::ensure!(
+                error.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+                "database grants did not refuse an unauthorized mutation"
+            );
+        }
+    }
+    let count: i64 = admin
+        .query_one("SELECT count(*) FROM identity.pats", &[])
+        .await?
+        .get(0);
+    anyhow::ensure!(count == 2, "both generations must issue exactly one PAT");
+    admin
+        .execute(
+            "DELETE FROM identity.pats WHERE principal_id = $1::text::uuid",
+            &[&id],
+        )
+        .await?;
+    admin
+        .execute(
+            "DELETE FROM identity.principals WHERE id = $1::text::uuid",
+            &[&id],
+        )
+        .await?;
     Ok(())
 }
 
@@ -379,6 +517,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
     fs::remove_dir(&broken_path)?;
 
     upgrade_foundation_surface(admin, admin_url, &b_path).await?;
+    upgrade_read_only_pat_surface(admin, admin_url, &b_path).await?;
     a.query("SELECT token_hash FROM identity.pats", &[])
         .await
         .context("existing A inherits the approved upgraded read surface")?;
@@ -388,6 +527,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
         "live session",
     )?;
     let b = connect(&b_url).await?;
+    pat_authority(admin, &a, &b).await?;
     b.query(
         "SELECT id,kind,subject,display_name,status FROM identity.principals",
         &[],

@@ -16,9 +16,17 @@ use crate::CredentialGeneration;
 pub const IDENTITY_ISSUER_ROLE: &str = "wamn_identity_issuer";
 /// Exact database served by the identity authority.
 pub const IDENTITY_ISSUER_DATABASE: &str = "wamn_system";
-/// The only tables the signing authority may mutate.
+/// Tables that allow full row mutations by the signing authority.
 pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_state"];
-/// Fresh PAT, membership and current environment-incarnation inputs to exchange.
+/// Columns that allow PAT issuance without update or deletion authority.
+pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 5] = [
+    "principal_id",
+    "token_prefix",
+    "token_hash",
+    "label",
+    "expires_at",
+];
+/// Fresh exchange inputs and non-secret metadata returned by PAT issuance.
 pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 4] = [
     (
         "identity",
@@ -29,9 +37,12 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 4] = [
         "identity",
         "pats",
         &[
+            "id",
             "principal_id",
             "token_prefix",
             "token_hash",
+            "label",
+            "created_at",
             "revoked_at",
             "expires_at",
         ],
@@ -249,10 +260,10 @@ pub fn parse_identity_issuer_url(
     ))
 }
 
-/// Grant key-table mutations and the fresh system inputs required by exchange.
+/// Grant key-table mutations, PAT issuance, and fresh exchange inputs.
 ///
 /// The driver must first refuse unexpected grants, ownership, or memberships.
-/// Live tests exercise the resulting permissions, not the SQL text.
+/// A builder test freezes the generated SQL. Live tests exercise its permissions.
 pub fn grant_identity_issuer_surface_sql() -> String {
     let role = quote_ident(IDENTITY_ISSUER_ROLE);
     let mut sql = format!(
@@ -273,6 +284,14 @@ pub fn grant_identity_issuer_surface_sql() -> String {
             table = quote_ident(table),
         ));
     }
+    let columns = IDENTITY_ISSUER_PAT_INSERT_COLUMNS
+        .iter()
+        .map(|column| quote_ident(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    sql.push_str(&format!(
+        " GRANT INSERT ({columns}) ON TABLE identity.pats TO {role};"
+    ));
     sql
 }
 
@@ -318,12 +337,44 @@ pub fn retire_identity_issuer_generation_sql(
 #[cfg(test)]
 mod tests {
     use super::{
-        IdentityIssuerUrlErrorKind, identity_issuer_generation_role, parse_identity_issuer_url,
-        validate_identity_issuer,
+        IdentityIssuerUrlErrorKind, grant_identity_issuer_surface_sql,
+        identity_issuer_generation_role, parse_identity_issuer_url, validate_identity_issuer,
     };
     use crate::CredentialGeneration;
 
     const ISSUER: &str = "https://wamn-identity.wamn-system.svc";
+
+    #[test]
+    fn issuer_surface_sql_preserves_exact_column_grants() {
+        assert_eq!(
+            grant_identity_issuer_surface_sql(),
+            "DO $workload_acl$ DECLARE role_name text := 'wamn_identity_issuer'; BEGIN \
+             PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+             IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
+             EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+             ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = role_name \
+             AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
+             OR rolinherit OR rolreplication OR rolbypassrls \
+             OR rolpassword IS NOT NULL)) THEN \
+             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+             END IF; END $workload_acl$; \
+             GRANT USAGE ON SCHEMA identity, registry TO \"wamn_identity_issuer\"; \
+             GRANT SELECT, INSERT, UPDATE, DELETE ON \
+             identity.session_keys, identity.session_signing_state TO \"wamn_identity_issuer\"; \
+             GRANT SELECT (\"id\", \"kind\", \"subject\", \"display_name\", \"status\") \
+             ON TABLE \"identity\".\"principals\" TO \"wamn_identity_issuer\"; \
+             GRANT SELECT (\"id\", \"principal_id\", \"token_prefix\", \"token_hash\", \"label\", \"created_at\", \"revoked_at\", \"expires_at\") \
+             ON TABLE \"identity\".\"pats\" TO \"wamn_identity_issuer\"; \
+             GRANT SELECT (\"principal_id\", \"org\", \"project\", \"env\") \
+             ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_issuer\"; \
+             GRANT SELECT (\"org\", \"project\", \"env\", \"instance_suffix\") \
+             ON TABLE \"registry\".\"project_envs\" TO \"wamn_identity_issuer\"; \
+             GRANT INSERT (\"principal_id\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
+             ON TABLE identity.pats TO \"wamn_identity_issuer\";"
+        );
+    }
 
     #[test]
     fn both_generation_urls_round_trip_without_disclosing_passwords() {

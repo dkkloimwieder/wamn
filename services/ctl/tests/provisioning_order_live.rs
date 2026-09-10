@@ -84,6 +84,7 @@ fn prepare_args(
         emit_role_sql: None,
         emit_privilege_sql: None,
         emit_secret: None,
+        pat_issuer: Default::default(),
         emit_management_author_pat_secret: None,
         emit_route_caller_pat_secret: None,
         revoke_pat_prefix: None,

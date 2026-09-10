@@ -309,9 +309,24 @@ nats_owned=false
 minio_owned=false
 reader_owned=false
 reader_pid=
+pat_identity_pid=
+pat_identity_prepared=false
 host_image_owned=false
 run_complete=false
 partial_bucket_removed=false
+
+stop_pat_identity() {
+  if [[ -n "$pat_identity_pid" ]]; then
+    kill -TERM "$pat_identity_pid" 2>/dev/null || true
+    wait "$pat_identity_pid" 2>/dev/null || true
+    pat_identity_pid=
+  fi
+  if [[ "$pat_identity_prepared" == true ]]; then
+    run_sensitive abort-pat-identity env WAMN_SYSTEM_ADMIN_URL="$system_url" \
+      "$ctl" provision-identity-issuer --issuer "$pat_identity_scope" --abort-generation a || return
+    pat_identity_prepared=false
+  fi
+}
 
 cleanup() {
   # FIRST, because $? is the journey's exit status only until the next
@@ -328,6 +343,8 @@ cleanup() {
   if [[ "$partial_bucket_removed" == true ]]; then
     restore_partial_bucket 2>"$evidence_dir/cleanup-restore-partial-bucket.stderr" || cleanup_failure restore-partial-bucket "$?"
   fi
+  stop_pat_identity >"$evidence_dir/cleanup-pat-identity.log" \
+    2>"$evidence_dir/cleanup-pat-identity.stderr" || cleanup_failure pat-identity "$?"
   # The authoring gate is a LOCAL process this journey spawned; on any exit
   # after it started -- a gate refusal exits inside the wiring loop -- it must
   # die here or it outlives the run, still bound to its port, and the next
@@ -621,7 +638,7 @@ fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   "$repo_root/tools/build-components" m1
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo build --locked -p wamn-host -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker
+  cargo build --locked -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker
 if [[ "$prove_generated_tui" == true ]]; then
   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
     cargo build --locked --offline -p wamn-client-terminal --example wms_move
@@ -853,7 +870,7 @@ test "$(curl --config "$curl_config" --silent --show-error --connect-timeout 2 \
   --max-time 5 --output /dev/null --write-out '%{http_code}' \
   "http://$registry_authority/v2/")" = 200
 
-system_url=postgresql://postgres:probe@$postgres_ip:5432/postgres
+system_url=postgresql://postgres:probe@$postgres_ip:5432/wamn_system
 nats_url=nats://$nats_ip:4222
 # The bucket blob-put writes into. An author may name an object but never a
 # container (the descriptor's own test), so the container exists before any
@@ -931,7 +948,7 @@ project_db_secret=$work_dir/project-db.json
 
 # 0. THE CONTROL STORE, as the producer installs it before any verb
 #    (dev_environment.rs, the control-owner preamble): the wamn_system owner
-#    role -- NOLOGIN, no privileges, CREATE on the database -- then the
+#    role owns the exact wamn_system database and cannot log in. Then create the
 #    control-author ACL role the portable store's grants name, then
 #    system-schema.sql and control-portable-store.sql applied AS wamn_system
 #    in one session, then the PUBLIC CONNECT and TEMPORARY floors. postgres-init.sql, the container's init mount, creates
@@ -944,7 +961,6 @@ DO $$ BEGIN
     CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
 END $$;
-DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;
 DO $workload_acl$ DECLARE role_name text := 'wamn_control_author'; BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN
@@ -952,7 +968,9 @@ DO $workload_acl$ DECLARE role_name text := 'wamn_control_author'; BEGIN
   END IF;
 END $workload_acl$;
 SQL
-run_sensitive install-control-store "${psql_admin[@]}" -d postgres \
+run_sensitive create-system-database "${psql_admin[@]}" -d postgres \
+  -c 'CREATE DATABASE wamn_system OWNER wamn_system'
+run_sensitive install-control-store "${psql_admin[@]}" -d wamn_system \
   -c 'SET ROLE wamn_system' \
   -f "$repo_root/deploy/sql/system-schema.sql" \
   -f "$repo_root/deploy/sql/control-portable-store.sql" \
@@ -960,7 +978,7 @@ run_sensitive install-control-store "${psql_admin[@]}" -d postgres \
 # Then the two floors the producer converges as superuser: PUBLIC loses
 # CONNECT on every database and TEMPORARY on the control database. The
 # identity-reader prepare refuses without the second (measured offline).
-run_sensitive converge-public-floor "${psql_admin[@]}" -d postgres -f - <<'SQL'
+run_sensitive converge-public-floor "${psql_admin[@]}" -d wamn_system -f - <<'SQL'
 DO $$ DECLARE database_name text; BEGIN
   FOR database_name IN SELECT datname FROM pg_database WHERE datallowconn LOOP
     EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', database_name);
@@ -968,6 +986,77 @@ DO $$ DECLARE database_name text; BEGIN
 END $$;
 DO $$ BEGIN EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END $$;
 SQL
+
+# Temporary operator certificates authorize only this separate PAT service.
+# The server and operator trust roots are distinct and expire after one day.
+pat_identity_directory=$work_dir/pat-identity
+install -d -m 0700 "$pat_identity_directory"
+(
+  umask 077
+  for certificate_kind in server operator; do
+    certificate_base=$pat_identity_directory/$certificate_kind
+    run_sensitive "create-$certificate_kind-ca" openssl req -x509 -newkey rsa:2048 -nodes \
+      -days 1 -subj "/CN=WMS journey $certificate_kind CA" \
+      -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' \
+      -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+      -keyout "$certificate_base-ca.key" -out "$certificate_base-ca.pem" \
+      2>"$certificate_base-ca.stderr"
+    certificate_purpose=clientAuth
+    certificate_san=()
+    if [[ "$certificate_kind" == server ]]; then
+      certificate_purpose=serverAuth
+      certificate_san=(-addext 'subjectAltName=IP:127.0.0.1')
+    fi
+    run_sensitive "request-$certificate_kind-certificate" openssl req -new -newkey rsa:2048 -nodes \
+      -subj "/CN=WMS journey $certificate_kind" \
+      -addext 'basicConstraints=critical,CA:FALSE' \
+      -addext 'keyUsage=critical,digitalSignature' \
+      -addext "extendedKeyUsage=$certificate_purpose" "${certificate_san[@]}" \
+      -keyout "$certificate_base.key" -out "$certificate_base.csr" \
+      2>"$certificate_base-request.stderr"
+    run_sensitive "sign-$certificate_kind-certificate" openssl x509 -req -days 1 \
+      -in "$certificate_base.csr" -CA "$certificate_base-ca.pem" \
+      -CAkey "$certificate_base-ca.key" -CAcreateserial -copy_extensions copy \
+      -out "$certificate_base.crt" 2>"$certificate_base-sign.stderr"
+  done
+)
+# The fresh database fixes the issuer scope. The readiness line supplies the
+# ephemeral transport port, which this PAT-only bootstrap does not use for JWTs.
+pat_identity_scope=https://127.0.0.1
+run_sensitive prepare-pat-identity env WAMN_SYSTEM_ADMIN_URL="$system_url" \
+  "$ctl" provision-identity-issuer --issuer "$pat_identity_scope" \
+  --prepare-generation a --emit-secret "$pat_identity_directory/database.json"
+pat_identity_prepared=true
+record_command env WAMN_IDENTITY_DATABASE_URL='<scoped credential redacted>' \
+  WAMN_IDENTITY_ISSUER="$pat_identity_scope" "$cargo_target_dir/debug/wamn-identity" \
+  serve --bind 127.0.0.1:0 --tls-cert "$pat_identity_directory/server.crt" \
+  --tls-key "$pat_identity_directory/server.key" --operator-ca "$pat_identity_directory/operator-ca.pem"
+coproc PAT_IDENTITY {
+  export WAMN_IDENTITY_DATABASE_URL
+  WAMN_IDENTITY_DATABASE_URL=$(jq -er '.stringData.url' "$pat_identity_directory/database.json")
+  export WAMN_IDENTITY_ISSUER="$pat_identity_scope"
+  exec "$cargo_target_dir/debug/wamn-identity" serve --bind 127.0.0.1:0 \
+    --tls-cert "$pat_identity_directory/server.crt" --tls-key "$pat_identity_directory/server.key" \
+    --operator-ca "$pat_identity_directory/operator-ca.pem" \
+    </dev/null 2>"$pat_identity_directory/service.stderr"
+}
+pat_identity_pid=${PAT_IDENTITY_PID:-}
+pat_identity_pipe=${PAT_IDENTITY[0]:-}
+if [[ -z "$pat_identity_pid" || -z "$pat_identity_pipe" ]]; then
+  echo "the disposable PAT service stopped before readiness" >&2
+  exit 1
+fi
+exec {pat_identity_read_fd}<&"$pat_identity_pipe"
+if ! read -r -t 5 -u "$pat_identity_read_fd" pat_identity_ready; then
+  echo "the disposable PAT service did not report readiness within five seconds" >&2
+  exit 1
+fi
+exec {pat_identity_read_fd}<&-
+if [[ ! "$pat_identity_ready" =~ ^identity\ listening\ on\ (127\.0\.0\.1:[1-9][0-9]*)$ ]]; then
+  echo "the disposable PAT service reported an unexpected listener" >&2
+  exit 1
+fi
+pat_identity_endpoint=https://${BASH_REMATCH[1]}
 
 # 1. PROVISION, as the producer does. provision-org stamps the org and its
 #    environment policies; the environment call carries the app password the
@@ -994,8 +1083,12 @@ run_sensitive provision-project-env env WAMN_APP_PASSWORD=unused-legacy-secret \
   --app-host "$postgres_ip" --app-port 5432 --namespace "$namespace" \
   --emit-database "$database_cr" --emit-role-sql "$roles_sql" --emit-privilege-sql "$privileges_sql" \
   --emit-secret "$project_db_secret" \
+  --pat-issuer "$pat_identity_endpoint" --pat-client-cert "$pat_identity_directory/operator.crt" \
+  --pat-client-key "$pat_identity_directory/operator.key" --pat-server-ca "$pat_identity_directory/server-ca.pem" \
   --emit-management-author-pat-secret "$management_pat_secret" \
   --emit-route-caller-pat-secret "$route_caller_secret"
+stop_pat_identity
+printf 'process=stopped credential=aborted\n' >"$evidence_dir/pat-identity.receipt"
 publisher_principal=$(jq -er '.metadata.annotations["wamn.io/principal-subject"]' "$management_pat_secret")
 secret_url() { jq -er '.stringData.url' "$1"; }
 

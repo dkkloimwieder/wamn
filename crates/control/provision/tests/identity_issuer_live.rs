@@ -197,10 +197,18 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
         assert_eq!(
             acl,
             [
+                "column|identity|pats.created_at|SELECT|f",
+                "column|identity|pats.expires_at|INSERT|f",
                 "column|identity|pats.expires_at|SELECT|f",
+                "column|identity|pats.id|SELECT|f",
+                "column|identity|pats.label|INSERT|f",
+                "column|identity|pats.label|SELECT|f",
+                "column|identity|pats.principal_id|INSERT|f",
                 "column|identity|pats.principal_id|SELECT|f",
                 "column|identity|pats.revoked_at|SELECT|f",
+                "column|identity|pats.token_hash|INSERT|f",
                 "column|identity|pats.token_hash|SELECT|f",
+                "column|identity|pats.token_prefix|INSERT|f",
                 "column|identity|pats.token_prefix|SELECT|f",
                 "column|identity|principals.display_name|SELECT|f",
                 "column|identity|principals.id|SELECT|f",
@@ -261,9 +269,14 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
             for statement in [
                 "SELECT secret_name FROM registry.project_envs",
                 "SELECT * FROM identity.project_roles",
-                "SELECT label FROM identity.pats",
                 "UPDATE identity.principals SET status = 'disabled'",
+                "UPDATE identity.pats SET revoked_at = now()",
                 "DELETE FROM identity.pats",
+                "INSERT INTO identity.pats (id) VALUES (DEFAULT)",
+                "INSERT INTO identity.pats (created_at) VALUES (DEFAULT)",
+                "INSERT INTO identity.pats (revoked_at) VALUES (NULL)",
+                "INSERT INTO identity.principals (kind, subject, display_name) VALUES ('human', 'escape', 'Escape')",
+                "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) VALUES ('00000000-0000-0000-0000-000000000001', 'acme', 'receiving', 'dev')",
                 "DELETE FROM identity.project_env_memberships",
                 "UPDATE registry.project_envs SET instance_suffix = 'z9z9z9z9'",
             ] {
@@ -287,7 +300,6 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
         );
         for statement in [
             "SELECT * FROM identity.principals",
-            "SELECT * FROM identity.pats",
             "SELECT * FROM registry.orgs",
             "CREATE ROLE identity_escape",
             "CREATE SCHEMA identity_escape",

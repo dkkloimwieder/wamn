@@ -45,9 +45,10 @@
 //! What this tool does directly (given `--system-database-url`): read the org's
 //! placement to pick the target cluster, and record `registry.projects` +
 //! `registry.project_envs` (as the `wamn_system` owner); when requested, resolve
-//! or create stable service principals, assign project roles, and issue then
-//! authenticate PATs. Kubernetes artifacts are only emitted (no K8s client, no
-//! target-cluster connection — the `provision-org` shape).
+//! or create stable service principals and assign project roles. The CLI requests
+//! PATs from `wamn-identity` over HTTPS with an operator client certificate, then
+//! authenticates each PAT against the system database. Kubernetes artifacts are
+//! only emitted (no K8s client, no target-cluster connection).
 //!
 //! **RLS floor** at provision time: there are no tables yet, so wamn-q3n.7
 //! establishes the RLS-**enforceable substrate** only — `wamn_app` is
@@ -90,10 +91,11 @@ use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_pg_core::quote_ident;
 use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
-    authenticate_pat, create_service, issue_pat, resolve_subject, revoke_pat, route_caller_subject,
+    authenticate_pat, create_service, resolve_subject, revoke_pat, route_caller_subject,
 };
 
 use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
+use crate::pat_client::{PatClient, PatIssuerArgs};
 
 #[derive(Debug, Args)]
 pub struct ProvisionProjectEnvArgs {
@@ -240,6 +242,10 @@ pub struct ProvisionProjectEnvArgs {
         required_unless_present_any = ["revoke_pat_prefix", WORKLOAD_ACTION_GROUP]
     )]
     pub emit_secret: Option<PathBuf>,
+
+    /// Operator authentication for PAT issuance through `wamn-identity`.
+    #[command(flatten)]
+    pub pat_issuer: PatIssuerArgs,
 
     /// Issue a management-author PAT and write its Kubernetes `Secret` JSON here.
     #[arg(
@@ -593,6 +599,10 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
             "PAT issuance requires --system-database-url to resolve the stable service principal"
         );
     }
+    // Refuse incomplete TLS configuration before registry writes or artifacts.
+    let pat_client = issues_pat
+        .then(|| PatClient::new(&args.pat_issuer))
+        .transpose()?;
 
     let org = args
         .org
@@ -695,9 +705,10 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         project_env_namespace(org, project, env, &instance)
     );
 
-    if issues_pat {
+    if let Some(pat_client) = pat_client.as_ref() {
         issue_pat_secrets(
             system_url,
+            pat_client,
             &triple,
             &args.namespace,
             args.emit_management_author_pat_secret.as_deref(),
@@ -2896,6 +2907,7 @@ async fn read_workload_role_state(
     }))
 }
 
+/// Provisioning PATs retain their existing 30-day lifetime.
 const PAT_TTL: Duration = Duration::from_secs(2_592_000);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2952,6 +2964,7 @@ impl PatPurpose {
 
 async fn issue_pat_secrets(
     system_url: &str,
+    pat_client: &PatClient,
     triple: &Triple,
     namespace: &str,
     management_author_path: Option<&Path>,
@@ -2967,10 +2980,18 @@ async fn issue_pat_secrets(
             .await
             .context("SET ROLE wamn_system for PAT issuance")?;
         if let Some(path) = management_author_path {
-            issue_pat_secret(&client, triple, namespace, MANAGEMENT_AUTHOR, path).await?;
+            issue_pat_secret(
+                &client,
+                pat_client,
+                triple,
+                namespace,
+                MANAGEMENT_AUTHOR,
+                path,
+            )
+            .await?;
         }
         if let Some(path) = route_caller_path {
-            issue_pat_secret(&client, triple, namespace, ROUTE_CALLER, path).await?;
+            issue_pat_secret(&client, pat_client, triple, namespace, ROUTE_CALLER, path).await?;
         }
         Ok::<(), anyhow::Error>(())
     }
@@ -2982,6 +3003,7 @@ async fn issue_pat_secrets(
 
 async fn issue_pat_secret(
     client: &tokio_postgres::Client,
+    pat_client: &PatClient,
     triple: &Triple,
     namespace: &str,
     purpose: PatPurpose,
@@ -3004,10 +3026,11 @@ async fn issue_pat_secret(
     .await
     .with_context(|| format!("assign {} role", purpose.role))?;
 
-    let issued = issue_pat(client, principal.id(), purpose.purpose, PAT_TTL)
+    let issued = pat_client
+        .issue(principal.id(), purpose.purpose, PAT_TTL)
         .await
         .with_context(|| format!("issue {} PAT", purpose.purpose))?;
-    let authenticated = authenticate_pat(client, issued.token())
+    let authenticated = authenticate_pat(client, &issued.token)
         .await
         .with_context(|| format!("authenticate newly issued {} PAT", purpose.purpose))?
         .with_context(|| format!("newly issued {} PAT did not authenticate", purpose.purpose))?;
@@ -3022,9 +3045,9 @@ async fn issue_pat_secret(
         namespace,
         purpose,
         principal.id().as_str(),
-        issued.token(),
-        issued.record().prefix(),
-        issued.record().expires_at(),
+        &issued.token,
+        &issued.token_prefix,
+        &issued.expires_at,
     )?;
     write_secret_json(path, &secret)?;
     println!(
@@ -3865,6 +3888,38 @@ mod tests {
         assert!(both.emit_management_author_pat_secret.is_some());
         assert!(both.emit_route_caller_pat_secret.is_some());
 
+        let transport = parse_args(&[
+            "--emit-secret",
+            "/tmp/db.json",
+            "--emit-route-caller-pat-secret",
+            "/tmp/route.json",
+            "--pat-issuer",
+            "https://identity.example/authority",
+            "--pat-client-cert",
+            "/tmp/operator.pem",
+            "--pat-client-key",
+            "/tmp/operator.key",
+            "--pat-server-ca",
+            "/tmp/server-ca.pem",
+        ])
+        .unwrap();
+        assert_eq!(
+            transport.pat_issuer.endpoint.as_deref(),
+            Some("https://identity.example/authority")
+        );
+        assert_eq!(
+            transport.pat_issuer.client_cert.as_deref(),
+            Some(Path::new("/tmp/operator.pem"))
+        );
+        assert_eq!(
+            transport.pat_issuer.client_key.as_deref(),
+            Some(Path::new("/tmp/operator.key"))
+        );
+        assert_eq!(
+            transport.pat_issuer.server_ca.as_deref(),
+            Some(Path::new("/tmp/server-ca.pem"))
+        );
+
         // `--app-password` (wamn-0h0g.12.129) is required with no default, but
         // only where it is consumed: wamn-0h0g.12.141 scoped it to the
         // provisioning modes, so revoke-only may carry it and need not. Passing
@@ -3922,6 +3977,56 @@ mod tests {
                 .is_err(),
                 "revoke accepted conflicting {issue_flag}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn pat_transport_configuration_refuses_before_provisioning_effects() {
+        for (issuer, expected_error) in [
+            (PatIssuerArgs::default(), "requires --pat-issuer"),
+            (
+                PatIssuerArgs {
+                    endpoint: Some("http://identity.example".to_owned()),
+                    ..Default::default()
+                },
+                "must be an HTTPS URL",
+            ),
+            (
+                PatIssuerArgs {
+                    endpoint: Some("https://identity.example".to_owned()),
+                    client_cert: Some(PathBuf::from("/private-marker/operator.pem")),
+                    ..Default::default()
+                },
+                "requires --pat-client-key",
+            ),
+        ] {
+            let mut args = parse_args(&[
+                "--emit-secret",
+                "/tmp/pat-config-refusal-db.json",
+                "--emit-route-caller-pat-secret",
+                "/tmp/pat-config-refusal-route.json",
+            ])
+            .unwrap();
+            // These values fail later guards or the DB connection. TLS refusal
+            // must occur first, without reaching either provisioning operation.
+            args.project = Some("wamn-reserved".to_owned());
+            args.system_database_url = Some("invalid-database-url".to_owned());
+            args.pat_issuer = issuer;
+            let error = run(args).await.unwrap_err();
+            assert!(error.to_string().contains(expected_error), "{error}");
+            assert!(!format!("{error:#} {error:?}").contains("private-marker"));
+        }
+    }
+
+    #[test]
+    fn pat_transport_flags_hide_environment_values() {
+        let command = TestCli::command();
+        for name in ["endpoint", "client_cert", "client_key", "server_ca"] {
+            let argument = command
+                .get_arguments()
+                .find(|arg| arg.get_id() == name)
+                .unwrap();
+            assert!(argument.is_hide_env_values_set(), "{name}");
         }
     }
 

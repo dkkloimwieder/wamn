@@ -616,7 +616,8 @@ if [[ "$standard_images" != true ]]; then
     cargo build --locked --release -p wamn-host
 fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor
+  cargo build --locked -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor
+export WAMN_IDENTITY_BINARY="$cargo_target_dir/debug/wamn-identity"
 if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true ]]; then
   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
     cargo test --locked --offline -p wamn-proof-integration --test startup_burst_live --no-run
@@ -920,14 +921,11 @@ test "$(curl --config "$curl_config" --silent --show-error --connect-timeout 2 \
   --max-time 5 --output /dev/null --write-out '%{http_code}' \
   "http://$registry_authority/v2/")" = 200
 
-system_database=postgres
-if [[ "$session_host_proof" == true ]]; then
-  system_database=wamn_system
-  record_command psql '<owned PostgreSQL administrator>' 'CREATE DATABASE wamn_system'
-  PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres -d postgres \
-    -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wamn_system' \
-    >"$evidence_dir/session-system-database.log" 2>&1
-fi
+system_database=wamn_system
+record_command psql '<owned PostgreSQL administrator>' 'CREATE DATABASE wamn_system'
+PGPASSWORD=probe psql -h "$postgres_ip" -p 5432 -U postgres -d postgres \
+  -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wamn_system' \
+  >"$evidence_dir/system-database.log" 2>&1
 system_url=postgresql://postgres:probe@$postgres_ip:5432/$system_database
 nats_url=nats://$nats_ip:4222
 component_artifact_base=$registry_authority/wamn/components

@@ -53,6 +53,7 @@ futures-util = { workspace = true }
 crossterm = { workspace = true }
 ratatui = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
+rcgen = { workspace = true }
 rustix = { workspace = true }
 wamn-authoring-model = { workspace = true }
 # The shared terminal driver behind `wamn dev --tui` (wamn-10yt.5.9).
@@ -85,6 +86,7 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wamn-run-state = { workspace = true }
 
 [dev-dependencies]
+tokio-rustls = { workspace = true }
 wit-component = { version = "=0.252.0", features = ["dummy-module"] }
 wit-parser = "=0.252.0"
 

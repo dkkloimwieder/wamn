@@ -1729,6 +1729,106 @@ The `retire` command removes expired generations.
 The `remove --kid` command removes a compromised key immediately and selects no replacement.
 Neither command creates a session record.
 
+### `[IDENTITY-PAT]` operator PAT issuance
+
+This gate covers `wamn-ctc8.20` on the existing `wamn-identity` service.
+Mutual TLS authenticates the client and server with certificates.
+Only a client certificate trusted by the dedicated operator CA authorizes `POST /pats`.
+Do not reuse a general client CA for operators.
+Every admitted operator can mint a PAT for any existing active principal.
+PATs, session JWTs, and certificate headers do not authorize this operation.
+
+The service accepts exactly `principal_id`, `label`, and integer `lifetime_seconds` in a JSON request without a query string.
+It returns HTTP 201 with exactly `token`, `token_prefix`, `principal_id`, `created_at`, and `expires_at`.
+The two timestamps use RFC 3339 UTC text.
+Every PAT response uses `Cache-Control: no-store`.
+The existing identity library retains the label, lifetime, full-token, expiry, revocation, and principal-status rules.
+Issuance creates no principal, role, environment membership, or session record.
+
+The request limit is 1,024 bytes, and the request deadline is five seconds.
+Missing operator authority returns 403.
+Invalid input and missing or disabled principals return the same 400 response.
+Infrastructure failures return a fixed 503 response without secret details.
+The CLI never follows redirects or retries issuance.
+A lost response can leave a stored PAT without returning its raw value to the caller.
+
+Configure `wamn-identity serve --operator-ca` or `WAMN_IDENTITY_OPERATOR_CA` with the dedicated CA file.
+Without that file, the service refuses all PAT issuance.
+The service authenticates the operator certificate when it opens the TLS connection.
+After you change the trusted operator CA, restart the service to close existing connections and load the new roots.
+Anonymous clients retain the existing JWKS, health, and configured `/session` behavior.
+The provisioning CLI uses `--pat-issuer`, `--pat-client-cert`, `--pat-client-key`, and optional `--pat-server-ca`.
+Disposable first-time setup starts the same native identity binary with temporary operator credentials.
+The separate identity process performs every PAT insert through its scoped database login.
+
+These commands define required proofs, not a recorded passing result.
+They perform no benchmarks.
+Build the native binaries before the live commands:
+
+```bash
+cargo build --locked --offline -p wamn-identity --bin wamn-identity
+cargo build --locked --offline -p wamn-ctl --bins
+cargo test --locked --offline -p wamn-identity --lib
+cargo test --locked --offline -p wamn-identity --test pat_issuance \
+  operator_ca_configuration_refuses_missing_or_malformed_roots
+cargo test --locked --offline -p wamn-ctl --lib pat_client
+cargo test --locked --offline -p wamn-control-provision --lib identity_issuer
+```
+
+Use a separate, fresh PostgreSQL 18 server for each live command below.
+Never use the frozen cluster or another shared server.
+These fixtures replace schemas and change cluster-wide roles and database privileges.
+Before each command, create `wamn_system` through that server's administrator URL:
+
+```bash
+psql "$WAMN_OWNED_PG18_ADMIN_URL" -v ON_ERROR_STOP=1 \
+  -c 'CREATE DATABASE wamn_system'
+```
+
+Set `WAMN_OWNED_SYSTEM_PG18_URL` to that fresh database's administrator URL.
+Replace the server and both URLs before each command:
+
+```bash
+WAMN_PAT_ISSUANCE_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_PAT_ISSUANCE_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-identity --test pat_issuance \
+  -- --include-ignored --nocapture --test-threads=1
+WAMN_PAT_BOOTSTRAP_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_PAT_BOOTSTRAP_ALLOW_SCHEMA_RESET=1 \
+WAMN_IDENTITY_BINARY="$PWD/target/debug/wamn-identity" \
+  cargo test --locked --offline -p wamn-ctl --test pat_bootstrap_live \
+  -- --include-ignored --nocapture --test-threads=1
+WAMN_IDENTITY_ISSUER_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_IDENTITY_ISSUER_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-control-provision --test identity_issuer_live \
+  -- --include-ignored --nocapture --test-threads=1
+WAMN_IDENTITY_ISSUER_CLI_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_IDENTITY_ISSUER_CLI_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-ctl --test identity_issuer_live \
+  -- --include-ignored --nocapture --test-threads=1
+WAMN_IDENTITY_SERVICE_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_IDENTITY_SERVICE_ALLOW_SCHEMA_RESET=1 \
+  cargo test --locked --offline -p wamn-identity --test https_surface \
+  -- --include-ignored --nocapture --test-threads=1
+WAMN_SESSION_EXCHANGE_PG_URL="$WAMN_OWNED_SYSTEM_PG18_URL" \
+WAMN_SESSION_EXCHANGE_ALLOW_SCHEMA_RESET=1 \
+WAMN_SESSION_EXCHANGE_CTL_BIN="$PWD/target/debug/wamn-ctl" \
+  cargo test --locked --offline -p wamn-identity --test session_exchange \
+  -- --include-ignored --nocapture --test-threads=1
+```
+
+The service proof requires `operator_pat_issuance_over_https` and its `OPERATOR_PAT_ISSUANCE result=pass` receipt.
+It exercises the actual native process with trusted, absent, foreign, expired, and wrong-purpose client certificates.
+It also covers bearer refusal, request boundaries, stored digests, token predicates, unchanged authority facts, and secret redaction.
+The bootstrap proof requires `cli_bootstrap_mints_first_service_pats_over_https`.
+It observes the actual inserting database login and requires temporary credentials and issuer authority to stop after issuance.
+The grant proofs retain issuer generation retirement, rollback, and denial of unrelated writes.
+
+Keep the `[IDENTITY-JWKS]` token and public-key cache proofs in the same gate set.
+Keep the existing `[IDENTITY-SESSION]` exchange proof in that set.
+An unarmed, ignored, missing, or zero-case live leg does not pass.
+Retain source identity, exact commands, results, and owned cleanup evidence without credentials or raw tokens.
+
 ### `[IDENTITY-SESSION]` human PAT exchange
 
 This gate covers `wamn-ctc8.15.2` on the separate identity service.
@@ -1985,15 +2085,19 @@ RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
   cargo build -p wamn-scenario-worker --locked --offline
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
+  cargo build -p wamn-identity --bin wamn-identity --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
   cargo build --manifest-path "$WAMN_DEV_LIVE_ROOT/components/Cargo.toml" \
     -p http-route --target wasm32-wasip2 --locked --offline
 WAMN_DEV_LIVE_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn"
 WAMN_DEV_LIVE_HOST_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn-host"
 WAMN_DEV_LIVE_GATE_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn-scenario-worker"
+WAMN_DEV_LIVE_IDENTITY_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn-identity"
 WAMN_DEV_LIVE_FLOW_HTTP="$WAMN_DEV_LIVE_TARGET/wasm32-wasip2/debug/http_route.wasm"
 test -x "$WAMN_DEV_LIVE_BIN"
 test -x "$WAMN_DEV_LIVE_HOST_BIN"
 test -x "$WAMN_DEV_LIVE_GATE_BIN"
+test -x "$WAMN_DEV_LIVE_IDENTITY_BIN"
 test -s "$WAMN_DEV_LIVE_FLOW_HTTP"
 # The spawned Gate binds this exact port; a stray listener is a hard failure,
 # not a fallback to an ephemeral one.
@@ -2036,6 +2140,9 @@ curl --fail --silent "http://127.0.0.1:${WAMN_DEV_LIVE_TEMPO_PORT}/ready" >/dev/
 PGPASSWORD=probe psql \
   "postgresql://postgres@127.0.0.1:${WAMN_DEV_LIVE_PG_PORT}/postgres" \
   -Atqc 'select 1' >/dev/null
+PGPASSWORD=probe psql \
+  "postgresql://postgres@127.0.0.1:${WAMN_DEV_LIVE_PG_PORT}/postgres" \
+  -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wamn_system'
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
   "http://${WAMN_DEV_LIVE_AUTHORITY}/v2/")" = 401
 
@@ -2047,7 +2154,8 @@ unset WAMN_DEV_LIVE_PASSWORD
 
 CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
 RUSTC_WRAPPER= \
-WAMN_ROUTE_PG18_URL="postgresql://postgres:probe@127.0.0.1:${WAMN_DEV_LIVE_PG_PORT}/postgres" \
+WAMN_ROUTE_PG18_URL="postgresql://postgres:probe@127.0.0.1:${WAMN_DEV_LIVE_PG_PORT}/wamn_system" \
+WAMN_IDENTITY_BINARY="$WAMN_DEV_LIVE_IDENTITY_BIN" \
 WAMN_RECEIVING_DEV_BIN="$WAMN_DEV_LIVE_BIN" \
 WAMN_RECEIVING_DEV_HOST_BIN="$WAMN_DEV_LIVE_HOST_BIN" \
 WAMN_JOURNEY_SCENARIO_WORKER_BIN="$WAMN_DEV_LIVE_GATE_BIN" \
@@ -2148,12 +2256,15 @@ RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
   cargo build -p wamn-scenario-worker --locked --offline
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
+  cargo build -p wamn-identity --bin wamn-identity --locked --offline
+RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
   cargo build --manifest-path "$WAMN_DEV_ENV_TREE/components/Cargo.toml" \
     -p http-route --target wasm32-wasip2 --locked --offline
 WAMN_DEV_ENV_FLOW_HTTP="$WAMN_DEV_ENV_TARGET/wasm32-wasip2/debug/http_route.wasm"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-host"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-scenario-worker"
+test -x "$WAMN_DEV_ENV_TARGET/debug/wamn-identity"
 # The spawned Gate binds a FIXED port, so the recipe refuses rather than
 # colliding. `wamn dev up --gate-bind` names it and defaults to
 # 127.0.0.1:8088; override the variable to run a second environment beside
@@ -2194,14 +2305,18 @@ curl --fail --silent "http://127.0.0.1:${WAMN_DEV_ENV_TEMPO_PORT}/ready" >/dev/n
 PGPASSWORD=probe psql \
   "postgresql://postgres@127.0.0.1:${WAMN_DEV_ENV_PG_PORT}/postgres" \
   -Atqc 'select 1' >/dev/null
+PGPASSWORD=probe psql \
+  "postgresql://postgres@127.0.0.1:${WAMN_DEV_ENV_PG_PORT}/postgres" \
+  -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wamn_system'
 
 wamn_wash=$(tools/install-wash)
 DOCKER_CONFIG="$(dirname "$WAMN_DEV_ENV_DOCKER_AUTH")" \
   "$wamn_wash" oci push "$WAMN_DEV_ENV_FLOW_HTTP_IMAGE" "$WAMN_DEV_ENV_FLOW_HTTP" --insecure
 unset WAMN_DEV_ENV_PASSWORD
 
+WAMN_IDENTITY_BINARY="$WAMN_DEV_ENV_TARGET/debug/wamn-identity" \
 "$WAMN_DEV_ENV_TARGET/debug/wamn" dev up \
-  --system-database-url "postgresql://postgres:probe@127.0.0.1:${WAMN_DEV_ENV_PG_PORT}/postgres" \
+  --system-database-url "postgresql://postgres:probe@127.0.0.1:${WAMN_DEV_ENV_PG_PORT}/wamn_system" \
   --root "$WAMN_DEV_ENV_DIR" \
   --gate-bind "127.0.0.1:${WAMN_DEV_ENV_GATE_PORT}" \
   --nats-url "nats://127.0.0.1:${WAMN_DEV_ENV_NATS_PORT}" \
@@ -2323,6 +2438,7 @@ python3 docs/perf/2026.09/generated-tui-recipe/tools/run.py \
 ```
 
 The runner builds the required native binaries and runs the focused client and generator tests.
+It builds `wamn-identity` and uses `wamn_system` for each disposable PAT bootstrap.
 These tests exercise typed request bytes, protected revisions, submission states, operation coverage, and declared error rendering.
 It regenerates Receiving, its Acme overlay, and WMS through the normal materializer against fresh PostgreSQL databases.
 It compares generated bytes, creates the temporary Receiving scaffold, and runs its declared tests.
@@ -2446,12 +2562,13 @@ SQL, and the Wasmtime cache.
 
 #### 2. Build
 
-Debug, locked, offline. Four commands, because `--bin` selects across every
+Debug, locked, offline. Five commands, because `--bin` selects across every
 `-p` given to one invocation and the components live in another workspace.
 
 ```bash
 RUSTC_WRAPPER= cargo build -p wamn-ctl --bin wamn --locked --offline
 RUSTC_WRAPPER= cargo build -p wamn-host -p wamn-scenario-worker --locked --offline
+RUSTC_WRAPPER= cargo build -p wamn-identity --bin wamn-identity --locked --offline
 RUSTC_WRAPPER= cargo build -p wamn-receiving-tui --bin wamn-receiving --locked --offline
 RUSTC_WRAPPER= cargo build --manifest-path "$WAMN_TUI_TREE/components/Cargo.toml" \
   -p http-route --target wasm32-wasip2 --locked --offline
@@ -2459,6 +2576,7 @@ RUSTC_WRAPPER= cargo build --manifest-path "$WAMN_TUI_TREE/components/Cargo.toml
 test -x "$WAMN_TUI_TARGET/debug/wamn"
 test -x "$WAMN_TUI_TARGET/debug/wamn-host"
 test -x "$WAMN_TUI_TARGET/debug/wamn-scenario-worker"
+test -x "$WAMN_TUI_TARGET/debug/wamn-identity"
 test -x "$WAMN_TUI_TARGET/debug/wamn-receiving"
 test -s "$WAMN_TUI_FLOW_HTTP"
 ```
@@ -2499,6 +2617,9 @@ done
 curl --fail --silent "http://127.0.0.1:${WAMN_TUI_TEMPO_PORT}/ready" >/dev/null
 PGPASSWORD=probe psql \
   "postgresql://postgres@127.0.0.1:${WAMN_TUI_PG_PORT}/postgres" -Atqc 'select 1' >/dev/null
+PGPASSWORD=probe psql \
+  "postgresql://postgres@127.0.0.1:${WAMN_TUI_PG_PORT}/postgres" \
+  -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wamn_system'
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
   "http://${WAMN_TUI_AUTHORITY}/v2/")" = 401
 
@@ -2511,8 +2632,9 @@ unset WAMN_TUI_PASSWORD
 #### 4. Terminal 1 — `wamn dev up`
 
 ```bash
+WAMN_IDENTITY_BINARY="$WAMN_TUI_TARGET/debug/wamn-identity" \
 "$WAMN_TUI_TARGET/debug/wamn" dev up \
-  --system-database-url "postgresql://postgres:probe@127.0.0.1:${WAMN_TUI_PG_PORT}/postgres" \
+  --system-database-url "postgresql://postgres:probe@127.0.0.1:${WAMN_TUI_PG_PORT}/wamn_system" \
   --root "$WAMN_TUI_ENV_DIR" \
   --scenario-worker-binary "$WAMN_TUI_TARGET/debug/wamn-scenario-worker" \
   --gate-bind "127.0.0.1:${WAMN_TUI_GATE_PORT}" \
@@ -3009,6 +3131,7 @@ tools/receiving-cluster-journey-run --apply --receiving-correctness \
 
 Use a new evidence directory for each run.
 The runner owns the cluster, PostgreSQL, registry, broker, images, and cleanup.
+It creates `wamn_system` and builds the native `wamn-identity` binary for operator-authenticated PAT bootstrap.
 This mode uses the separate `wamn-receiving-correctness` scratch cluster.
 Its local authoring Gate binds to `127.0.0.1:18090`.
 The frozen `kind-wamn` cluster remains outside this recipe.
@@ -3162,8 +3285,11 @@ test -s "$RECEIVING_ROUTE_FLOW_HTTP"
 # The Gate the proof spawns. Built into the default target directory, the one
 # the test build below also uses.
 cargo build -p wamn-scenario-worker --locked --offline
+cargo build -p wamn-identity --bin wamn-identity --locked --offline
 RECEIVING_ROUTE_GATE_BIN="$RECEIVING_ROUTE_ROOT/target/debug/wamn-scenario-worker"
+RECEIVING_ROUTE_IDENTITY_BIN="$RECEIVING_ROUTE_ROOT/target/debug/wamn-identity"
 test -x "$RECEIVING_ROUTE_GATE_BIN"
+test -x "$RECEIVING_ROUTE_IDENTITY_BIN"
 # The spawned Gate binds this exact port. A stray listener is a hard failure,
 # not a fallback to an ephemeral one.
 test -z "$(ss -Hltn 'sport = :18089')"
@@ -3198,6 +3324,9 @@ docker compose --profile receiving-route -p "$RECEIVING_ROUTE_PROJECT" \
 PGPASSWORD=probe psql \
   "postgresql://postgres@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/postgres" \
   -Atqc 'select 1' >/dev/null
+PGPASSWORD=probe psql \
+  "postgresql://postgres@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/postgres" \
+  -v ON_ERROR_STOP=1 -c 'CREATE DATABASE wamn_system'
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
   "http://${RECEIVING_ROUTE_AUTHORITY}/v2/")" = 401
 test "$(curl --config "$RECEIVING_ROUTE_CURL_AUTH" --silent --show-error \
@@ -3210,7 +3339,7 @@ test "$(curl --config "$RECEIVING_ROUTE_CURL_AUTH" --silent --show-error \
 # is refused here, naming it, rather than by the Rust side after the build.
 source tools/journey-document.sh
 declare -A journey_spec=(
-  [system_pg_url]="postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/postgres"
+  [system_pg_url]="postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/wamn_system"
   [component_directory]="$RECEIVING_ROUTE_COMPONENTS"
   [compilation_cache_directory]="$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY"
   [flow_http_wasm]="$RECEIVING_ROUTE_FLOW_HTTP"
@@ -3226,6 +3355,7 @@ write_journey_document journey_spec \
   tests/integration/schema/wamn-journey.schema.json "$RECEIVING_ROUTE_JOURNEY_DOCUMENT"
 WAMN_JOURNEY_DOCUMENT="$RECEIVING_ROUTE_JOURNEY_DOCUMENT" \
 WAMN_JOURNEY_SCENARIO_WORKER_BIN="$RECEIVING_ROUTE_GATE_BIN" \
+WAMN_IDENTITY_BINARY="$RECEIVING_ROUTE_IDENTITY_BIN" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes \
   -- --ignored --exact --nocapture --test-threads=1

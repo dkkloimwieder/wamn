@@ -1,6 +1,7 @@
-//! The separate identity authority serves public keys and configured PAT exchanges.
+//! The identity authority serves public keys, PAT exchanges, and operator PAT issuance.
 
 pub mod cli;
+mod pat;
 mod session;
 
 use std::collections::BTreeMap;
@@ -169,7 +170,14 @@ impl IdentityService {
     async fn respond(
         &self,
         request: Request<Incoming>,
+        operator: bool,
     ) -> Result<Response<Full<Bytes>>, Infallible> {
+        if request.method() == Method::POST
+            && request.uri().path() == "/pats"
+            && request.uri().query().is_none()
+        {
+            return Ok(pat::respond(&self.inner, request, operator).await);
+        }
         if request.method() == Method::POST
             && request.uri().path() == "/session"
             && request.uri().query().is_none()
@@ -245,24 +253,64 @@ pub fn tls_config(
     certificate_pem: &[u8],
     private_key_pem: &[u8],
 ) -> Result<rustls::ServerConfig, IdentityServiceError> {
+    listener_tls_config(certificate_pem, private_key_pem, None)
+}
+
+/// Trust only the dedicated operator CA for optional TLS client authentication.
+///
+/// Anonymous clients retain access to public keys and configured PAT exchanges.
+/// Only a verified client certificate authorizes PAT issuance.
+pub fn tls_config_with_operator_ca(
+    certificate_pem: &[u8],
+    private_key_pem: &[u8],
+    operator_ca_pem: &[u8],
+) -> Result<rustls::ServerConfig, IdentityServiceError> {
+    listener_tls_config(certificate_pem, private_key_pem, Some(operator_ca_pem))
+}
+
+fn listener_tls_config(
+    certificate_pem: &[u8],
+    private_key_pem: &[u8],
+    operator_ca_pem: Option<&[u8]>,
+) -> Result<rustls::ServerConfig, IdentityServiceError> {
     let certificates = CertificateDer::pem_slice_iter(certificate_pem)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| IdentityServiceError::new("identity TLS certificate refused"))?;
     let key = PrivateKeyDer::from_pem_slice(private_key_pem)
         .map_err(|_| IdentityServiceError::new("identity TLS private key refused"))?;
-    let mut config = rustls::ServerConfig::builder_with_provider(
-        rustls::crypto::aws_lc_rs::default_provider().into(),
-    )
-    .with_safe_default_protocol_versions()
-    .map_err(|_| IdentityServiceError::new("identity TLS versions refused"))?
-    .with_no_client_auth()
-    .with_single_cert(certificates, key)
-    .map_err(|_| IdentityServiceError::new("identity TLS key pair refused"))?;
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let verifier =
+        match operator_ca_pem {
+            Some(pem) => {
+                let mut roots = rustls::RootCertStore::empty();
+                for certificate in CertificateDer::pem_slice_iter(pem) {
+                    roots
+                        .add(certificate.map_err(|_| {
+                            IdentityServiceError::new("identity operator CA refused")
+                        })?)
+                        .map_err(|_| IdentityServiceError::new("identity operator CA refused"))?;
+                }
+                rustls::server::WebPkiClientVerifier::builder_with_provider(
+                    Arc::new(roots),
+                    Arc::clone(&provider),
+                )
+                .allow_unauthenticated()
+                .build()
+                .map_err(|_| IdentityServiceError::new("identity operator CA refused"))?
+            }
+            None => rustls::server::WebPkiClientVerifier::no_client_auth(),
+        };
+    let mut config = rustls::ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|_| IdentityServiceError::new("identity TLS versions refused"))?
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(certificates, key)
+        .map_err(|_| IdentityServiceError::new("identity TLS key pair refused"))?;
     config.alpn_protocols = vec![b"http/1.1".to_vec()];
     Ok(config)
 }
 
-/// Serve public keys and configured exchanges; dropping this future closes connections.
+/// Serve HTTPS identity routes; dropping this future closes connections.
 pub async fn serve(
     listener: TcpListener,
     service: IdentityService,
@@ -278,9 +326,13 @@ pub async fn serve(
                 let service = service.clone();
                 connections.spawn(async move {
                     let Ok(Ok(tls)) = tokio::time::timeout(IO_TIMEOUT, acceptor.accept(tcp)).await else { return; };
+                    // Only the accepted TLS session supplies operator authority.
+                    // Certificate headers and bearer credentials cannot set it.
+                    let operator = tls.get_ref().1.peer_certificates()
+                        .is_some_and(|certificates| !certificates.is_empty());
                     let handler = service_fn(move |request| {
                         let service = service.clone();
-                        async move { service.respond(request).await }
+                        async move { service.respond(request, operator).await }
                     });
                     let _ = http1::Builder::new().timer(TokioTimer::new())
                         .header_read_timeout(IO_TIMEOUT)
