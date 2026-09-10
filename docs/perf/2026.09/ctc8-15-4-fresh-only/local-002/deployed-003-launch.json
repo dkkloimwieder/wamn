@@ -1,0 +1,15 @@
+{
+  "issue": "wamn-ctc8.15.4",
+  "source_commit": "ee9d8fcfee81d622efa86babcde9471c8bf6ff12",
+  "effects_source_commit": "c86488041b09b02d3f82676c60cdb3ed1d1fca04",
+  "source_worktree": "/home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909",
+  "command": "tools/receiving-cluster-journey-run --fresh-only-proof --apply --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-4-fresh-only/deployed-003",
+  "launcher_pid": 210831,
+  "runner_pid": 210835,
+  "cluster": "wamn-receiving-journey",
+  "context": "kind-wamn-receiving-journey",
+  "local_authoring_bind": "127.0.0.1:18089",
+  "log": "deployed-003-launch.log",
+  "exit_file": "deployed-003-exit.txt",
+  "scope": "This records the launch only. The exact exit and live receipts determine the result."
+}

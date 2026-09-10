@@ -1,0 +1,109 @@
+{
+  "issue": "wamn-ctc8.15.4",
+  "source_commit": "aed88333f441c09d5052c1a53a8046f9ea114495",
+  "base_commit": "41ba0334",
+  "scope": "Local compilation and focused tests. These results do not establish live coverage.",
+  "runs": [
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --no-run --locked --offline",
+      "log": "compile.log",
+      "exit_code": 0,
+      "scope": "Compilation before the final fixture assertions."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline route_authentication_live::regenerate_checked_in_journey_schema -- --ignored --exact",
+      "log": "schema-regeneration.log",
+      "exit_code": 0,
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline journey_schema -- --nocapture",
+      "log": "schema-tests.log",
+      "exit_code": 0,
+      "passed": 2,
+      "ignored": 1,
+      "ignored_reason": "The separate schema regeneration command is not a test."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline fresh_only -- --nocapture",
+      "log": "fresh-only-tests-002.log",
+      "exit_code": 101,
+      "result": "The added assertion used a field absent from CarriedRelease. The fixture now reads manifest().release.packages."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline fresh_only -- --nocapture",
+      "log": "fresh-only-tests-003.log",
+      "exit_code": 0,
+      "passed": 2,
+      "ignored": 2,
+      "ignored_reason": "The two live tests require the disposable Receiving and identity services."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline fresh_only -- --nocapture",
+      "source_commit": "d8a285933b3c2555475ad0870183ad9a5b48fd5b",
+      "log": "fresh-only-tests-004.log",
+      "exit_code": 0,
+      "passed": 2,
+      "ignored": 2,
+      "ignored_reason": "The two live tests require the disposable Receiving and identity services.",
+      "scope": "The fixture retains the source directory names and their generated TUI paths. This does not establish live coverage."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline fresh_only -- --nocapture",
+      "source_commit": "ee9d8fcfee81d622efa86babcde9471c8bf6ff12",
+      "log": "fresh-only-tests-005.log",
+      "exit_code": 0,
+      "passed": 2,
+      "ignored": 2,
+      "ignored_reason": "The two live tests require the disposable Receiving and identity services.",
+      "scope": "Focused tests after the clean effects source merge. This does not establish live coverage."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline fresh_only -- --nocapture",
+      "source_commit": "1673ee4f845df06bc402948444b43e24c58e0b34",
+      "log": "fresh-only-tests-006.log",
+      "exit_code": 0,
+      "passed": 2,
+      "ignored": 2,
+      "ignored_reason": "The two live tests require the disposable Receiving and identity services.",
+      "scope": "Compilation and focused tests after the publisher lookup fix. This does not establish live coverage."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline fresh_only -- --nocapture",
+      "source_commit": "21775e603c39d4e88cc5631388352922b7fc41b9",
+      "log": "fresh-only-tests-007.log",
+      "exit_code": 0,
+      "passed": 4,
+      "ignored": 2,
+      "ignored_reason": "The two live tests require the disposable Receiving and identity services.",
+      "scope": "The local Wasmtime call and credential-redaction tests pass. They do not reproduce or explain the deployed HTTP 503."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc -- --ignored --exact --nocapture --test-threads=1",
+      "source_commit": "e13fd2f391a6cf0c4db797803a1f6c4c2cd846ea",
+      "log": "counter-login-pg-001.log",
+      "arming": "WAMN_TENANT_KEY_PG_URL named the dedicated disposable PostgreSQL 18 server. Credentials are omitted.",
+      "exit_code": 0,
+      "passed": 1,
+      "ignored": 0,
+      "original_fixture_sqlstate": "42704",
+      "corrected_own_updates": 2,
+      "corrected_foreign_updates": 0,
+      "forged_tenant_setting": "did not change login authority",
+      "container": "wamn-fresh-only-counter-pg18-20260910-001",
+      "cleanup": "Root removed this exact container after the test. Docker listed only the three frozen wamn nodes afterward.",
+      "scope": "The test reproduces the counter fixture defect and proves the corrected tenant policy on PostgreSQL. The full HTTP proof remains separate."
+    },
+    {
+      "command": "cargo test -p wamn-proof-integration --lib --locked --offline fresh_only -- --nocapture",
+      "source_commit": "e13fd2f391a6cf0c4db797803a1f6c4c2cd846ea",
+      "log": "fresh-only-tests-008.log",
+      "exit_code": 0,
+      "passed": 4,
+      "ignored": 3,
+      "ignored_reason": "The two full live tests require the Receiving and identity services. The PostgreSQL test ran separately with its explicit arm.",
+      "scope": "Focused tests after the login-bound counter policy correction. This does not establish full live coverage."
+    }
+  ]
+}

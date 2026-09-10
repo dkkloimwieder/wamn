@@ -1,0 +1,20 @@
+{
+  "result": "pass",
+  "hosts": 2,
+  "processes": [
+    {
+      "pod_uid": "092b03c5-c6e7-47d3-a094-cc29864816b4",
+      "host_id": "dfa54698-b9b8-4837-8f0b-30fa7968ed84",
+      "container_id": "containerd://83f29ed6510b629f167e0133c1d9cfda0eca7d40f5d6851379607a12c595bd01",
+      "started_at": "2026-09-10T04:27:10Z",
+      "restart_count": 0
+    },
+    {
+      "pod_uid": "cf4f3132-e3b1-4b5c-b772-9b6f31c36f6a",
+      "host_id": "eecec0d2-b41c-4024-b6b7-159f252e0caf",
+      "container_id": "containerd://6201d53b20125e526a88971c21c8dc5f7197bd311397cb5f57fa1c7a8f49b306",
+      "started_at": "2026-09-10T04:27:10Z",
+      "restart_count": 0
+    }
+  ]
+}

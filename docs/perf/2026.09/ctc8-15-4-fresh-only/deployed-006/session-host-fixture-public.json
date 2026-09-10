@@ -1,0 +1,35 @@
+{
+  "audience": "urn:wamn:project-env:acme:receiving:dev:5cfhh7yu",
+  "environment": "dev",
+  "expected_response": [
+    {
+      "request_id": "session-host-proof",
+      "value": {
+        "created_at": "2026-08-31T12:00:00.000000Z",
+        "id": "00000000-0000-0000-0000-000000000301",
+        "purchase_order_number": "PO-301",
+        "row_version": "3",
+        "status": "complete",
+        "supplier_id": "00000000-0000-0000-0000-000000000402",
+        "updated_at": "2026-09-10T04:26:18.965438Z"
+      }
+    }
+  ],
+  "human_id": "98bd3e4b-5471-486e-bdd8-da887a7c67db",
+  "instance_suffix": "5cfhh7yu",
+  "manifest_digest": "sha256:d802f9b44bf72c097c987dde0eebdfb66f526bea557f39d2efcdb13d98a25b34",
+  "org": "acme",
+  "project": "receiving",
+  "request_body": [
+    {
+      "id": "00000000-0000-0000-0000-000000000301",
+      "request_id": "session-host-proof"
+    }
+  ],
+  "roles": [
+    "session-host-reader"
+  ],
+  "route_host": "receiving.localhost",
+  "route_path": "/purchase_order/get",
+  "tenant": "receiving-route-auth"
+}

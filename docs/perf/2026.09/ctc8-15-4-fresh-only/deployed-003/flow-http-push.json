@@ -1,0 +1,9 @@
+{
+  "message": "OCI command executed successfully.",
+  "success": true,
+  "data": {
+    "digest": "sha256:c448986f93428fa0440501766049be41b864d90e3c38c3e2f419a688f17b10df",
+    "message": "OCI command executed successfully.",
+    "success": true
+  }
+}

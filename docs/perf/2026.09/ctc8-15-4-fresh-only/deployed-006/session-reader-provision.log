@@ -1,0 +1,3 @@
+2026-09-10T04:26:23.576853Z  INFO tokio_postgres::connection: WARNING: role "wamn_session_role_reader" has not been granted membership in role "wamn_platform" by role "postgres"
+2026-09-10T04:26:23.576970Z  INFO tokio_postgres::connection: WARNING: role "wamn_session_roles_c7c2372fa3e57fc383a4ef2ad6b0866b59f895ce_a" has not been granted membership in role "wamn_session_role_reader" by role "postgres"
+prepared and authenticated session-role-reader credential generation a for acme/receiving/dev; wrote /tmp/tmp.SxXxvXhu0c/session-target.json

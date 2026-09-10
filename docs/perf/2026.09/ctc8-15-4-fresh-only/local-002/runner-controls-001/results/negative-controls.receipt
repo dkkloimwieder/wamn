@@ -1,0 +1,5 @@
+negative name=wrong-name expected_exit=1 actual_exit=1 result=pass
+negative name=duplicate expected_exit=1 actual_exit=1 result=pass
+negative name=missing-summary expected_exit=1 actual_exit=1 result=pass
+negative name=zero-test expected_exit=1 actual_exit=1 result=pass
+negative name=failed-test expected_exit=1 actual_exit=1 result=pass

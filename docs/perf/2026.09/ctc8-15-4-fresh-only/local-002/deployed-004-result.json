@@ -1,0 +1,14 @@
+{
+  "issue": "wamn-ctc8.15.4",
+  "source_commit": "1673ee4f845df06bc402948444b43e24c58e0b34",
+  "exit_code": 101,
+  "result": "failed",
+  "initial_fixture": {"passed": 1, "failed": 0, "log": "../deployed-004/production-route.log"},
+  "session_host_fixture": {"passed": 1, "failed": 0, "log": "../deployed-004/session-host-fixture.log"},
+  "nested_fresh_only": {"passed": 0, "failed": 1, "log": "../deployed-004/session-nested.log"},
+  "error": "operation refusal differs from its exact HTTP contract: status=503 Service Unavailable body={\"error\":{\"code\":\"execution-failed\"}}",
+  "failure_stage": "The first prior-commit parent request, after successful Gate and release 4 publication.",
+  "cleanup": "pass",
+  "cleanup_receipt": "../deployed-004/cleanup.receipt",
+  "proof_limits": "The generic HTTP error does not identify the internal cause. No final fresh-only or key-removal window receipt."
+}

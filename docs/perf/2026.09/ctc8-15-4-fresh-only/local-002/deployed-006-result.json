@@ -1,0 +1,60 @@
+{
+  "issue": "wamn-ctc8.15.4",
+  "source_commit": "e13fd2f391a6cf0c4db797803a1f6c4c2cd846ea",
+  "exit_code": 0,
+  "evidence": "../deployed-006",
+  "tests": [
+    {
+      "name": "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 73,
+      "seconds": 44.48
+    },
+    {
+      "scope": "session-host fixture",
+      "log": "../deployed-006/session-host-fixture.log",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 73,
+      "seconds": 1.24
+    },
+    {
+      "name": "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 73,
+      "seconds": 22.84
+    }
+  ],
+  "prior_commit": {
+    "result": "pass",
+    "session_counter": 1,
+    "pat_counter": 2,
+    "fixture_release": 4
+  },
+  "fresh_only": {
+    "result": "pass",
+    "session": "refused",
+    "pat": "accepted",
+    "direct_session": "refused",
+    "direct_pat": "accepted",
+    "role_revocation": "refused",
+    "membership_revocation": "refused",
+    "committed_state": "unchanged",
+    "fixture_release": 3,
+    "manifest_format": 1
+  },
+  "jwks": {
+    "reachable": "pass",
+    "unreachable": "pass",
+    "hosts_per_arm": 2,
+    "process_continuity_per_arm": "pass"
+  },
+  "cleanup": "pass",
+  "post_cleanup": "Both owned runner PIDs ended. Docker listed only the three frozen wamn nodes.",
+  "scope": "The full fresh-only gate passed. The combined workspace sweep and integration remain separate. No benchmark or production session activation ran."
+}

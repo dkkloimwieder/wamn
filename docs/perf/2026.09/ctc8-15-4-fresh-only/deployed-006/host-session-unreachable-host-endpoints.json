@@ -1,0 +1,24 @@
+[
+  {
+    "deployment": "flow-http-session-a",
+    "deployment_uid": "cbba60c8-8d42-412d-a578-e4f5fae0bcd4",
+    "replicaset_uid": "af13871f-78a7-41ab-8afc-c3fccc6c31cb",
+    "workload_uid": "f50da154-e5ca-418b-a16b-d19e24cccf64",
+    "host_id": "850ae06b-9555-427b-932f-68e98093609f",
+    "pod_uid": "8d2bb3d7-3a1f-470d-890c-6175bd10a681",
+    "pod_name": "hostgroup-default-6d9f6f4df6-t8vrc",
+    "pod_ip": "10.244.1.6",
+    "endpoint": "http://10.244.1.6:80/purchase_order/get"
+  },
+  {
+    "deployment": "flow-http-session-b",
+    "deployment_uid": "9e4b34f4-ca3a-449e-ab03-86b034c9150a",
+    "replicaset_uid": "0edb64d6-d9ca-464f-b190-3708889d9be6",
+    "workload_uid": "4291caaa-74f3-4c10-ac77-7e355d63f07a",
+    "host_id": "bfcbcb7b-9edd-4124-beb6-c779e32abee8",
+    "pod_uid": "81b88c82-15ee-4b33-9e21-0769ba83b158",
+    "pod_name": "hostgroup-default-6d9f6f4df6-zrjzv",
+    "pod_ip": "10.244.2.9",
+    "endpoint": "http://10.244.2.9:80/purchase_order/get"
+  }
+]

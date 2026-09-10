@@ -1,0 +1,43 @@
+{
+  "schema_version": "0.1",
+  "protocol": "wamn-kubernetes-gate-verdict/v0.1",
+  "manifest": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-15-4-fresh-only/deployed-006/host-session-reachable-job.json",
+  "namespace": "wamn-receiving-journey",
+  "run_started_at": "2026-09-10T04:27:43.891505126Z",
+  "timeout_seconds": 480,
+  "verdict": "pass",
+  "failure_classes": [],
+  "jobs": [
+    {
+      "name": "host-session-reachable",
+      "container": "host-session",
+      "expectation": "positive",
+      "expected_exit_code": 0,
+      "expected_image": "wamn-gates:receiving-e13fd2f391a6-571592-release",
+      "observed": {
+        "uid": "54c9461b-f2f8-4b32-ad89-1f8bfb579d26",
+        "previous_uid": "",
+        "created_at": "2026-09-10T04:27:43Z",
+        "condition": "complete",
+        "condition_transition_at": "2026-09-10T04:32:47Z",
+        "logs_sha256": "bd4b9246261ca88a851d05a8cb12383e83b8d306e1f9271a611f21c442348645",
+        "pods": [
+          {
+            "name": "host-session-reachable-lk6wp",
+            "uid": "92842945-fc9e-41ad-97ad-f369dd286dbc",
+            "node": "wamn-receiving-journey-worker2",
+            "created_at": "2026-09-10T04:27:43Z",
+            "started_at": "2026-09-10T04:27:44Z",
+            "phase": "Succeeded",
+            "init_exit_codes": [],
+            "container_exit_code": 0,
+            "image_id": "docker.io/library/import-2026-09-10@sha256:555df01599c26eb68b2a978ab1eae38ddddbefffceb33cbf61ba14cf348f281a"
+          }
+        ]
+      },
+      "verdict": "pass",
+      "failure_classes": []
+    }
+  ],
+  "snapshot_probe": null
+}
