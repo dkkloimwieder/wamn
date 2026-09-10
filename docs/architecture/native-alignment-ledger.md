@@ -46,6 +46,12 @@ The exact-digest case compares WAMN's accepted release selection with native dup
 B retains its loading stop condition and the production manual lifecycle until that boundary is resolved.
 This checkpoint does not change row 4 or permit warm reuse.
 
+The [native NATS checkpoint](../perf/2026.09/native-c-nats/report.md), owned by `wamn-0ct2.4`, stops at the private native message-handle boundary.
+Registration checks and original-message dead-letter construction remain in the Rust host.
+No native NATS backend or adapter replaces the current implementation.
+Deferred decision `wamn-0ct2.6` reopens when the upstream binding surface stabilizes and the message handle becomes public.
+The capability registry can restrict native NATS imports to a trusted adapter, but moving policy requires its own decision and bypass proof.
+
 The [P3 HTTP cutover](../perf/2026.09/p3-http-cutover/report.md) belongs to `wamn-0h0g.2.7.17`.
 Its HTTP shell exports `wasi:http/handler@0.3.0` and uses native P3 body streams.
 WAMN routing, authentication, and delivery imports remain synchronous.

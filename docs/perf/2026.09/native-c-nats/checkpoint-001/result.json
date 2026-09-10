@@ -1,0 +1,14 @@
+{
+  "command": [
+    "python3",
+    "docs/perf/2026.09/native-c-nats/tools/capture-source.py",
+    "/home/kaalin/.cache/wamn-lanes/native-c-nats-20260910",
+    "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-nats/checkpoint-001"
+  ],
+  "exit_code": 1,
+  "failure": "FileNotFoundError: crates/wash-runtime/wit/nats/wit/world.wit",
+  "source_snapshot_created": false,
+  "tests_executed": 0,
+  "correction": "The upstream WIT path is wit/nats/wit/world.wit. The corrected capture uses checkpoint-002."
+}

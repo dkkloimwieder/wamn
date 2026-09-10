@@ -201,6 +201,27 @@ Retain the source and artifact hashes, command, counts, and complete output.
 A passing checkpoint does not close B or prove the application node path.
 Do not change the production lifecycle while a required public-API boundary remains blocked.
 
+### `[NATIVE-C]` native NATS source checkpoint
+
+`wamn-0ct2.4` stops before a production substitution.
+The [report](../perf/2026.09/native-c-nats/report.md) records the private message-handle boundary and the retained host policy.
+Deferred decision `wamn-0ct2.6` owns the separate trusted adapter option and its upstream trigger.
+No native delivery or bypass proof ran for this checkpoint.
+
+Capture the source identities into a new evidence directory:
+
+```bash
+python3 docs/perf/2026.09/native-c-nats/tools/capture-source.py \
+  /absolute/path/to/wamn-worktree \
+  /absolute/path/to/pinned-wasmcloud-source \
+  /absolute/repository/path/to/new-native-nats-evidence
+```
+
+The tool records four Git commands, 15 source hashes, and its own hash.
+Make sure that the revisions match the report and the selected source files are clean.
+Do not treat this source capture as an executed broker or adapter proof.
+Keep the host checks until the separate decision authorizes a tested replacement.
+
 ### `[P3-HTTP]` production HTTP cutover
 
 `wamn-0h0g.2.7.17` owns the shell, manifests, publication, and matching proof drivers.

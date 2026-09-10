@@ -107,6 +107,13 @@ An idempotent inspection result is not a platform-wide exactly-once claim. Keep 
 
 **Stop condition:** identify any release, metadata, acknowledgement or authority requirement the public interface cannot preserve. Keep the necessary WAMN portion and document why; do not widen grants or rewrite the event architecture to claim adoption.
 
+Owner ruling, 2026-09-10: C can proceed ahead of B because their ordering protects shared-file edits, not a technical dependency.
+The [C source checkpoint](../perf/2026.09/native-c-nats/report.md) reaches the public message-handle stop condition under `wamn-0ct2.4`.
+The owner retains registration checks and dead-letter construction in the Rust host.
+Deferred decision `wamn-0ct2.6` owns a trusted adapter component after the upstream binding surface stabilizes and the message handle becomes public.
+The capability registry can make that adapter the sole native NATS importer, but policy placement and bypass resistance require a separate decision and proof.
+B2 still requires B.
+
 ### D. Finish HTTP transport reuse without weakening destination authority
 
 **Observation:** the retained native-pooling probe ran on 2.8. It demonstrated reuse, but also sent to an address different from WAMN's approved peer. Tagged 2.9 still constructs its connector privately. Production `ConnectionHttp` continues to build a client per call and collect the response body in full. The historical probe is not an executed 2.9 adoption proof. [S10, S11]

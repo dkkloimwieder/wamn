@@ -1,0 +1,88 @@
+{
+  "commands": [
+    {
+      "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-nats-20260910",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "88db1d3a138fe6f3ae21e450223c3f30d1a64532\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-nats-20260910",
+      "argv": [
+        "git",
+        "status",
+        "--porcelain",
+        "--",
+        "components/execution/materializer/src/main.rs",
+        "components/execution/materializer/wit/world.wit",
+        "crates/execution/host/src/router_delivery.rs",
+        "crates/platform/runtime/src/plugins/wamn_jetstream.rs",
+        "docs/architecture/wamn_native_alignment_plan.md"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "cwd": "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece",
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9\n",
+      "stderr": ""
+    },
+    {
+      "cwd": "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece",
+      "argv": [
+        "git",
+        "status",
+        "--porcelain",
+        "--",
+        "crates/wash-runtime/src/plugin/wasmcloud_nats/mod.rs",
+        "crates/wash-runtime/src/plugin/wasmcloud_nats/plugin.rs",
+        "crates/wash-runtime/src/plugin/wasmcloud_nats/keys.rs",
+        "crates/wash-runtime/src/plugin/wasmcloud_nats/interfaces/jetstream/mod.rs",
+        "crates/wash-runtime/src/plugin/wasmcloud_nats/interfaces/jetstream/pull_consumer.rs",
+        "crates/wash-runtime/src/plugin/wasmcloud_nats/interfaces/jetstream/message_handle.rs",
+        "crates/wash-runtime/src/plugin/wasmcloud_nats/jetstream.rs",
+        "wit/nats/wit/world.wit",
+        "crates/wash-runtime/Cargo.toml",
+        "crates/wash-runtime/src/plugin/component_host/mod.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "sources": {
+    "wamn": {
+      "components/execution/materializer/src/main.rs": "39df015408164a4402bfd009b690c58243bb32e075dc23c77e23b96797af9396",
+      "components/execution/materializer/wit/world.wit": "90e88d6eb5d4dbdea250e7e31123859a279a8529d44817c00fd8d0a28e34f3a7",
+      "crates/execution/host/src/router_delivery.rs": "bfb7ded9c5f6e9ecbf0263fe6caa12449307f897f4ea04fce5d6468fa098e00f",
+      "crates/platform/runtime/src/plugins/wamn_jetstream.rs": "3737536331a56743dc26781737207eb6e1e35070b7c08e1b67e8e238fcd47c72",
+      "docs/architecture/wamn_native_alignment_plan.md": "47bd74aef6d3f8417fc431a1d0a55917bd2834acb37043dee7d77c23c8914bf2"
+    },
+    "upstream": {
+      "crates/wash-runtime/src/plugin/wasmcloud_nats/mod.rs": "cc85040039e7735d900b2930ea268855b3452f06a6fd388daaa4ca4a46e69f0d",
+      "crates/wash-runtime/src/plugin/wasmcloud_nats/plugin.rs": "1ce33a48d2efafd73d0798dc561fd90448e7cf2d655d5d3448072fe40762604d",
+      "crates/wash-runtime/src/plugin/wasmcloud_nats/keys.rs": "ca4bb432a6b129188f963a0a4994bc681b805394ff0cf32364eaa2e83b991bf5",
+      "crates/wash-runtime/src/plugin/wasmcloud_nats/interfaces/jetstream/mod.rs": "9df05c33bd0089765bd659c84abb32709734cd9e092a6287441b486a25f0e944",
+      "crates/wash-runtime/src/plugin/wasmcloud_nats/interfaces/jetstream/pull_consumer.rs": "035de6a3cef5b49bc758bd5f451f73643fbfe3d50ec1e217bb1aea01281bdb7d",
+      "crates/wash-runtime/src/plugin/wasmcloud_nats/interfaces/jetstream/message_handle.rs": "68242453f54fff5739532cc4c87281da069b62c7226bb61130dfa8ac6f9e12a1",
+      "crates/wash-runtime/src/plugin/wasmcloud_nats/jetstream.rs": "38a969a69a0a3b6582da4197598b49e7e3818b30f5b1919058d3145e849668d9",
+      "wit/nats/wit/world.wit": "0965e4663e28fe4e770868170d5947678edb43c268970e9be6160705bc8a0fdf",
+      "crates/wash-runtime/Cargo.toml": "fcdb94583b1f76f3ab5e8abb8a60490231b96f53a8bdee3fa0bef88895d79ef9",
+      "crates/wash-runtime/src/plugin/component_host/mod.rs": "65775487ddc67ec25077ef342897e644fa6dcb7463fd28276e73c1f786e21b1d"
+    }
+  },
+  "tests_executed": 0,
+  "capture_tool_sha256": "b939474481364f3d6f8a253d2b6de3c79bc5920dc7d96dd01e290f20b475bfe1"
+}
