@@ -664,6 +664,8 @@ fn manifest_list<'a>(document: &[&'a str], field: &str) -> Vec<Vec<&'a str>> {
 fn list_field<'a>(entry: &[&'a str], key: &str) -> Option<&'a str> {
     let values: Vec<_> = entry
         .iter()
+        // A nested secretKeyRef name is not the environment entry's name.
+        .filter(|line| key != "name" || indent(line) <= indent(entry[0]) + 2)
         .filter_map(|line| manifest_field(line, key))
         .collect();
     assert!(values.len() <= 1, "rendered entry repeats {key}");
