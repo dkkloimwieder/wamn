@@ -1,0 +1,5 @@
+{
+  "configuration_root": "/tmp/pg_virtualenv.bNO4VA/postgresql",
+  "port": 5432,
+  "version": "18"
+}

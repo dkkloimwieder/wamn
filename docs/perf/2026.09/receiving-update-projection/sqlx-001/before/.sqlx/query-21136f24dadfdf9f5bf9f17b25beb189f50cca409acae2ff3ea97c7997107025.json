@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    canonical_command,\n    receipt_id,\n    purchase_order_id,\n    purchase_order_status,\n    row_version\nFROM record_receipt_command\nWHERE idempotency_key = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_command",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "record_receipt_command",
+            "name": "canonical_command"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "receipt_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "record_receipt_command",
+            "name": "receipt_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "purchase_order_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "record_receipt_command",
+            "name": "purchase_order_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "purchase_order_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "record_receipt_command",
+            "name": "purchase_order_status"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "record_receipt_command",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "21136f24dadfdf9f5bf9f17b25beb189f50cca409acae2ff3ea97c7997107025"
+}

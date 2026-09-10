@@ -1,0 +1,9 @@
+{
+  "pid": 2734790,
+  "argv": [
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/tools/final_local.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910"
+  ]
+}

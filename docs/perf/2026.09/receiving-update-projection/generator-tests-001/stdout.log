@@ -1,0 +1,199 @@
+
+running 51 tests
+test client_fields::tests::omission_does_not_permit_a_null_writable_value ... ok
+test client_fields::tests::typed_contract_constraints_remain_stricter_than_the_transport_schema ... ok
+test client_fields::tests::presence_and_null_are_independent_in_the_served_schema ... ok
+test client_fields::tests::repeated_inputs_keep_children_bounds_and_typed_hints ... ok
+test client_fields::tests::unsupported_unions_do_not_silently_select_a_text_editor ... ok
+test client_ir::tests::a_command_contract_still_reads_its_fields_array ... ok
+test client_ir::tests::a_closed_value_domain_reaches_the_descriptor ... ok
+test client_ir::tests::a_private_operation_is_not_a_client_operation ... ok
+test client_ir::tests::a_package_with_no_release_carries_no_routes ... ok
+test client_ir::tests::a_public_operation_missing_its_grant_still_refuses ... ok
+test client_ir::tests::a_parameterized_template_keeps_its_parameter_name ... ok
+test client_ir::tests::a_contract_change_surfaces_without_hand_edits ... ok
+test client_ir::tests::an_operation_published_twice_refuses ... ok
+test client_ir::tests::fresh_only_client_ir_refuses_private_and_malformed_contracts ... ok
+test client_ir::tests::fresh_only_contract_policy_is_preserved_in_the_client_ir ... ok
+test client_ir::tests::a_generated_crud_contract_yields_its_scalar_inputs ... ok
+test client_ir::tests::an_unnormalized_route_refuses_and_names_the_form_publication_would_use ... ok
+test client_ir::tests::every_result_class_is_typed_by_its_result_contract ... ok
+test client_ir::tests::an_operation_carries_the_route_its_release_publishes ... ok
+test client_ir::tests::paging_is_present_only_where_the_contract_declares_it ... ok
+test client_ir::tests::the_ir_carries_the_shipped_projection ... ok
+test client_ir::tests::operations_carry_their_permission_and_identity ... ok
+test client_route::tests::malformed_schema_and_wiring_are_contextual_refusals ... ok
+test client_route::tests::missing_wiring_preserves_input_without_inventing_response_evidence ... ok
+test client_route::tests::receiving_claim_route_has_a_direct_declared_response ... ok
+test client_route::tests::response_schema_requires_matching_publication_identity_and_preserves_opaque_arrays ... ok
+test client_route::tests::response_selection_follows_reachability_and_refuses_ambiguous_terminals ... ok
+test client_ir::tests::every_projected_operation_has_input_fields ... ok
+test client_route::tests::wiring_selection_uses_declared_identity_and_version ... ok
+test client_rust::tests::an_unknown_contract_type_refuses_by_name ... ok
+test client_rust::tests::every_contract_type_has_its_exact_rust_spelling ... ok
+test client_ir::tests::a_studio_attachment_publishes_no_client_route ... ok
+test client_rust::tests::operation_freshness_selects_the_generated_invocation_method ... ok
+test manifest::tests::rust_2024_names_have_one_lossless_spelling_authority ... ok
+test client_ir::tests::the_overlay_publishes_its_own_path_for_its_own_operation ... ok
+test sql_lex::tests::access_is_derived_by_database_verb ... ok
+test materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection ... ok
+test client_ir::tests::regeneration_is_byte_identical_on_an_unchanged_release ... ok
+test sql_lex::tests::every_known_bad_shape_is_refused ... ok
+test client_rust::tests::every_type_the_shipped_releases_use_is_mapped ... ok
+test client_ir::tests::the_ir_is_byte_identical_when_the_contract_members_are_reordered ... ok
+test sql_lex::tests::schema_qualification_reads_tokens_not_text ... ok
+test client_route::tests::wms_move_response_belongs_to_the_terminal_store ... ok
+test client_ir::tests::every_shipped_operation_carries_its_published_route ... ok
+test sql_lex::tests::unsupported_effect_and_opaque_returning_refuse ... ok
+test client_route::tests::partial_projection_requires_one_exact_committed_component_declaration ... ok
+test sql_lex::tests::the_parser_recovers_the_authored_access ... ok
+test sql_lex::tests::known_bad_statements_are_refused_under_every_rendering ... ok
+test sql_lex::tests::schema_qualification_ignores_inert_text ... ok
+test sql_lex::tests::derived_access_names_only_declared_relations_and_fields ... ok
+test sql_lex::tests::inert_text_and_rendering_style_never_change_authority ... ok
+
+test result: ok. 51 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+
+running 2 tests
+test crud_record_links_use_the_declared_relation_and_revision ... ok
+test custom_state_metadata_preserves_the_guard_without_inventing_a_record_link ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 7 tests
+test a_field_added_to_a_contract_appears_without_a_hand_edit ... ok
+test an_error_added_to_a_contract_appears_without_a_hand_edit ... ok
+test emission_is_byte_stable ... ok
+test generated_code_carries_release_facts_and_no_deployment_facts ... ok
+test valid_operations_cannot_collide_with_route_helpers_or_their_fallbacks ... ok
+test the_emitted_overlay_client_compiles ... ok
+test the_emitted_receiving_client_compiles ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 57.48s
+
+
+running 13 tests
+test composed_record_read_uses_the_served_terminal_response_for_revision_binding ... ok
+test a_record_read_keeps_its_other_required_inputs ... ok
+test custom_state_and_claim_declarations_do_not_invent_input_key_links ... ok
+test missing_or_unexposed_record_read_requires_composition ... ok
+test declared_kind_and_record_mappings_bind_operations_with_unrelated_names ... ok
+test query_columns_remain_specific_to_each_result_contract ... ok
+test revision_roles_use_declared_paths_and_platform_fields_only ... ok
+test declared_delete_needs_a_compatible_exposed_read_for_its_revision ... ok
+test incompatible_record_relation_key_or_revision_requires_composition ... ok
+test revision_binding_requires_one_served_record_even_when_terminal_fields_match ... ok
+test receiving_update_preserves_writable_type_presence_and_null_refusal ... ok
+test receiving_query_closed_string_domains_remain_typed_without_explicit_schema_types ... ok
+test receiving_direct_claim_grants_replay_but_wms_composition_does_not ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 5 tests
+test malformed_or_mismatched_cursor_is_typed_invalid_input ... ok
+test noncanonical_timestamps_and_numeric_spellings_refuse ... ok
+test numeric_cursor_preserves_postgresql_lexical_scale ... ok
+test whole_second_timestamp_has_one_literal_wire_spelling ... ok
+test noncanonical_json_and_unknown_version_never_reset_to_first_page ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 60 tests
+test a_lineless_command_canonicalizes_without_a_line_profile ... ok
+test a_command_that_declares_no_idempotence_refuses_and_names_all_three_remedies ... ok
+test a_state_idempotent_command_carries_the_relation_its_version_guards ... ok
+test a_generated_operation_names_an_exclusion_violation_with_its_constraint ... ok
+test a_line_profile_and_a_line_input_must_agree ... ok
+test a_command_riding_a_base_claim_carries_its_one_contract_test ... ok
+test a_model_identity_the_claim_does_not_mint_refuses ... ok
+test an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim ... ok
+test an_authored_command_carries_the_two_claim_contract_tests ... ok
+test corpus_hash_uses_sorted_unambiguous_framing ... ok
+test command_privilege_mismatch_reports_for_update_lock_and_declared_value ... ok
+test component_grouping_defaults_one_group_and_refuses_invalid_splits ... ok
+test command_privilege_mismatch_reports_returning_reads_and_declared_writes ... ok
+test additive_unused_column_on_consumed_relation_preserves_required_contract ... ok
+test custom_sql_generated_rust_symbols_are_unique_before_emission ... ok
+test claim_finalization_requires_one_returned_row ... ok
+test duplicate_filters_and_schema_qualified_authored_sql_refuse ... ok
+test command_privilege_declarations_match_sql_effects_and_row_locks ... ok
+test dependency_composition_may_add_one_declared_post_call_projection ... ok
+test an_authored_claim_is_refused_unless_every_identity_comes_from_it ... ok
+test exclusion_owners_reject_unknown_constraints ... ok
+test exclusion_owners_reject_undeclared_owners ... ok
+test every_generated_create_carries_the_two_claim_contract_tests ... ok
+test explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields ... ok
+test custom_operation_kinds_visibility_permissions_and_registration_are_closed ... ok
+test each_declared_idempotence_value_admits_only_its_own_shape ... ok
+test custom_statement_declarations_drive_both_siblings_without_domain_tables ... ok
+test custom_operation_ir_references_require_declared_fields_and_named_constraints ... ok
+test generated_create_pins_and_grants_its_claim_relation ... ok
+test exclusion_owners_accept_the_package_and_a_declared_base ... ok
+test generated_create_contracts_publish_the_claim_and_its_refusal ... ok
+test generated_create_replay_writes_nothing ... ok
+test generated_create_takes_every_identity_from_the_claim ... ok
+test generated_operations_ship_a_result_contract_with_closed_domains ... ok
+test fresh_only_refuses_private_operations_and_non_boolean_flags ... ok
+test idempotency_conflict_is_closed_to_the_create ... ok
+test generated_weld_has_one_strict_canonical_reader ... ok
+test generated_create_refuses_a_claim_that_does_not_pre_generate_identity ... ok
+test mutation_contract_refuses_server_owned_and_nonnullable_null ... ok
+test only_a_create_carries_claim_contract_tests ... ok
+test generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings ... ok
+test generation_is_byte_stable_and_emits_both_projection_siblings ... ok
+test fresh_only_public_operations_emit_policy_and_false_preserves_contract_bytes ... ok
+test ordered_filters_and_query_variants_remain_structural_and_finite ... ok
+test operation_identity_errors_and_constraint_names_are_closed ... ok
+test shared_operation_vocabulary_refuses_permission_identity_drift ... ok
+test generic_custom_operation_path_preserves_shipped_receiving_bytes ... ok
+test shared_operation_vocabulary_refuses_noncanonical_coordinates ... ok
+test shipped_command_source_map_parity_and_bind_fixtures_align_structurally ... ok
+test ownership_only_model_generates_without_fabricated_crud ... ok
+test strict_manifest_and_ir_references_fail_loudly ... ok
+test the_two_line_members_are_declared_together ... ok
+test update_returning_names_only_the_declared_model_columns ... ok
+test overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain ... ok
+test overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions ... ok
+test shipped_receiving_manifest_and_authored_corpus_generate_without_drift ... ok
+test operation_error_details_are_required_closed_and_exact ... ok
+test wamn_accessors_are_structurally_derived_from_operations_and_ir ... ok
+test internal_relation_cdc_exclusion_is_closed_and_not_a_model ... ok
+test weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables ... ok
+
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+
+running 5 tests
+test nullability_mutant_fails_with_field_context ... ok
+test unknown_matrix_members_and_postgres_types_fail_closed ... ok
+test frozen_postgres_native_and_wamn_mappings_validate ... ok
+test accessor_bind_mutants_fail_with_parameter_context ... ok
+test distinct_wamn_carrier_mutants_fail_with_field_context ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 11 tests
+test raw_schema_literals_preserve_quotes_without_becoming_rust_source ... ok
+test screen_metadata_preserves_the_operation_freshness_requirement ... ok
+test platform_and_revision_inputs_come_only_from_exact_declared_paths ... ok
+test screens_reference_the_same_collision_free_helpers_as_the_client ... ok
+test unexposed_unsupported_and_composed_operations_keep_distinct_screens ... ok
+test event_handlers_are_excluded_and_deployment_values_are_supplied_at_launch ... ok
+test invalid_paths_and_generated_module_collisions_are_refused ... ok
+test queries_reference_their_own_result_schemas_and_preserve_distinct_error_cases ... ok
+test workspace_package_and_binary_names_keep_the_reference_crate_distinct ... ok
+test receiving_replay_and_wms_composed_completion_use_the_served_contract ... ok
+test shipped_operator_crates_are_deterministic_and_cover_each_callable_operation ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

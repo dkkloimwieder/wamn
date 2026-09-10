@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "-p",
+    "wamn-schema-generator",
+    "--all-targets",
+    "--no-fail-fast",
+    "--locked",
+    "--offline",
+    "--",
+    "--include-ignored",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910"
+}

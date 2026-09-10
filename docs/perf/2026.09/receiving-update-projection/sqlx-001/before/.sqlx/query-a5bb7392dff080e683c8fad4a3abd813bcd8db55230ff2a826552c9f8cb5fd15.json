@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE record_receipt_command\nSET\n    purchase_order_status = $4,\n    row_version = $5\nWHERE idempotency_key = $1\n    AND canonical_command = $2\n    AND receipt_id = $3\n    AND purchase_order_status IS NULL\n    AND row_version IS NULL\nRETURNING purchase_order_status, row_version;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "purchase_order_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "record_receipt_command",
+            "name": "purchase_order_status"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "record_receipt_command",
+            "name": "row_version"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea",
+        "Uuid",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "a5bb7392dff080e683c8fad4a3abd813bcd8db55230ff2a826552c9f8cb5fd15"
+}

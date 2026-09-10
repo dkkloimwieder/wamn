@@ -1,0 +1,20 @@
+{
+  "receiving": {
+    "old_query_hash": "ae9bc70de2245821b2776e694c9f169e7bd6dde8895767adeafc42f36f00e71f",
+    "new_query_hash": "a972049a3023f1c87ac95c07a3716f75aff4f520b37c8dcdecd74c49090eb6ab",
+    "describe_unchanged": true,
+    "changed_keys": [
+      "hash",
+      "query"
+    ]
+  },
+  "client_acme_receiving": {
+    "old_query_hash": "df5a9977e52e7386bd4f49fc96f713418fbf095d63f3c9c284a7725485531645",
+    "new_query_hash": "0c8ddebddf00a12125acec9fb36f9cbd8619c99773ee79102b5dcd9afe844a95",
+    "describe_unchanged": true,
+    "changed_keys": [
+      "hash",
+      "query"
+    ]
+  }
+}

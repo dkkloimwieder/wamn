@@ -1,0 +1,10 @@
+{
+  "source": "/home/kaalin/dev/wamn/docs/perf/2026.09/guest-digest/tools/remint.py",
+  "source_sha256": "01e740d8edcd8cbaaea416dba19ccbc726b91b2e103b85542189fb92334c638f",
+  "adapted_sha256": "3a925af452b2d4d031a4b0349d0b198f4c67b3e82b447a08e9195f33310c8258",
+  "changes": [
+    "Read artifact from the exclusive transferred root target directory",
+    "Require captured env CARGO_TARGET_DIR=<tree>/target tools/build-components m1 command"
+  ],
+  "pin_algorithm_changed": false
+}

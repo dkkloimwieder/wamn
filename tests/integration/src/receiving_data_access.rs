@@ -144,6 +144,172 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL"]
+    async fn generated_update_ignores_ungranted_additive_columns() -> Result<()> {
+        use wamn_schema_generator::{
+            DataAccessOverlay, DataAccessRelationInventory, derive_effective_data_access,
+            render_effective_data_access_sql,
+        };
+
+        let url = std::env::var("WAMN_RECEIVING_PG_URL")
+            .context("WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database")?;
+        let client = connect(&url).await?;
+        assert_postgres_18(&client).await?;
+        assert_fresh_receiving_schema(&client).await?;
+        // All fixture DDL, grants, role creation, and row changes roll back.
+        client
+            .batch_execute("BEGIN; CREATE SCHEMA receiving")
+            .await?;
+        client.batch_execute(MIGRATION).await?;
+        client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
+        client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
+        client
+            .batch_execute(
+                "ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text; \
+             CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS",
+            )
+            .await?;
+        select_receiving_schema(&client).await?;
+        let id = Uuid::new_v4();
+        let initial_supplier = Uuid::new_v4();
+        let changed_supplier = Uuid::new_v4();
+        insert_purchase_order(&client, id, "PO-additive", initial_supplier, "open").await?;
+        client
+            .execute(
+                "UPDATE purchase_order SET overlay_compatibility_note = 'untouched' WHERE id = $1",
+                &[&id],
+            )
+            .await?;
+
+        let mut fields = BTreeMap::<String, Vec<String>>::new();
+        for row in client
+            .query(
+                wamn_schema_control::select_schema_columns_sql(),
+                &[&"receiving"],
+            )
+            .await?
+        {
+            fields.entry(row.get(0)).or_default().push(row.get(1));
+        }
+        let inventory = fields
+            .into_iter()
+            .map(|(table, fields)| DataAccessRelationInventory::new("receiving", table, fields))
+            .collect::<Vec<_>>();
+        let overlays = [
+            DataAccessOverlay::from_slice(include_bytes!(
+                "../../../packages/receiving/generated/platform-policy/data-access.json"
+            ))?,
+            DataAccessOverlay::from_slice(include_bytes!(
+                "../../../packages/client_acme_receiving/generated/platform-policy/data-access.json"
+            ))?,
+        ];
+        let authority = derive_effective_data_access(&inventory, &overlays)?;
+        client
+            .batch_execute(&render_effective_data_access_sql(&authority)?)
+            .await?;
+        client.batch_execute("SET LOCAL ROLE wamn_app").await?;
+        let grants = client.query_one(
+            "SELECT current_user::text, \
+             has_table_privilege(current_user, 'receiving.purchase_order', 'SELECT'), \
+             has_column_privilege(current_user, 'receiving.purchase_order', 'overlay_compatibility_note', 'SELECT')",
+            &[],
+        ).await?;
+        ensure!(
+            grants.get::<_, String>(0) == "wamn_app"
+                && !grants.get::<_, bool>(1)
+                && !grants.get::<_, bool>(2),
+            "fixture must use exact column grants without SELECT on the additive field"
+        );
+
+        // Mutate only the generated projection. Both old and repaired emitter
+        // shapes reach PostgreSQL, so reverting the repair fails on authority.
+        let (before, returned) = UPDATE_SQL
+            .split_once("    RETURNING")
+            .context("generated update must return its row")?;
+        let (_, after) = returned
+            .split_once("\n)\nSELECT")
+            .context("generated update must retain its outer result projection")?;
+        let wildcard = format!("{before}    RETURNING model.*\n)\nSELECT{after}");
+        client
+            .batch_execute("SAVEPOINT wildcard_projection")
+            .await?;
+        let refusal = client
+            .query_one(&wildcard, &[&id, &1_i64, &true, &Some(changed_supplier)])
+            .await
+            .expect_err("wildcard RETURNING must require SELECT on the added field");
+        client
+            .batch_execute(
+                "ROLLBACK TO SAVEPOINT wildcard_projection; RELEASE SAVEPOINT wildcard_projection",
+            )
+            .await?;
+        ensure!(
+            refusal.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+            "wildcard control refused for a different reason: {refusal}"
+        );
+        eprintln!("wildcard RETURNING control: SQLSTATE 42501");
+
+        let updated = execute_update(&client, id, 1, changed_supplier)
+            .await
+            .context("execute exact base UPDATE with an ungranted additive field")?;
+        ensure!(
+            updated.outcome == "updated"
+                && updated.id == Some(id)
+                && updated.supplier_id == Some(changed_supplier)
+                && updated.row_version == Some(2)
+                && updated.purchase_order_number.as_deref() == Some("PO-additive")
+                && updated.status.as_deref() == Some("open")
+                && updated.created_at.is_some()
+                && updated.updated_at.is_some(),
+            "base update changed its declared row payload"
+        );
+        let overlay = client
+            .query_one(
+                OVERLAY_UPDATE_SQL,
+                &[&id, &2_i64, &true, &Some(true), &false, &None::<String>],
+            )
+            .await
+            .context("execute exact overlay UPDATE with an ungranted additive field")?;
+        ensure!(
+            overlay.get::<_, String>("outcome") == "updated"
+                && overlay.get::<_, Option<Uuid>>("id") == Some(id)
+                && overlay.get::<_, Option<i64>>("row_version") == Some(3)
+                && overlay.get::<_, Option<bool>>("acme_inspection_required") == Some(true)
+                && overlay
+                    .get::<_, Option<String>>("acme_quality_status")
+                    .as_deref()
+                    == Some("not_required"),
+            "overlay update changed its declared row payload"
+        );
+        let stale = execute_update(&client, id, 1, initial_supplier).await?;
+        ensure!(
+            stale.outcome == "concurrency_conflict",
+            "stale update lost its conflict outcome"
+        );
+        assert_null_payload(&stale)?;
+        let missing = execute_update(&client, Uuid::new_v4(), 1, initial_supplier).await?;
+        ensure!(
+            missing.outcome == "not_found",
+            "missing update lost its not_found outcome"
+        );
+        assert_null_payload(&missing)?;
+
+        client.batch_execute("RESET ROLE").await?;
+        let stored = client.query_one(
+            "SELECT supplier_id, row_version, overlay_compatibility_note FROM purchase_order WHERE id = $1", &[&id],
+        ).await?;
+        ensure!(
+            stored.get::<_, Uuid>(0) == changed_supplier
+                && stored.get::<_, i64>(1) == 3
+                && stored.get::<_, String>(2) == "untouched",
+            "updates changed unrelated stored state"
+        );
+        client.batch_execute("ROLLBACK").await?;
+        assert_fresh_receiving_schema(&client).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL"]
     async fn enum_and_optimistic_update_outcomes_hold_on_postgres_18() -> Result<()> {
         let url = std::env::var("WAMN_RECEIVING_PG_URL")
             .context("WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database")?;

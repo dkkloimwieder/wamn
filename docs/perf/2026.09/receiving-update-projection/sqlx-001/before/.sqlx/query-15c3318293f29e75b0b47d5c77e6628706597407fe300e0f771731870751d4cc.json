@@ -1,0 +1,124 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.acme_inspection_required,\n    model.acme_quality_status,\n    model.created_at,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at\nFROM purchase_order AS model\nWHERE model.id = $1::uuid;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "acme_inspection_required",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "acme_inspection_required"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "acme_quality_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "acme_quality_status"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "purchase_order_number",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "purchase_order_number"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "row_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "row_version"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "supplier_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "supplier_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "15c3318293f29e75b0b47d5c77e6628706597407fe300e0f771731870751d4cc"
+}

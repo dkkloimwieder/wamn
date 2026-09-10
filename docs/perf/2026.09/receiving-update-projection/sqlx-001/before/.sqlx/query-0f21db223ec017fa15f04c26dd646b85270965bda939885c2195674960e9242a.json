@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT receipt_id\nFROM quality_inspection\nWHERE receipt_id = $1;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "receipt_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "quality_inspection",
+            "name": "receipt_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0f21db223ec017fa15f04c26dd646b85270965bda939885c2195674960e9242a"
+}

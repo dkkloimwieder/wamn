@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "pg_virtualenv",
+    "-t",
+    "-v",
+    "18",
+    "/usr/bin/python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/diagnose.py",
+    "--inside"
+  ],
+  "harness_sha256": "663e4c6c63d925d4069764eb9e0f342c9d224c23ed4f0c7d81a138e4c99d23c3"
+}

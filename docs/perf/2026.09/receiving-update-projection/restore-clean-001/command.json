@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "cargo",
+    "clean",
+    "-p",
+    "wamn-proof-integration"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910"
+}

@@ -1,0 +1,15 @@
+{
+  "pid": 2714277,
+  "argv": [
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/tools/wildcard_control.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910",
+    "--package",
+    "base",
+    "--positive-evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/regression-positive-001",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/wildcard-base-001"
+  ]
+}

@@ -1,0 +1,7 @@
+Stage: native-callers-001
+exit_code=0 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/native-callers-001
+Stage: offline-sqlx-001
+exit_code=0 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/offline-sqlx-001
+Stage: clippy-001
+exit_code=0 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/clippy-001
+All scoped local gates completed.

@@ -1,0 +1,14 @@
+{
+  "added": [],
+  "modified": [
+    "packages/client_acme_receiving/generated/contracts/purchase_order/update.operation.json",
+    "packages/client_acme_receiving/generated/package-weld.json",
+    "packages/client_acme_receiving/generated/sql/purchase_order/update.sql",
+    "packages/client_acme_receiving/generated/wamn/purchase_order.rs",
+    "packages/receiving/generated/contracts/purchase_order/update.operation.json",
+    "packages/receiving/generated/package-weld.json",
+    "packages/receiving/generated/sql/purchase_order/update.sql",
+    "packages/receiving/generated/wamn/purchase_order.rs"
+  ],
+  "removed": []
+}

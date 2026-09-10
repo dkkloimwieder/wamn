@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO record_receipt_command (\n    idempotency_key,\n    canonical_command,\n    purchase_order_id\n)\nVALUES ($1, $2, $3)\nON CONFLICT ON CONSTRAINT record_receipt_command_idempotency_key_pkey\nDO NOTHING\nRETURNING receipt_id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "receipt_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "record_receipt_command",
+            "name": "receipt_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6b854d40de1d42cab4ab852d0d6b1b6d869e7d5117a0dbd9c7f00b3602874430"
+}

@@ -1,0 +1,77 @@
+Creating new PostgreSQL cluster 18/regress ...
+{"test": "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns", "exit_code": 101, "exact_test_ran": true}
+*** /tmp/pg_virtualenv.zZ6mTd/log/postgresql-18-regress.log (last 100 lines) ***
+2026-09-10 19:26:13.414 EDT [2714444] LOG:  starting PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg26.04+2) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, 64-bit
+2026-09-10 19:26:13.415 EDT [2714444] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-09-10 19:26:13.415 EDT [2714444] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2026-09-10 19:26:13.418 EDT [2714450] LOG:  database system was shut down at 2026-09-10 19:26:13 EDT
+2026-09-10 19:26:13.422 EDT [2714444] LOG:  database system is ready to accept connections
+2026-09-10 19:26:23.052 EDT [2715062] kaalin@postgres ERROR:  permission denied for table purchase_order
+2026-09-10 19:26:23.052 EDT [2715062] kaalin@postgres STATEMENT:  WITH target AS MATERIALIZED (
+	    SELECT id, row_version
+	    FROM purchase_order
+	    WHERE id = $1::uuid
+	    FOR UPDATE
+	),
+	updated AS (
+	    UPDATE purchase_order AS model
+	    SET
+	        supplier_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.supplier_id END,
+	        row_version = model.row_version + 1
+	    FROM target
+	    WHERE model.id = target.id
+	      AND target.row_version = $2::int8
+	    RETURNING model.*
+	)
+	SELECT
+	    CASE
+	        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'
+	        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'
+	        ELSE 'updated'
+	    END AS outcome,
+	    (SELECT target.row_version FROM target) AS observed_row_version,
+	    updated.created_at,
+	    updated.id,
+	    updated.purchase_order_number,
+	    updated.row_version,
+	    updated.status,
+	    updated.supplier_id,
+	    updated.updated_at
+	FROM (SELECT 1) AS singleton
+	LEFT JOIN updated ON TRUE;
+	
+2026-09-10 19:26:23.054 EDT [2715062] kaalin@postgres ERROR:  permission denied for table purchase_order
+2026-09-10 19:26:23.054 EDT [2715062] kaalin@postgres STATEMENT:  WITH target AS MATERIALIZED (
+	    SELECT id, row_version
+	    FROM purchase_order
+	    WHERE id = $1::uuid
+	    FOR UPDATE
+	),
+	updated AS (
+	    UPDATE purchase_order AS model
+	    SET
+	        supplier_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.supplier_id END,
+	        row_version = model.row_version + 1
+	    FROM target
+	    WHERE model.id = target.id
+	      AND target.row_version = $2::int8
+	    RETURNING model.*
+	)
+	SELECT
+	    CASE
+	        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'
+	        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'
+	        ELSE 'updated'
+	    END AS outcome,
+	    (SELECT target.row_version FROM target) AS observed_row_version,
+	    updated.created_at,
+	    updated.id,
+	    updated.purchase_order_number,
+	    updated.row_version,
+	    updated.status,
+	    updated.supplier_id,
+	    updated.updated_at
+	FROM (SELECT 1) AS singleton
+	LEFT JOIN updated ON TRUE;
+	
+Dropping cluster 18/regress ...

@@ -1,0 +1,20 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910/crates/schema/generator)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.21s
+     Running unittests src/lib.rs (target/debug/deps/wamn_schema_generator-4a588e27220a0340)
+     Running tests/client_contract_metadata.rs (target/debug/deps/client_contract_metadata-b118967873010360)
+     Running tests/client_emitter.rs (target/debug/deps/client_emitter-6f8add21463f14c9)
+     Running tests/client_projection.rs (target/debug/deps/client_projection-64eb46ddf6d7208f)
+     Running tests/cursor.rs (target/debug/deps/cursor-c5949ba2a652a745)
+     Running tests/generation.rs (target/debug/deps/generation-228e6c79f0773dac)
+     Running tests/parity.rs (target/debug/deps/parity-03d4cbae06b3dc5d)
+     Running tests/tui_emitter.rs (target/debug/deps/tui_emitter-7dacb684ee38d745)
+     Running unittests examples/materialize_package.rs (target/debug/examples/materialize_package-42c4475c6fd8b4ac)

@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "cargo",
+    "clippy",
+    "-p",
+    "wamn-schema-generator",
+    "-p",
+    "wamn-proof-integration",
+    "--all-targets",
+    "--locked",
+    "--offline"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910"
+}

@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH input AS (\n    SELECT\n        purchase_order_line_id,\n        quantity::numeric AS quantity,\n        location_id\n    FROM jsonb_to_recordset($2::jsonb) AS item (\n        purchase_order_line_id uuid,\n        quantity text,\n        location_id uuid\n    )\n)\nINSERT INTO receipt_line (\n    receipt_id,\n    purchase_order_line_id,\n    quantity,\n    location_id\n)\nSELECT $1, purchase_order_line_id, quantity, location_id\nFROM input\nRETURNING id;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "receipt_line",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "46af356f1b2e4640f42ffb8040f14aa7bd88d303f54941cf1d707456337c781d"
+}

@@ -1,0 +1,16 @@
+{
+  "pid": 2725328,
+  "argv": [
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/tools/capture.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-update-projection/m1-001",
+    "--",
+    "env",
+    "CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910/target",
+    "tools/build-components",
+    "m1"
+  ]
+}

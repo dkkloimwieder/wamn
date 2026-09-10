@@ -1835,6 +1835,32 @@ fn generated_operations_ship_a_result_contract_with_closed_domains() {
 }
 
 #[test]
+fn update_returning_names_only_the_declared_model_columns() {
+    let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
+    let sql = std::str::from_utf8(
+        package
+            .file("generated/sql/purchase_order/update.sql")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    let returning = sql
+        .split_once("    RETURNING\n")
+        .unwrap()
+        .1
+        .split_once("\n)\nSELECT")
+        .unwrap()
+        .0;
+    assert_eq!(
+        returning,
+        concat!(
+            "    model.created_at,\n    model.id,\n    model.purchase_order_number,\n",
+            "    model.row_version,\n    model.status,\n    model.supplier_id",
+        )
+    );
+}
+
+#[test]
 fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
     let get_contract = artifact_json(

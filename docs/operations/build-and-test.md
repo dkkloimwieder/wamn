@@ -495,6 +495,11 @@ RECEIVING_DATABASE_URL="postgresql://postgres:probe@127.0.0.1:${RECEIVING_PG_POR
 RECEIVING_SQLX_DATABASE_URL="${RECEIVING_DATABASE_URL}?options=-csearch_path%3Dreceiving%2Cpublic"
 
 WAMN_RECEIVING_PG_URL="$RECEIVING_DATABASE_URL" cargo test \
+  -p wamn-proof-integration --lib \
+  receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns \
+  --locked --offline -- --ignored --exact --nocapture
+
+WAMN_RECEIVING_PG_URL="$RECEIVING_DATABASE_URL" cargo test \
   -p wamn-proof-integration \
   receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18 \
   --locked --offline -- --ignored --exact

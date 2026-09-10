@@ -1,0 +1,90 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.idempotency_key,\n    model.occurred_at,\n    model.purchase_order_id,\n    model.receipt_reference\nFROM receipt AS model\nWHERE\n    ($1::timestamptz IS NULL OR model.created_at > $1::timestamptz\n        OR (model.created_at = $1::timestamptz AND model.id > $2::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $3::int8;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "receipt",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "receipt",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "idempotency_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "receipt",
+            "name": "idempotency_key"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "occurred_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "receipt",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "purchase_order_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "receipt",
+            "name": "purchase_order_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "receipt_reference",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "receipt",
+            "name": "receipt_reference"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7c9d3439ce29d392049e5bda1e005e146eb4882d22fee290ed7de80c3b4e1eb3"
+}

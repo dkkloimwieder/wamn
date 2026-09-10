@@ -1,0 +1,10 @@
+{
+  "git_command": [
+    "git",
+    "show",
+    "b8c52797:packages/client_acme_receiving/generated/sql/purchase_order/update.sql"
+  ],
+  "mutant_sha256": "df5a9977e52e7386bd4f49fc96f713418fbf095d63f3c9c284a7725485531645",
+  "only_source_path": "packages/client_acme_receiving/generated/sql/purchase_order/update.sql",
+  "original_sha256": "0c8ddebddf00a12125acec9fb36f9cbd8619c99773ee79102b5dcd9afe844a95"
+}
