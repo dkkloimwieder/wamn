@@ -28,6 +28,7 @@ pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         replay: submission::Replay::Unknown,
     },
     route: Some(crate::purchase_order::get_route),
+    fresh_only: false,
     record: Some(screen::RecordLink { relation: "receiving.purchase_order", key_field: "id", key_input: Some("id") }),
     revision: None,
     revision_inputs: &[],
@@ -67,6 +68,7 @@ pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         replay: submission::Replay::Unknown,
     },
     route: Some(crate::purchase_order::query_route),
+    fresh_only: false,
     record: Some(screen::RecordLink { relation: "receiving.purchase_order", key_field: "id", key_input: None }),
     revision: None,
     revision_inputs: &[],
@@ -108,6 +110,7 @@ pub static UPDATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         replay: submission::Replay::Unknown,
     },
     route: Some(crate::purchase_order::update_route),
+    fresh_only: false,
     record: Some(screen::RecordLink { relation: "receiving.purchase_order", key_field: "id", key_input: Some("id") }),
     revision: Some(screen::RevisionBinding {
         read_operation: "wamn-receiving:purchase-order/get@1.0.0",

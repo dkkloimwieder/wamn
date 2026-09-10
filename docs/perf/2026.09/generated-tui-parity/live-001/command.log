@@ -1,0 +1,9 @@
+Private live-proof scratch: /tmp/wamn-receiving-parity-live-jkgw5p1n
+Stage: build-http-route
+Stage: create-registry-auth
+Stage: substrate-up
+Stage: postgres-ready
+Stage: push-http-route
+Stage: receiving-composition-live
+Retained live-proof evidence: /home/kaalin/dev/wamn/docs/perf/2026.09/generated-tui-parity/live-001/environment
+receiving-composition-live: exit 1; see private stage log

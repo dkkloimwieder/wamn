@@ -1,154 +1,21 @@
-//! The Receiving operator terminal, as one running binary.
+//! The Receiving composition over generated screens and the shared terminal loop.
 //!
-//! Everything that DECIDES anything is in the library beside this file: the
-//! state is [`AppState`], every transition is [`reduce`], the envelope is
-//! [`record_receipt`], and the screen is [`AppScreen`]. This binary is the
-//! shell around those — it reads the deployment from the environment, speaks
-//! HTTP, maps key presses onto events, and hands the widget to the shared
-//! terminal driver. Nothing here is a decision the reducer has not made, which
-//! is why the crate's assertions still live below the terminal.
-//!
-//! The driver is `wamn-client-terminal`, shared with `wamn dev --tui`. It was
-//! the developer client's private module until this binary existed
-//! (wamn-10yt.5.9); a second copy of raw mode and a second panic hook is
-//! exactly what that move prevents.
-//!
-//! # Configuration
-//!
-//! `WAMN_BASE_URL` names the deployment, `WAMN_TOKEN` carries the operator
-//! PAT, and `WAMN_HOST` supplies the routing host header when the deployment
-//! routes by host. All three are deployment facts, so none of them is
-//! compiled in.
+//! `WAMN_BASE_URL`, `WAMN_HOST`, and `WAMN_TARGET_INSTANCE` bind this client to
+//! the served activation. `WAMN_TOKEN` supplies the operator PAT.
 //! `WAMN_SESSION_ISSUER` and `WAMN_SESSION_AUDIENCE` optionally select session
-//! login. Configure both or neither. `WAMN_TOKEN` remains the PAT source.
+//! login. Configure both or neither. Login completes before terminal entry.
 //!
-//! Where those three values come from against a `wamn dev` session, the keys
-//! this binary reads, and the teardown, are the `[RECEIVING-TUI]` recipe in
-//! `docs/operations/build-and-test.md`.
+//! The `[RECEIVING-TUI]` recipe in `docs/operations/build-and-test.md` supplies
+//! the launch commands and interaction keys.
 
+use std::error::Error;
 use std::io;
 use std::sync::Arc;
 
-use anyhow::Context as _;
-use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use futures_util::StreamExt as _;
-use serde_json::{Value, json};
-use wamn_client::{ClientError, HttpRequest, HttpResponse, ItemOutcome, Transport, WamnClient};
-use wamn_client_terminal::TerminalSession;
-use wamn_receiving_tui::login;
-use wamn_receiving_tui::model::{Location, PurchaseOrderRow, ReceiptLine, Screen};
-use wamn_receiving_tui::request::{ClientSupplied, record_receipt};
-use wamn_receiving_tui::screen::AppScreen;
-use wamn_receiving_tui::{AppState, Event, reduce};
-
-// THE ROUTES THIS CLIENT CALLS ARE NOT AUTHORED HERE ANY MORE.
-//
-// They are read out of the bindings the development loop's Generate stage
-// emits beside the package's contracts, from the contract projection and the
-// publication attachments together (`wamn-10yt.5.8`, `wamn-10yt.45`). The
-// files are a build input by path, so `wamn dev` regenerating them and this
-// binary being rebuilt is the whole loop: a route the release moves moves
-// here by regeneration, and nothing in this crate has to be edited to follow
-// it.
-//
-// `#[path]` rather than a generated crate, because the bindings belong to the
-// PACKAGE and not to any one client: a second client includes the same files
-// from wherever it lives. The path is relative to this file's directory, so
-// four levels up is the repository root.
-//
-// Emitted modules carry every operation of their model with its request and
-// result types, its descriptors and its grant. This client calls four
-// operations, so most of that is unused here and unused is correct — it is
-// the model's contract, not this screen's.
-#[allow(
-    dead_code,
-    unused_imports,
-    reason = "the emitter writes a model's whole contract; one client calls part of it"
-)]
-#[path = "../../../../packages/receiving/generated/client/location.rs"]
-mod location;
-#[allow(
-    dead_code,
-    unused_imports,
-    reason = "the emitter writes a model's whole contract; one client calls part of it"
-)]
-#[path = "../../../../packages/receiving/generated/client/purchase_order.rs"]
-mod purchase_order;
-#[allow(
-    dead_code,
-    unused_imports,
-    reason = "the emitter writes a model's whole contract; one client calls part of it"
-)]
-#[path = "../../../../packages/receiving/generated/client/receiving.rs"]
-mod receiving;
-
-/// Which of the receipt screen's two text entries the keyboard is typing into.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-enum Focus {
-    /// The highlighted line's quantity.
-    #[default]
-    Quantity,
-    /// The receipt reference.
-    Reference,
-}
-
-impl Focus {
-    const fn toggled(self) -> Self {
-        match self {
-            Self::Quantity => Self::Reference,
-            Self::Reference => Self::Quantity,
-        }
-    }
-}
-
-/// What one key press asks for.
-///
-/// Separated from the loop so the mapping is a pure function over the screen
-/// and the focus, and can be asserted without a terminal.
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum Action {
-    /// Leave the client.
-    Quit,
-    /// Apply one reducer event.
-    Apply(Event),
-    /// Move the typing focus.
-    ToggleFocus,
-    /// Load the highlighted order's receipt screen.
-    OpenReceipt,
-    /// Send the entered receipt.
-    Submit,
-    /// The key means nothing here.
-    Ignore,
-}
-
-/// Map one key press onto what it asks for.
-fn action(screen: &Screen, focus: Focus, key: KeyEvent) -> Action {
-    // Windows reports press AND release; acting on both doubles every key.
-    if key.kind != KeyEventKind::Press {
-        return Action::Ignore;
-    }
-    let control = key.modifiers.contains(KeyModifiers::CONTROL);
-    match (screen, key.code) {
-        (_, KeyCode::Char('c' | 'q')) if control => Action::Quit,
-        (_, KeyCode::Up) => Action::Apply(Event::MoveUp),
-        (_, KeyCode::Down) => Action::Apply(Event::MoveDown),
-        (Screen::List, KeyCode::Esc | KeyCode::Char('q')) => Action::Quit,
-        (Screen::List, KeyCode::Enter) => Action::OpenReceipt,
-        (Screen::Receipt, KeyCode::Esc) => Action::Apply(Event::Back),
-        (Screen::Receipt, KeyCode::Char('s')) if control => Action::Submit,
-        (Screen::Receipt, KeyCode::Char('l')) if control => Action::Apply(Event::NextLocation),
-        (Screen::Receipt, KeyCode::Tab) => Action::ToggleFocus,
-        (Screen::Receipt, KeyCode::Backspace) => Action::Apply(Event::BackspaceQuantity),
-        // A receipt reference carries digits, so which entry a character
-        // reaches is the FOCUS and never the character: guessing from the
-        // character would send "GRN-1001" into two different fields.
-        (Screen::Receipt, KeyCode::Char(symbol)) if !control => match focus {
-            Focus::Quantity => Action::Apply(Event::TypeQuantity(symbol)),
-            Focus::Reference => Action::Apply(Event::TypeReference(symbol)),
-        },
-        _ => Action::Ignore,
-    }
-}
+use wamn_client::{ClientError, HttpRequest, HttpResponse, Transport, WamnClient};
+use wamn_client_terminal::operator::{ExitReason, run_application_with_client};
+use wamn_client_tui::submission::SessionBinding;
+use wamn_receiving_tui::{ReceivingApplication, login};
 
 /// One HTTP exchange over the real network.
 #[derive(Debug)]
@@ -188,296 +55,66 @@ impl Transport for HttpTransport {
     }
 }
 
-/// The running client: the deployment, the state, and what is being typed.
-struct App {
-    client: WamnClient,
-    state: AppState,
-    focus: Focus,
-    requests: u64,
+fn required_env(name: &str, message: &str) -> io::Result<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
-impl App {
-    /// Apply one event and repaint.
-    fn apply(&mut self, event: Event, screen: &mut TerminalSession) -> io::Result<()> {
-        self.state = reduce(&self.state, event);
-        screen.draw(AppScreen::new(&self.state))
+fn session_setting(name: &str) -> io::Result<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{name} must contain Unicode text"),
+        )),
     }
-
-    /// Show `operation` as outstanding before the request is awaited.
-    fn begin(&mut self, operation: &str, screen: &mut TerminalSession) -> io::Result<()> {
-        self.apply(
-            Event::Sent {
-                operation: operation.to_owned(),
-            },
-            screen,
-        )
-    }
-
-    /// A fresh correlation id, unique within this process.
-    fn next_request_id(&mut self) -> String {
-        self.requests += 1;
-        format!("req-{}", self.requests)
-    }
-}
-
-/// Extract the single outcome returned by a generated operation wrapper.
-fn single_result(result: Result<Vec<ItemOutcome>, ClientError>) -> Result<Value, ClientError> {
-    result?
-        .into_iter()
-        .next()
-        .expect("one sent item yields one outcome")
-        .into_result()
-}
-
-/// Rows of a `bounded_list` result, which spells its rows `rows`.
-fn rows(value: &Value) -> &[Value] {
-    value["rows"].as_array().map_or(&[], Vec::as_slice)
-}
-
-fn text(row: &Value, member: &str) -> String {
-    row[member].as_str().unwrap_or_default().to_owned()
-}
-
-/// An `int64` member, which is spelled as a JSON STRING on the wire.
-///
-/// `int32` is a JSON number and `int64` is not: a 64-bit integer does not
-/// survive every JSON reader intact, so the platform carries it lexically.
-/// Reading `row_version` with `as_i64` therefore yields `None` and the screen
-/// shows revision 0 for every order, which is exactly what a stale-write
-/// refusal reports back (measured live against the served release,
-/// `[RECEIVING-TUI]`).
-fn integer(row: &Value, member: &str) -> i64 {
-    row[member]
-        .as_str()
-        .and_then(|digits| digits.parse().ok())
-        .unwrap_or_default()
-}
-
-/// Load the first page of purchase orders.
-async fn load_orders(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
-    app.begin("purchase_order.query", screen)?;
-    let request_id = app.next_request_id();
-    let result = purchase_order::query(&app.client, &[json!({ "request_id": request_id })]).await;
-    let event = match single_result(result) {
-        Ok(page) => Event::OrdersLoaded {
-            // A `page` result is NOT a `bounded_list`: it spells its rows
-            // `item` and its continuation `next_cursor`. Reading `rows` and
-            // `next` here found neither, so the list rendered empty against a
-            // deployment holding two orders and reported no error at all
-            // (measured live, `[RECEIVING-TUI]`).
-            rows: page["item"]
-                .as_array()
-                .map_or(&[][..], Vec::as_slice)
-                .iter()
-                .map(|row| PurchaseOrderRow {
-                    id: text(row, "id"),
-                    number: text(row, "purchase_order_number"),
-                    status: text(row, "status"),
-                    row_version: integer(row, "row_version"),
-                })
-                .collect(),
-            next: page["next_cursor"].as_str().map(str::to_owned),
-        },
-        Err(error) => Event::Failed { error },
-    };
-    app.apply(event, screen)
-}
-
-/// Open receipt entry against the highlighted order and load what it needs.
-async fn open_receipt(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
-    let Some(order) = app.state.highlighted_order().cloned() else {
-        return Ok(());
-    };
-    app.apply(Event::OpenReceipt, screen)?;
-
-    app.begin("receiving.load_receipt_screen", screen)?;
-    let request_id = app.next_request_id();
-    let item = json!({ "request_id": request_id, "purchase_order_id": order.id });
-    let result = receiving::load_receipt_screen(&app.client, &[item]).await;
-    let event = match single_result(result) {
-        Ok(value) => Event::ReceiptLoaded {
-            lines: rows(&value)
-                .iter()
-                // The projection answers an order with no lines with a row
-                // carrying only the header, which is not a receivable line.
-                .filter(|row| !row["line_id"].is_null())
-                .map(|row| ReceiptLine {
-                    purchase_order_line_id: text(row, "line_id"),
-                    line_number: row["line_number"].as_i64().unwrap_or_default(),
-                    item_number: text(row, "item_number"),
-                    ordered: text(row, "ordered_quantity"),
-                    received: text(row, "received_quantity"),
-                    remaining: text(row, "remaining_quantity"),
-                    entered: String::new(),
-                })
-                .collect(),
-        },
-        Err(error) => Event::Failed { error },
-    };
-    app.apply(event, screen)?;
-    if app.state.failure.is_some() {
-        return Ok(());
-    }
-
-    app.begin("location.list", screen)?;
-    let request_id = app.next_request_id();
-    let result = location::list(&app.client, &[json!({ "request_id": request_id })]).await;
-    let event = match single_result(result) {
-        Ok(value) => Event::LocationsLoaded {
-            locations: rows(&value)
-                .iter()
-                .map(|row| Location {
-                    id: text(row, "id"),
-                    code: text(row, "location_code"),
-                })
-                .collect(),
-        },
-        Err(error) => Event::Failed { error },
-    };
-    app.apply(event, screen)
-}
-
-/// Send the entered receipt.
-async fn submit(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
-    let supplied = ClientSupplied {
-        request_id: app.next_request_id(),
-        // Stable across every retry of the SAME operator action, because it is
-        // DERIVED from what identifies that action rather than minted per
-        // attempt: this receipt, against this order, under this reference. A
-        // second receipt against the same order is a second reference, which
-        // is what a receipt reference is for.
-        idempotency_key: format!(
-            "{}:{}",
-            app.state
-                .receiving
-                .as_ref()
-                .map_or("", |order| order.id.as_str()),
-            app.state.receipt_reference
-        ),
-        occurred_at: chrono::Utc::now().to_rfc3339(),
-    };
-    let items = match record_receipt(&app.state, &supplied) {
-        Ok(items) => items,
-        Err(reason) => {
-            // The screen already knew, so the operator is told what is missing
-            // instead of being sent a request that cannot succeed.
-            return app.apply(
-                Event::Failed {
-                    error: ClientError::Operation {
-                        literal: "incomplete_receipt".to_owned(),
-                        detail: json!({ "detail": reason }),
-                    },
-                },
-                screen,
-            );
-        }
-    };
-
-    app.begin("receiving.record_receipt", screen)?;
-    let sent = single_result(receiving::record_receipt(&app.client, &items).await);
-    let event = match sent {
-        Ok(value) => Event::ReceiptRecorded {
-            receipt_id: text(&value, "receipt_id"),
-        },
-        Err(error) => Event::Failed { error },
-    };
-    app.apply(event, screen)
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let base_url = std::env::var("WAMN_BASE_URL")
-        .context("WAMN_BASE_URL must name the deployment this client talks to")?;
-    let token = std::env::var("WAMN_TOKEN")
-        .map_err(|_| anyhow::anyhow!("WAMN_TOKEN must carry the operator's access token"))?;
-    let host = std::env::var("WAMN_HOST").ok();
-    let session_setting = |name| match std::env::var(name) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(anyhow::anyhow!("{name} must contain Unicode text"))
-        }
+async fn main() -> Result<ExitReason, Box<dyn Error>> {
+    let base_url = required_env(
+        "WAMN_BASE_URL",
+        "WAMN_BASE_URL must name the deployment this client talks to",
+    )?;
+    let token = required_env(
+        "WAMN_TOKEN",
+        "WAMN_TOKEN must carry the operator's access token",
+    )?;
+    let binding = SessionBinding {
+        url: base_url,
+        host: std::env::var("WAMN_HOST")
+            .ok()
+            .filter(|host| !host.is_empty()),
+        target_instance: required_env(
+            "WAMN_TARGET_INSTANCE",
+            "WAMN_TARGET_INSTANCE must identify the served activation",
+        )?,
     };
     let issuer = session_setting("WAMN_SESSION_ISSUER")?;
     let audience = session_setting("WAMN_SESSION_AUDIENCE")?;
     let target = login::session_target(issuer.as_deref(), audience.as_deref())?;
     let transport: Arc<dyn Transport> = Arc::new(http_transport(reqwest::Client::builder())?);
     let credentials = login::credentials(token, target, transport.clone()).await?;
-
-    let mut app = App {
-        client: WamnClient::new(base_url, host, credentials, transport),
-        state: AppState::default(),
-        focus: Focus::default(),
-        requests: 0,
-    };
-
-    let mut events = wamn_client_terminal::events();
-    let mut screen = TerminalSession::enter().context("enter the interactive terminal")?;
-    load_orders(&mut app, &mut screen).await?;
-
-    while let Some(event) = events.next().await {
-        let TerminalEvent::Key(key) = event.context("read a terminal event")? else {
-            // A resize, and anything else, is answered by repainting: the
-            // screen is a rendering of a state that has not changed.
-            screen.draw(AppScreen::new(&app.state))?;
-            continue;
-        };
-        match action(&app.state.screen, app.focus, key) {
-            Action::Quit => break,
-            Action::Ignore => {}
-            Action::ToggleFocus => app.focus = app.focus.toggled(),
-            Action::Apply(event) => app.apply(event, &mut screen)?,
-            Action::OpenReceipt => open_receipt(&mut app, &mut screen).await?,
-            Action::Submit => submit(&mut app, &mut screen).await?,
-        }
-    }
-    Ok(())
+    let client = Arc::new(WamnClient::new(
+        binding.url.clone(),
+        binding.host.clone(),
+        credentials,
+        transport,
+    ));
+    run_application_with_client("Receiving", binding, client, ReceivingApplication::new).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Focus, action, http_transport, single_result};
-    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    use super::http_transport;
     use std::collections::BTreeMap;
     use std::io::{BufRead as _, BufReader, Write as _};
     use std::net::TcpListener;
     use std::time::Duration;
-    use wamn_client::{ClientError, HttpRequest, ItemOutcome, Transport as _};
-    use wamn_receiving_tui::Event;
-    use wamn_receiving_tui::model::Screen;
-
-    fn press(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn control(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::CONTROL)
-    }
-
-    #[test]
-    fn the_single_result_preserves_values_and_both_refusal_layers() {
-        let value = serde_json::json!({ "receipt_id": "fixture-receipt" });
-        assert_eq!(
-            single_result(Ok(vec![ItemOutcome {
-                request_id: "r1".to_owned(),
-                value: Some(value.clone()),
-                error: None,
-            }])),
-            Ok(value),
-        );
-        let refusal = ClientError::from_status(
-            403,
-            r#"{"error":{"code":"fresh-credential-required","operation":"receiving.record_receipt"}}"#,
-        );
-        assert_eq!(single_result(Err(refusal.clone())), Err(refusal));
-        let item_refusal = single_result(Ok(vec![ItemOutcome {
-            request_id: "r2".to_owned(),
-            value: None,
-            error: Some(serde_json::json!({ "code": "invalid_input" })),
-        }]))
-        .expect_err("preserve an item-level refusal");
-        assert_eq!(item_refusal.code(), "invalid_input");
-    }
+    use wamn_client::{HttpRequest, Transport as _};
 
     #[tokio::test]
     async fn the_real_transport_returns_a_redirect_without_following_it() {
@@ -540,72 +177,5 @@ mod tests {
             .await
             .expect_err("refuse the invalid request URL");
         assert!(!format!("{error:?} {error}").contains(sentinel));
-    }
-
-    /// The same character reaches a different entry under a different focus —
-    /// which is the whole reason the focus exists, since a receipt reference
-    /// carries digits too.
-    #[test]
-    fn a_character_follows_the_focus_and_not_its_own_shape() {
-        assert_eq!(
-            action(&Screen::Receipt, Focus::Quantity, press(KeyCode::Char('1'))),
-            Action::Apply(Event::TypeQuantity('1'))
-        );
-        assert_eq!(
-            action(
-                &Screen::Receipt,
-                Focus::Reference,
-                press(KeyCode::Char('1'))
-            ),
-            Action::Apply(Event::TypeReference('1'))
-        );
-    }
-
-    /// Escape leaves the receipt rather than the client: an operator backing
-    /// out of an order must not lose the session.
-    #[test]
-    fn escape_leaves_the_receipt_and_quits_only_from_the_list() {
-        assert_eq!(
-            action(&Screen::Receipt, Focus::Quantity, press(KeyCode::Esc)),
-            Action::Apply(Event::Back)
-        );
-        assert_eq!(
-            action(&Screen::List, Focus::Quantity, press(KeyCode::Esc)),
-            Action::Quit
-        );
-    }
-
-    /// A key RELEASE is not a key press. Terminals that report both would
-    /// otherwise type every character twice.
-    #[test]
-    fn a_release_is_ignored() {
-        let mut release = press(KeyCode::Char('7'));
-        release.kind = KeyEventKind::Release;
-        assert_eq!(
-            action(&Screen::Receipt, Focus::Quantity, release),
-            Action::Ignore
-        );
-    }
-
-    /// Sending and cycling the location are control keys, so they stay
-    /// reachable while the reference entry is taking plain characters.
-    #[test]
-    fn sending_and_cycling_stay_reachable_while_typing() {
-        assert_eq!(
-            action(
-                &Screen::Receipt,
-                Focus::Reference,
-                control(KeyCode::Char('s'))
-            ),
-            Action::Submit
-        );
-        assert_eq!(
-            action(
-                &Screen::Receipt,
-                Focus::Reference,
-                control(KeyCode::Char('l'))
-            ),
-            Action::Apply(Event::NextLocation)
-        );
     }
 }

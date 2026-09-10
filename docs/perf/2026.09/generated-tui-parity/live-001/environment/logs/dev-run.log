@@ -1,0 +1,48 @@
+applied wamn_receiving@1.0.0: 1 migration(s)
+applied client_acme_receiving@3.0.0: 2 migration(s)
+applied wamn_receiving@1.0.0: 1 migration(s)
+applied client_acme_receiving@3.0.0: 2 migration(s)
+projected sha256:5326f1a794dfe01736dbf08a41a73593a908f4551c76e116c2e9a79f3b6795b3 (source-project: already converged; control: changed)
+sha256:5326f1a794dfe01736dbf08a41a73593a908f4551c76e116c2e9a79f3b6795b3
+projected sha256:710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e (source-project: already converged; control: changed)
+sha256:710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e
+sha256:5f8077a8dda3f72b69c3e0569bcbc4256d1e89094b89fbc3548e68c6a26f9dbd
+sha256:5f8077a8dda3f72b69c3e0569bcbc4256d1e89094b89fbc3548e68c6a26f9dbd
+2026-09-10T11:27:15.002203Z  INFO connected to NATS
+2026-09-10T11:27:15.004255Z  INFO host memory resolved max_guest_memory=45.7GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-10T11:27:15.248132Z  INFO wiring activation doorbell listening; dropped every cached pointer channel="wamn_wiring_activation" dropped=0
+2026-09-10T11:27:15.660170Z  INFO release component pull completed component_digest=sha256:5326f1a794dfe01736dbf08a41a73593a908f4551c76e116c2e9a79f3b6795b3 component_bytes=669281 elapsed_ms=146
+2026-09-10T11:27:15.667463Z  INFO release component pull completed component_digest=sha256:710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e component_bytes=466355 elapsed_ms=153
+2026-09-10T11:27:27.112941Z  INFO release component compilation completed component_digest=sha256:710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e compile_ms=11444 compile_wall_ms=11445
+2026-09-10T11:27:27.157197Z  INFO release component compilation completed component_digest=sha256:5326f1a794dfe01736dbf08a41a73593a908f4551c76e116c2e9a79f3b6795b3 compile_ms=11496 compile_wall_ms=11496
+2026-09-10T11:27:27.161759Z  WARN wamn.component.linker_setup:wamn.linker.register: component imports wamn:postgres but sets no wamn.tenant; calls will be refused component="receiving#0"
+2026-09-10T11:27:27.165190Z  INFO release component instantiation completed component_digest=sha256:5326f1a794dfe01736dbf08a41a73593a908f4551c76e116c2e9a79f3b6795b3 elapsed_ms=7 total_elapsed_ms=11651
+2026-09-10T11:27:27.168908Z  WARN wamn.component.linker_setup:wamn.linker.register: component imports wamn:postgres but sets no wamn.tenant; calls will be refused component="client_acme_receiving#1"
+2026-09-10T11:27:27.172088Z  INFO release component instantiation completed component_digest=sha256:710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e elapsed_ms=6 total_elapsed_ms=11657
+2026-09-10T11:27:27.172266Z  INFO synchronous release preload completed synchronous_wirings=13 component_digests=2 elapsed_ms=12032
+2026-09-10T11:27:27.172579Z  INFO release preload completed; component cache warm
+2026-09-10T11:27:27.215080Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=true
+2026-09-10T11:27:27.215175Z  INFO wamn-host welded to its release effective_release_id=1 manifest_digest=sha256:5f8077a8dda3f72b69c3e0569bcbc4256d1e89094b89fbc3548e68c6a26f9dbd
+2026-09-10T11:27:27.215277Z  INFO HTTP server listening addr=127.0.0.1:34423 protocol="HTTP"
+2026-09-10T11:27:27.215389Z  INFO Starting WASI OTel plugin endpoint=http://127.0.0.1:49323 protocol="grpc"
+2026-09-10T11:27:27.216531Z  INFO WASI OTel plugin started
+2026-09-10T11:27:27.216644Z  INFO Host started host_id="a322a308-cce4-4b10-b995-07880f70a682" friendly_name="brown-day-7761" host_name="wamn-dev-receiving-1099673" labels={"hostgroup": "wamn-dev-receiving"} version="2.9.0" max_concurrent_starts=4
+2026-09-10T11:27:27.217199Z  INFO Host provides interfaces count=10 interfaces=["wasi:cli/terminal-stdout,stdin,environment,stdout,terminal-stdin,terminal-input,exit,terminal-output,stderr,terminal-stderr@0.2.0", "wasi:clocks/monotonic-clock,wall-clock@0.2.0", "wasi:clocks/wall-time,monotonic-clock@0.2.0", "wasi:filesystem/types,preopens@0.2.0", "wasi:http/types,handler@0.3.0", "wasi:http/incoming-handler,outgoing-handler,types@0.2.0", "wasi:io/poll,error,streams@0.2.0", "wasi:random/random@0.2.0", "wasi:random/insecure,insecure-seed,random@0.2.0", "wasi:sockets/ip-name-lookup,udp-create-socket,tcp,tcp-create-socket,udp,instance-network,network@0.2.0"]
+2026-09-10T11:27:27.217324Z  INFO wamn-host runtime startup completed elapsed_ms=12443 cleanup_budget_secs=51
+2026-09-10T11:27:28.390769Z  INFO workload_start{workload_id=wamn-dev-flow-http workload.name="flow-http" workload.namespace="dev"}: Starting workload workload_id="wamn-dev-flow-http" namespace="dev" name="flow-http"
+run completed: migrate,introspect,generate,build,virtualize,apply,acl,admit,gate,publish,release,activate
+run stage-ms: prepare=1788ms migrate=794ms introspect=261ms generate=328ms build=21826ms virtualize=6792ms apply=530ms acl=296ms admit=13264ms gate=384ms publish=2057ms release=1261ms activate=19087ms
+run served: http://127.0.0.1:34423 host=receiving.localhost target_instance=20155
+run holding
+2026-09-10T11:27:35.106501Z  INFO shutting down wamn-host
+2026-09-10T11:27:35.106904Z  INFO HTTP server stopping addr=127.0.0.1:34423
+2026-09-10T11:27:35.107012Z  INFO Stopping WASI OTel plugin
+2026-09-10T11:27:35.107929Z  INFO WASI OTel plugin stopped
+2026-09-10T11:27:35.108167Z  INFO HTTP server received shutdown signal
+failed to shutdown meter provider: Operation failed: [InternalFailure("Failed to shutdown")]
+Error: clean up local activation
+
+Caused by:
+    0: dev-stage-owner-failed while clean up activation: dev-activation-scheduler-unavailable at stop-workload: native runtime NATS operation failed
+    1: dev-activation-scheduler-unavailable at stop-workload: native runtime NATS operation failed
+    2: native workload request failed

@@ -2161,7 +2161,8 @@ It prints the path before it opens the operator terminal.
 After an emitter source change, rebuild `wamn` and restart `wamn dev`.
 The running process uses the emitter linked into its binary.
 
-This recipe uses the existing `wamn-receiving` terminal.
+This recipe uses `wamn-receiving`, the Receiving composition over generated screens.
+The shared terminal loop owns requests, credentials, signals, and terminal restoration.
 The loop starts and supervises `wamn-host` and `wamn-scenario-worker`.
 
 The operations verbs — `apply-package`,
@@ -2356,8 +2357,9 @@ process is interrupted.
   --hold 2>&1 | tee "$WAMN_TUI_RUN_LOG"
 ```
 
-Four lines are printed before the hold begins, and a scripted caller reads them
-by shape:
+The following output records the original cold run.
+Current runs append `target_instance=<id>` to the `run served` line.
+The operator uses that identity with the URL and routing host:
 
 ```
 run completed: migrate,introspect,generate,build,virtualize,apply,acl,admit,gate,publish,release,activate
@@ -2380,8 +2382,11 @@ Read the endpoint and the operator PAT out in the third terminal:
 ```bash
 WAMN_TUI_BASE_URL="$(awk '/^run served: /{print $3}' "$WAMN_TUI_RUN_LOG")"
 WAMN_TUI_ROUTE_HOST="$(awk '/^run served: /{sub(/^host=/,"",$4); print $4}' "$WAMN_TUI_RUN_LOG")"
+WAMN_TUI_TARGET_INSTANCE="$(awk '/^run served: /{sub(/^target_instance=/,"",$5); print $5}' "$WAMN_TUI_RUN_LOG")"
 WAMN_TUI_OPERATOR_PAT="$(jq -r .stringData.token "$WAMN_TUI_ENV_DIR/route-caller-pat.json")"
-test -n "$WAMN_TUI_BASE_URL" && test -n "$WAMN_TUI_ROUTE_HOST"
+test -n "$WAMN_TUI_BASE_URL"
+test -n "$WAMN_TUI_ROUTE_HOST"
+test -n "$WAMN_TUI_TARGET_INSTANCE"
 ```
 
 #### 6. Seed the two purchase orders
@@ -2441,10 +2446,11 @@ returning the method and template the RELEASE publishes, and an invoke function
 over `wamn-client`. No base URL and no host: those are the caller's deployment
 config, which is why this recipe reads them from `run served` and the PAT file.
 
-`wamn-receiving` is built from those files. It declares them with `#[path]`
-rather than copying route strings, so an operation the release republishes
-elsewhere moves in the client by regeneration alone. Rebuilding the frontend
-after a run is therefore just:
+`wamn-receiving` depends on the generated crate at
+`packages/receiving/generated/receiving-tui/`.
+That crate exports the generated screens and bindings.
+The Receiving composition connects the projection, line editors, location picker, and receipt command.
+Rebuild the terminal after regeneration:
 
 ```bash
 RUSTC_WRAPPER= cargo build -p wamn-receiving-tui --bin wamn-receiving --locked --offline
@@ -2458,52 +2464,40 @@ generate` on its own line, and a run that regenerates does not.
 
 #### 7. Terminal 3 — the operator terminal
 
-`wamn-receiving` takes the whole deployment from three environment variables
-and compiles none of it in.
+`wamn-receiving` takes the deployment and activation identity from four environment variables.
+To use session login, also supply both `WAMN_SESSION_ISSUER` and `WAMN_SESSION_AUDIENCE`.
+Login completes before the terminal opens.
+`WAMN_TOKEN` remains the PAT source for operations that require a fresh credential.
 
 ```bash
 WAMN_BASE_URL="$WAMN_TUI_BASE_URL" \
 WAMN_HOST="$WAMN_TUI_ROUTE_HOST" \
+WAMN_TARGET_INSTANCE="$WAMN_TUI_TARGET_INSTANCE" \
 WAMN_TOKEN="$WAMN_TUI_OPERATOR_PAT" \
   "$WAMN_TUI_TARGET/debug/wamn-receiving"
 ```
 
-It opens on the purchase-order list, which it has already loaded:
+The terminal loads the purchase-order list when it opens.
+Use the shared editors to compose a receipt:
 
-```
-purchase_order_number status row_version
->PO-301               open   1
-PO-302                open   1
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move the selected order, line, or location. |
+| `Enter` | Open an order, edit a line quantity, or choose a location. |
+| `F2` | Show the order lines. |
+| `F3` | Edit the receipt reference. |
+| `F4` | Open the location picker. |
+| `l` | Cycle the selected location outside a text editor. |
+| `Ctrl-S` | Submit the receipt. |
+| `F7` | Retry the captured command when its contract permits retry. |
+| `F8` | Load the next purchase-order page. |
+| `Esc` | Leave the editor or request confirmation before discarding an entry. |
+| `q` | Exit from the list when no request is pending. |
 
-2 rows  complete
-```
-
-Keys, in the order one receipt needs them:
-
-| key | list screen | receipt screen |
-| --- | --- | --- |
-| `Up` / `Down` | move the highlight | move the highlighted line |
-| `Enter` | open the highlighted order's receipt | — |
-| digits and `.` | — | type into the focused entry |
-| `Backspace` | — | delete from the quantity |
-| `Tab` | — | move focus between quantity and reference |
-| `Ctrl-L` | — | cycle the receiving location |
-| `Ctrl-S` | — | send the receipt |
-| `Esc` | quit | back to the list |
-| `q` | quit | types a character; use `Esc` or `Ctrl-Q` |
-| `Ctrl-C` / `Ctrl-Q` | quit | quit |
-
-A character follows the FOCUS and not its own shape, because a receipt
-reference carries digits too. One worked receipt — `Down`, `Enter`, `3`, `Tab`,
-`GRN-TUI-1`, `Ctrl-L`, `Ctrl-S` — clears the entry, returns to the list, and
-leaves the verdict on the status line:
-
-```
-ok  recorded receipt 667e925b-1fcd-4dda-af2a-0d8cde5119e3
-```
-
-A success SPENDS the entry on purpose: quantities left on screen after a
-recorded receipt are how the same receipt gets submitted twice.
+A confirmed refusal retains the entry for correction.
+An uncertain outcome retains the captured request and offers only the recovery actions that its contract permits.
+A successful receipt spends the entry and returns to the order list.
+The shared layer blocks another submission while a request is pending.
 
 #### 8. Testing the served environment without the terminal
 
@@ -2526,9 +2520,10 @@ before any operation runs:
   **`next_cursor`**. A `bounded_list` result spells its rows **`rows`** and has
   no continuation. Reading `rows` off a page finds nothing and renders an empty
   list with no error.
-- `int64` is a JSON **string** (`"row_version":"1"`); `int32` is a JSON number
-  (`"line_number":1`). A 64-bit integer does not survive every JSON reader, so
-  the platform carries it lexically.
+- An `int64` result can carry a JSON integer or numeric text, such as
+  `"row_version":1` or `"row_version":"1"`.
+  The shared result reader accepts both representations.
+  An `int32` result carries a JSON number, such as `"line_number":1`.
 - `numeric` is a JSON **string** on the way in as well as out. The
   canonicalization is `postgresql_lexical_scale_preserved` and scale is the
   reason: a JSON number cannot carry `5.0000`. The published wiring's input

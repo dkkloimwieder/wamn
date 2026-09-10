@@ -6043,20 +6043,16 @@ dependencies = [
 name = "wamn-receiving-tui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
- "chrono",
  "crossterm",
- "futures-util",
  "ratatui",
  "reqwest",
- "rust_decimal",
  "serde_json",
  "tokio",
- "uuid",
  "wamn-client",
  "wamn-client-terminal",
  "wamn-client-tui",
+ "wamn-generated-receiving-tui",
 ]
 
 [[package]]

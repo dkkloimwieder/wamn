@@ -1,0 +1,22 @@
+{
+  "binary": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/target/debug/wamn-receiving",
+  "binary_sha256": "dfbdebe1c95747a5ca82d7eadb9071c2da21d8b5669afa299e7ca21395157577",
+  "driver_sha256": "5ff254f4137309bcd608193f2499c41ec88c4a3d0f7be63a6a6348bbf948481e",
+  "endpoint": "http://127.0.0.1:34423",
+  "fixture_ids": {
+    "dock1": "43919903-c433-4a2f-9a79-ac3a3c29ee42",
+    "dock2": "f6e476de-6939-443c-a447-f98b517a9cbe",
+    "item": "9861742a-4f79-43e3-9dde-633e512a8fcd",
+    "line1": "cdd4ac98-55cf-43f9-a473-a764f13c663b",
+    "line2": "014e59e4-b26a-4102-b58c-db169fcec04c",
+    "order": "2065e759-7932-43c4-aca4-eb6eb93013da",
+    "supplier": "a961a22c-19c7-40ee-9451-4a69b68af86c"
+  },
+  "fixture_prefix": "TUI-932e6323",
+  "host": "receiving.localhost",
+  "target_instance": "20155",
+  "terminal_columns": 260,
+  "terminal_helper_sha256": "10f2d209349e905b3cd2e7d737929fcc041bf64abff9464cf9c1126931ed0568",
+  "terminal_rows": 50,
+  "timeout_seconds": 30.0
+}

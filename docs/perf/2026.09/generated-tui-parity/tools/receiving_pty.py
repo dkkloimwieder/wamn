@@ -77,10 +77,10 @@ class Database:
 
     def sql(self, name, sql, parse=False):
         self.evidence.write(name + ".sql", sql + "\n")
-        self.evidence.event("psql", sql=name + ".sql", connection="private URL file via PGDATABASE")
-        environment = dict(os.environ, PGDATABASE=self.url, PGCONNECT_TIMEOUT="10")
+        self.evidence.event("psql", sql=name + ".sql", connection="private URL file via --dbname")
+        environment = dict(os.environ, PGCONNECT_TIMEOUT="10")
         result = subprocess.run(
-            ["psql", "-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1"],
+            ["psql", "--dbname", self.url, "-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1"],
             input=sql, text=True, capture_output=True, env=environment, timeout=30,
         )
         self.evidence.write(name + ".stdout", result.stdout)

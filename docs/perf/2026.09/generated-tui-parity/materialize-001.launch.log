@@ -1,0 +1,1 @@
+{"changed_paths": [], "cleanup_complete": true, "container": "wamn-tui-parity-materialize-ba6b37927204", "elapsed_seconds": 3.446, "failure": "receiving-migrate-0 exited 3", "packages": {}, "passed": false}

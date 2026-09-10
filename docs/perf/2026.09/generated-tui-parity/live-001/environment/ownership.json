@@ -1,0 +1,13 @@
+{
+  "project": "wamn-receiving-parity-7e4d34596db4221d",
+  "ports": {
+    "postgres": 47337,
+    "standard_registry": 54867,
+    "registry": 36469,
+    "nats": 50843,
+    "tempo": 49797,
+    "otlp": 49323,
+    "gate": 59365
+  },
+  "tree": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908"
+}

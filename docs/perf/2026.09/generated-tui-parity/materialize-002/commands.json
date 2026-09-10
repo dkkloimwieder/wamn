@@ -1,0 +1,245 @@
+[
+  {
+    "argv": [
+      "docker",
+      "run",
+      "--detach",
+      "--name",
+      "wamn-tui-parity-materialize-24ac9e8142ff",
+      "-e",
+      "POSTGRES_PASSWORD=probe",
+      "-p",
+      "127.0.0.1::5432",
+      "postgres:18"
+    ],
+    "name": "postgres-start"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "wamn-tui-parity-materialize-24ac9e8142ff",
+      "createdb",
+      "-U",
+      "postgres",
+      "wamn_tui_receiving"
+    ],
+    "name": "receiving-create"
+  },
+  {
+    "argv": [
+      "psql",
+      "postgresql://postgres:probe@127.0.0.1:32894/wamn_tui_receiving",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      "CREATE SCHEMA receiving"
+    ],
+    "name": "receiving-schema"
+  },
+  {
+    "argv": [
+      "psql",
+      "postgresql://postgres:probe@127.0.0.1:32894/wamn_tui_receiving",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/packages/receiving/migrations/0001_initial.sql"
+    ],
+    "name": "receiving-migrate-0"
+  },
+  {
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "write",
+      "packages/receiving"
+    ],
+    "name": "receiving-write"
+  },
+  {
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "check",
+      "packages/receiving"
+    ],
+    "name": "receiving-check"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "wamn-tui-parity-materialize-24ac9e8142ff",
+      "createdb",
+      "-U",
+      "postgres",
+      "wamn_tui_client_acme_receiving"
+    ],
+    "name": "client_acme_receiving-create"
+  },
+  {
+    "argv": [
+      "psql",
+      "postgresql://postgres:probe@127.0.0.1:32894/wamn_tui_client_acme_receiving",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      "CREATE SCHEMA receiving"
+    ],
+    "name": "client_acme_receiving-schema"
+  },
+  {
+    "argv": [
+      "psql",
+      "postgresql://postgres:probe@127.0.0.1:32894/wamn_tui_client_acme_receiving",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/packages/receiving/migrations/0001_initial.sql"
+    ],
+    "name": "client_acme_receiving-migrate-0"
+  },
+  {
+    "argv": [
+      "psql",
+      "postgresql://postgres:probe@127.0.0.1:32894/wamn_tui_client_acme_receiving",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/packages/client_acme_receiving/migrations/0001_add_inspection_required.sql"
+    ],
+    "name": "client_acme_receiving-migrate-1"
+  },
+  {
+    "argv": [
+      "psql",
+      "postgresql://postgres:probe@127.0.0.1:32894/wamn_tui_client_acme_receiving",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/packages/client_acme_receiving/migrations/0002_quality_inspection.sql"
+    ],
+    "name": "client_acme_receiving-migrate-2"
+  },
+  {
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "write",
+      "packages/client_acme_receiving"
+    ],
+    "name": "client_acme_receiving-write"
+  },
+  {
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "check",
+      "packages/client_acme_receiving"
+    ],
+    "name": "client_acme_receiving-check"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "wamn-tui-parity-materialize-24ac9e8142ff",
+      "createdb",
+      "-U",
+      "postgres",
+      "wamn_tui_wms"
+    ],
+    "name": "wms-create"
+  },
+  {
+    "argv": [
+      "psql",
+      "postgresql://postgres:probe@127.0.0.1:32894/wamn_tui_wms",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      "CREATE SCHEMA wms"
+    ],
+    "name": "wms-schema"
+  },
+  {
+    "argv": [
+      "psql",
+      "postgresql://postgres:probe@127.0.0.1:32894/wamn_tui_wms",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/packages/wms/migrations/0001_initial.sql"
+    ],
+    "name": "wms-migrate-0"
+  },
+  {
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "write",
+      "packages/wms"
+    ],
+    "name": "wms-write"
+  },
+  {
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "check",
+      "packages/wms"
+    ],
+    "name": "wms-check"
+  }
+]

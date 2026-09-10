@@ -1,0 +1,162 @@
+[
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "01-seed.sql"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "02-navigation.sql"
+  },
+  {
+    "action": "launch",
+    "binary": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/target/debug/wamn-receiving",
+    "credential": "private PAT file via WAMN_TOKEN"
+  },
+  {
+    "action": "keys",
+    "bytes": "0d",
+    "description": "open owned order"
+  },
+  {
+    "action": "keys",
+    "bytes": "0d",
+    "description": "edit first line"
+  },
+  {
+    "action": "keys",
+    "bytes": "392e303030300d",
+    "description": "enter excessive quantity"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b4f511b5b420d",
+    "description": "open second line"
+  },
+  {
+    "action": "keys",
+    "bytes": "0d",
+    "description": "leave second line blank"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b4f52",
+    "description": "edit receipt reference"
+  },
+  {
+    "action": "keys",
+    "bytes": "5455492d39306534373066342d5245460d",
+    "description": "set receipt reference"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b4f53",
+    "description": "open locations"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b5b42",
+    "description": "select owned second location"
+  },
+  {
+    "action": "keys",
+    "bytes": "0d",
+    "description": "save location"
+  },
+  {
+    "action": "keys",
+    "bytes": "13",
+    "description": "submit excessive quantity"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "14-refused-db.sql"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "15-refused-idle-db.sql"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b4f52",
+    "description": "inspect retained reference"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b",
+    "description": "cancel reference editor"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b4f511b5b410d",
+    "description": "reopen first quantity"
+  },
+  {
+    "action": "keys",
+    "bytes": "7f7f7f7f7f7f322e353030300d",
+    "description": "correct quantity without rebuilding entry"
+  },
+  {
+    "action": "keys",
+    "bytes": "13",
+    "description": "submit corrected entry"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "19-committed-db.sql"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "20-success-idle-db.sql"
+  },
+  {
+    "action": "keys",
+    "bytes": "0d",
+    "description": "reopen order after success"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b4f52",
+    "description": "inspect new entry reference"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b",
+    "description": "cancel new reference"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b4f510d",
+    "description": "inspect new entry quantity"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b",
+    "description": "cancel new quantity"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b",
+    "description": "leave new entry"
+  },
+  {
+    "action": "keys",
+    "bytes": "79",
+    "description": "discard new draft"
+  },
+  {
+    "action": "keys",
+    "bytes": "71",
+    "description": "quit operator"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "90-cleanup.sql"
+  }
+]

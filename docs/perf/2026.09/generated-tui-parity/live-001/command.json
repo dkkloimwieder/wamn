@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "python3",
+    "docs/perf/2026.09/generated-tui-parity/tools/live_environment.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/generated-tui-parity/live-001/environment"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908"
+}

@@ -18,19 +18,12 @@ serde_json = { workspace = true }
 wamn-client = { workspace = true }
 wamn-client-terminal = { workspace = true }
 wamn-client-tui = { workspace = true }
-# BINARY-ONLY from here down. The library half stays free of transport, clock
-# and terminal, which is what keeps its assertions below the terminal layer.
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-chrono = { workspace = true, features = ["clock", "std"] }
+wamn-generated-receiving-tui = { workspace = true }
 crossterm = { workspace = true }
-futures-util = { workspace = true }
+# The binary supplies HTTP transport and asynchronous startup.
+async-trait = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
-# Named by the EMITTED bindings the binary compiles in, not by code written
-# here: `numeric` is `rust_decimal::Decimal` and `uuid` is `uuid::Uuid`.
-rust_decimal = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-uuid = { workspace = true }
 
 [lints]
 workspace = true

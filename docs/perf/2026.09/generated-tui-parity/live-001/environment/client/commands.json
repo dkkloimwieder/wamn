@@ -1,0 +1,12 @@
+[
+  {
+    "action": "psql",
+    "connection": "private URL file via PGDATABASE",
+    "sql": "01-seed.sql"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via PGDATABASE",
+    "sql": "90-cleanup.sql"
+  }
+]

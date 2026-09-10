@@ -1,0 +1,65 @@
+    Checking wamn-client-tui v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/client/tui)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+    Checking wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/schema/introspection)
+    Checking wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/schema/generator)
+    Checking wamn-client-terminal v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/client/terminal)
+    Checking wamn-generated-receiving-tui v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/packages/receiving/generated/receiving-tui)
+    Checking wamn-receiving-tui v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/client/receiving)
+error: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
+   --> crates/client/receiving/src/application.rs:145:21
+    |
+145 |           let index = match existing {
+    |  _____________________^
+146 | |             Some(index) => index,
+147 | |             None => {
+148 | |                 let index = rows.map_or(0, Vec::len);
+...   |
+158 | |         };
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#single_match_else
+    = note: `-D clippy::single-match-else` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::single_match_else)]`
+help: try
+    |
+145 ~         let index = if let Some(index) = existing { index } else {
+146 +             let index = rows.map_or(0, Vec::len);
+147 +             let mut row = json!({"purchase_order_line_id": id, "quantity": ""});
+148 +             if let Some(location) = self.location() {
+149 +                 row["location_id"] = location["id"].clone();
+150 +             }
+151 +             self.screen_mut(Panel::Receipt)
+152 +                 .insert_row("/value/line", index, row)
+153 +                 .map_err(|error| error.to_string())?;
+154 +             index
+155 ~         };
+    |
+
+error: this boolean expression can be simplified
+   --> crates/client/receiving/src/application.rs:194:12
+    |
+194 |           if !receipt["value"]["receipt_reference"]
+    |  ____________^
+195 | |             .as_str()
+196 | |             .is_some_and(|value| !value.trim().is_empty())
+    | |__________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#nonminimal_bool
+    = note: `-D clippy::nonminimal-bool` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::nonminimal_bool)]`
+help: try
+    |
+194 ~         if receipt["value"]["receipt_reference"]
+195 +             .as_str().is_none_or(|value| value.trim().is_empty())
+    |
+
+error: could not compile `wamn-receiving-tui` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...

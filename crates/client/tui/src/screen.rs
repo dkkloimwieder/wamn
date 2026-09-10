@@ -195,6 +195,10 @@ impl From<SubmissionError> for ScreenError {
 
 /// Data-dependent state shared by generated screens and ordinary Rust composition.
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Paging, edits, composition, and record bindings are independent screen facts."
+)]
 pub struct Screen {
     spec: &'static ScreenSpec,
     draft: Draft,

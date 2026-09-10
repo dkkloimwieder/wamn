@@ -1,0 +1,21 @@
+   Compiling syn v2.0.119
+   Compiling typenum v1.20.1
+   Compiling hybrid-array v0.4.14
+   Compiling serde_json v1.0.151
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling const-oid v0.10.2
+   Compiling prettyplease v0.2.37
+   Compiling serde_derive_internals v0.29.1
+   Compiling schemars v0.8.22
+   Compiling schemars_derive v0.8.22
+   Compiling wit-bindgen-rust v0.61.1
+   Compiling digest v0.11.3
+   Compiling cfg-if v1.0.4
+   Compiling dyn-clone v1.0.20
+   Compiling sha2 v0.11.0
+   Compiling wit-bindgen-rust-macro v0.61.1
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/components/execution/contract)
+   Compiling wit-bindgen v0.61.1
+   Compiling http-route v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/components/ingress/http-route)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 22.92s

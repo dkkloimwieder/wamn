@@ -27,6 +27,7 @@ pub static LIST_SPEC: screen::ScreenSpec = screen::ScreenSpec {
         replay: submission::Replay::Unknown,
     },
     route: Some(crate::location::list_route),
+    fresh_only: false,
     record: None,
     revision: None,
     revision_inputs: &[],

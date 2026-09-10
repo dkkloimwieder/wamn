@@ -1,0 +1,9 @@
+   Compiling wamn-receiving-tui v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/client/receiving)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.93s
+     Running tests/workflow.rs (target/debug/deps/workflow-0f1ec9296210a98e)
+
+running 1 test
+test the_receipt_entry_workflow_runs_end_to_end ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.04s
+

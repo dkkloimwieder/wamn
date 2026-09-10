@@ -1,0 +1,1 @@
+{"claims" : 0, "receipts" : 0, "order" : {"status" : "open", "row_version" : 1}, "lines" : [{"id" : "dc27d7cd-d5f9-4aa5-888e-e6366e5ce04f", "received" : "0.0000"}, {"id" : "8847d63d-54ae-4874-bdfc-dcf701fa97f9", "received" : "0.0000"}], "receipt_lines" : [], "canonical" : []}

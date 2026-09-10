@@ -1,0 +1,6 @@
+{
+  "cleanup": false,
+  "cleanup_error": "ProofError",
+  "error": "psql failed at 01-seed; see redacted evidence",
+  "passed": false
+}
