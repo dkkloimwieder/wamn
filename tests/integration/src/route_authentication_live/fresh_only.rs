@@ -17,7 +17,7 @@ use wamn_ctl::dev::environment::{
 use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_component::{self, PushComponentArgs};
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
-use wamn_platform_identity::{issue_pat, revoke_pat};
+use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_verifier::SessionVerifier;
@@ -514,9 +514,13 @@ async fn gate_wiring(proof: &Proof<'_>, wiring: &Value) -> anyhow::Result<()> {
         control_author: secret_value(&copies.join("control-author.json"), "url")?,
         management_admitter: secret_value(&copies.join("management-admitter.json"), "url")?,
     };
+    let publisher = resolve_subject(proof.control, PrincipalKind::Service, proof.publisher)
+        .await
+        .context("resolve the prior-commit management-author principal")?
+        .context("the prior-commit management-author principal is absent")?;
     let pat = issue_pat(
         proof.control,
-        &proof.publisher.parse()?,
+        publisher.id(),
         "prior-commit Gate fixture",
         Duration::from_secs(300),
     )
