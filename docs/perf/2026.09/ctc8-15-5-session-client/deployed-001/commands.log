@@ -1,0 +1,21 @@
+2026-09-10T11:02:41Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910/tools/build-components m1 
+2026-09-10T11:03:46Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor 
+2026-09-10T11:05:04Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910/Dockerfile --target host --tag wamn-host:receiving-8204b35d0bae-1036987-release --label wamn.dev/source-head=8204b35d0bae424803cc231c7e375d44435ef0cf --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910 
+2026-09-10T11:11:25Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910/Dockerfile --target gates --tag wamn-gates:receiving-8204b35d0bae-1036987-release --label wamn.dev/source-head=8204b35d0bae424803cc231c7e375d44435ef0cf --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910 
+2026-09-10T11:27:29Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910/Dockerfile --target identity --tag wamn-identity:receiving-8204b35d0bae-1036987-release --label wamn.dev/source-head=8204b35d0bae424803cc231c7e375d44435ef0cf --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-15-5-session-client-20260910 
+2026-09-10T11:28:21Z docker image inspect wamn-identity:receiving-8204b35d0bae-1036987-release 
+2026-09-10T11:28:21Z kind create cluster --name wamn-receiving-journey --config /tmp/tmp.QOdSuL1OpA/kind-config.yaml --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig 
+2026-09-10T11:28:41Z kubectl --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-10T11:28:55Z kubectl --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig --context kind-wamn-receiving-journey create namespace wamn-receiving-journey 
+2026-09-10T11:28:55Z kind load docker-image wamn-host:receiving-8204b35d0bae-1036987-release --name wamn-receiving-journey 
+2026-09-10T11:29:02Z kind load docker-image wamn-gates:receiving-8204b35d0bae-1036987-release --name wamn-receiving-journey 
+2026-09-10T11:29:19Z kubectl --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get deployment hostgroup-default -o json 
+2026-09-10T11:29:19Z kubectl --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get pods -o json 
+2026-09-10T11:29:19Z kubectl --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get events -o json 
+2026-09-10T11:29:19Z kubectl --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get secrets -o name 
+2026-09-10T11:29:19Z kubectl --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get jobs -o json 
+2026-09-10T11:29:19Z kind delete cluster --name wamn-receiving-journey --kubeconfig /tmp/tmp.QOdSuL1OpA/kubeconfig 
+2026-09-10T11:29:20Z docker image rm wamn-gates:receiving-8204b35d0bae-1036987-release 
+2026-09-10T11:29:20Z docker image rm wamn-host:receiving-8204b35d0bae-1036987-release 
+2026-09-10T11:29:20Z docker image rm wamn-identity:receiving-8204b35d0bae-1036987-release 
+2026-09-10T11:29:20Z rm -rf -- /tmp/tmp.QOdSuL1OpA 
