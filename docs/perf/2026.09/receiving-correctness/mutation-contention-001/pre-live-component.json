@@ -1,0 +1,15 @@
+{
+  "source_commit": "9bdd6cd292a10592bcd35b7d258393dfba41fe36",
+  "component_digests": {
+    "client_acme_receiving": "sha256:710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e",
+    "receiving": "sha256:efd57e2b16d0bd700cc1c75be6c3f4d04021d63a6b4c9019559f90901a24fb24"
+  },
+  "baseline_component_digests": {
+    "client_acme_receiving": "sha256:710586d8b7fa9ff054d84203d981832659ae9baa618ed03b14588d1168d68d2e",
+    "receiving": "sha256:5326f1a794dfe01736dbf08a41a73593a908f4551c76e116c2e9a79f3b6795b3"
+  },
+  "receiving_bytes_changed": true,
+  "overlay_bytes_unchanged": true,
+  "replay_implementation_restored_sha256": "a039bc9fd4b603672b145a36740625fe76ec6cab7c730872dde2e9f756f92865",
+  "corpus_sha256": "sha256:43443f80f2c5d262d91d3c1929652dcb5fc2c932df4af3c292b61322b570ccf6"
+}

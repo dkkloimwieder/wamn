@@ -1,0 +1,40 @@
+{
+    "apiVersion": "v1",
+    "kind": "Service",
+    "metadata": {
+        "annotations": {
+            "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Service\",\"metadata\":{\"annotations\":{},\"name\":\"receiving-correctness-nodeport\",\"namespace\":\"wamn-receiving-correctness\"},\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"protocol\":\"TCP\",\"targetPort\":80}],\"type\":\"NodePort\"}}\n"
+        },
+        "creationTimestamp": "2026-09-10T04:27:28Z",
+        "name": "receiving-correctness-nodeport",
+        "namespace": "wamn-receiving-correctness",
+        "resourceVersion": "1452",
+        "uid": "26340b60-dfd2-4aff-8a3e-abc985c0814c"
+    },
+    "spec": {
+        "clusterIP": "10.96.163.214",
+        "clusterIPs": [
+            "10.96.163.214"
+        ],
+        "externalTrafficPolicy": "Cluster",
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+            "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+            {
+                "name": "http",
+                "nodePort": 30130,
+                "port": 80,
+                "protocol": "TCP",
+                "targetPort": 80
+            }
+        ],
+        "sessionAffinity": "None",
+        "type": "NodePort"
+    },
+    "status": {
+        "loadBalancer": {}
+    }
+}

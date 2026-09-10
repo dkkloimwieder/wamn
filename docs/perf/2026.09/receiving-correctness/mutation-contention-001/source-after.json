@@ -1,0 +1,18 @@
+{
+  "head": "9bdd6cd292a10592bcd35b7d258393dfba41fe36",
+  "status": "",
+  "sha256": {
+    "tools/receiving-cluster-journey-run": "330d17a32f56e8e784235aac3cad97b851713b5ce379e560c26f119526c0c29c",
+    "Dockerfile": "9810d66561baef133d51dab12523c6403387f5c747ba15aebd589d1fd9821a93",
+    "Cargo.lock": "6b45e20b2a810a00142001df60bc42aa6f1906228c5541fc474fc1542a33a1a5",
+    "tests/integration/Cargo.toml": "c7df0aeeeb4c2958ec708752ad38f3235895e6e7e99c383e2597d653e671fbd2",
+    "tests/integration/tests/receiving_command_histories_live.rs": "9fd8a064bedacbfdca3f9eba0f7666822ea3297a37777365103692818f4bb936",
+    "tests/integration/tests/receiving_history/model.rs": "6adbfc92f90d28e1ddea4debc48b0e7f9c22cfebda65b62bedb502e3781f9506",
+    "tests/integration/tests/receiving_history/database.rs": "43b97fdb06601487c1815dea07e3d6b3195c127304ce15c46c7fc36b1de7aae1",
+    "components/data/receiving-data/src/record_receipt.rs": "a039bc9fd4b603672b145a36740625fe76ec6cab7c730872dde2e9f756f92865",
+    "packages/receiving/command/record_receipt/lock_purchase_order.sql": "8e0df44ac99da3dd5ac680f4ce55b715dd8da34004b2a78b46a16293f8fc0d8a",
+    "packages/receiving/generated/wamn/receiving_record_receipt.rs": "71648dfbd288653ef6636322a849a54d15eed7696027b0b7883628ce15e81087",
+    "packages/receiving/generated/contracts/receiving/record_receipt.operation.json": "b2139ae27a937bb14e08a33a5916149c3777d42a6cf542675664eedd1debb265",
+    "packages/receiving/generated/package-weld.json": "53a98de19b41a90abbb7b4801b2d773a8f3cfbf47fe696b9c0ed23c910374319"
+  }
+}

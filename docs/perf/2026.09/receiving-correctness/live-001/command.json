@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "timeout",
+    "--signal=TERM",
+    "--kill-after=120s",
+    "3600s",
+    "tools/receiving-cluster-journey-run",
+    "--apply",
+    "--receiving-correctness",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-correctness/live-001/journey"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-correctness-20260909",
+  "target": "/home/kaalin/.cache/wamn-lanes/receiving-correctness-20260909/target",
+  "rustc_wrapper": ""
+}

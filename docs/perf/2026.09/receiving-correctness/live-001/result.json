@@ -1,0 +1,16 @@
+{
+  "result": "incomplete",
+  "classification": "outer timeout during standard image preparation",
+  "exit_code": 124,
+  "source_commit": "5cf023f834e0761415714d09d798dad95f1bf05c",
+  "source_unchanged": true,
+  "live_receiving_tests_executed": 0,
+  "mutations_applied": 0,
+  "cleanup": "pass",
+  "cluster_created": false,
+  "run": {
+    "started": "2026-09-10T01:54:23.656746+00:00",
+    "finished": "2026-09-10T02:54:24.160283+00:00",
+    "exit_code": 124
+  }
+}

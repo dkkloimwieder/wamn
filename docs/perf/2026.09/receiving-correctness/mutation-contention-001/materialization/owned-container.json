@@ -1,0 +1,9 @@
+{
+  "name": "wamn-receiving-lock-materialize-0673f3f5-463418",
+  "id": "b55a7f7fad92b2e1d02832168ee68e4b83fefa250f32f8ecdabed39f512eb325",
+  "image_id": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14",
+  "host": "127.0.0.1",
+  "port": 32886,
+  "database": "wamn_materialize_receiving",
+  "migration_sha256": "46f703e4e9bc83001bbd6293cd3aea6b01dad4feb3a5458d88ef1308ac37d16a"
+}

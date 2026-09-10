@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "cargo",
+    "run",
+    "-p",
+    "wamn-schema-generator",
+    "--example",
+    "materialize_package",
+    "--locked",
+    "--offline",
+    "--",
+    "check",
+    "packages/receiving"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-correctness-20260909"
+}

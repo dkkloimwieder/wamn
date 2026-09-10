@@ -1,0 +1,33 @@
+{
+  "completed": "2026-09-10T04:22:21.048479+00:00",
+  "mutant_commit": "9bdd6cd292a10592bcd35b7d258393dfba41fe36",
+  "restoration_commit": "264b43301f45f73dea55b554738051e95bfd51ad",
+  "returned_to_commit": "0673f3f54f2db1250c6b023a11d7dc5877a944da",
+  "tree_equals_baseline": true,
+  "paths": [
+    {
+      "path": "packages/receiving/command/record_receipt/lock_purchase_order.sql",
+      "before_mtime_ns": 1789013224623938202,
+      "after_mtime_ns": 1789014140776154948,
+      "restored_sha256": "f54302c31a8ac7d1d26fdc1eaa4886f1d60b3656d6850cc5589c1bb2abeb85e2"
+    },
+    {
+      "path": "packages/receiving/generated/wamn/receiving_record_receipt.rs",
+      "before_mtime_ns": 1789013224992996617,
+      "after_mtime_ns": 1789014140777531365,
+      "restored_sha256": "73fc661bdbdcab9dc028a6b3b583a2ede7e8346d9c402ca25bd1a6cdeb7f371c"
+    },
+    {
+      "path": "packages/receiving/generated/contracts/receiving/record_receipt.operation.json",
+      "before_mtime_ns": 1789013224991996625,
+      "after_mtime_ns": 1789014140778774047,
+      "restored_sha256": "6593d72ba95abc2500f7e6997fa6ce5900df900936b12320ae68ddac17e420e9"
+    },
+    {
+      "path": "packages/receiving/generated/package-weld.json",
+      "before_mtime_ns": 1789013224991996625,
+      "after_mtime_ns": 1789014140780132957,
+      "restored_sha256": "a42ab812536feac531be57dab1603136b98e00cb74d471b063d2aff8d0ba5325"
+    }
+  ]
+}

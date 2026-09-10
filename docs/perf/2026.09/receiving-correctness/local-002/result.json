@@ -1,0 +1,15 @@
+{
+  "source_commit": "3bcab34419d71e1b9416d8177d30c5bd162e7945",
+  "exit_code": 0,
+  "passed": [
+    "model::tests::stale_updates_and_replays_do_not_advance_the_revision",
+    "model::tests::replay_preserves_the_result_before_completion_and_later_updates",
+    "model::tests::refused_attempt_does_not_claim_the_key_or_change_business_state",
+    "shrinking_preserves_the_original_business_property_and_outcome",
+    "infrastructure_failure_cannot_replace_a_business_counterexample"
+  ],
+  "ignored_and_not_proven": [
+    "production_receiving_command_histories"
+  ],
+  "source_unchanged": true
+}

@@ -1,0 +1,3 @@
+test(wamn-10yt.77): weaken the purchase-order lock control
+
+Keep this deliberate defect on a local proof branch.

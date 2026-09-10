@@ -1,0 +1,2 @@
+verdict=pass cluster=wamn-receiving-correctness containers=wamn-receiving-pg18-9bdd6cd292a1-538688,wamn-receiving-registry-9bdd6cd292a1-538688,wamn-receiving-nats-9bdd6cd292a1-538688 reader_pid= image=wamn-host:receiving-9bdd6cd292a1-538688-release
+gates_image=wamn-gates:receiving-9bdd6cd292a1-538688-release
