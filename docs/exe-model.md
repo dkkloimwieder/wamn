@@ -83,7 +83,9 @@ execution trapped on exactly that). The router dispatches on whichever handler
 interface a node exports and drives both through `call_async`; admission
 admits the async lift on `async-handler` alone. Named for what it is, not
 versioned: nothing outside this tree consumes the node ABI. blob-put is the
-first consumer; p3 HTTP, streaming capabilities and MQTT are the next.
+first consumer; streaming capabilities and MQTT remain future consumers. The
+P3 HTTP shell exports `wasi:http/handler@0.3.0` separately from this node ABI.
+Its WAMN routing, authentication, and delivery imports remain synchronous.
 
 Noted as future exploration, not planned: a **router fan-out** that delivers
 the envelope's items one at a time and reassembles after the last node (its

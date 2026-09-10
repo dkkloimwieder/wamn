@@ -72,6 +72,8 @@ readonly WAMN_TIER_MANIFEST="$WAMN_REPOSITORY_ROOT/architecture/workspace-tiers.
 readonly WAMN_VIRTUALIZATION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-virtualization.json"
 readonly WAMN_PACKAGE_ROOT="$WAMN_REPOSITORY_ROOT/packages"
 readonly WAMN_CARGO="${CARGO:-cargo}"
+# Keep the P3 HTTP shell's async binding features out of the other guests.
+readonly WAMN_HTTP_SHELL_PACKAGE='http-route'
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
 command -v sha256sum >/dev/null 2>&1 || wamn_fail 127 'sha256sum is required'
@@ -130,8 +132,9 @@ cd -- "$WAMN_REPOSITORY_ROOT"
 
 # The guests are split across more than one Cargo workspace, because Cargo
 # feature unification is additive-only within a single invocation and would
-# force std into the `no_std` guests. One metadata read and at most one build
-# per declared workspace; the canonical inventory says which is which.
+# force std into the `no_std` guests. Read metadata once per declared workspace.
+# The P3 HTTP shell also gets its own invocation within its existing workspace;
+# all selections still come from the canonical inventory.
 declare WAMN_MANIFEST_LIST
 WAMN_MANIFEST_LIST="$(
   jq -er '.source_inventory.component_workspaces
@@ -202,6 +205,7 @@ fi
 declare WAMN_PLAN
 WAMN_PLAN="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s --arg profile "$WAMN_PROFILE" \
+    --arg http_shell "$WAMN_HTTP_SHELL_PACKAGE" \
     --argjson package_components "$WAMN_PACKAGE_COMPONENTS" '
     .[0] as $contract
     | .[1:] as $metadata
@@ -242,7 +246,9 @@ WAMN_PLAN="$(
        | {manifest: $workspaces[$index].manifest,
           packages: [$packages[]
                      | select(. as $package
-                              | $membership[$index] | index($package) != null)]}]
+                              | $membership[$index] | index($package) != null)]} as $workspace
+       | ($workspace | .packages |= map(select(. != $http_shell))),
+         ($workspace | .packages |= map(select(. == $http_shell)))]
     | select(([.[].packages] | add | length) == ($packages | length))
     | map(select(.packages | length > 0))
   ' "$WAMN_TIER_MANIFEST" -
@@ -256,8 +262,8 @@ if [[ "$WAMN_MODE" == watch-roots ]]; then
        [$build[].manifest
         | select(endswith("/Cargo.toml"))
         | sub("/Cargo.toml$"; "")]
-       | sort}
-    | select(.workspace_roots | length == ($build | length))
+       | unique}
+    | select(.workspace_roots | length == ($build | map(.manifest) | unique | length))
   '
   exit 0
 fi
@@ -371,7 +377,7 @@ readonly WAMN_VIRTUALIZATION_PLAN
 
 readonly WAMN_LEG_COUNT="$(jq -r 'length' <<<"$WAMN_PLAN")"
 ((WAMN_LEG_COUNT > 0)) || wamn_fail 65 "$WAMN_PROFILE has an empty component selection"
-printf 'build-components: %s selects %s component packages across %s workspaces\n' \
+printf 'build-components: %s selects %s component packages across %s Cargo invocations\n' \
   "$WAMN_PROFILE" "$(jq -r '[.[].packages[]] | length' <<<"$WAMN_PLAN")" \
   "$WAMN_LEG_COUNT" >&2
 
@@ -380,8 +386,8 @@ wamn_build() {
   local leg manifest package leg_status
   local -a arguments
 
-  # Every leg runs: the workspaces are isolated precisely so that one
-  # workspace's failure does not describe the other's state.
+  # Every leg runs: one invocation's failure does not describe another
+  # selection, including selections that share a workspace.
   for ((leg = 0; leg < WAMN_LEG_COUNT; leg += 1)); do
     manifest="$(jq -r --argjson leg "$leg" '.[$leg].manifest' <<<"$WAMN_PLAN")"
     # RELEASE, NOT DEBUG. The served guest was a debug artifact: 20,496,492

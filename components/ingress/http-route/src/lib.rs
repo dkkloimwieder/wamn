@@ -203,8 +203,12 @@ impl std::fmt::Display for ProviderError {
 impl std::error::Error for ProviderError {}
 
 /// Incremental request-body source. A read error never reaches the router.
+#[expect(
+    async_fn_in_trait,
+    reason = "the WASI body future stays local to its request task"
+)]
 pub trait BodyReader {
-    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError>;
+    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError>;
 }
 
 /// All external authority behind the thin adapter.
@@ -244,16 +248,18 @@ struct MatchedRoute {
 }
 
 /// Adapt one HTTP request without accessing graph or run-state storage.
-pub fn handle_request(
+pub async fn handle_request(
     backend: &mut impl Backend,
     body: &mut impl BodyReader,
     head: &RequestHead,
     limits: AdapterLimits,
 ) -> HttpResponse {
-    try_handle(backend, body, head, limits).unwrap_or_else(|response| response)
+    try_handle(backend, body, head, limits)
+        .await
+        .unwrap_or_else(|response| response)
 }
 
-fn try_handle(
+async fn try_handle(
     backend: &mut impl Backend,
     body: &mut impl BodyReader,
     head: &RequestHead,
@@ -278,7 +284,7 @@ fn try_handle(
         .map_err(rejection_response)?;
 
     let body_limit = matched.definition.body_limit.min(limits.body_bytes);
-    let raw_body = read_bounded(body, body_limit)?;
+    let raw_body = read_bounded(body, body_limit).await?;
     let body_json = if raw_body.is_empty() {
         Value::Null
     } else {
@@ -493,10 +499,11 @@ fn match_path(template: &str, path: &str) -> Option<PathMatch> {
     (path_index == path_segments.len()).then_some((score, values))
 }
 
-fn read_bounded(body: &mut impl BodyReader, limit: usize) -> Result<Vec<u8>, HttpResponse> {
+async fn read_bounded(body: &mut impl BodyReader, limit: usize) -> Result<Vec<u8>, HttpResponse> {
     let mut bytes = Vec::new();
     while let Some(chunk) = body
         .next_chunk()
+        .await
         .map_err(|_| error_response(400, "body-read-failed"))?
     {
         let next = bytes

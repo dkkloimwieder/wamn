@@ -4,13 +4,14 @@ wit_bindgen::generate!({
     world: "flow-http",
     path: "wit",
     generate_all,
+    async: ["export:wasi:http/handler@0.3.0#handle"],
 });
 
-use exports::wasi::http::incoming_handler::Guest;
-use wasi::http::types::{
-    Fields, IncomingBody, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
+use exports::wasi::http::handler::Guest;
+use wasi::http::types::{ErrorCode, Fields, Method, Request, Response};
+use wit_bindgen::rt::async_support::{
+    FutureReader, FutureWriter, StreamReader, StreamResult, spawn_local,
 };
-use wasi::io::streams::{InputStream, StreamError};
 
 use super::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
@@ -22,13 +23,19 @@ use super::{
 struct Component;
 
 impl Guest for Component {
-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
+    async fn handle(request: Request) -> Result<Response, ErrorCode> {
         let head = request_head(&request);
-        let body = request.consume().ok();
         let mut backend = GuestBackend;
-        let mut body = WasiBody::new(body);
-        let response = handle_request(&mut backend, &mut body, &head, AdapterLimits::default());
-        send_response(response_out, response);
+        let mut body = WasiBody {
+            request: Some(request),
+            stream: None,
+            trailers: None,
+            result: None,
+        };
+        let response =
+            handle_request(&mut backend, &mut body, &head, AdapterLimits::default()).await;
+        drop(body);
+        Ok(send_response(response))
     }
 }
 
@@ -250,44 +257,47 @@ fn route_definition(
 }
 
 struct WasiBody {
-    stream: Option<InputStream>,
-    _body: Option<IncomingBody>,
-    failed: bool,
-}
-
-impl WasiBody {
-    fn new(body: Option<IncomingBody>) -> Self {
-        let stream = body.as_ref().and_then(|body| body.stream().ok());
-        Self {
-            stream,
-            _body: body,
-            failed: false,
-        }
-    }
+    request: Option<Request>,
+    stream: Option<StreamReader<u8>>,
+    trailers: Option<FutureReader<Result<Option<Fields>, ErrorCode>>>,
+    result: Option<FutureWriter<Result<(), ErrorCode>>>,
 }
 
 impl BodyReader for WasiBody {
-    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
-        if self.failed {
-            return Err(BodyReadError);
+    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
+        // The adapter calls this only after route selection and authentication.
+        if let Some(request) = self.request.take() {
+            let (result, receiver) = wit_future::new(|| Ok(()));
+            let (stream, trailers) = Request::consume_body(request, receiver);
+            self.stream = Some(stream);
+            self.trailers = Some(trailers);
+            self.result = Some(result);
         }
-        let Some(stream) = &self.stream else {
+        let Some(stream) = self.stream.as_mut() else {
             return Ok(None);
         };
-        match stream.blocking_read(8192) {
-            Ok(bytes) if bytes.is_empty() => Ok(None),
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(StreamError::Closed) => Ok(None),
-            Err(_) => {
-                self.failed = true;
-                Err(BodyReadError)
+        loop {
+            let (status, bytes) = stream.read(Vec::with_capacity(8192)).await;
+            match status {
+                StreamResult::Complete(_) if !bytes.is_empty() => return Ok(Some(bytes)),
+                StreamResult::Complete(_) => {}
+                StreamResult::Cancelled => return Err(BodyReadError),
+                StreamResult::Dropped => break,
             }
         }
+        self.stream.take();
+        // A closed stream alone does not establish successful body reception.
+        let trailers = self
+            .trailers
+            .take()
+            .expect("request body has trailers future");
+        trailers.await.map_err(|_| BodyReadError)?;
+        Ok(None)
     }
 }
 
-fn request_head(request: &IncomingRequest) -> RequestHead {
-    let method = match request.method() {
+fn request_head(request: &Request) -> RequestHead {
+    let method = match request.get_method() {
         Method::Get => "GET".to_string(),
         Method::Head => "HEAD".to_string(),
         Method::Post => "POST".to_string(),
@@ -299,9 +309,9 @@ fn request_head(request: &IncomingRequest) -> RequestHead {
         Method::Patch => "PATCH".to_string(),
         Method::Other(method) => method,
     };
-    let headers = request
-        .headers()
-        .entries()
+    let headers: Vec<Header> = request
+        .get_headers()
+        .copy_all()
         .into_iter()
         .filter_map(|(name, value)| {
             String::from_utf8(value)
@@ -309,29 +319,38 @@ fn request_head(request: &IncomingRequest) -> RequestHead {
                 .map(|value| Header { name, value })
         })
         .collect();
+    // Origin-form HTTP requests carry their authority in the Host header.
+    let authority = request.get_authority().unwrap_or_else(|| {
+        headers
+            .iter()
+            .find(|header| header.name.eq_ignore_ascii_case("host"))
+            .map(|header| header.value.clone())
+            .unwrap_or_default()
+    });
     RequestHead {
         method,
-        authority: request.authority().unwrap_or_default(),
-        target: request.path_with_query().unwrap_or_else(|| "/".to_string()),
+        authority,
+        target: request
+            .get_path_with_query()
+            .unwrap_or_else(|| "/".to_string()),
         headers,
     }
 }
 
-fn send_response(response_out: ResponseOutparam, response: HttpResponse) {
+fn send_response(response: HttpResponse) -> Response {
     let headers = Fields::new();
     if !response.body.is_empty() {
         let _ = headers.set("content-type", &[response.content_type.as_bytes().to_vec()]);
     }
-    let outgoing = OutgoingResponse::new(headers);
+    let (mut writer, reader) = wit_stream::new::<u8>();
+    let (trailers, trailer_reader) = wit_future::new(|| Ok(None));
+    let (outgoing, _sent) = Response::new(headers, Some(reader), trailer_reader);
     let _ = outgoing.set_status_code(response.status);
-    let body = outgoing.body().expect("flow-http response body");
-    ResponseOutparam::set(response_out, Ok(outgoing));
-    if let Ok(stream) = body.write() {
-        for chunk in response.body.chunks(4096) {
-            if stream.blocking_write_and_flush(chunk).is_err() {
-                break;
-            }
-        }
-    }
-    let _ = OutgoingBody::finish(body, None);
+    // The host consumes the stream after handle returns the response.
+    spawn_local(async move {
+        let _ = writer.write_all(response.body).await;
+        drop(writer);
+        let _ = trailers.write(Ok(None)).await;
+    });
+    outgoing
 }

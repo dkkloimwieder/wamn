@@ -138,7 +138,7 @@ const STRUCK_KEY_SITES: [&str; 3] = [
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum WorkloadAbi {
-    P2Components,
+    P3Components,
     P2CliService,
     P3Service,
 }
@@ -784,9 +784,9 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
 
     let has_workload_service = source.lines().any(|line| line == "      service:");
     match abi {
-        WorkloadAbi::P2Components if has_workload_service || !has_components => {
+        WorkloadAbi::P3Components if has_workload_service || !has_components => {
             return Err(format!(
-                "{path}: recorded as P2 components but its components/service shape disagrees"
+                "{path}: recorded as P3 components but its components/service shape disagrees"
             ));
         }
         WorkloadAbi::P2CliService if !has_workload_service => {
@@ -799,7 +799,7 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
                 "{path}: P3 service workload deployment is excluded"
             ));
         }
-        WorkloadAbi::P2Components | WorkloadAbi::P2CliService => {}
+        WorkloadAbi::P3Components | WorkloadAbi::P2CliService => {}
     }
     Ok(())
 }
@@ -1061,7 +1061,7 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
                     world_path.display()
                 );
             }
-            (WorkloadAbi::P2Components, None) => {}
+            (WorkloadAbi::P3Components, None) => {}
             _ => panic!(
                 "{} ABI classification has missing or unexpected evidence",
                 workload.path
@@ -1138,7 +1138,7 @@ fn host_component_plugins_mutation_is_rejected() {
 fn nonzero_pool_size_mutation_is_rejected() {
     let mutant = "components:\n  - name: mutant\n    poolSize: 1\n    maxInvocations: 10\n";
     let error =
-        validate_workload_policy("pool-size-mutant.yaml", mutant, &WorkloadAbi::P2Components)
+        validate_workload_policy("pool-size-mutant.yaml", mutant, &WorkloadAbi::P3Components)
             .expect_err("mutation must fail closed");
     assert!(error.contains("poolSize 1 enables reusable component stores"));
 }
@@ -1146,7 +1146,7 @@ fn nonzero_pool_size_mutation_is_rejected() {
 #[test]
 fn nonempty_ip_name_lookup_default_mutation_is_rejected() {
     let mutant = "      components:\n        - name: mutant\n          localResources:\n            allowedIpNameLookups: [\"example.com\"]\n";
-    let error = validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P2Components)
+    let error = validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P3Components)
         .expect_err("nonempty allowedIpNameLookups default must fail closed");
     assert!(error.contains("allowedIpNameLookups must default to []"));
 }
@@ -1174,7 +1174,7 @@ fn missing_misspelled_or_duplicate_ip_name_lookup_defaults_are_rejected() {
 
     for (name, mutant) in mutants {
         let error =
-            validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P2Components)
+            validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P3Components)
                 .expect_err("invalid allowedIpNameLookups structure must fail closed");
         assert!(
             error.contains("must contain exactly one allowedIpNameLookups field"),
@@ -1201,7 +1201,7 @@ fn component_environment_pg_url_suffix_mutation_is_rejected() {
     let error = validate_workload_policy(
         "component-pg-url-key-mutant.yaml",
         &mutant,
-        &WorkloadAbi::P2Components,
+        &WorkloadAbi::P3Components,
     )
     .expect_err("a component environment *_PG_URL key must fail closed");
     assert!(
@@ -1216,7 +1216,7 @@ fn component_environment_database_url_mutation_is_rejected() {
     let error = validate_workload_policy(
         "component-database-url-key-mutant.yaml",
         &mutant,
-        &WorkloadAbi::P2Components,
+        &WorkloadAbi::P3Components,
     )
     .expect_err("an empty component environment DATABASE_URL placeholder must fail closed");
     assert!(
@@ -1238,7 +1238,7 @@ fn component_environment_postgres_url_value_mutation_is_rejected() {
         let error = validate_workload_policy(
             "component-postgres-url-value-mutant.yaml",
             &mutant,
-            &WorkloadAbi::P2Components,
+            &WorkloadAbi::P3Components,
         )
         .expect_err("a postgres URL under a neutral component environment key must fail closed");
         assert!(
@@ -1273,7 +1273,7 @@ fn database_url_names_and_values_outside_component_environment_are_allowed() {
     validate_workload_policy(
         "component-environment-boundary-control.yaml",
         control,
-        &WorkloadAbi::P2Components,
+        &WorkloadAbi::P3Components,
     )
     .expect("host environment and arbitrary Secret fields are outside this guard");
 }

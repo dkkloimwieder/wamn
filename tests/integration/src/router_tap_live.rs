@@ -35,9 +35,8 @@ mod tests {
     use wash_runtime::types::LocalResources;
     use wash_runtime::wasmtime::Store;
     use wash_runtime::wasmtime::component::{Component, Linker};
-    use wasmtime_wasi_http::p2::WasiHttpView as _;
-    use wasmtime_wasi_http::p2::bindings::Proxy;
-    use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
+    use wasmtime_wasi_http::p3::bindings::Service;
+    use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
     use crate::trusted_http_route::{
         self, ATTACHMENT_ID, ENVIRONMENT, PROJECT, ROUTE_AUTHORITY, ROUTE_PATH, RouteOptions,
@@ -111,7 +110,7 @@ mod tests {
         let mut linker = Linker::new(raw);
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
             .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
-        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
+        wasmtime_wasi_http::p3::add_to_linker(&mut linker)
             .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
         let loopback = Arc::new(std::sync::Mutex::new(
             wash_runtime::sockets::loopback::Network::default(),
@@ -156,7 +155,7 @@ mod tests {
         wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
         store.set_epoch_deadline(u64::MAX / 2);
         let compiled = workload.component().clone();
-        let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
+        let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
             .await
             .map_err(|error| anyhow::anyhow!("instantiate the shipped flow-http guest: {error}"))?;
 
@@ -167,32 +166,51 @@ mod tests {
             .header("content-type", "application/json")
             .body(body)
             .context("build the HTTP request")?;
-        let incoming = store
-            .data_mut()
-            .http()
-            .new_incoming_request(Scheme::Http, request)
-            .map_err(|error| anyhow::anyhow!("lower the incoming request: {error}"))?;
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-        let out = store
-            .data_mut()
-            .http()
-            .new_response_outparam(sender)
-            .map_err(|error| anyhow::anyhow!("allocate the response outparam: {error}"))?;
-        let call = wasmtime_wasi::runtime::spawn(async move {
-            proxy
-                .wasi_http_incoming_handler()
-                .call_handle(&mut store, incoming, out)
-                .await
-                .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))
-        });
-        let response = receiver
+        let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(request);
+        // Keep the fresh store driving P3 streams until the response body is collected.
+        let response = store
+            .run_concurrent(async |accessor| {
+                let handle = async {
+                    let response = service
+                        .handle(accessor, request)
+                        .await
+                        .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
+                        .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
+                    let (finish_tx, finish_rx) =
+                        tokio::sync::oneshot::channel::<Result<(), ErrorCode>>();
+                    let response = accessor
+                        .with(|store| {
+                            response.into_http(store, async move {
+                                finish_rx
+                                    .await
+                                    .unwrap_or(Err(ErrorCode::ConnectionTerminated))
+                            })
+                        })
+                        .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
+                    let (parts, body) = response.into_parts();
+                    let body = body.collect().await;
+                    let _ = finish_tx.send(body.as_ref().map(|_| ()).map_err(Clone::clone));
+                    let body = body.map_err(|error| {
+                        anyhow::anyhow!("collect flow-http response: {error:?}")
+                    })?;
+                    Ok::<_, anyhow::Error>(hyper::Response::from_parts(parts, body.to_bytes()))
+                };
+                let io = async {
+                    // An early typed refusal may abandon its request body.
+                    if let Err(error) = request_io.await {
+                        tracing::debug!(
+                            ?error,
+                            "flow-http request body processing ended with an error"
+                        );
+                    }
+                    Ok::<_, anyhow::Error>(())
+                };
+                let (response, ()) = tokio::try_join!(handle, io)?;
+                Ok::<_, anyhow::Error>(response)
+            })
             .await
-            .context("flow-http did not set its response")?
-            .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
-        let (parts, body) = response.into_parts();
-        let body = body.collect().await.context("collect flow-http response")?;
-        call.await.context("join flow-http")?;
-        Ok(hyper::Response::from_parts(parts, body.to_bytes()))
+            .map_err(|error| anyhow::anyhow!("drive flow-http P3 request: {error}"))??;
+        Ok(response)
     }
 
     async fn read_tap_records(

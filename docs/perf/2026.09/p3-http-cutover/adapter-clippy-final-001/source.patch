@@ -1,0 +1,3047 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 9ad02c9b..c64fb215 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -5960,6 +5960,7 @@ dependencies = [
+  "wamn-run-state",
+  "wamn-runtime",
+  "wash-runtime",
++ "wasi-virt",
+  "wasm-encoder 0.251.0",
+  "wasmtime-wasi",
+  "wat",
+diff --git a/components/Cargo.lock b/components/Cargo.lock
+index 88501715..48336895 100644
+--- a/components/Cargo.lock
++++ b/components/Cargo.lock
+@@ -269,6 +269,31 @@ dependencies = [
+  "percent-encoding",
+ ]
+ 
++[[package]]
++name = "futures"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
++dependencies = [
++ "futures-channel",
++ "futures-core",
++ "futures-executor",
++ "futures-io",
++ "futures-sink",
++ "futures-task",
++ "futures-util",
++]
++
++[[package]]
++name = "futures-channel"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
++dependencies = [
++ "futures-core",
++ "futures-sink",
++]
++
+ [[package]]
+ name = "futures-core"
+ version = "0.3.34"
+@@ -303,6 +328,17 @@ version = "0.3.34"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
+ 
++[[package]]
++name = "futures-macro"
++version = "0.3.34"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn 3.0.4",
++]
++
+ [[package]]
+ name = "futures-sink"
+ version = "0.3.34"
+@@ -321,8 +357,10 @@ version = "0.3.34"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
+ dependencies = [
++ "futures-channel",
+  "futures-core",
+  "futures-io",
++ "futures-macro",
+  "futures-sink",
+  "futures-task",
+  "memchr",
+@@ -385,6 +423,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+ name = "http-route"
+ version = "0.1.0"
+ dependencies = [
++ "futures",
+  "serde",
+  "serde_json",
+  "wamn-execution-contract",
+@@ -1291,6 +1330,7 @@ version = "0.61.1"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "e473fd0095479f9689ac7d2a52c427cc96bb2b973ace50238dfcc1ab1cd52d93"
+ dependencies = [
++ "futures",
+  "wit-bindgen-rust-macro",
+ ]
+ 
+diff --git a/components/ingress/http-route/Cargo.toml b/components/ingress/http-route/Cargo.toml
+index 22354e0a..2afb8656 100644
+--- a/components/ingress/http-route/Cargo.toml
++++ b/components/ingress/http-route/Cargo.toml
+@@ -6,7 +6,7 @@ edition.workspace = true
+ [dependencies]
+ serde = { workspace = true, features = ["derive"] }
+ serde_json = { workspace = true }
+-wit-bindgen = { workspace = true }
++wit-bindgen = { workspace = true, features = ["async", "async-spawn"] }
+ wamn-execution-contract = { workspace = true }
+ 
+ [lib]
+@@ -14,3 +14,6 @@ crate-type = ["cdylib", "rlib"]
+ 
+ [lints]
+ workspace = true
++
++[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
++futures = "0.3"
+diff --git a/components/ingress/http-route/src/guest.rs b/components/ingress/http-route/src/guest.rs
+index 398c5ced..fad57908 100644
+--- a/components/ingress/http-route/src/guest.rs
++++ b/components/ingress/http-route/src/guest.rs
+@@ -4,13 +4,14 @@ wit_bindgen::generate!({
+     world: "flow-http",
+     path: "wit",
+     generate_all,
++    async: ["export:wasi:http/handler@0.3.0#handle"],
+ });
+ 
+-use exports::wasi::http::incoming_handler::Guest;
+-use wasi::http::types::{
+-    Fields, IncomingBody, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
++use exports::wasi::http::handler::Guest;
++use wasi::http::types::{ErrorCode, Fields, Method, Request, Response};
++use wit_bindgen::rt::async_support::{
++    FutureReader, FutureWriter, StreamReader, StreamResult, spawn_local,
+ };
+-use wasi::io::streams::{InputStream, StreamError};
+ 
+ use super::{
+     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
+@@ -22,13 +23,19 @@ use super::{
+ struct Component;
+ 
+ impl Guest for Component {
+-    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
++    async fn handle(request: Request) -> Result<Response, ErrorCode> {
+         let head = request_head(&request);
+-        let body = request.consume().ok();
+         let mut backend = GuestBackend;
+-        let mut body = WasiBody::new(body);
+-        let response = handle_request(&mut backend, &mut body, &head, AdapterLimits::default());
+-        send_response(response_out, response);
++        let mut body = WasiBody {
++            request: Some(request),
++            stream: None,
++            trailers: None,
++            result: None,
++        };
++        let response =
++            handle_request(&mut backend, &mut body, &head, AdapterLimits::default()).await;
++        drop(body);
++        Ok(send_response(response))
+     }
+ }
+ 
+@@ -250,44 +257,47 @@ fn route_definition(
+ }
+ 
+ struct WasiBody {
+-    stream: Option<InputStream>,
+-    _body: Option<IncomingBody>,
+-    failed: bool,
+-}
+-
+-impl WasiBody {
+-    fn new(body: Option<IncomingBody>) -> Self {
+-        let stream = body.as_ref().and_then(|body| body.stream().ok());
+-        Self {
+-            stream,
+-            _body: body,
+-            failed: false,
+-        }
+-    }
++    request: Option<Request>,
++    stream: Option<StreamReader<u8>>,
++    trailers: Option<FutureReader<Result<Option<Fields>, ErrorCode>>>,
++    result: Option<FutureWriter<Result<(), ErrorCode>>>,
+ }
+ 
+ impl BodyReader for WasiBody {
+-    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
+-        if self.failed {
+-            return Err(BodyReadError);
++    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
++        // The adapter calls this only after route selection and authentication.
++        if let Some(request) = self.request.take() {
++            let (result, receiver) = wit_future::new(|| Ok(()));
++            let (stream, trailers) = Request::consume_body(request, receiver);
++            self.stream = Some(stream);
++            self.trailers = Some(trailers);
++            self.result = Some(result);
+         }
+-        let Some(stream) = &self.stream else {
++        let Some(stream) = self.stream.as_mut() else {
+             return Ok(None);
+         };
+-        match stream.blocking_read(8192) {
+-            Ok(bytes) if bytes.is_empty() => Ok(None),
+-            Ok(bytes) => Ok(Some(bytes)),
+-            Err(StreamError::Closed) => Ok(None),
+-            Err(_) => {
+-                self.failed = true;
+-                Err(BodyReadError)
++        loop {
++            let (status, bytes) = stream.read(Vec::with_capacity(8192)).await;
++            match status {
++                StreamResult::Complete(_) if !bytes.is_empty() => return Ok(Some(bytes)),
++                StreamResult::Complete(_) => {}
++                StreamResult::Cancelled => return Err(BodyReadError),
++                StreamResult::Dropped => break,
+             }
+         }
++        self.stream.take();
++        // A closed stream alone does not establish successful body reception.
++        let trailers = self
++            .trailers
++            .take()
++            .expect("request body has trailers future");
++        trailers.await.map_err(|_| BodyReadError)?;
++        Ok(None)
+     }
+ }
+ 
+-fn request_head(request: &IncomingRequest) -> RequestHead {
+-    let method = match request.method() {
++fn request_head(request: &Request) -> RequestHead {
++    let method = match request.get_method() {
+         Method::Get => "GET".to_string(),
+         Method::Head => "HEAD".to_string(),
+         Method::Post => "POST".to_string(),
+@@ -299,9 +309,9 @@ fn request_head(request: &IncomingRequest) -> RequestHead {
+         Method::Patch => "PATCH".to_string(),
+         Method::Other(method) => method,
+     };
+-    let headers = request
+-        .headers()
+-        .entries()
++    let headers: Vec<Header> = request
++        .get_headers()
++        .copy_all()
+         .into_iter()
+         .filter_map(|(name, value)| {
+             String::from_utf8(value)
+@@ -309,29 +319,38 @@ fn request_head(request: &IncomingRequest) -> RequestHead {
+                 .map(|value| Header { name, value })
+         })
+         .collect();
++    // Origin-form HTTP requests carry their authority in the Host header.
++    let authority = request.get_authority().unwrap_or_else(|| {
++        headers
++            .iter()
++            .find(|header| header.name.eq_ignore_ascii_case("host"))
++            .map(|header| header.value.clone())
++            .unwrap_or_default()
++    });
+     RequestHead {
+         method,
+-        authority: request.authority().unwrap_or_default(),
+-        target: request.path_with_query().unwrap_or_else(|| "/".to_string()),
++        authority,
++        target: request
++            .get_path_with_query()
++            .unwrap_or_else(|| "/".to_string()),
+         headers,
+     }
+ }
+ 
+-fn send_response(response_out: ResponseOutparam, response: HttpResponse) {
++fn send_response(response: HttpResponse) -> Response {
+     let headers = Fields::new();
+     if !response.body.is_empty() {
+         let _ = headers.set("content-type", &[response.content_type.as_bytes().to_vec()]);
+     }
+-    let outgoing = OutgoingResponse::new(headers);
++    let (mut writer, reader) = wit_stream::new::<u8>();
++    let (trailers, trailer_reader) = wit_future::new(|| Ok(None));
++    let (outgoing, _sent) = Response::new(headers, Some(reader), trailer_reader);
+     let _ = outgoing.set_status_code(response.status);
+-    let body = outgoing.body().expect("flow-http response body");
+-    ResponseOutparam::set(response_out, Ok(outgoing));
+-    if let Ok(stream) = body.write() {
+-        for chunk in response.body.chunks(4096) {
+-            if stream.blocking_write_and_flush(chunk).is_err() {
+-                break;
+-            }
+-        }
+-    }
+-    let _ = OutgoingBody::finish(body, None);
++    // The host consumes the stream after handle returns the response.
++    spawn_local(async move {
++        let _ = writer.write_all(response.body).await;
++        drop(writer);
++        let _ = trailers.write(Ok(None)).await;
++    });
++    outgoing
+ }
+diff --git a/components/ingress/http-route/src/lib.rs b/components/ingress/http-route/src/lib.rs
+index becd68b0..b78a6a3a 100644
+--- a/components/ingress/http-route/src/lib.rs
++++ b/components/ingress/http-route/src/lib.rs
+@@ -203,8 +203,12 @@ impl std::fmt::Display for ProviderError {
+ impl std::error::Error for ProviderError {}
+ 
+ /// Incremental request-body source. A read error never reaches the router.
++#[expect(
++    async_fn_in_trait,
++    reason = "the WASI body future stays local to its request task"
++)]
+ pub trait BodyReader {
+-    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError>;
++    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError>;
+ }
+ 
+ /// All external authority behind the thin adapter.
+@@ -244,16 +248,18 @@ struct MatchedRoute {
+ }
+ 
+ /// Adapt one HTTP request without accessing graph or run-state storage.
+-pub fn handle_request(
++pub async fn handle_request(
+     backend: &mut impl Backend,
+     body: &mut impl BodyReader,
+     head: &RequestHead,
+     limits: AdapterLimits,
+ ) -> HttpResponse {
+-    try_handle(backend, body, head, limits).unwrap_or_else(|response| response)
++    try_handle(backend, body, head, limits)
++        .await
++        .unwrap_or_else(|response| response)
+ }
+ 
+-fn try_handle(
++async fn try_handle(
+     backend: &mut impl Backend,
+     body: &mut impl BodyReader,
+     head: &RequestHead,
+@@ -278,7 +284,7 @@ fn try_handle(
+         .map_err(rejection_response)?;
+ 
+     let body_limit = matched.definition.body_limit.min(limits.body_bytes);
+-    let raw_body = read_bounded(body, body_limit)?;
++    let raw_body = read_bounded(body, body_limit).await?;
+     let body_json = if raw_body.is_empty() {
+         Value::Null
+     } else {
+@@ -493,10 +499,11 @@ fn match_path(template: &str, path: &str) -> Option<PathMatch> {
+     (path_index == path_segments.len()).then_some((score, values))
+ }
+ 
+-fn read_bounded(body: &mut impl BodyReader, limit: usize) -> Result<Vec<u8>, HttpResponse> {
++async fn read_bounded(body: &mut impl BodyReader, limit: usize) -> Result<Vec<u8>, HttpResponse> {
+     let mut bytes = Vec::new();
+     while let Some(chunk) = body
+         .next_chunk()
++        .await
+         .map_err(|_| error_response(400, "body-read-failed"))?
+     {
+         let next = bytes
+diff --git a/components/ingress/http-route/tests/adversarial.rs b/components/ingress/http-route/tests/adversarial.rs
+index fcc60036..23375eca 100644
+--- a/components/ingress/http-route/tests/adversarial.rs
++++ b/components/ingress/http-route/tests/adversarial.rs
+@@ -2,6 +2,9 @@ use std::collections::VecDeque;
+ use std::sync::Arc;
+ use std::sync::atomic::{AtomicUsize, Ordering};
+ 
++use futures::channel::mpsc;
++use futures::executor::block_on;
++use futures::{FutureExt as _, StreamExt as _};
+ use serde_json::{Value, json};
+ 
+ use http_route::{
+@@ -149,9 +152,21 @@ impl Chunks {
+ }
+ 
+ impl BodyReader for Chunks {
+-    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
++    fn next_chunk(&mut self) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, BodyReadError>> {
+         self.reads += 1;
+-        self.chunks.pop_front().unwrap_or(Ok(None))
++        std::future::ready(self.chunks.pop_front().unwrap_or(Ok(None)))
++    }
++}
++
++struct StreamedChunks {
++    chunks: mpsc::UnboundedReceiver<Vec<u8>>,
++    reads: usize,
++}
++
++impl BodyReader for StreamedChunks {
++    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
++        self.reads += 1;
++        Ok(self.chunks.next().await)
+     }
+ }
+ 
+@@ -231,7 +246,7 @@ fn request(
+     bytes: &[u8],
+ ) -> http_route::HttpResponse {
+     let mut body = Chunks::json(&[bytes]);
+-    handle_request(backend, &mut body, head, limits())
++    block_on(handle_request(backend, &mut body, head, limits()))
+ }
+ 
+ fn error_code(body: &[u8]) -> String {
+@@ -260,7 +275,7 @@ fn partial_body_selected_attachment_mapping_and_delivery() {
+     backend.routes.insert(0, wildcard);
+     let mut body = Chunks::json(&[br#"{"am"#, br#"ount":12.50}"#]);
+ 
+-    let output = handle_request(&mut backend, &mut body, &head(), limits());
++    let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
+ 
+     assert_eq!(output.status, 200);
+     assert_eq!(output.body, br#"{"ok":true}"#);
+@@ -315,9 +330,12 @@ fn an_authentication_refusal_never_reaches_delivery() {
+         status: 401,
+         code: "unauthorized".to_string(),
+     });
+-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
++    let (_sender, chunks) = mpsc::unbounded();
++    let mut body = StreamedChunks { chunks, reads: 0 };
+ 
+-    let output = handle_request(&mut backend, &mut body, &head(), limits());
++    let output = handle_request(&mut backend, &mut body, &head(), limits())
++        .now_or_never()
++        .expect("authentication refusal must not await the request body");
+ 
+     assert_eq!(output.status, 401);
+     assert_eq!(output.body, br#"{"error":{"code":"unauthorized"}}"#);
+@@ -325,6 +343,63 @@ fn an_authentication_refusal_never_reaches_delivery() {
+     assert!(backend.deliveries.is_empty());
+ }
+ 
++#[test]
++fn pending_body_resumes_under_the_selected_route_limit() {
++    for (last_chunk, status, reads) in [(b"1}".as_slice(), 200, 3), (b"12}".as_slice(), 413, 2)] {
++        let mut selected = route();
++        selected.body_limit = 12;
++        let mut backend = FakeBackend::new(selected);
++        let (sender, chunks) = mpsc::unbounded();
++        let mut body = StreamedChunks { chunks, reads: 0 };
++        let request_head = head();
++        sender.unbounded_send(br#"{"amount":"#.to_vec()).unwrap();
++
++        let output = block_on(async {
++            let mut request = Box::pin(handle_request(
++                &mut backend,
++                &mut body,
++                &request_head,
++                limits(),
++            ));
++            assert!(futures::poll!(request.as_mut()).is_pending());
++            sender.unbounded_send(last_chunk.to_vec()).unwrap();
++            drop(sender);
++            request.await
++        });
++
++        assert_eq!(output.status, status);
++        assert_eq!(body.reads, reads);
++        if status == 200 {
++            assert_eq!(backend.deliveries.len(), 1);
++        } else {
++            assert_eq!(output.body, b"request body exceeds 12-byte limit\n");
++            assert!(backend.deliveries.is_empty());
++        }
++    }
++}
++
++#[test]
++fn cancellation_while_awaiting_the_body_never_starts_delivery() {
++    let mut backend = FakeBackend::new(route());
++    let (sender, chunks) = mpsc::unbounded();
++    let mut body = StreamedChunks { chunks, reads: 0 };
++    sender.unbounded_send(br#"{"amount":"#.to_vec()).unwrap();
++
++    assert!(
++        handle_request(&mut backend, &mut body, &head(), limits())
++            .now_or_never()
++            .is_none()
++    );
++
++    assert_eq!(body.reads, 2, "the request awaited another body chunk");
++    assert_eq!(backend.authenticated_attachments, ["attachment-a"]);
++    assert!(backend.validated_inputs.is_empty());
++    assert!(backend.acquired_routes.is_empty());
++    assert!(backend.deliveries.is_empty());
++    assert_eq!(backend.next_delivery_id, 1);
++    assert_eq!(backend.permits.load(Ordering::SeqCst), 0);
++}
++
+ #[test]
+ fn identical_requests_receive_distinct_delivery_ids() {
+     let mut backend = FakeBackend::new(route());
+@@ -439,7 +514,7 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
+         }
+         let mut body = Chunks::json(&[bytes]);
+ 
+-        let output = handle_request(&mut backend, &mut body, &head(), limits());
++        let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
+ 
+         assert!(matches!(output.status, 400 | 401 | 413), "{name}");
+         assert!(
+@@ -501,7 +576,12 @@ fn default_raw_body_ceiling_accepts_one_mebibyte_and_refuses_the_next_byte() {
+     accepted_body[..4].copy_from_slice(b"null");
+     let mut backend = FakeBackend::new(selected.clone());
+     let mut body = Chunks::json(&[&accepted_body]);
+-    let output = handle_request(&mut backend, &mut body, &head(), AdapterLimits::default());
++    let output = block_on(handle_request(
++        &mut backend,
++        &mut body,
++        &head(),
++        AdapterLimits::default(),
++    ));
+     assert_eq!(output.status, 200);
+     assert_eq!(backend.deliveries.len(), 1);
+ 
+@@ -509,7 +589,12 @@ fn default_raw_body_ceiling_accepts_one_mebibyte_and_refuses_the_next_byte() {
+     refused_body.push(b' ');
+     let mut backend = FakeBackend::new(selected);
+     let mut body = Chunks::json(&[&refused_body]);
+-    let output = handle_request(&mut backend, &mut body, &head(), AdapterLimits::default());
++    let output = block_on(handle_request(
++        &mut backend,
++        &mut body,
++        &head(),
++        AdapterLimits::default(),
++    ));
+     assert_eq!(output.status, 413);
+     assert_eq!(output.content_type, "text/plain; charset=utf-8");
+     assert_eq!(output.body, b"request body exceeds 1048576-byte limit\n");
+@@ -661,7 +746,7 @@ fn provider_and_body_faults_are_bounded() {
+         chunks: VecDeque::from([Err(BodyReadError)]),
+         reads: 0,
+     };
+-    let output = handle_request(&mut backend, &mut body, &head(), limits());
++    let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
+     assert_eq!(error_code(&output.body), "body-read-failed");
+     assert!(backend.deliveries.is_empty());
+ }
+diff --git a/components/ingress/http-route/wit/deps/wasi-clocks/package.wit b/components/ingress/http-route/wit/deps/wasi-clocks/package.wit
+index 06b7d8b2..8bbdda31 100644
+--- a/components/ingress/http-route/wit/deps/wasi-clocks/package.wit
++++ b/components/ingress/http-route/wit/deps/wasi-clocks/package.wit
+@@ -1,162 +1,9 @@
+-package wasi:clocks@0.2.12;
+-
+-/// WASI Monotonic Clock is a clock API intended to let users measure elapsed
+-/// time.
+-///
+-/// It is intended to be portable at least between Unix-family platforms and
+-/// Windows.
+-///
+-/// A monotonic clock is a clock which has an unspecified initial value, and
+-/// successive reads of the clock will produce non-decreasing values.
+-@since(version = 0.2.0)
+-interface monotonic-clock {
+-  @since(version = 0.2.0)
+-  use wasi:io/poll@0.2.12.{pollable};
+-
+-  /// An instant in time, in nanoseconds. An instant is relative to an
+-  /// unspecified initial value, and can only be compared to instances from
+-  /// the same monotonic-clock.
+-  @since(version = 0.2.0)
+-  type instant = u64;
++package wasi:clocks@0.3.0;
+ 
++/// This interface common types used throughout wasi:clocks.
++@since(version = 0.3.0)
++interface types {
+   /// A duration of time, in nanoseconds.
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   type duration = u64;
+-
+-  /// Read the current value of the clock.
+-  ///
+-  /// The clock is monotonic, therefore calling this function repeatedly will
+-  /// produce a sequence of non-decreasing values.
+-  ///
+-  /// For completeness, this function traps if it's not possible to represent
+-  /// the value of the clock in an `instant`. Consequently, implementations
+-  /// should ensure that the starting time is low enough to avoid the
+-  /// possibility of overflow in practice.
+-  @since(version = 0.2.0)
+-  now: func() -> instant;
+-
+-  /// Query the resolution of the clock. Returns the duration of time
+-  /// corresponding to a clock tick.
+-  @since(version = 0.2.0)
+-  resolution: func() -> duration;
+-
+-  /// Create a `pollable` which will resolve once the specified instant
+-  /// has occurred.
+-  @since(version = 0.2.0)
+-  subscribe-instant: func(when: instant) -> pollable;
+-
+-  /// Create a `pollable` that will resolve after the specified duration has
+-  /// elapsed from the time this function is invoked.
+-  @since(version = 0.2.0)
+-  subscribe-duration: func(when: duration) -> pollable;
+-}
+-
+-/// WASI Wall Clock is a clock API intended to let users query the current
+-/// time. The name "wall" makes an analogy to a "clock on the wall", which
+-/// is not necessarily monotonic as it may be reset.
+-///
+-/// It is intended to be portable at least between Unix-family platforms and
+-/// Windows.
+-///
+-/// A wall clock is a clock which measures the date and time according to
+-/// some external reference.
+-///
+-/// External references may be reset, so this clock is not necessarily
+-/// monotonic, making it unsuitable for measuring elapsed time.
+-///
+-/// It is intended for reporting the current date and time for humans.
+-@since(version = 0.2.0)
+-interface wall-clock {
+-  /// A time and date in seconds plus nanoseconds.
+-  @since(version = 0.2.0)
+-  record datetime {
+-    seconds: u64,
+-    nanoseconds: u32,
+-  }
+-
+-  /// Read the current value of the clock.
+-  ///
+-  /// This clock is not monotonic, therefore calling this function repeatedly
+-  /// will not necessarily produce a sequence of non-decreasing values.
+-  ///
+-  /// The returned timestamps represent the number of seconds since
+-  /// 1970-01-01T00:00:00Z, also known as [POSIX's Seconds Since the Epoch],
+-  /// also known as [Unix Time].
+-  ///
+-  /// The nanoseconds field of the output is always less than 1000000000.
+-  ///
+-  /// [POSIX's Seconds Since the Epoch]: https://pubs.opengroup.org/onlinepubs/9699919799/xrat/V4_xbd_chap04.html#tag_21_04_16
+-  /// [Unix Time]: https://en.wikipedia.org/wiki/Unix_time
+-  @since(version = 0.2.0)
+-  now: func() -> datetime;
+-
+-  /// Query the resolution of the clock.
+-  ///
+-  /// The nanoseconds field of the output is always less than 1000000000.
+-  @since(version = 0.2.0)
+-  resolution: func() -> datetime;
+-}
+-
+-@unstable(feature = clocks-timezone)
+-interface timezone {
+-  @unstable(feature = clocks-timezone)
+-  use wall-clock.{datetime};
+-
+-  /// Information useful for displaying the timezone of a specific `datetime`.
+-  ///
+-  /// This information may vary within a single `timezone` to reflect daylight
+-  /// saving time adjustments.
+-  @unstable(feature = clocks-timezone)
+-  record timezone-display {
+-    /// The number of seconds difference between UTC time and the local
+-    /// time of the timezone.
+-    ///
+-    /// The returned value will always be less than 86400 which is the
+-    /// number of seconds in a day (24*60*60).
+-    ///
+-    /// In implementations that do not expose an actual time zone, this
+-    /// should return 0.
+-    utc-offset: s32,
+-    /// The abbreviated name of the timezone to display to a user. The name
+-    /// `UTC` indicates Coordinated Universal Time. Otherwise, this should
+-    /// reference local standards for the name of the time zone.
+-    ///
+-    /// In implementations that do not expose an actual time zone, this
+-    /// should be the string `UTC`.
+-    ///
+-    /// In time zones that do not have an applicable name, a formatted
+-    /// representation of the UTC offset may be returned, such as `-04:00`.
+-    name: string,
+-    /// Whether daylight saving time is active.
+-    ///
+-    /// In implementations that do not expose an actual time zone, this
+-    /// should return false.
+-    in-daylight-saving-time: bool,
+-  }
+-
+-  /// Return information needed to display the given `datetime`. This includes
+-  /// the UTC offset, the time zone name, and a flag indicating whether
+-  /// daylight saving time is active.
+-  ///
+-  /// If the timezone cannot be determined for the given `datetime`, return a
+-  /// `timezone-display` for `UTC` with a `utc-offset` of 0 and no daylight
+-  /// saving time.
+-  @unstable(feature = clocks-timezone)
+-  display: func(when: datetime) -> timezone-display;
+-
+-  /// The same as `display`, but only return the UTC offset.
+-  @unstable(feature = clocks-timezone)
+-  utc-offset: func(when: datetime) -> s32;
+-}
+-
+-@since(version = 0.2.0)
+-world imports {
+-  @since(version = 0.2.0)
+-  import wasi:io/poll@0.2.12;
+-  @since(version = 0.2.0)
+-  import monotonic-clock;
+-  @since(version = 0.2.0)
+-  import wall-clock;
+-  @unstable(feature = clocks-timezone)
+-  import timezone;
+ }
+diff --git a/components/ingress/http-route/wit/deps/wasi-http/package.wit b/components/ingress/http-route/wit/deps/wasi-http/package.wit
+index a7c5d546..d998e6da 100644
+--- a/components/ingress/http-route/wit/deps/wasi-http/package.wit
++++ b/components/ingress/http-route/wit/deps/wasi-http/package.wit
+@@ -1,21 +1,13 @@
+-package wasi:http@0.2.12;
++package wasi:http@0.3.0;
+ 
+-/// This interface defines all of the types and methods for implementing
+-/// HTTP Requests and Responses, both incoming and outgoing, as well as
+-/// their headers, trailers, and bodies.
+-@since(version = 0.2.0)
++/// This interface defines all of the types and methods for implementing HTTP
++/// Requests and Responses, as well as their headers, trailers, and bodies.
++@since(version = 0.3.0)
+ interface types {
+-  @since(version = 0.2.0)
+-  use wasi:clocks/monotonic-clock@0.2.12.{duration};
+-  @since(version = 0.2.0)
+-  use wasi:io/streams@0.2.12.{input-stream, output-stream};
+-  @since(version = 0.2.0)
+-  use wasi:io/error@0.2.12.{error as io-error};
+-  @since(version = 0.2.0)
+-  use wasi:io/poll@0.2.12.{pollable};
++  use wasi:clocks/types@0.3.0.{duration};
+ 
+   /// This type corresponds to HTTP standard Methods.
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   variant method {
+     get,
+     head,
+@@ -30,7 +22,7 @@ interface types {
+   }
+ 
+   /// This type corresponds to HTTP standard Related Schemes.
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   variant scheme {
+     HTTP,
+     HTTPS,
+@@ -38,21 +30,21 @@ interface types {
+   }
+ 
+   /// Defines the case payload type for `DNS-error` above:
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   record DNS-error-payload {
+     rcode: option<string>,
+     info-code: option<u16>,
+   }
+ 
+   /// Defines the case payload type for `TLS-alert-received` above:
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   record TLS-alert-received-payload {
+     alert-id: option<u8>,
+     alert-message: option<string>,
+   }
+ 
+   /// Defines the case payload type for `HTTP-response-{header,trailer}-size` above:
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   record field-size-payload {
+     field-name: option<string>,
+     field-size: option<u32>,
+@@ -60,7 +52,7 @@ interface types {
+ 
+   /// These cases are inspired by the IANA HTTP Proxy Error Types:
+   ///   <https://www.iana.org/assignments/http-proxy-status/http-proxy-status.xhtml#table-http-proxy-error-types>
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   variant error-code {
+     DNS-timeout,
+     DNS-error(DNS-error-payload),
+@@ -110,7 +102,7 @@ interface types {
+ 
+   /// This type enumerates the different kinds of errors that may occur when
+   /// setting or appending to a `fields` resource.
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   variant header-error {
+     /// This error indicates that a `field-name` or `field-value` was
+     /// syntactically invalid when used with an operation that sets headers in a
+@@ -122,31 +114,49 @@ interface types {
+     /// This error indicates that the operation on the `fields` was not
+     /// permitted because the fields are immutable.
+     immutable,
++    /// This error indicates that the operation would exceed an
++    /// implementation-defined limit on field sizes. This may apply to
++    /// an individual `field-value`, a single `field-name` plus all its
++    /// values, or the total aggregate size of all fields.
++    size-exceeded,
++    /// This is a catch-all error for anything that doesn't fit cleanly into a
++    /// more specific case. Implementations can use this to extend the error
++    /// type without breaking existing code. It also includes an optional
++    /// string for an unstructured description of the error. Users should not
++    /// depend on the string for diagnosing errors, as it's not required to be
++    /// consistent between implementations.
++    other(option<string>),
+   }
+ 
+-  /// Field keys are always strings.
+-  ///
+-  /// Field keys should always be treated as case insensitive by the `fields`
+-  /// resource for the purposes of equality checking.
+-  ///
+-  /// # Deprecation
+-  ///
+-  /// This type has been deprecated in favor of the `field-name` type.
+-  @since(version = 0.2.0)
+-  @deprecated(version = 0.2.2)
+-  type field-key = string;
++  /// This type enumerates the different kinds of errors that may occur when
++  /// setting fields of a `request-options` resource.
++  @since(version = 0.3.0)
++  variant request-options-error {
++    /// Indicates the specified field is not supported by this implementation.
++    not-supported,
++    /// Indicates that the operation on the `request-options` was not permitted
++    /// because it is immutable.
++    immutable,
++    /// This is a catch-all error for anything that doesn't fit cleanly into a
++    /// more specific case. Implementations can use this to extend the error
++    /// type without breaking existing code. It also includes an optional
++    /// string for an unstructured description of the error. Users should not
++    /// depend on the string for diagnosing errors, as it's not required to be
++    /// consistent between implementations.
++    other(option<string>),
++  }
+ 
+   /// Field names are always strings.
+   ///
+   /// Field names should always be treated as case insensitive by the `fields`
+   /// resource for the purposes of equality checking.
+-  @since(version = 0.2.1)
+-  type field-name = field-key;
++  @since(version = 0.3.0)
++  type field-name = string;
+ 
+   /// Field values should always be ASCII strings. However, in
+   /// reality, HTTP implementations often have to interpret malformed values,
+   /// so they are provided as a list of bytes.
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   type field-value = list<u8>;
+ 
+   /// This following block defines the `fields` resource which corresponds to
+@@ -156,15 +166,23 @@ interface types {
+   /// A `fields` may be mutable or immutable. A `fields` created using the
+   /// constructor, `from-list`, or `clone` will be mutable, but a `fields`
+   /// resource given by other means (including, but not limited to,
+-  /// `incoming-request.headers`, `outgoing-request.headers`) might be
+-  /// immutable. In an immutable fields, the `set`, `append`, and `delete`
+-  /// operations will fail with `header-error.immutable`.
+-  @since(version = 0.2.0)
++  /// `request.headers`) might be be immutable. In an immutable fields, the
++  /// `set`, `append`, and `delete` operations will fail with
++  /// `header-error.immutable`.
++  ///
++  /// A `fields` resource should store `field-name`s and `field-value`s in their
++  /// original casing used to construct or mutate the `fields` resource. The `fields`
++  /// resource should use that original casing when serializing the fields for
++  /// transport or when returning them from a method.
++  ///
++  /// Implementations may impose limits on individual field values and on total
++  /// aggregate field section size. Operations that would exceed these limits
++  /// fail with `header-error.size-exceeded`
++  @since(version = 0.3.0)
+   resource fields {
+     /// Construct an empty HTTP Fields.
+     ///
+     /// The resulting `fields` is mutable.
+-    @since(version = 0.2.0)
+     constructor();
+     /// Construct an HTTP Fields.
+     ///
+@@ -175,48 +193,49 @@ interface types {
+     /// list with the same name.
+     ///
+     /// The tuple is a pair of the field name, represented as a string, and
+-    /// Value, represented as a list of bytes.
++    /// Value, represented as a list of bytes. In a valid Fields, all names
++    /// and values are valid UTF-8 strings. However, values are not always
++    /// well-formed, so they are represented as a raw list of bytes.
+     ///
+-    /// An error result will be returned if any `field-name` or `field-value` is
+-    /// syntactically invalid, or if a field is forbidden.
+-    @since(version = 0.2.0)
++    /// An error result will be returned if any header or value was
++    /// syntactically invalid, if a header was forbidden, or if the
++    /// entries would exceed an implementation size limit.
+     from-list: static func(entries: list<tuple<field-name, field-value>>) -> result<fields, header-error>;
+     /// Get all of the values corresponding to a name. If the name is not present
+-    /// in this `fields` or is syntactically invalid, an empty list is returned.
+-    /// However, if the name is present but empty, this is represented by a list
+-    /// with one or more empty field-values present.
+-    @since(version = 0.2.0)
++    /// in this `fields`, an empty list is returned. However, if the name is
++    /// present but empty, this is represented by a list with one or more
++    /// empty field-values present.
+     get: func(name: field-name) -> list<field-value>;
+     /// Returns `true` when the name is present in this `fields`. If the name is
+     /// syntactically invalid, `false` is returned.
+-    @since(version = 0.2.0)
+     has: func(name: field-name) -> bool;
+     /// Set all of the values for a name. Clears any existing values for that
+     /// name, if they have been set.
+     ///
+     /// Fails with `header-error.immutable` if the `fields` are immutable.
+     ///
+-    /// Fails with `header-error.invalid-syntax` if the `field-name` or any of
+-    /// the `field-value`s are syntactically invalid.
+-    @since(version = 0.2.0)
++    /// Fails with `header-error.size-exceeded` if the name or values would
++    /// exceed an implementation-defined size limit.
+     set: func(name: field-name, value: list<field-value>) -> result<_, header-error>;
+     /// Delete all values for a name. Does nothing if no values for the name
+     /// exist.
+     ///
+     /// Fails with `header-error.immutable` if the `fields` are immutable.
+-    ///
+-    /// Fails with `header-error.invalid-syntax` if the `field-name` is
+-    /// syntactically invalid.
+-    @since(version = 0.2.0)
+     delete: func(name: field-name) -> result<_, header-error>;
++    /// Delete all values for a name. Does nothing if no values for the name
++    /// exist.
++    ///
++    /// Returns all values previously corresponding to the name, if any.
++    ///
++    /// Fails with `header-error.immutable` if the `fields` are immutable.
++    get-and-delete: func(name: field-name) -> result<list<field-value>, header-error>;
+     /// Append a value for a name. Does not change or delete any existing
+     /// values for that name.
+     ///
+     /// Fails with `header-error.immutable` if the `fields` are immutable.
+     ///
+-    /// Fails with `header-error.invalid-syntax` if the `field-name` or
+-    /// `field-value` are syntactically invalid.
+-    @since(version = 0.2.0)
++    /// Fails with `header-error.size-exceeded` if the value would exceed
++    /// an implementation-defined size limit.
+     append: func(name: field-name, value: field-value) -> result<_, header-error>;
+     /// Retrieve the full set of names and values in the Fields. Like the
+     /// constructor, the list represents each name-value pair.
+@@ -227,447 +246,196 @@ interface types {
+     ///
+     /// The names and values are always returned in the original casing and in
+     /// the order in which they will be serialized for transport.
+-    @since(version = 0.2.0)
+-    entries: func() -> list<tuple<field-name, field-value>>;
++    copy-all: func() -> list<tuple<field-name, field-value>>;
+     /// Make a deep copy of the Fields. Equivalent in behavior to calling the
+-    /// `fields` constructor on the return value of `entries`. The resulting
++    /// `fields` constructor on the return value of `copy-all`. The resulting
+     /// `fields` is mutable.
+-    @since(version = 0.2.0)
+     clone: func() -> fields;
+   }
+ 
+   /// Headers is an alias for Fields.
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   type headers = fields;
+ 
+   /// Trailers is an alias for Fields.
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   type trailers = fields;
+ 
+-  /// Represents an incoming HTTP Request.
+-  @since(version = 0.2.0)
+-  resource incoming-request {
+-    /// Returns the method of the incoming request.
+-    @since(version = 0.2.0)
+-    method: func() -> method;
+-    /// Returns the path with query parameters from the request, as a string.
+-    @since(version = 0.2.0)
+-    path-with-query: func() -> option<string>;
+-    /// Returns the protocol scheme from the request.
+-    @since(version = 0.2.0)
+-    scheme: func() -> option<scheme>;
+-    /// Returns the authority of the Request's target URI, if present.
+-    @since(version = 0.2.0)
+-    authority: func() -> option<string>;
+-    /// Get the `headers` associated with the request.
++  /// Represents an HTTP Request.
++  @since(version = 0.3.0)
++  resource request {
++    /// Construct a new `request` with a default `method` of `GET`, and
++    /// `none` values for `path-with-query`, `scheme`, and `authority`.
+     ///
+-    /// The returned `headers` resource is immutable: `set`, `append`, and
+-    /// `delete` operations will fail with `header-error.immutable`.
++    /// `headers` is the HTTP Headers for the Request.
+     ///
+-    /// The `headers` returned are a child resource: it must be dropped before
+-    /// the parent `incoming-request` is dropped. Dropping this
+-    /// `incoming-request` before all children are dropped will trap.
+-    @since(version = 0.2.0)
+-    headers: func() -> headers;
+-    /// Gives the `incoming-body` associated with this request. Will only
+-    /// return success at most once, and subsequent calls will return error.
+-    @since(version = 0.2.0)
+-    consume: func() -> result<incoming-body>;
+-  }
+-
+-  /// Represents an outgoing HTTP Request.
+-  @since(version = 0.2.0)
+-  resource outgoing-request {
+-    /// Construct a new `outgoing-request` with a default `method` of `GET`, and
+-    /// `none` values for `path-with-query`, `scheme`, and `authority`.
++    /// `contents` is the optional body content stream with `none`
++    /// representing a zero-length content stream.
++    /// Once it is closed, `trailers` future must resolve to a result.
++    /// If `trailers` resolves to an error, underlying connection
++    /// will be closed immediately.
+     ///
+-    /// * `headers` is the HTTP Headers for the Request.
++    /// `options` is optional `request-options` resource to be used
++    /// if the request is sent over a network connection.
+     ///
+     /// It is possible to construct, or manipulate with the accessor functions
+-    /// below, an `outgoing-request` with an invalid combination of `scheme`
++    /// below, a `request` with an invalid combination of `scheme`
+     /// and `authority`, or `headers` which are not permitted to be sent.
+-    /// It is the obligation of the `outgoing-handler.handle` implementation
+-    /// to reject invalid constructions of `outgoing-request`.
+-    @since(version = 0.2.0)
+-    constructor(headers: headers);
+-    /// Returns the resource corresponding to the outgoing Body for this
+-    /// Request.
+-    ///
+-    /// Returns success on the first call: the `outgoing-body` resource for
+-    /// this `outgoing-request` can be retrieved at most once. Subsequent
+-    /// calls will return error.
+-    @since(version = 0.2.0)
+-    body: func() -> result<outgoing-body>;
++    /// It is the obligation of the `handler.handle` implementation
++    /// to reject invalid constructions of `request`.
++    ///
++    /// The returned future resolves to result of transmission of this request.
++    new: static func(headers: headers, contents: option<stream<u8>>, trailers: future<result<option<trailers>, error-code>>, options: option<request-options>) -> tuple<request, future<result<_, error-code>>>;
+     /// Get the Method for the Request.
+-    @since(version = 0.2.0)
+-    method: func() -> method;
++    get-method: func() -> method;
+     /// Set the Method for the Request. Fails if the string present in a
+     /// `method.other` argument is not a syntactically valid method.
+-    @since(version = 0.2.0)
+     set-method: func(method: method) -> result;
+-    /// Get the combination of the HTTP Path and Query for the Request.
+-    /// When `none`, this represents an empty Path and empty Query.
+-    @since(version = 0.2.0)
+-    path-with-query: func() -> option<string>;
+-    /// Set the combination of the HTTP Path and Query for the Request.
+-    /// When `none`, this represents an empty Path and empty Query. Fails is the
++    /// Get the combination of the HTTP Path and Query for the Request.  When
++    /// `none`, this represents an empty Path and empty Query.
++    get-path-with-query: func() -> option<string>;
++    /// Set the combination of the HTTP Path and Query for the Request.  When
++    /// `none`, this represents an empty Path and empty Query. Fails is the
+     /// string given is not a syntactically valid path and query uri component.
+-    @since(version = 0.2.0)
+     set-path-with-query: func(path-with-query: option<string>) -> result;
+     /// Get the HTTP Related Scheme for the Request. When `none`, the
+     /// implementation may choose an appropriate default scheme.
+-    @since(version = 0.2.0)
+-    scheme: func() -> option<scheme>;
++    get-scheme: func() -> option<scheme>;
+     /// Set the HTTP Related Scheme for the Request. When `none`, the
+     /// implementation may choose an appropriate default scheme. Fails if the
+     /// string given is not a syntactically valid uri scheme.
+-    @since(version = 0.2.0)
+     set-scheme: func(scheme: option<scheme>) -> result;
+     /// Get the authority of the Request's target URI. A value of `none` may be used
+     /// with Related Schemes which do not require an authority. The HTTP and
+     /// HTTPS schemes always require an authority.
+-    @since(version = 0.2.0)
+-    authority: func() -> option<string>;
++    get-authority: func() -> option<string>;
+     /// Set the authority of the Request's target URI. A value of `none` may be used
+     /// with Related Schemes which do not require an authority. The HTTP and
+     /// HTTPS schemes always require an authority. Fails if the string given is
+     /// not a syntactically valid URI authority.
+-    @since(version = 0.2.0)
+     set-authority: func(authority: option<string>) -> result;
++    /// Get the `request-options` to be associated with this request
++    ///
++    /// The returned `request-options` resource is immutable: `set-*` operations
++    /// will fail if invoked.
++    ///
++    /// This `request-options` resource is a child: it must be dropped before
++    /// the parent `request` is dropped, or its ownership is transferred to
++    /// another component by e.g. `handler.handle`.
++    get-options: func() -> option<request-options>;
+     /// Get the headers associated with the Request.
+     ///
+     /// The returned `headers` resource is immutable: `set`, `append`, and
+     /// `delete` operations will fail with `header-error.immutable`.
++    get-headers: func() -> headers;
++    /// Get body of the Request.
++    ///
++    /// Stream returned by this method represents the contents of the body.
++    /// Once the stream is reported as closed, callers should await the returned
++    /// future to determine whether the body was received successfully.
++    /// The future will only resolve after the stream is reported as closed.
++    ///
++    /// This function takes a `res` future as a parameter, which can be used to
++    /// communicate an error in handling of the request.
+     ///
+-    /// This headers resource is a child: it must be dropped before the parent
+-    /// `outgoing-request` is dropped, or its ownership is transferred to
+-    /// another component by e.g. `outgoing-handler.handle`.
+-    @since(version = 0.2.0)
+-    headers: func() -> headers;
++    /// Note that function will move the `request`, but references to headers or
++    /// request options acquired from it previously will remain valid.
++    consume-body: static func(this: request, res: future<result<_, error-code>>) -> tuple<stream<u8>, future<result<option<trailers>, error-code>>>;
+   }
+ 
+   /// Parameters for making an HTTP Request. Each of these parameters is
+   /// currently an optional timeout applicable to the transport layer of the
+   /// HTTP protocol.
+   ///
+-  /// These timeouts are separate from any the user may use to bound a
+-  /// blocking call to `wasi:io/poll.poll`.
+-  @since(version = 0.2.0)
++  /// These timeouts are separate from any the user may use to bound an
++  /// asynchronous call.
++  @since(version = 0.3.0)
+   resource request-options {
+     /// Construct a default `request-options` value.
+-    @since(version = 0.2.0)
+     constructor();
+     /// The timeout for the initial connect to the HTTP Server.
+-    @since(version = 0.2.0)
+-    connect-timeout: func() -> option<duration>;
++    get-connect-timeout: func() -> option<duration>;
+     /// Set the timeout for the initial connect to the HTTP Server. An error
+-    /// return value indicates that this timeout is not supported.
+-    @since(version = 0.2.0)
+-    set-connect-timeout: func(duration: option<duration>) -> result;
++    /// return value indicates that this timeout is not supported or that this
++    /// handle is immutable.
++    set-connect-timeout: func(duration: option<duration>) -> result<_, request-options-error>;
+     /// The timeout for receiving the first byte of the Response body.
+-    @since(version = 0.2.0)
+-    first-byte-timeout: func() -> option<duration>;
++    get-first-byte-timeout: func() -> option<duration>;
+     /// Set the timeout for receiving the first byte of the Response body. An
+-    /// error return value indicates that this timeout is not supported.
+-    @since(version = 0.2.0)
+-    set-first-byte-timeout: func(duration: option<duration>) -> result;
++    /// error return value indicates that this timeout is not supported or that
++    /// this handle is immutable.
++    set-first-byte-timeout: func(duration: option<duration>) -> result<_, request-options-error>;
+     /// The timeout for receiving subsequent chunks of bytes in the Response
+     /// body stream.
+-    @since(version = 0.2.0)
+-    between-bytes-timeout: func() -> option<duration>;
++    get-between-bytes-timeout: func() -> option<duration>;
+     /// Set the timeout for receiving subsequent chunks of bytes in the Response
+     /// body stream. An error return value indicates that this timeout is not
+-    /// supported.
+-    @since(version = 0.2.0)
+-    set-between-bytes-timeout: func(duration: option<duration>) -> result;
+-  }
+-
+-  /// Represents the ability to send an HTTP Response.
+-  ///
+-  /// This resource is used by the `wasi:http/incoming-handler` interface to
+-  /// allow a Response to be sent corresponding to the Request provided as the
+-  /// other argument to `incoming-handler.handle`.
+-  @since(version = 0.2.0)
+-  resource response-outparam {
+-    /// Send an HTTP 1xx response.
+-    ///
+-    /// Unlike `response-outparam.set`, this does not consume the
+-    /// `response-outparam`, allowing the guest to send an arbitrary number of
+-    /// informational responses before sending the final response using
+-    /// `response-outparam.set`.
+-    ///
+-    /// This will return an `HTTP-protocol-error` if `status` is not in the
+-    /// range [100-199], or an `internal-error` if the implementation does not
+-    /// support informational responses.
+-    @unstable(feature = informational-outbound-responses)
+-    send-informational: func(status: u16, headers: headers) -> result<_, error-code>;
+-    /// Set the value of the `response-outparam` to either send a response,
+-    /// or indicate an error.
+-    ///
+-    /// This method consumes the `response-outparam` to ensure that it is
+-    /// called at most once. If it is never called, the implementation
+-    /// will respond with an error.
+-    ///
+-    /// The user may provide an `error` to `response` to allow the
+-    /// implementation determine how to respond with an HTTP error response.
+-    @since(version = 0.2.0)
+-    set: static func(param: response-outparam, response: result<outgoing-response, error-code>);
++    /// supported or that this handle is immutable.
++    set-between-bytes-timeout: func(duration: option<duration>) -> result<_, request-options-error>;
++    /// Make a deep copy of the `request-options`.
++    /// The resulting `request-options` is mutable.
++    clone: func() -> request-options;
+   }
+ 
+   /// This type corresponds to the HTTP standard Status Code.
+-  @since(version = 0.2.0)
++  @since(version = 0.3.0)
+   type status-code = u16;
+ 
+-  /// Represents an incoming HTTP Response.
+-  @since(version = 0.2.0)
+-  resource incoming-response {
+-    /// Returns the status code from the incoming response.
+-    @since(version = 0.2.0)
+-    status: func() -> status-code;
+-    /// Returns the headers from the incoming response.
+-    ///
+-    /// The returned `headers` resource is immutable: `set`, `append`, and
+-    /// `delete` operations will fail with `header-error.immutable`.
+-    ///
+-    /// This headers resource is a child: it must be dropped before the parent
+-    /// `incoming-response` is dropped.
+-    @since(version = 0.2.0)
+-    headers: func() -> headers;
+-    /// Returns the incoming body. May be called at most once. Returns error
+-    /// if called additional times.
+-    @since(version = 0.2.0)
+-    consume: func() -> result<incoming-body>;
+-  }
+-
+-  /// Represents an incoming HTTP Request or Response's Body.
+-  ///
+-  /// A body has both its contents - a stream of bytes - and a (possibly
+-  /// empty) set of trailers, indicating that the full contents of the
+-  /// body have been received. This resource represents the contents as
+-  /// an `input-stream` and the delivery of trailers as a `future-trailers`,
+-  /// and ensures that the user of this interface may only be consuming either
+-  /// the body contents or waiting on trailers at any given time.
+-  @since(version = 0.2.0)
+-  resource incoming-body {
+-    /// Returns the contents of the body, as a stream of bytes.
+-    ///
+-    /// Returns success on first call: the stream representing the contents
+-    /// can be retrieved at most once. Subsequent calls will return error.
+-    ///
+-    /// The returned `input-stream` resource is a child: it must be dropped
+-    /// before the parent `incoming-body` is dropped, or consumed by
+-    /// `incoming-body.finish`.
+-    ///
+-    /// This invariant ensures that the implementation can determine whether
+-    /// the user is consuming the contents of the body, waiting on the
+-    /// `future-trailers` to be ready, or neither. This allows for network
+-    /// backpressure is to be applied when the user is consuming the body,
+-    /// and for that backpressure to not inhibit delivery of the trailers if
+-    /// the user does not read the entire body.
+-    @since(version = 0.2.0)
+-    %stream: func() -> result<input-stream>;
+-    /// Takes ownership of `incoming-body`, and returns a `future-trailers`.
+-    /// This function will trap if the `input-stream` child is still alive.
+-    @since(version = 0.2.0)
+-    finish: static func(this: incoming-body) -> future-trailers;
+-  }
+-
+-  /// Represents a future which may eventually return trailers, or an error.
+-  ///
+-  /// In the case that the incoming HTTP Request or Response did not have any
+-  /// trailers, this future will resolve to the empty set of trailers once the
+-  /// complete Request or Response body has been received.
+-  @since(version = 0.2.0)
+-  resource future-trailers {
+-    /// Returns a pollable which becomes ready when either the trailers have
+-    /// been received, or an error has occurred. When this pollable is ready,
+-    /// the `get` method will return `some`.
+-    @since(version = 0.2.0)
+-    subscribe: func() -> pollable;
+-    /// Returns the contents of the trailers, or an error which occurred,
+-    /// once the future is ready.
+-    ///
+-    /// The outer `option` represents future readiness. Users can wait on this
+-    /// `option` to become `some` using the `subscribe` method.
+-    ///
+-    /// The outer `result` is used to retrieve the trailers or error at most
+-    /// once. It will be success on the first call in which the outer option
+-    /// is `some`, and error on subsequent calls.
+-    ///
+-    /// The inner `result` represents that either the HTTP Request or Response
+-    /// body, as well as any trailers, were received successfully, or that an
+-    /// error occurred receiving them. The optional `trailers` indicates whether
+-    /// or not trailers were present in the body.
+-    ///
+-    /// When some `trailers` are returned by this method, the `trailers`
+-    /// resource is immutable, and a child. Use of the `set`, `append`, or
+-    /// `delete` methods will return an error, and the resource must be
+-    /// dropped before the parent `future-trailers` is dropped.
+-    @since(version = 0.2.0)
+-    get: func() -> option<result<result<option<trailers>, error-code>>>;
+-  }
+-
+-  /// Represents an outgoing HTTP Response.
+-  @since(version = 0.2.0)
+-  resource outgoing-response {
+-    /// Construct an `outgoing-response`, with a default `status-code` of `200`.
++  /// Represents an HTTP Response.
++  @since(version = 0.3.0)
++  resource response {
++    /// Construct a new `response`, with a default `status-code` of `200`.
+     /// If a different `status-code` is needed, it must be set via the
+     /// `set-status-code` method.
+     ///
+-    /// * `headers` is the HTTP Headers for the Response.
+-    @since(version = 0.2.0)
+-    constructor(headers: headers);
++    /// `headers` is the HTTP Headers for the Response.
++    ///
++    /// `contents` is the optional body content stream with `none`
++    /// representing a zero-length content stream.
++    /// Once it is closed, `trailers` future must resolve to a result.
++    /// If `trailers` resolves to an error, underlying connection
++    /// will be closed immediately.
++    ///
++    /// The returned future resolves to result of transmission of this response.
++    new: static func(headers: headers, contents: option<stream<u8>>, trailers: future<result<option<trailers>, error-code>>) -> tuple<response, future<result<_, error-code>>>;
+     /// Get the HTTP Status Code for the Response.
+-    @since(version = 0.2.0)
+-    status-code: func() -> status-code;
++    get-status-code: func() -> status-code;
+     /// Set the HTTP Status Code for the Response. Fails if the status-code
+     /// given is not a valid http status code.
+-    @since(version = 0.2.0)
+     set-status-code: func(status-code: status-code) -> result;
+-    /// Get the headers associated with the Request.
++    /// Get the headers associated with the Response.
+     ///
+     /// The returned `headers` resource is immutable: `set`, `append`, and
+     /// `delete` operations will fail with `header-error.immutable`.
++    get-headers: func() -> headers;
++    /// Get body of the Response.
+     ///
+-    /// This headers resource is a child: it must be dropped before the parent
+-    /// `outgoing-request` is dropped, or its ownership is transferred to
+-    /// another component by e.g. `outgoing-handler.handle`.
+-    @since(version = 0.2.0)
+-    headers: func() -> headers;
+-    /// Returns the resource corresponding to the outgoing Body for this Response.
+-    ///
+-    /// Returns success on the first call: the `outgoing-body` resource for
+-    /// this `outgoing-response` can be retrieved at most once. Subsequent
+-    /// calls will return error.
+-    @since(version = 0.2.0)
+-    body: func() -> result<outgoing-body>;
+-  }
+-
+-  /// Represents an outgoing HTTP Request or Response's Body.
+-  ///
+-  /// A body has both its contents - a stream of bytes - and a (possibly
+-  /// empty) set of trailers, inducating the full contents of the body
+-  /// have been sent. This resource represents the contents as an
+-  /// `output-stream` child resource, and the completion of the body (with
+-  /// optional trailers) with a static function that consumes the
+-  /// `outgoing-body` resource, and ensures that the user of this interface
+-  /// may not write to the body contents after the body has been finished.
+-  ///
+-  /// If the user code drops this resource, as opposed to calling the static
+-  /// method `finish`, the implementation should treat the body as incomplete,
+-  /// and that an error has occurred. The implementation should propagate this
+-  /// error to the HTTP protocol by whatever means it has available,
+-  /// including: corrupting the body on the wire, aborting the associated
+-  /// Request, or sending a late status code for the Response.
+-  @since(version = 0.2.0)
+-  resource outgoing-body {
+-    /// Returns a stream for writing the body contents.
+-    ///
+-    /// The returned `output-stream` is a child resource: it must be dropped
+-    /// before the parent `outgoing-body` resource is dropped (or finished),
+-    /// otherwise the `outgoing-body` drop or `finish` will trap.
+-    ///
+-    /// Returns success on the first call: the `output-stream` resource for
+-    /// this `outgoing-body` may be retrieved at most once. Subsequent calls
+-    /// will return error.
+-    @since(version = 0.2.0)
+-    write: func() -> result<output-stream>;
+-    /// Finalize an outgoing body, optionally providing trailers. This must be
+-    /// called to signal that the response is complete. If the `outgoing-body`
+-    /// is dropped without calling `outgoing-body.finalize`, the implementation
+-    /// should treat the body as corrupted.
+-    ///
+-    /// Fails if the body's `outgoing-request` or `outgoing-response` was
+-    /// constructed with a Content-Length header, and the contents written
+-    /// to the body (via `write`) does not match the value given in the
+-    /// Content-Length.
+-    @since(version = 0.2.0)
+-    finish: static func(this: outgoing-body, trailers: option<trailers>) -> result<_, error-code>;
+-  }
+-
+-  /// Represents a future which may eventually return an incoming HTTP
+-  /// Response, or an error.
+-  ///
+-  /// This resource is returned by the `wasi:http/outgoing-handler` interface to
+-  /// provide the HTTP Response corresponding to the sent Request.
+-  @since(version = 0.2.0)
+-  resource future-incoming-response {
+-    /// Returns a pollable which becomes ready when either the Response has
+-    /// been received, or an error has occurred. When this pollable is ready,
+-    /// the `get` method will return `some`.
+-    @since(version = 0.2.0)
+-    subscribe: func() -> pollable;
+-    /// Returns the incoming HTTP Response, or an error, once one is ready.
+-    ///
+-    /// The outer `option` represents future readiness. Users can wait on this
+-    /// `option` to become `some` using the `subscribe` method.
+-    ///
+-    /// The outer `result` is used to retrieve the response or error at most
+-    /// once. It will be success on the first call in which the outer option
+-    /// is `some`, and error on subsequent calls.
+-    ///
+-    /// The inner `result` represents that either the incoming HTTP Response
+-    /// status and headers have received successfully, or that an error
+-    /// occurred. Errors may also occur while consuming the response body,
+-    /// but those will be reported by the `incoming-body` and its
+-    /// `output-stream` child.
+-    @since(version = 0.2.0)
+-    get: func() -> option<result<result<incoming-response, error-code>>>;
++    /// Stream returned by this method represents the contents of the body.
++    /// Once the stream is reported as closed, callers should await the returned
++    /// future to determine whether the body was received successfully.
++    /// The future will only resolve after the stream is reported as closed.
++    ///
++    /// This function takes a `res` future as a parameter, which can be used to
++    /// communicate an error in handling of the response.
++    ///
++    /// Note that function will move the `response`, but references to headers
++    /// acquired from it previously will remain valid.
++    consume-body: static func(this: response, res: future<result<_, error-code>>) -> tuple<stream<u8>, future<result<option<trailers>, error-code>>>;
+   }
+-
+-  /// Attempts to extract a http-related `error` from the wasi:io `error`
+-  /// provided.
+-  ///
+-  /// Stream operations which return
+-  /// `wasi:io/stream.stream-error.last-operation-failed` have a payload of
+-  /// type `wasi:io/error.error` with more information about the operation
+-  /// that failed. This payload can be passed through to this function to see
+-  /// if there's http-related information about the error to return.
+-  ///
+-  /// Note that this function is fallible because not all io-errors are
+-  /// http-related errors.
+-  @since(version = 0.2.0)
+-  http-error-code: func(err: borrow<io-error>) -> option<error-code>;
+-}
+-
+-/// This interface defines a handler of incoming HTTP Requests. It should
+-/// be exported by components which can respond to HTTP Requests.
+-@since(version = 0.2.0)
+-interface incoming-handler {
+-  @since(version = 0.2.0)
+-  use types.{incoming-request, response-outparam};
+-
+-  /// This function is invoked with an incoming HTTP Request, and a resource
+-  /// `response-outparam` which provides the capability to reply with an HTTP
+-  /// Response. The response is sent by calling the `response-outparam.set`
+-  /// method, which allows execution to continue after the response has been
+-  /// sent. This enables both streaming to the response body, and performing other
+-  /// work.
+-  ///
+-  /// The implementor of this function must write a response to the
+-  /// `response-outparam` before returning, or else the caller will respond
+-  /// with an error on its behalf.
+-  @since(version = 0.2.0)
+-  handle: func(request: incoming-request, response-out: response-outparam);
+ }
+ 
+-/// This interface defines a handler of outgoing HTTP Requests. It should be
+-/// imported by components which wish to make HTTP Requests.
+-@since(version = 0.2.0)
+-interface outgoing-handler {
+-  @since(version = 0.2.0)
+-  use types.{outgoing-request, request-options, future-incoming-response, error-code};
++/// This interface defines a handler of HTTP Requests.
++///
++/// In a `wasi:http/service` this interface is exported to respond to an
++/// incoming HTTP Request with a Response.
++///
++/// In `wasi:http/middleware` this interface is both exported and imported as
++/// the "downstream" and "upstream" directions of the middleware chain.
++@since(version = 0.3.0)
++interface handler {
++  use types.{request, response, error-code};
+ 
+-  /// This function is invoked with an outgoing HTTP Request, and it returns
+-  /// a resource `future-incoming-response` which represents an HTTP Response
+-  /// which may arrive in the future.
+-  ///
+-  /// The `options` argument accepts optional parameters for the HTTP
+-  /// protocol's transport layer.
+-  ///
+-  /// This function may return an error if the `outgoing-request` is invalid
+-  /// or not allowed to be made. Otherwise, protocol errors are reported
+-  /// through the `future-incoming-response`.
+-  @since(version = 0.2.0)
+-  handle: func(request: outgoing-request, options: option<request-options>) -> result<future-incoming-response, error-code>;
++  /// This function may be called with either an incoming request read from the
++  /// network or a request synthesized or forwarded by another component.
++  handle: async func(request: request) -> result<response, error-code>;
+ }
+diff --git a/components/ingress/http-route/wit/deps/wasi-io/package.wit b/components/ingress/http-route/wit/deps/wasi-io/package.wit
+deleted file mode 100644
+index 543cbfc6..00000000
+--- a/components/ingress/http-route/wit/deps/wasi-io/package.wit
++++ /dev/null
+@@ -1,299 +0,0 @@
+-package wasi:io@0.2.12;
+-
+-@since(version = 0.2.0)
+-interface error {
+-  /// A resource which represents some error information.
+-  ///
+-  /// The only method provided by this resource is `to-debug-string`,
+-  /// which provides some human-readable information about the error.
+-  ///
+-  /// In the `wasi:io` package, this resource is returned through the
+-  /// `wasi:io/streams.stream-error` type.
+-  ///
+-  /// To provide more specific error information, other interfaces may
+-  /// offer functions to "downcast" this error into more specific types. For example,
+-  /// errors returned from streams derived from filesystem types can be described using
+-  /// the filesystem's own error-code type. This is done using the function
+-  /// `wasi:filesystem/types.filesystem-error-code`, which takes a `borrow<error>`
+-  /// parameter and returns an `option<wasi:filesystem/types.error-code>`.
+-  ///
+-  /// The set of functions which can "downcast" an `error` into a more
+-  /// concrete type is open.
+-  @since(version = 0.2.0)
+-  resource error {
+-    /// Returns a string that is suitable to assist humans in debugging
+-    /// this error.
+-    ///
+-    /// WARNING: The returned string should not be consumed mechanically!
+-    /// It may change across platforms, hosts, or other implementation
+-    /// details. Parsing this string is a major platform-compatibility
+-    /// hazard.
+-    @since(version = 0.2.0)
+-    to-debug-string: func() -> string;
+-  }
+-}
+-
+-/// A poll API intended to let users wait for I/O events on multiple handles
+-/// at once.
+-@since(version = 0.2.0)
+-interface poll {
+-  /// `pollable` represents a single I/O event which may be ready, or not.
+-  @since(version = 0.2.0)
+-  resource pollable {
+-    /// Return the readiness of a pollable. This function never blocks.
+-    ///
+-    /// Returns `true` when the pollable is ready, and `false` otherwise.
+-    @since(version = 0.2.0)
+-    ready: func() -> bool;
+-    /// `block` returns immediately if the pollable is ready, and otherwise
+-    /// blocks until ready.
+-    ///
+-    /// This function is equivalent to calling `poll.poll` on a list
+-    /// containing only this pollable.
+-    @since(version = 0.2.0)
+-    block: func();
+-  }
+-
+-  /// Poll for completion on a set of pollables.
+-  ///
+-  /// This function takes a list of pollables, which identify I/O sources of
+-  /// interest, and waits until one or more of the events is ready for I/O.
+-  ///
+-  /// The result `list<u32>` contains one or more indices of handles in the
+-  /// argument list that is ready for I/O.
+-  ///
+-  /// This function traps if either:
+-  /// - the list is empty, or:
+-  /// - the list contains more elements than can be indexed with a `u32` value.
+-  ///
+-  /// A timeout can be implemented by adding a pollable from the
+-  /// wasi-clocks API to the list.
+-  ///
+-  /// This function does not return a `result`; polling in itself does not
+-  /// do any I/O so it doesn't fail. If any of the I/O sources identified by
+-  /// the pollables has an error, it is indicated by marking the source as
+-  /// being ready for I/O.
+-  @since(version = 0.2.0)
+-  poll: func(in: list<borrow<pollable>>) -> list<u32>;
+-}
+-
+-/// WASI I/O is an I/O abstraction API which is currently focused on providing
+-/// stream types.
+-///
+-/// In the future, the component model is expected to add built-in stream types;
+-/// when it does, they are expected to subsume this API.
+-@since(version = 0.2.0)
+-interface streams {
+-  @since(version = 0.2.0)
+-  use error.{error};
+-  @since(version = 0.2.0)
+-  use poll.{pollable};
+-
+-  /// An error for input-stream and output-stream operations.
+-  @since(version = 0.2.0)
+-  variant stream-error {
+-    /// The last operation (a write or flush) failed before completion.
+-    ///
+-    /// More information is available in the `error` payload.
+-    ///
+-    /// After this, the stream will be closed. All future operations return
+-    /// `stream-error::closed`.
+-    last-operation-failed(error),
+-    /// The stream is closed: no more input will be accepted by the
+-    /// stream. A closed output-stream will return this error on all
+-    /// future operations.
+-    closed,
+-  }
+-
+-  /// An input bytestream.
+-  ///
+-  /// `input-stream`s are *non-blocking* to the extent practical on underlying
+-  /// platforms. I/O operations always return promptly; if fewer bytes are
+-  /// promptly available than requested, they return the number of bytes promptly
+-  /// available, which could even be zero. To wait for data to be available,
+-  /// use the `subscribe` function to obtain a `pollable` which can be polled
+-  /// for using `wasi:io/poll`.
+-  @since(version = 0.2.0)
+-  resource input-stream {
+-    /// Perform a non-blocking read from the stream.
+-    ///
+-    /// When the source of a `read` is binary data, the bytes from the source
+-    /// are returned verbatim. When the source of a `read` is known to the
+-    /// implementation to be text, bytes containing the UTF-8 encoding of the
+-    /// text are returned.
+-    ///
+-    /// This function returns a list of bytes containing the read data,
+-    /// when successful. The returned list will contain up to `len` bytes;
+-    /// it may return fewer than requested, but not more. The list is
+-    /// empty when no bytes are available for reading at this time. The
+-    /// pollable given by `subscribe` will be ready when more bytes are
+-    /// available.
+-    ///
+-    /// This function fails with a `stream-error` when the operation
+-    /// encounters an error, giving `last-operation-failed`, or when the
+-    /// stream is closed, giving `closed`.
+-    ///
+-    /// When the caller gives a `len` of 0, it represents a request to
+-    /// read 0 bytes. If the stream is still open, this call should
+-    /// succeed and return an empty list, or otherwise fail with `closed`.
+-    ///
+-    /// The `len` parameter is a `u64`, which could represent a list of u8 which
+-    /// is not possible to allocate in wasm32, or not desirable to allocate as
+-    /// as a return value by the callee. The callee may return a list of bytes
+-    /// less than `len` in size while more bytes are available for reading.
+-    @since(version = 0.2.0)
+-    read: func(len: u64) -> result<list<u8>, stream-error>;
+-    /// Read bytes from a stream, after blocking until at least one byte can
+-    /// be read. Except for blocking, behavior is identical to `read`.
+-    @since(version = 0.2.0)
+-    blocking-read: func(len: u64) -> result<list<u8>, stream-error>;
+-    /// Skip bytes from a stream. Returns number of bytes skipped.
+-    ///
+-    /// Behaves identical to `read`, except instead of returning a list
+-    /// of bytes, returns the number of bytes consumed from the stream.
+-    @since(version = 0.2.0)
+-    skip: func(len: u64) -> result<u64, stream-error>;
+-    /// Skip bytes from a stream, after blocking until at least one byte
+-    /// can be skipped. Except for blocking behavior, identical to `skip`.
+-    @since(version = 0.2.0)
+-    blocking-skip: func(len: u64) -> result<u64, stream-error>;
+-    /// Create a `pollable` which will resolve once either the specified stream
+-    /// has bytes available to read or the other end of the stream has been
+-    /// closed.
+-    /// The created `pollable` is a child resource of the `input-stream`.
+-    /// Implementations may trap if the `input-stream` is dropped before
+-    /// all derived `pollable`s created with this function are dropped.
+-    @since(version = 0.2.0)
+-    subscribe: func() -> pollable;
+-  }
+-
+-  /// An output bytestream.
+-  ///
+-  /// `output-stream`s are *non-blocking* to the extent practical on
+-  /// underlying platforms. Except where specified otherwise, I/O operations also
+-  /// always return promptly, after the number of bytes that can be written
+-  /// promptly, which could even be zero. To wait for the stream to be ready to
+-  /// accept data, the `subscribe` function to obtain a `pollable` which can be
+-  /// polled for using `wasi:io/poll`.
+-  ///
+-  /// Dropping an `output-stream` while there's still an active write in
+-  /// progress may result in the data being lost. Before dropping the stream,
+-  /// be sure to fully flush your writes.
+-  @since(version = 0.2.0)
+-  resource output-stream {
+-    /// Check readiness for writing. This function never blocks.
+-    ///
+-    /// Returns the number of bytes permitted for the next call to `write`,
+-    /// or an error. Calling `write` with more bytes than this function has
+-    /// permitted will trap.
+-    ///
+-    /// When this function returns 0 bytes, the `subscribe` pollable will
+-    /// become ready when this function will report at least 1 byte, or an
+-    /// error.
+-    @since(version = 0.2.0)
+-    check-write: func() -> result<u64, stream-error>;
+-    /// Perform a write. This function never blocks.
+-    ///
+-    /// When the destination of a `write` is binary data, the bytes from
+-    /// `contents` are written verbatim. When the destination of a `write` is
+-    /// known to the implementation to be text, the bytes of `contents` are
+-    /// transcoded from UTF-8 into the encoding of the destination and then
+-    /// written.
+-    ///
+-    /// Precondition: check-write gave permit of Ok(n) and contents has a
+-    /// length of less than or equal to n. Otherwise, this function will trap.
+-    ///
+-    /// returns Err(closed) without writing if the stream has closed since
+-    /// the last call to check-write provided a permit.
+-    @since(version = 0.2.0)
+-    write: func(contents: list<u8>) -> result<_, stream-error>;
+-    /// Perform a write of up to 4096 bytes, and then flush the stream. Block
+-    /// until all of these operations are complete, or an error occurs.
+-    ///
+-    /// Returns success when all of the contents written are successfully
+-    /// flushed to output. If an error occurs at any point before all
+-    /// contents are successfully flushed, that error is returned as soon as
+-    /// possible. If writing and flushing the complete contents causes the
+-    /// stream to become closed, this call should return success, and
+-    /// subsequent calls to check-write or other interfaces should return
+-    /// stream-error::closed.
+-    @since(version = 0.2.0)
+-    blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
+-    /// Request to flush buffered output. This function never blocks.
+-    ///
+-    /// This tells the output-stream that the caller intends any buffered
+-    /// output to be flushed. the output which is expected to be flushed
+-    /// is all that has been passed to `write` prior to this call.
+-    ///
+-    /// Upon calling this function, the `output-stream` will not accept any
+-    /// writes (`check-write` will return `ok(0)`) until the flush has
+-    /// completed. The `subscribe` pollable will become ready when the
+-    /// flush has completed and the stream can accept more writes.
+-    @since(version = 0.2.0)
+-    flush: func() -> result<_, stream-error>;
+-    /// Request to flush buffered output, and block until flush completes
+-    /// and stream is ready for writing again.
+-    @since(version = 0.2.0)
+-    blocking-flush: func() -> result<_, stream-error>;
+-    /// Create a `pollable` which will resolve once the output-stream
+-    /// is ready for more writing, or an error has occurred. When this
+-    /// pollable is ready, `check-write` will return `ok(n)` with n>0, or an
+-    /// error.
+-    ///
+-    /// If the stream is closed, this pollable is always ready immediately.
+-    ///
+-    /// The created `pollable` is a child resource of the `output-stream`.
+-    /// Implementations may trap if the `output-stream` is dropped before
+-    /// all derived `pollable`s created with this function are dropped.
+-    @since(version = 0.2.0)
+-    subscribe: func() -> pollable;
+-    /// Write zeroes to a stream.
+-    ///
+-    /// This should be used precisely like `write` with the exact same
+-    /// preconditions (must use check-write first), but instead of
+-    /// passing a list of bytes, you simply pass the number of zero-bytes
+-    /// that should be written.
+-    @since(version = 0.2.0)
+-    write-zeroes: func(len: u64) -> result<_, stream-error>;
+-    /// Perform a write of up to 4096 zeroes, and then flush the stream.
+-    /// Block until all of these operations are complete, or an error
+-    /// occurs.
+-    ///
+-    /// Functionality is equivelant to `blocking-write-and-flush` with
+-    /// contents given as a list of len containing only zeroes.
+-    @since(version = 0.2.0)
+-    blocking-write-zeroes-and-flush: func(len: u64) -> result<_, stream-error>;
+-    /// Read from one stream and write to another.
+-    ///
+-    /// The behavior of splice is equivalent to:
+-    /// 1. calling `check-write` on the `output-stream`
+-    /// 2. calling `read` on the `input-stream` with the smaller of the
+-    /// `check-write` permitted length and the `len` provided to `splice`
+-    /// 3. calling `write` on the `output-stream` with that read data.
+-    ///
+-    /// Any error reported by the call to `check-write`, `read`, or
+-    /// `write` ends the splice and reports that error.
+-    ///
+-    /// This function returns the number of bytes transferred; it may be less
+-    /// than `len`.
+-    @since(version = 0.2.0)
+-    splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
+-    /// Read from one stream and write to another, with blocking.
+-    ///
+-    /// This is similar to `splice`, except that it blocks until the
+-    /// `output-stream` is ready for writing, and the `input-stream`
+-    /// is ready for reading, before performing the `splice`.
+-    @since(version = 0.2.0)
+-    blocking-splice: func(src: borrow<input-stream>, len: u64) -> result<u64, stream-error>;
+-  }
+-}
+-
+-@since(version = 0.2.0)
+-world imports {
+-  @since(version = 0.2.0)
+-  import error;
+-  @since(version = 0.2.0)
+-  import poll;
+-  @since(version = 0.2.0)
+-  import streams;
+-}
+diff --git a/components/ingress/http-route/wit/world.wit b/components/ingress/http-route/wit/world.wit
+index a176d1b1..cc1a7432 100644
+--- a/components/ingress/http-route/wit/world.wit
++++ b/components/ingress/http-route/wit/world.wit
+@@ -4,7 +4,7 @@ world flow-http {
+   import wamn:flow-http-routing/routing@0.1.0;
+   import wamn:router-delivery/delivery@0.1.0;
+   import wasi:random/random@0.2.12;
+-  import wasi:http/types@0.2.12;
++  import wasi:http/types@0.3.0;
+ 
+-  export wasi:http/incoming-handler@0.2.12;
++  export wasi:http/handler@0.3.0;
+ }
+diff --git a/crates/platform/component-policy/src/lib.rs b/crates/platform/component-policy/src/lib.rs
+index a7d4fef9..2e84fa2e 100644
+--- a/crates/platform/component-policy/src/lib.rs
++++ b/crates/platform/component-policy/src/lib.rs
+@@ -125,7 +125,7 @@ pub struct CapabilityRow {
+ /// rows are pinned to the WASI-Virt revision and adapter digest of
+ /// `docs/architecture/native-alignment-ledger.md` row 5, and a bump there
+ /// without a matching edit here would silently refuse every std guest.
+-/// `capability_registry_wasi_rows_match_the_vendored_wit` in the conformance
++/// `capability_registry_wasi_rows_match_the_pinned_adapter` in the conformance
+ /// suite is what makes that fail at the gate instead.
+ pub const CAPABILITY_REGISTRY: [CapabilityRow; 8] = [
+     // Versions we author.
+diff --git a/deploy/platform/http-route-workload.example.yaml b/deploy/platform/http-route-workload.example.yaml
+index e417d14b..a9adbd5e 100644
+--- a/deploy/platform/http-route-workload.example.yaml
++++ b/deploy/platform/http-route-workload.example.yaml
+@@ -58,7 +58,8 @@ spec:
+       hostInterfaces:
+         - namespace: wasi
+           package: http
+-          interfaces: [incoming-handler]
++          version: "0.3.0"
++          interfaces: [handler]
+         - namespace: wamn
+           package: flow-http-routing
+           version: "0.1.0"
+diff --git a/docs/architecture/native-alignment-ledger.md b/docs/architecture/native-alignment-ledger.md
+index 422f1aed..45fc3972 100644
+--- a/docs/architecture/native-alignment-ledger.md
++++ b/docs/architecture/native-alignment-ledger.md
+@@ -21,7 +21,7 @@ The historical ledger below retains the reasons for the former 2.8 patches.
+ | 2 | Publish-time import allowlist — **as of §2a, the declared capability registry**: 8 rows of `{package, version, posture}` matched on exact package AND exact version (native: runtime non-satisfaction of ungranted caps) | Auditable tenant contract; refusal before distribution, not at wiring. Posture is declared rather than inferred from a namespace, so an unregistered import is refused by ABSENCE and interfaces carry name, shape and posture with no second classifier. | **Keep** — additive over native model, composes cleanly. The registry lives in `wamn-component-policy` as code, never a catalog row, so posture moves only through code review plus a ledger row. Design: `docs/architecture/2a-capability-registry.md`. |
+ | 3 | Wirings as gated tenant rows + hot pointer flip (native: lattice links / wadm manifests / CRDs) | Tenancy, minutes-scale user churn, gate + rollback + provenance. | **Keep (ruled).** Trigger to revisit: upstream ships a multi-tenant, per-link-authz link store. |
+ | 4 | Wasmtime's pooling **allocator is on**, while the router still constructs and drops a fresh store per invocation; wash-runtime's warm `InstancePool` dispatch remains unwired. | Fast allocator-backed fresh instances without guest state surviving a call. Allocator capacity and store reuse are separate controls. | **Keep the allocator; keep reuse off.** Admission rejects `poolSize > 0`, so every workload stays `InstancePolicy::Ephemeral`. The `.17.x` router/native-dispatch wiring remains open only if it preserves that fresh-store rule. Revisit warm reuse with explicit affinity/windowed state; `a5e7d5a` is already present for that future step. |
+-| 5 | Guest build boundary: native std + `wasm32-wasip2`, normalized before admission by pinned upstream WASI virtualization (the existing `no_std` guests remain until their owning slices migrate them) | The closed capability registry (row 2; this cross-reference said "the 4-element allowlist" until §2a replaced that allowlist with the registry — corrected under standing trigger 8) stays closed with **zero exemption machinery**. Linking std still adds 14 imports per guest, 10 of them `wasi:cli`; deterministic post-link composition removes that ambient CLI surface while preserving `wamn:postgres` and only the already-admitted `wasi:io`/`wasi:clocks` packages. | **Re-convergence proven — amended 2026-08-31.** `wamn-component-virtualizer` pins WASI-Virt `0.2.0` at `448f6df8f688cee5d6995e96b1ffc31f9bf00742` and adapter SHA-256 `28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632`; its fixed profile supplies an empty environment, denies stdio and exit, passes clocks, filters unused virtualization, and disables `wasm-opt`. Byte-identical repeated output and the SQLx component inventory proved the result. This is build normalization, **not an admission exemption**: the unchanged admission path receives ordinary component bytes whose direct imports satisfy row 2 plus their explicit `wamn:*` grants. **The capability-registry rows move with this pin (§2a).** The virtualizer REWRITES the WASI version admission sees — measured on `receiving`, the authored WIT says `0.2.12`, the raw build imports `0.2.9`, and the virtualized artifact imports `0.2.12` — so row 2's inherited `wasi:io`/`wasi:clocks`/`wasi:random` rows are pinned to the revision and adapter digest above, not to our WIT. Bumping either without moving those rows would silently refuse every std guest at admission; `capability_registry_wasi_rows_match_the_vendored_wit` makes that fail at the gate instead. |
++| 5 | Guest build boundary: native std + `wasm32-wasip2`, normalized before admission by pinned upstream WASI virtualization (the existing `no_std` guests remain until their owning slices migrate them) | The closed capability registry (row 2; this cross-reference said "the 4-element allowlist" until §2a replaced that allowlist with the registry — corrected under standing trigger 8) stays closed with **zero exemption machinery**. Linking std still adds 14 imports per guest, 10 of them `wasi:cli`; deterministic post-link composition removes that ambient CLI surface while preserving `wamn:postgres` and only the already-admitted `wasi:io`/`wasi:clocks` packages. | **Re-convergence proven — amended 2026-08-31.** `wamn-component-virtualizer` pins WASI-Virt `0.2.0` at `448f6df8f688cee5d6995e96b1ffc31f9bf00742` and adapter SHA-256 `28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632`; its fixed profile supplies an empty environment, denies stdio and exit, passes clocks, filters unused virtualization, and disables `wasm-opt`. Byte-identical repeated output and the SQLx component inventory proved the result. This is build normalization, **not an admission exemption**: the unchanged admission path receives ordinary component bytes whose direct imports satisfy row 2 plus their explicit `wamn:*` grants. **The capability-registry rows move with this pin (§2a).** The virtualizer REWRITES the WASI version admission sees — measured on `receiving`, the authored WIT says `0.2.12`, the raw build imports `0.2.9`, and the virtualized artifact imports `0.2.12` — so row 2's inherited `wasi:io`/`wasi:clocks`/`wasi:random` rows are pinned to the revision and adapter digest above, not to our WIT. Bumping either without moving those rows would silently refuse every std guest at admission; `capability_registry_wasi_rows_match_the_pinned_adapter` makes that fail at the gate instead. |
+ | 6 | Our `tools/build-components` instead of `wash build` | Palette publish integration (digest, admission). | **Watch.** Re-converge when `wash build` + OCI push covers admission hooks; not blocking. |
+ | 7 | Already aligned (no deviation): OCI distribution + digest pinning, `implements`/maps bindings for connection requirements, runtime-operator CRDs, HPA scaling, wasip2 + P3 + component-model-async, JetStream at-least-once ack-after-process. | — | Cited in exe-model; keep tracking upstream defaults each sync. |
+ | 8 | Per-environment `events.k8s.io` Role + RoleBinding for the runtime-operator. Native chart 2.9.0 still grants only core-group Events. | Lets the native `CrossEnvironmentSchedulingDenied` Warning Event publish alongside the authoritative `HostSelection=False` condition. | Temporary WAMN configuration. The [2026-09-09 distributed render](../perf/2026.09/wasmcloud-2-9-cutover/deployment-001/operator.json) confirms the gap, so the scoped `create,patch` overlay remains. The first Receiving run at `7798190c` records the native [Warning Event](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/cross-environment-event.json) and exact [RBAC receipt](../perf/2026.09/wasmcloud-2-9-cutover/live-receiving-001/journey/operator-events-rbac.receipt): `create,patch` allowed; all six other checked verbs denied. Remove the overlay only when a pinned chart supplies the required permission in every watched namespace. |
+@@ -46,6 +46,15 @@ The exact-digest case compares WAMN's accepted release selection with native dup
+ B retains its loading stop condition and the production manual lifecycle until that boundary is resolved.
+ This checkpoint does not change row 4 or permit warm reuse.
+ 
++The [P3 HTTP cutover](../perf/2026.09/p3-http-cutover/report.md) belongs to `wamn-0h0g.2.7.17`.
++Its HTTP shell exports `wasi:http/handler@0.3.0` and uses native P3 body streams.
++WAMN routing, authentication, and delivery imports remain synchronous.
++The shell authenticates before reading its body and applies the selected route's existing limits.
++P3 HTTP components retain fresh stores, and P3 service workloads remain refused.
++The tenant capability registry and virtualization pin remain unchanged.
++The owner permits P3 to proceed ahead of blocked B after B released the shared files.
++The report records the exact proof status and remaining acceptance work.
++
+ `tools/wasmcloud-release-check` requires clean released source and retains the upstream runtime suite and isolated Git template fixtures.
+ 
+ The [combined Cargo check](../perf/2026.09/wasmcloud-2-9-cutover/build-003/exit-code.txt) passed with `--workspace --all-targets --locked`.
+diff --git a/docs/architecture/wamn_native_alignment_plan.md b/docs/architecture/wamn_native_alignment_plan.md
+index 83b73a5d..9c74be97 100644
+--- a/docs/architecture/wamn_native_alignment_plan.md
++++ b/docs/architecture/wamn_native_alignment_plan.md
+@@ -125,7 +125,7 @@ Select either native adoption or the scoped fallback, with measured evidence, un
+ 
+ **Observation:** the reviewed HTTP shell still exports P2 `incoming-handler` and calls synchronous WAMN routing/auth/delivery imports. Runtime support for P3 does not convert those interfaces. [S12]
+ 
+-The P3 cutover owner is `wamn-0h0g.2.7.17`, under the cutover follow-ons. The successful probe remains `wamn-0h0g.17.26`. Sequence P3 after B because both change the HTTP shell and dispatch path. Convert the actual HTTP shell, request/response handling, WIT bindings, manifests, publication tooling and owning tests. Preserve request limits, origin-form/Host authority handling, authentication, typed responses and fresh stores.
++The P3 cutover owner is `wamn-0h0g.2.7.17`, under the cutover follow-ons. The successful probe remains `wamn-0h0g.17.26`. Owner ruling, 2026-09-10: proceed with P3 ahead of blocked B after B released the shared files. Keep the shared HTTP shell and dispatch edits serialized. Convert the actual HTTP shell, request/response handling, WIT bindings, manifests, publication tooling and owning tests. Preserve request limits, origin-form/Host authority handling, authentication, typed responses and fresh stores.
+ 
+ **Acceptance:** the same P3 artifact runs through in-process and deployed proofs, including valid requests, refusals, cancellation and bounded bodies. Recheck actual post-build/post-virtualization imports; move any necessary pin, digest and exact capability-registry rows together. Do not broaden admission with a WASI wildcard.
+ 
+@@ -168,7 +168,7 @@ B2 explicitly proposes changing the existing fresh-store adoption rule; the othe
+ | **Bounded probe** | Place F with the data-access owner after shared-file availability is confirmed; start with the public transaction/session checkpoint. No dependency on F for B/C or application delivery. |
+ | **After B and correctness proofs** | B2 lands warm reuse, resource/admission rules, execution-model and row 4 together. The throughput comparison follows. Stateful affinity remains separate. |
+ 
+-The tracker owns status and dependencies under epic `wamn-0ct2`. A is `wamn-0ct2.1`, B is `.2`, B2 is `.3`, C is `.4`, and F is `.5`. D references `wamn-ctc8.13` and `wamn-ctc8.16`. The closed P3 probe is `wamn-0h0g.17.26`. The P3 implementation owner is `wamn-0h0g.2.7.17`, with B as its prerequisite.
++The tracker owns status and dependencies under epic `wamn-0ct2`. A is `wamn-0ct2.1`, B is `.2`, B2 is `.3`, C is `.4`, and F is `.5`. D references `wamn-ctc8.13` and `wamn-ctc8.16`. The closed P3 probe is `wamn-0h0g.17.26`. The P3 implementation owner is `wamn-0h0g.2.7.17`. The owner removed its ordering dependency on blocked B on 2026-09-10.
+ 
+ Use separate worktrees and serialize A, B and C landings. The shared driver is `crates/execution/host/src/router_driver.rs`. Coordinate its edits with `services/host`, `services/executor`, `crates/platform/runtime`, affected manifests and shared proofs. Identity and TUI owners keep their current files and stay outside each active substitution boundary. Each owner rebases after the boundary lands. F waits for shared-file availability.
+ 
+diff --git a/docs/exe-model.md b/docs/exe-model.md
+index bcf32db0..15471459 100644
+--- a/docs/exe-model.md
++++ b/docs/exe-model.md
+@@ -83,7 +83,9 @@ execution trapped on exactly that). The router dispatches on whichever handler
+ interface a node exports and drives both through `call_async`; admission
+ admits the async lift on `async-handler` alone. Named for what it is, not
+ versioned: nothing outside this tree consumes the node ABI. blob-put is the
+-first consumer; p3 HTTP, streaming capabilities and MQTT are the next.
++first consumer; streaming capabilities and MQTT remain future consumers. The
++P3 HTTP shell exports `wasi:http/handler@0.3.0` separately from this node ABI.
++Its WAMN routing, authentication, and delivery imports remain synchronous.
+ 
+ Noted as future exploration, not planned: a **router fan-out** that delivers
+ the envelope's items one at a time and reassembles after the last node (its
+diff --git a/docs/operations/build-and-test.md b/docs/operations/build-and-test.md
+index 2a243211..1b846092 100644
+--- a/docs/operations/build-and-test.md
++++ b/docs/operations/build-and-test.md
+@@ -200,6 +200,52 @@ Retain the source and artifact hashes, command, counts, and complete output.
+ A passing checkpoint does not close B or prove the application node path.
+ Do not change the production lifecycle while a required public-API boundary remains blocked.
+ 
++### `[P3-HTTP]` production HTTP cutover
++
++`wamn-0h0g.2.7.17` owns the shell, manifests, publication, and matching proof drivers.
++Its [report](../perf/2026.09/p3-http-cutover/report.md) records executed results.
++P3 HTTP components use fresh stores.
++P3 service workloads remain refused.
++WAMN routing, authentication, and delivery imports remain synchronous.
++
++Build and inspect the actual shell in the isolated worktree:
++
++```bash
++cargo build --manifest-path components/Cargo.toml -p http-route \
++  --target wasm32-wasip2 --locked --offline
++wasm-tools validate --features all components/target/wasm32-wasip2/debug/http_route.wasm
++wasm-tools component wit components/target/wasm32-wasip2/debug/http_route.wasm
++cargo test --manifest-path components/Cargo.toml -p http-route \
++  --test adversarial --locked --offline -- --nocapture --test-threads=1
++bash tools/journey-workload-proof
++```
++
++Require the exact `wasi:http/handler@0.3.0` export and retained WAMN imports.
++The platform shell is not a tenant component and does not pass through guest virtualization.
++Keep the tenant registry closed and inspect normalized application imports separately.
++Require all 21 adapter tests, with no ignored cases.
++The authentication-order mutant must fail the named refusal test.
++Restore source bytes and timestamps, remove mutant build outputs, and require the suite to pass again.
++
++Commit the source before the deployed proof and place evidence outside the active worktree.
++Run the existing Receiving correctness journey after its dry run:
++
++```bash
++tools/receiving-cluster-journey-run --receiving-correctness \
++  --evidence-dir /absolute/repository/path/to/new-p3-dry-run
++tools/receiving-cluster-journey-run --apply --receiving-correctness \
++  --evidence-dir /absolute/repository/path/to/new-p3-journey
++```
++
++The journey uses one HTTP artifact for its in-process route proof and OCI publication.
++Require the deployed workload to select the digest from that publication receipt.
++The in-process proof includes eight P3 protocol cases after its existing authenticated route checks.
++These cover origin-form Host handling, stalled-body refusals, exact body limits, transport failure, cancellation cleanup, and a subsequent valid request.
++A failed body after valid JSON must return `body-read-failed` and must not deliver that prefix.
++The cancellation case requires charged guest memory before cancellation and zero retained memory afterward.
++The journey uses its private scratch cluster and must complete resource cleanup.
++This correctness mode runs no throughput benchmark.
++
+ ### Rebuilt host process lifecycle
+ 
+ The ignored host test starts an owned NATS process on a temporary loopback port.
+diff --git a/services/ctl/src/dev/activation.rs b/services/ctl/src/dev/activation.rs
+index 52600e96..40a98f6d 100644
+--- a/services/ctl/src/dev/activation.rs
++++ b/services/ctl/src/dev/activation.rs
+@@ -738,8 +738,8 @@ fn flow_http_request(
+                     v2::WitInterface {
+                         namespace: "wasi".to_owned(),
+                         package: "http".to_owned(),
+-                        version: String::new(),
+-                        interfaces: vec!["incoming-handler".to_owned()],
++                        version: "0.3.0".to_owned(),
++                        interfaces: vec!["handler".to_owned()],
+                         config: HashMap::from([(
+                             "host".to_owned(),
+                             request.config.route_host().to_owned(),
+@@ -1762,7 +1762,8 @@ mod tests {
+                 world.host_interfaces.iter().find(|interface| {
+                     interface.namespace == "wasi"
+                         && interface.package == "http"
+-                        && interface.interfaces == ["incoming-handler"]
++                        && interface.version == "0.3.0"
++                        && interface.interfaces == ["handler"]
+                 })
+             })
+             .expect("flow-http declares the native incoming HTTP interface");
+diff --git a/tests/conformance/Cargo.toml b/tests/conformance/Cargo.toml
+index 59dd0106..a1d9654e 100644
+--- a/tests/conformance/Cargo.toml
++++ b/tests/conformance/Cargo.toml
+@@ -36,6 +36,7 @@ sqlx = { version = "=0.9.0", default-features = false, features = ["chrono", "js
+ uuid = { workspace = true }
+ wamn-execution-host = { workspace = true }
+ wamn-run-state = { workspace = true, features = ["test-util"] }
++wasi-virt = { workspace = true }
+ wat = "=1.252.0"
+ 
+ [lints]
+diff --git a/tests/conformance/runtime-inventory.json b/tests/conformance/runtime-inventory.json
+index 18b3d8ad..dec2162c 100644
+--- a/tests/conformance/runtime-inventory.json
++++ b/tests/conformance/runtime-inventory.json
+@@ -49,7 +49,7 @@
+     {
+       "path": "deploy/platform/http-route-workload.example.yaml",
+       "deployment_state": "template",
+-      "abi": "p2-components"
++      "abi": "p3-components"
+     },
+     {
+       "path": "deploy/platform/materializer.example.yaml",
+diff --git a/tests/conformance/src/runtime_inventory.rs b/tests/conformance/src/runtime_inventory.rs
+index f4b2500a..a16805d1 100644
+--- a/tests/conformance/src/runtime_inventory.rs
++++ b/tests/conformance/src/runtime_inventory.rs
+@@ -138,7 +138,7 @@ const STRUCK_KEY_SITES: [&str; 3] = [
+ #[derive(Clone, Debug, Deserialize)]
+ #[serde(rename_all = "kebab-case")]
+ enum WorkloadAbi {
+-    P2Components,
++    P3Components,
+     P2CliService,
+     P3Service,
+ }
+@@ -784,9 +784,9 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
+ 
+     let has_workload_service = source.lines().any(|line| line == "      service:");
+     match abi {
+-        WorkloadAbi::P2Components if has_workload_service || !has_components => {
++        WorkloadAbi::P3Components if has_workload_service || !has_components => {
+             return Err(format!(
+-                "{path}: recorded as P2 components but its components/service shape disagrees"
++                "{path}: recorded as P3 components but its components/service shape disagrees"
+             ));
+         }
+         WorkloadAbi::P2CliService if !has_workload_service => {
+@@ -799,7 +799,7 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
+                 "{path}: P3 service workload deployment is excluded"
+             ));
+         }
+-        WorkloadAbi::P2Components | WorkloadAbi::P2CliService => {}
++        WorkloadAbi::P3Components | WorkloadAbi::P2CliService => {}
+     }
+     Ok(())
+ }
+@@ -1061,7 +1061,7 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
+                     world_path.display()
+                 );
+             }
+-            (WorkloadAbi::P2Components, None) => {}
++            (WorkloadAbi::P3Components, None) => {}
+             _ => panic!(
+                 "{} ABI classification has missing or unexpected evidence",
+                 workload.path
+@@ -1138,7 +1138,7 @@ fn host_component_plugins_mutation_is_rejected() {
+ fn nonzero_pool_size_mutation_is_rejected() {
+     let mutant = "components:\n  - name: mutant\n    poolSize: 1\n    maxInvocations: 10\n";
+     let error =
+-        validate_workload_policy("pool-size-mutant.yaml", mutant, &WorkloadAbi::P2Components)
++        validate_workload_policy("pool-size-mutant.yaml", mutant, &WorkloadAbi::P3Components)
+             .expect_err("mutation must fail closed");
+     assert!(error.contains("poolSize 1 enables reusable component stores"));
+ }
+@@ -1146,7 +1146,7 @@ fn nonzero_pool_size_mutation_is_rejected() {
+ #[test]
+ fn nonempty_ip_name_lookup_default_mutation_is_rejected() {
+     let mutant = "      components:\n        - name: mutant\n          localResources:\n            allowedIpNameLookups: [\"example.com\"]\n";
+-    let error = validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P2Components)
++    let error = validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P3Components)
+         .expect_err("nonempty allowedIpNameLookups default must fail closed");
+     assert!(error.contains("allowedIpNameLookups must default to []"));
+ }
+@@ -1174,7 +1174,7 @@ fn missing_misspelled_or_duplicate_ip_name_lookup_defaults_are_rejected() {
+ 
+     for (name, mutant) in mutants {
+         let error =
+-            validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P2Components)
++            validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P3Components)
+                 .expect_err("invalid allowedIpNameLookups structure must fail closed");
+         assert!(
+             error.contains("must contain exactly one allowedIpNameLookups field"),
+@@ -1201,7 +1201,7 @@ fn component_environment_pg_url_suffix_mutation_is_rejected() {
+     let error = validate_workload_policy(
+         "component-pg-url-key-mutant.yaml",
+         &mutant,
+-        &WorkloadAbi::P2Components,
++        &WorkloadAbi::P3Components,
+     )
+     .expect_err("a component environment *_PG_URL key must fail closed");
+     assert!(
+@@ -1216,7 +1216,7 @@ fn component_environment_database_url_mutation_is_rejected() {
+     let error = validate_workload_policy(
+         "component-database-url-key-mutant.yaml",
+         &mutant,
+-        &WorkloadAbi::P2Components,
++        &WorkloadAbi::P3Components,
+     )
+     .expect_err("an empty component environment DATABASE_URL placeholder must fail closed");
+     assert!(
+@@ -1238,7 +1238,7 @@ fn component_environment_postgres_url_value_mutation_is_rejected() {
+         let error = validate_workload_policy(
+             "component-postgres-url-value-mutant.yaml",
+             &mutant,
+-            &WorkloadAbi::P2Components,
++            &WorkloadAbi::P3Components,
+         )
+         .expect_err("a postgres URL under a neutral component environment key must fail closed");
+         assert!(
+@@ -1273,7 +1273,7 @@ fn database_url_names_and_values_outside_component_environment_are_allowed() {
+     validate_workload_policy(
+         "component-environment-boundary-control.yaml",
+         control,
+-        &WorkloadAbi::P2Components,
++        &WorkloadAbi::P3Components,
+     )
+     .expect("host environment and arbitrary Secret fields are outside this guard");
+ }
+diff --git a/tests/conformance/tests/capability_registry.rs b/tests/conformance/tests/capability_registry.rs
+index 7d0abf5d..f944f1e8 100644
+--- a/tests/conformance/tests/capability_registry.rs
++++ b/tests/conformance/tests/capability_registry.rs
+@@ -1,31 +1,17 @@
+-//! The capability registry's inherited-version rows, bound to the tree.
++//! The capability registry's inherited versions match the pinned WASI adapter.
+ //!
+-//! §2a splits the registry into two provenance classes. The `wamn:*` rows and
+-//! `wasi:logging` carry versions WE author, so they move only when we move
+-//! them. The remaining `wasi:*` rows do not: measured on `receiving`, the
+-//! authored WIT says `0.2.12`, the raw build imports `0.2.9`, and the
+-//! virtualized artifact that admission actually sees imports `0.2.12` — the
+-//! virtualizer rewrites the version.
+-//!
+-//! That makes those rows fragile in a way a reader cannot see from the table
+-//! alone: bumping the WASI-Virt revision or adapter digest in
+-//! `docs/architecture/native-alignment-ledger.md` row 5 changes the version
+-//! admission compares against, and without a matching edit to the registry
+-//! **every std guest is silently refused at admission**.
+-//!
+-//! This suite is what turns that into a gate failure instead. It binds the
+-//! inherited rows to the WASI vocabulary vendored in the tree — the same WIT
+-//! guests bind against — so the registry and the tree cannot drift apart
+-//! quietly. It reads source, never build output, which is this tier's
+-//! convention and means it can never self-skip.
++//! Tenant admission sees virtualized component imports. The HTTP shell's
++//! vendored WIT describes a separate platform workload and cannot establish
++//! those versions. This gate generates adapter bytes through the pinned
++//! WASI-Virt public API and inspects their interfaces on the production engine.
++//! No guest build or external artifact is required.
+ 
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::path::{Path, PathBuf};
+ 
+-use wamn_component_policy::{CAPABILITY_REGISTRY, Posture};
+-
+-/// Rows whose version the virtualizer/toolchain authors, not us.
+-const INHERITED_PACKAGES: [&str; 3] = ["wasi:io", "wasi:clocks", "wasi:random"];
++use wamn_component_policy::{CAPABILITY_REGISTRY, Posture, import_pkg, import_version};
++use wash_runtime::wasmtime::component::Component;
++use wasi_virt::WasiVirt;
+ 
+ fn repository_root() -> PathBuf {
+     std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+@@ -77,34 +63,84 @@ fn vendored_wasi_versions(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
+     found
+ }
+ 
+-/// The load-bearing assertion: an inherited row must equal the version the tree
+-/// vendors for that package. A virtualizer bump that moves the vendored WIT
+-/// without moving the registry fails HERE, at the gate — not at admission,
+-/// where it would present as every std guest suddenly being unadmittable.
++fn assert_registry_version(package: &str, interfaces: &[String]) {
++    let row = CAPABILITY_REGISTRY
++        .iter()
++        .find(|row| row.package == package)
++        .unwrap_or_else(|| panic!("{package} must carry a registry row"));
++    let versions: BTreeSet<&str> = interfaces
++        .iter()
++        .filter(|name| import_pkg(name) == package)
++        .map(|name| {
++            import_version(name)
++                .unwrap_or_else(|| panic!("pinned adapter interface {name} has no version"))
++        })
++        .collect();
++    assert_eq!(
++        versions,
++        BTreeSet::from([row.version]),
++        "{package} registry version differs from the pinned adapter interfaces {interfaces:?}"
++    );
++}
++
+ #[test]
+-fn capability_registry_wasi_rows_match_the_vendored_wit() {
+-    let vendored = vendored_wasi_versions(&repository_root());
++fn capability_registry_wasi_rows_match_the_pinned_adapter() {
++    let mut virtualizer = WasiVirt::new();
++    // The production tool's fixed profile, before component-specific filtering.
++    virtualizer.clocks(true);
++    virtualizer.env().deny_all();
++    virtualizer.exit(false);
++    virtualizer.stdio().deny();
++    virtualizer.wasm_opt(false);
++
++    let adapter = virtualizer
++        .finish()
++        .expect("generate the pinned WASI adapter");
++    let engine = wamn_runtime::build_engine(&[]).expect("build the production engine");
++    let component =
++        Component::new(engine.inner(), &adapter.adapter).expect("compile the pinned WASI adapter");
++    let imports: Vec<String> = component
++        .component_type()
++        .imports(component.engine())
++        .map(|(name, _)| name.to_owned())
++        .collect();
++    println!(
++        "production-profile-adapter={} imports={imports:?}",
++        wamn_runtime::component_admission::component_digest(&adapter.adapter)
++    );
++    for package in ["wasi:io", "wasi:clocks"] {
++        assert_registry_version(package, &imports);
++    }
+     assert!(
+-        !vendored.is_empty(),
+-        "no vendored wasi WIT found; the walk is broken, so this suite proves nothing"
++        imports.iter().all(|name| import_pkg(name) != "wasi:random"),
++        "the production adapter profile unexpectedly imports random: {imports:?}"
+     );
+ 
+-    for package in INHERITED_PACKAGES {
+-        let row = CAPABILITY_REGISTRY
+-            .iter()
+-            .find(|row| row.package == package)
+-            .unwrap_or_else(|| panic!("{package} must carry a registry row"));
+-        let versions = vendored
+-            .get(package)
+-            .unwrap_or_else(|| panic!("{package} is registered but vendored nowhere in the tree"));
+-        assert!(
+-            versions.contains(row.version),
+-            "registry has {package}@{} but the tree vendors {versions:?} — a virtualizer or \
+-             toolchain bump moved the WASI vocabulary without moving the registry, and every \
+-             std guest would refuse at admission",
+-            row.version
+-        );
+-    }
++    // Random is offered by the host but absent from current tenant imports.
++    // Inspect the adapter's real refusal exports to bind that row's vocabulary;
++    // this test-only option does not change the production virtualization policy.
++    virtualizer.random(false);
++    let adapter = virtualizer
++        .finish()
++        .expect("generate the pinned adapter with random refusal exports");
++    let component = Component::new(engine.inner(), &adapter.adapter)
++        .expect("compile the pinned adapter with random refusal exports");
++    let exports: Vec<String> = component
++        .component_type()
++        .exports(component.engine())
++        .map(|(name, _)| name.to_owned())
++        .filter(|name| import_pkg(name) == "wasi:random")
++        .collect();
++    println!(
++        "random-refusal-adapter={} exports={exports:?}",
++        wamn_runtime::component_admission::component_digest(&adapter.adapter)
++    );
++    assert_eq!(
++        exports.len(),
++        3,
++        "the adapter must expose all random interfaces"
++    );
++    assert_registry_version("wasi:random", &exports);
+ }
+ 
+ /// Every WASI package the tree vendors and admission can reach must be either
+@@ -119,6 +155,10 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
+     const DELIBERATELY_ABSENT: [&str; 2] = ["wasi:sockets", "wasi:http"];
+ 
+     let vendored = vendored_wasi_versions(&repository_root());
++    assert!(
++        !vendored.is_empty(),
++        "no vendored wasi WIT found; the walk is broken, so this suite proves nothing"
++    );
+     let registered: BTreeSet<&str> = CAPABILITY_REGISTRY.iter().map(|row| row.package).collect();
+ 
+     for package in vendored.keys() {
+diff --git a/tests/integration/src/route_authentication_live.rs b/tests/integration/src/route_authentication_live.rs
+index 573ff33b..7e502553 100644
+--- a/tests/integration/src/route_authentication_live.rs
++++ b/tests/integration/src/route_authentication_live.rs
+@@ -2,6 +2,7 @@
+ //! fresh disposable PostgreSQL 18 server.
+ 
+ mod fresh_only;
++mod p3_shell;
+ mod session_client;
+ 
+ use std::collections::{BTreeSet, HashMap};
+@@ -81,9 +82,8 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
+ use wash_runtime::types::LocalResources;
+ use wash_runtime::wasmtime::Store;
+ use wash_runtime::wasmtime::component::{Component, Linker};
+-use wasmtime_wasi_http::p2::WasiHttpView as _;
+-use wasmtime_wasi_http::p2::bindings::Proxy;
+-use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
++use wasmtime_wasi_http::p3::bindings::Service;
++use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
+ 
+ use wamn_ctl::dev::environment::{
+     DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT,
+@@ -3115,11 +3115,37 @@ async fn invoke_journey_route(
+     traceparent: &str,
+     body: Bytes,
+ ) -> anyhow::Result<hyper::Response<Bytes>> {
++    let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
++    let mut request = Request::builder()
++        .method(Method::POST)
++        .uri(format!("http://{route_host}{path}"))
++        .header("content-type", "application/json")
++        .header("traceparent", traceparent);
++    if let Some(bearer) = bearer {
++        request = request.header("authorization", format!("Bearer {bearer}"));
++    }
++    let request = request
++        .body(body)
++        .context("build the Receiving HTTP request")?;
++    invoke_journey_request(engine, flow_http, routing, bridge, request).await
++}
++
++async fn invoke_journey_request<B>(
++    engine: &wash_runtime::engine::Engine,
++    flow_http: &Component,
++    routing: Arc<FlowHttpRouting>,
++    bridge: Arc<RouterDeliveryBridge>,
++    request: Request<B>,
++) -> anyhow::Result<hyper::Response<Bytes>>
++where
++    B: hyper::body::Body<Data = Bytes> + Send + 'static,
++    B::Error: Into<ErrorCode>,
++{
+     let raw = engine.inner();
+     let mut linker = Linker::new(raw);
+     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+         .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
+-    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
++    wasmtime_wasi_http::p3::add_to_linker(&mut linker)
+         .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
+     let loopback = Arc::new(std::sync::Mutex::new(
+         wash_runtime::sockets::loopback::Network::default(),
+@@ -3164,65 +3190,68 @@ async fn invoke_journey_route(
+     wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
+     store.set_epoch_deadline(u64::MAX / 2);
+     let compiled = workload.component().clone();
+-    let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
++    let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
+         .await
+         .map_err(|error| anyhow::anyhow!("instantiate shipped flow-http: {error}"))?;
+ 
+-    let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
+-    let mut request = Request::builder()
+-        .method(Method::POST)
+-        .uri(format!("http://{route_host}{path}"))
+-        .header("content-type", "application/json")
+-        .header("traceparent", traceparent);
+-    if let Some(bearer) = bearer {
+-        request = request.header("authorization", format!("Bearer {bearer}"));
+-    }
+-    let request = request
+-        .body(body)
+-        .context("build the Receiving HTTP request")?;
+-    let incoming = store
+-        .data_mut()
+-        .http()
+-        .new_incoming_request(Scheme::Http, request)
+-        .map_err(|error| anyhow::anyhow!("lower the Receiving HTTP request: {error}"))?;
+-    let (sender, receiver) = tokio::sync::oneshot::channel();
+-    let out = store
+-        .data_mut()
+-        .http()
+-        .new_response_outparam(sender)
+-        .map_err(|error| anyhow::anyhow!("allocate the Receiving response outparam: {error}"))?;
+-    let guest_memory = Arc::clone(engine.guest_memory());
+-    let call = wasmtime_wasi::runtime::spawn(async move {
+-        proxy
+-            .wasi_http_incoming_handler()
+-            .call_handle(&mut store, incoming, out)
+-            .await
+-            .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?;
+-        let shell_bytes = store.data().memory_limiter.charged();
+-        anyhow::ensure!(
+-            guest_memory.in_use() == shell_bytes,
+-            "Receiving invocation retained memory outside its flow-http store"
+-        );
+-        Ok::<_, anyhow::Error>(JourneyGuestMemory {
+-            shell_bytes,
+-            peak_bytes: guest_memory.high_water(),
++    let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(request);
++    // Keep the fresh store driving P3 streams until the response body is collected.
++    let response = store
++        .run_concurrent(async |accessor| {
++            let handle = async {
++                let response = service
++                    .handle(accessor, request)
++                    .await
++                    .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
++                    .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
++                let (finish_tx, finish_rx) =
++                    tokio::sync::oneshot::channel::<Result<(), ErrorCode>>();
++                let response = accessor
++                    .with(|store| {
++                        response.into_http(store, async move {
++                            finish_rx
++                                .await
++                                .unwrap_or(Err(ErrorCode::ConnectionTerminated))
++                        })
++                    })
++                    .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
++                let (parts, body) = response.into_parts();
++                let body = body.collect().await;
++                let _ = finish_tx.send(body.as_ref().map(|_| ()).map_err(Clone::clone));
++                let body =
++                    body.map_err(|error| anyhow::anyhow!("collect flow-http response: {error:?}"))?;
++                Ok::<_, anyhow::Error>(hyper::Response::from_parts(parts, body.to_bytes()))
++            };
++            let io = async {
++                // An early typed refusal may abandon its request body.
++                if let Err(error) = request_io.await {
++                    tracing::debug!(
++                        ?error,
++                        "flow-http request body processing ended with an error"
++                    );
++                }
++                Ok::<_, anyhow::Error>(())
++            };
++            let (response, ()) = tokio::try_join!(handle, io)?;
++            Ok::<_, anyhow::Error>(response)
+         })
+-    });
+-    let response = receiver
+         .await
+-        .context("flow-http did not set its Receiving response")?
+-        .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
+-    let (parts, body) = response.into_parts();
+-    let body = body
+-        .collect()
+-        .await
+-        .context("collect the Receiving HTTP response")?;
+-    let memory = call.await.context("join flow-http")?;
++        .map_err(|error| anyhow::anyhow!("drive flow-http P3 request: {error}"))??;
++    let shell_bytes = store.data().memory_limiter.charged();
++    anyhow::ensure!(
++        engine.guest_memory().in_use() == shell_bytes,
++        "Receiving invocation retained memory outside its flow-http store"
++    );
++    let memory = JourneyGuestMemory {
++        shell_bytes,
++        peak_bytes: engine.guest_memory().high_water(),
++    };
++    drop(store);
+     anyhow::ensure!(
+         engine.guest_memory().in_use() == 0,
+         "Receiving invocation retained guest memory after its stores dropped"
+     );
+-    let mut response = hyper::Response::from_parts(parts, body.to_bytes());
++    let mut response = response;
+     response.extensions_mut().insert(memory);
+     Ok(response)
+ }
+@@ -4165,6 +4194,16 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
+         String::from_utf8_lossy(oversized.body())
+     );
+ 
++    p3_shell::prove(
++        &engine,
++        &flow_http,
++        Arc::clone(&routing),
++        Arc::clone(&bridge),
++        &inputs.route_host,
++        &route.token,
++    )
++    .await?;
++
+     let spans = traces.spans();
+     for (trace_id, wiring_id, operation, package_id) in expected_direct_traces {
+         let component_digest = component_digests
+diff --git a/tests/integration/src/router_tap_live.rs b/tests/integration/src/router_tap_live.rs
+index 31ca3cd4..d3736de3 100644
+--- a/tests/integration/src/router_tap_live.rs
++++ b/tests/integration/src/router_tap_live.rs
+@@ -35,9 +35,8 @@ mod tests {
+     use wash_runtime::types::LocalResources;
+     use wash_runtime::wasmtime::Store;
+     use wash_runtime::wasmtime::component::{Component, Linker};
+-    use wasmtime_wasi_http::p2::WasiHttpView as _;
+-    use wasmtime_wasi_http::p2::bindings::Proxy;
+-    use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
++    use wasmtime_wasi_http::p3::bindings::Service;
++    use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
+ 
+     use crate::trusted_http_route::{
+         self, ATTACHMENT_ID, ENVIRONMENT, PROJECT, ROUTE_AUTHORITY, ROUTE_PATH, RouteOptions,
+@@ -111,7 +110,7 @@ mod tests {
+         let mut linker = Linker::new(raw);
+         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+             .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
+-        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
++        wasmtime_wasi_http::p3::add_to_linker(&mut linker)
+             .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
+         let loopback = Arc::new(std::sync::Mutex::new(
+             wash_runtime::sockets::loopback::Network::default(),
+@@ -156,7 +155,7 @@ mod tests {
+         wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
+         store.set_epoch_deadline(u64::MAX / 2);
+         let compiled = workload.component().clone();
+-        let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
++        let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
+             .await
+             .map_err(|error| anyhow::anyhow!("instantiate the shipped flow-http guest: {error}"))?;
+ 
+@@ -167,32 +166,51 @@ mod tests {
+             .header("content-type", "application/json")
+             .body(body)
+             .context("build the HTTP request")?;
+-        let incoming = store
+-            .data_mut()
+-            .http()
+-            .new_incoming_request(Scheme::Http, request)
+-            .map_err(|error| anyhow::anyhow!("lower the incoming request: {error}"))?;
+-        let (sender, receiver) = tokio::sync::oneshot::channel();
+-        let out = store
+-            .data_mut()
+-            .http()
+-            .new_response_outparam(sender)
+-            .map_err(|error| anyhow::anyhow!("allocate the response outparam: {error}"))?;
+-        let call = wasmtime_wasi::runtime::spawn(async move {
+-            proxy
+-                .wasi_http_incoming_handler()
+-                .call_handle(&mut store, incoming, out)
+-                .await
+-                .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))
+-        });
+-        let response = receiver
++        let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(request);
++        // Keep the fresh store driving P3 streams until the response body is collected.
++        let response = store
++            .run_concurrent(async |accessor| {
++                let handle = async {
++                    let response = service
++                        .handle(accessor, request)
++                        .await
++                        .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
++                        .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
++                    let (finish_tx, finish_rx) =
++                        tokio::sync::oneshot::channel::<Result<(), ErrorCode>>();
++                    let response = accessor
++                        .with(|store| {
++                            response.into_http(store, async move {
++                                finish_rx
++                                    .await
++                                    .unwrap_or(Err(ErrorCode::ConnectionTerminated))
++                            })
++                        })
++                        .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
++                    let (parts, body) = response.into_parts();
++                    let body = body.collect().await;
++                    let _ = finish_tx.send(body.as_ref().map(|_| ()).map_err(Clone::clone));
++                    let body = body.map_err(|error| {
++                        anyhow::anyhow!("collect flow-http response: {error:?}")
++                    })?;
++                    Ok::<_, anyhow::Error>(hyper::Response::from_parts(parts, body.to_bytes()))
++                };
++                let io = async {
++                    // An early typed refusal may abandon its request body.
++                    if let Err(error) = request_io.await {
++                        tracing::debug!(
++                            ?error,
++                            "flow-http request body processing ended with an error"
++                        );
++                    }
++                    Ok::<_, anyhow::Error>(())
++                };
++                let (response, ()) = tokio::try_join!(handle, io)?;
++                Ok::<_, anyhow::Error>(response)
++            })
+             .await
+-            .context("flow-http did not set its response")?
+-            .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
+-        let (parts, body) = response.into_parts();
+-        let body = body.collect().await.context("collect flow-http response")?;
+-        call.await.context("join flow-http")?;
+-        Ok(hyper::Response::from_parts(parts, body.to_bytes()))
++            .map_err(|error| anyhow::anyhow!("drive flow-http P3 request: {error}"))??;
++        Ok(response)
+     }
+ 
+     async fn read_tap_records(
+diff --git a/tests/integration/src/virtualized_std_guest.rs b/tests/integration/src/virtualized_std_guest.rs
+index 396d18c1..6b5c3a8a 100644
+--- a/tests/integration/src/virtualized_std_guest.rs
++++ b/tests/integration/src/virtualized_std_guest.rs
+@@ -32,9 +32,8 @@ mod tests {
+     use wash_runtime::wasmtime::Store;
+     use wash_runtime::wasmtime::component::types::{ComponentInstance, ComponentItem, Type};
+     use wash_runtime::wasmtime::component::{Component, Linker};
+-    use wasmtime_wasi_http::p2::WasiHttpView as _;
+-    use wasmtime_wasi_http::p2::bindings::Proxy;
+-    use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
++    use wasmtime_wasi_http::p3::bindings::Service;
++    use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
+ 
+     use crate::trusted_http_route::{
+         self, ENVIRONMENT, PACKAGE, PROJECT, ROUTE_AUTHORITY, ROUTE_PATH, RouteOptions, TENANT,
+@@ -329,7 +328,7 @@ mod tests {
+         let mut linker = Linker::new(raw);
+         wasmtime_wasi::p2::add_to_linker_async(&mut linker)
+             .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
+-        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
++        wasmtime_wasi_http::p3::add_to_linker(&mut linker)
+             .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
+         let loopback = Arc::new(std::sync::Mutex::new(
+             wash_runtime::sockets::loopback::Network::default(),
+@@ -374,7 +373,7 @@ mod tests {
+         wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
+         store.set_epoch_deadline(u64::MAX / 2);
+         let compiled = workload.component().clone();
+-        let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
++        let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
+             .await
+             .map_err(|error| anyhow::anyhow!("instantiate the shipped flow-http guest: {error}"))?;
+ 
+@@ -385,32 +384,51 @@ mod tests {
+             .header("content-type", "application/json")
+             .body(body)
+             .context("build the proof request")?;
+-        let incoming = store
+-            .data_mut()
+-            .http()
+-            .new_incoming_request(Scheme::Http, request)
+-            .map_err(|error| anyhow::anyhow!("lower the proof request: {error}"))?;
+-        let (sender, receiver) = tokio::sync::oneshot::channel();
+-        let out = store
+-            .data_mut()
+-            .http()
+-            .new_response_outparam(sender)
+-            .map_err(|error| anyhow::anyhow!("allocate the response outparam: {error}"))?;
+-        let call = wasmtime_wasi::runtime::spawn(async move {
+-            proxy
+-                .wasi_http_incoming_handler()
+-                .call_handle(&mut store, incoming, out)
+-                .await
+-                .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))
+-        });
+-        let response = receiver
++        let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(request);
++        // Keep the fresh store driving P3 streams until the response body is collected.
++        let response = store
++            .run_concurrent(async |accessor| {
++                let handle = async {
++                    let response = service
++                        .handle(accessor, request)
++                        .await
++                        .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
++                        .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
++                    let (finish_tx, finish_rx) =
++                        tokio::sync::oneshot::channel::<Result<(), ErrorCode>>();
++                    let response = accessor
++                        .with(|store| {
++                            response.into_http(store, async move {
++                                finish_rx
++                                    .await
++                                    .unwrap_or(Err(ErrorCode::ConnectionTerminated))
++                            })
++                        })
++                        .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
++                    let (parts, body) = response.into_parts();
++                    let body = body.collect().await;
++                    let _ = finish_tx.send(body.as_ref().map(|_| ()).map_err(Clone::clone));
++                    let body = body.map_err(|error| {
++                        anyhow::anyhow!("collect flow-http response: {error:?}")
++                    })?;
++                    Ok::<_, anyhow::Error>(hyper::Response::from_parts(parts, body.to_bytes()))
++                };
++                let io = async {
++                    // An early typed refusal may abandon its request body.
++                    if let Err(error) = request_io.await {
++                        tracing::debug!(
++                            ?error,
++                            "flow-http request body processing ended with an error"
++                        );
++                    }
++                    Ok::<_, anyhow::Error>(())
++                };
++                let (response, ()) = tokio::try_join!(handle, io)?;
++                Ok::<_, anyhow::Error>(response)
++            })
+             .await
+-            .context("flow-http did not set its response")?
+-            .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
+-        let (parts, body) = response.into_parts();
+-        let body = body.collect().await.context("collect flow-http response")?;
+-        call.await.context("join flow-http")?;
+-        Ok(hyper::Response::from_parts(parts, body.to_bytes()))
++            .map_err(|error| anyhow::anyhow!("drive flow-http P3 request: {error}"))??;
++        Ok(response)
+     }
+ 
+     #[tokio::test]
+diff --git a/tools/journey-workload-proof b/tools/journey-workload-proof
+index a431631b..6c6d7ef8 100755
+--- a/tools/journey-workload-proof
++++ b/tools/journey-workload-proof
+@@ -25,7 +25,7 @@ build_spec() { # <array-name> <template> <tenant> <project> <schema> <environmen
+     [tenant]=$3 [environment]=$6 [project]=$4 [schema]=$5 [catalog]=$7
+     [template_namespace]=wamn-system [template_environment]=wamn-system
+     [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
+-    [template_interfaces]='interfaces: [incoming-handler]'
++    [template_interfaces]='interfaces: [handler]'
+     [template_tenant]=00000000-0000-0000-0000-000000000001 [template_catalog]=default
+     [template_environment_value]=poc [template_project]=default [template_schema]=public
+   )"
+@@ -34,11 +34,9 @@ build_spec() { # <array-name> <template> <tenant> <project> <schema> <environmen
+ echo "1. bytes, and both applications"
+ build_spec rcv "$TEMPLATE" receiving-route-auth receiving receiving dev default
+ render_workload_manifest rcv "$work/rcv.yaml"; check "the Receiving render succeeds" $?
+-# 2026-09-09, wamn-0h0g.2.7.5: the unchanged renderer reproduces the old
+-# dfa1c318 pin. The reviewed 2.9 delta changes only the wash publication
+-# instructions; parsed Kubernetes objects are unchanged. Before/after evidence:
+-# docs/perf/2026.09/wasmcloud-2-9-cutover/live-harness-fix-002/
+-[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == c58b4e3bc663e16ef755db0edb49a8d35387a0d765476e0ecd2c25ef17edc74f ]]
++# 2026-09-10, wamn-0h0g.2.7.17: the HTTP declaration is handler@0.3.0.
++# The renderer preserves every route identity and host substitution.
++[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == ce298c51c13d93e86e9e6a17ff8ef0ce01d8be960a7bc40a2bd9fc36a5a96b80 ]]
+ check "bytes match reviewed template baseline" $?
+ build_spec wms "$TEMPLATE" wms-route-auth wms wms dev wms-catalog
+ render_workload_manifest wms "$work/wms.yaml"; check "a second application renders" $?
+@@ -87,7 +85,7 @@ done
+ # route-host singularity guard refuses the same input -- and a control caught by
+ # the neighbour proves the neighbour. Deleting the interfaces check left this
+ # proof green until the message was the assertion.
+-grep -vF -- 'interfaces: [incoming-handler]' "$TEMPLATE" >"$work/drift.yaml"
++grep -vF -- 'interfaces: [handler]' "$TEMPLATE" >"$work/drift.yaml"
+ build_spec drift "$work/drift.yaml" receiving-route-auth receiving receiving dev default
+ REASON="interfaces anchor matched 0 times" refused_saying render_workload_manifest drift "$work/out.yaml"
+ check "control: a template missing the interfaces anchor is refused, naming IT" $?
+@@ -157,7 +155,7 @@ binds() {
+       [catalog]=default
+       [template_namespace]=wamn-system [template_environment]=wamn-system
+       [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
+-      [template_interfaces]='interfaces: [incoming-handler]'
++      [template_interfaces]='interfaces: [handler]'
+       [template_tenant]=00000000-0000-0000-0000-000000000001 [template_catalog]=default
+       [template_environment_value]=poc [template_project]=default [template_schema]=public
+     )"
+diff --git a/tools/receiving-cluster-journey-run b/tools/receiving-cluster-journey-run
+index d6f9e052..acc9927b 100755
+--- a/tools/receiving-cluster-journey-run
++++ b/tools/receiving-cluster-journey-run
+@@ -1816,7 +1816,7 @@ declare -A workload_spec=(
+   [template_namespace]=$system_namespace
+   [template_environment]=$system_namespace
+   [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
+-  [template_interfaces]="interfaces: [incoming-handler]"
++  [template_interfaces]="interfaces: [handler]"
+   [template_tenant]=00000000-0000-0000-0000-000000000001
+   [template_catalog]=default
+   [template_environment_value]=poc
+diff --git a/tools/wms-cluster-journey-run b/tools/wms-cluster-journey-run
+index d2277723..d0cf540f 100755
+--- a/tools/wms-cluster-journey-run
++++ b/tools/wms-cluster-journey-run
+@@ -1661,7 +1661,7 @@ declare -A workload_spec=(
+   [template_namespace]=$system_namespace
+   [template_environment]=$system_namespace
+   [template_image]=registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev
+-  [template_interfaces]="interfaces: [incoming-handler]"
++  [template_interfaces]="interfaces: [handler]"
+   [template_tenant]=00000000-0000-0000-0000-000000000001
+   [template_catalog]=default
+   [template_environment_value]=poc
+diff --git a/tests/integration/src/route_authentication_live/p3_shell.rs b/tests/integration/src/route_authentication_live/p3_shell.rs
+new file mode 100644
+index 00000000..abc48e6c
+--- /dev/null
++++ b/tests/integration/src/route_authentication_live/p3_shell.rs
+@@ -0,0 +1,234 @@
++//! P3 protocol cases over the shipped Receiving HTTP component.
++
++use std::sync::Arc;
++use std::task::Poll;
++use std::time::Duration;
++
++use anyhow::Context as _;
++use bytes::Bytes;
++use futures_util::{StreamExt as _, stream};
++use http_body_util::{BodyExt as _, Full, StreamBody, combinators::UnsyncBoxBody};
++use hyper::body::Frame;
++use hyper::{Method, Request, StatusCode};
++use tokio::sync::Notify;
++use wamn_execution_host::RouterDeliveryBridge;
++use wamn_runtime::plugins::flow_http_routing::FlowHttpRouting;
++use wash_runtime::engine::Engine;
++use wash_runtime::wasmtime::component::Component;
++use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
++
++use super::{RAW_BODY_LIMIT, invoke_journey_request, successful_value};
++
++const TIMEOUT: Duration = Duration::from_secs(10);
++const PATH: &str = "/purchase_order/get";
++const REQUEST_ID: &str = "p3-protocol";
++const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
++const PAYLOAD: &[u8] =
++    br#"[{"request_id":"p3-protocol","id":"00000000-0000-0000-0000-000000000301"}]"#;
++
++pub(super) async fn prove(
++    engine: &Engine,
++    flow_http: &Component,
++    routing: Arc<FlowHttpRouting>,
++    bridge: Arc<RouterDeliveryBridge>,
++    route_host: &str,
++    bearer: &str,
++) -> anyhow::Result<()> {
++    let invoke = |request| {
++        invoke_journey_request(
++            engine,
++            flow_http,
++            Arc::clone(&routing),
++            Arc::clone(&bridge),
++            request,
++        )
++    };
++    let response = tokio::time::timeout(
++        TIMEOUT,
++        invoke(request(
++            route_host,
++            PATH,
++            Some(bearer),
++            buffered(Bytes::from_static(PAYLOAD)),
++        )?),
++    )
++    .await
++    .context("P3 protocol case origin-form-host timed out")??;
++    anyhow::ensure!(
++        successful_value(&response, REQUEST_ID)?["id"] == PURCHASE_ORDER_ID,
++        "P3 protocol case origin-form-host returned another purchase order"
++    );
++
++    for (case, path, token, status, code) in [
++        (
++            "stalled-body-missing-auth",
++            PATH,
++            None,
++            StatusCode::UNAUTHORIZED,
++            "unauthorized",
++        ),
++        (
++            "stalled-body-unknown-route",
++            "/p3-protocol-no-such-route",
++            Some(bearer),
++            StatusCode::NOT_FOUND,
++            "route-not-found",
++        ),
++    ] {
++        let body =
++            StreamBody::new(stream::pending::<Result<Frame<Bytes>, ErrorCode>>()).boxed_unsync();
++        let response =
++            tokio::time::timeout(TIMEOUT, invoke(request(route_host, path, token, body)?))
++                .await
++                .with_context(|| {
++                    format!("P3 protocol case {case} waited for the stalled body")
++                })??;
++        let expected = serde_json::json!({"error": {"code": code}});
++        anyhow::ensure!(
++            response.status() == status
++                && serde_json::from_slice::<serde_json::Value>(response.body())? == expected,
++            "P3 protocol case {case} did not preserve its HTTP refusal"
++        );
++    }
++
++    let mut padded = PAYLOAD.to_vec();
++    padded.resize(RAW_BODY_LIMIT, b' ');
++    let response = tokio::time::timeout(
++        TIMEOUT,
++        invoke(request(
++            route_host,
++            PATH,
++            Some(bearer),
++            buffered(Bytes::from(padded.clone())),
++        )?),
++    )
++    .await
++    .context("P3 protocol case exact-1mib timed out")??;
++    anyhow::ensure!(
++        successful_value(&response, REQUEST_ID)?["id"] == PURCHASE_ORDER_ID,
++        "P3 protocol case exact-1mib did not execute the valid read"
++    );
++
++    padded.push(b' ');
++    let response = tokio::time::timeout(
++        TIMEOUT,
++        invoke(request(
++            route_host,
++            PATH,
++            Some(bearer),
++            buffered(Bytes::from(padded)),
++        )?),
++    )
++    .await
++    .context("P3 protocol case 1mib-plus-one timed out")??;
++    anyhow::ensure!(
++        response.status() == StatusCode::PAYLOAD_TOO_LARGE
++            && response
++                .headers()
++                .get(hyper::header::CONTENT_TYPE)
++                .is_some_and(|value| value == "text/plain; charset=utf-8")
++            && response.body().as_ref() == b"request body exceeds 1048576-byte limit\n",
++        "P3 protocol case 1mib-plus-one lost the typed 413 contract"
++    );
++
++    let body = StreamBody::new(stream::iter([
++        Ok(Frame::data(Bytes::from_static(PAYLOAD))),
++        Err(ErrorCode::ConnectionTerminated),
++    ]))
++    .boxed_unsync();
++    let response = tokio::time::timeout(
++        TIMEOUT,
++        invoke(request(route_host, PATH, Some(bearer), body)?),
++    )
++    .await
++    .context("P3 protocol case transport-error-after-json timed out")??;
++    anyhow::ensure!(
++        response.status() == StatusCode::BAD_REQUEST
++            && response.body().as_ref() == br#"{"error":{"code":"body-read-failed"}}"#,
++        "P3 protocol case transport-error-after-json did not refuse the incomplete transport"
++    );
++
++    let stalled = Arc::new(Notify::new());
++    let observed = Arc::clone(&stalled);
++    let body = StreamBody::new(
++        stream::iter([Ok(Frame::data(Bytes::from_static(PAYLOAD)))]).chain(stream::poll_fn(
++            move |_| {
++                observed.notify_one();
++                Poll::<Option<Result<Frame<Bytes>, ErrorCode>>>::Pending
++            },
++        )),
++    )
++    .boxed_unsync();
++    {
++        let invocation = invoke(request(route_host, PATH, Some(bearer), body)?);
++        tokio::pin!(invocation);
++        tokio::select! {
++            biased;
++            response = &mut invocation => {
++                let response = response.context("P3 protocol case pending-body-cancellation failed before cancellation")?;
++                anyhow::bail!(
++                    "P3 protocol case pending-body-cancellation completed early with {}",
++                    response.status()
++                );
++            }
++            () = stalled.notified() => {}
++            () = tokio::time::sleep(TIMEOUT) => {
++                anyhow::bail!("P3 protocol case pending-body-cancellation never reached the stalled body");
++            }
++        }
++        anyhow::ensure!(
++            engine.guest_memory().in_use() > 0,
++            "P3 protocol case pending-body-cancellation did not hold a live guest store"
++        );
++    }
++    anyhow::ensure!(
++        engine.guest_memory().in_use() == 0,
++        "P3 protocol case pending-body-cancellation retained guest memory after drop"
++    );
++    let response = tokio::time::timeout(
++        TIMEOUT,
++        invoke(request(
++            route_host,
++            PATH,
++            Some(bearer),
++            buffered(Bytes::from_static(PAYLOAD)),
++        )?),
++    )
++    .await
++    .context("P3 protocol case recovery-after-cancellation timed out")??;
++    anyhow::ensure!(
++        successful_value(&response, REQUEST_ID)?["id"] == PURCHASE_ORDER_ID,
++        "P3 protocol case recovery-after-cancellation did not execute the next valid request"
++    );
++    println!(
++        "P3 protocol cases passed: origin-form-host, stalled-body-missing-auth, \
++         stalled-body-unknown-route, exact-1mib, 1mib-plus-one, transport-error-after-json, \
++         pending-body-cancellation, recovery-after-cancellation"
++    );
++    Ok(())
++}
++
++fn buffered(bytes: Bytes) -> UnsyncBoxBody<Bytes, ErrorCode> {
++    Full::new(bytes)
++        .map_err(|never| -> ErrorCode { match never {} })
++        .boxed_unsync()
++}
++
++fn request(
++    route_host: &str,
++    path: &str,
++    bearer: Option<&str>,
++    body: UnsyncBoxBody<Bytes, ErrorCode>,
++) -> anyhow::Result<Request<UnsyncBoxBody<Bytes, ErrorCode>>> {
++    let mut request = Request::builder()
++        .method(Method::POST)
++        .uri(path)
++        .header(hyper::header::HOST, route_host)
++        .header(hyper::header::CONTENT_TYPE, "application/json");
++    if let Some(bearer) = bearer {
++        request = request.header(hyper::header::AUTHORIZATION, format!("Bearer {bearer}"));
++    }
++    request
++        .body(body)
++        .context("build a P3 protocol origin-form request")
++}

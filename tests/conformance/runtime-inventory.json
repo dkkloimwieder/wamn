@@ -49,7 +49,7 @@
     {
       "path": "deploy/platform/http-route-workload.example.yaml",
       "deployment_state": "template",
-      "abi": "p2-components"
+      "abi": "p3-components"
     },
     {
       "path": "deploy/platform/materializer.example.yaml",

@@ -1,0 +1,539 @@
+   Compiling serde_core v1.0.229
+   Compiling hashbrown v0.17.1
+   Compiling mio v1.2.2
+   Compiling futures-io v0.3.34
+   Compiling futures-util v0.3.34
+   Compiling tokio v1.53.1
+   Compiling indexmap v2.14.0
+   Compiling serde_json v1.0.151
+   Compiling serde v1.0.229
+   Compiling tracing v0.1.44
+   Compiling wasmtime-internal-core v47.0.4
+   Compiling rustix v1.1.4
+   Compiling cranelift-bitset v0.134.4
+   Compiling either v1.18.0
+   Compiling smallvec v1.15.2
+   Compiling thiserror v2.0.20
+   Compiling cranelift-entity v0.134.4
+   Compiling gimli v0.33.0
+   Compiling bytes v1.12.1
+   Compiling tokio-util v0.7.19
+   Compiling h2 v0.4.19
+   Compiling cranelift-bforest v0.134.4
+   Compiling rustls v0.23.43
+   Compiling pulley-interpreter v47.0.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling hyper v1.11.0
+   Compiling cranelift-codegen-meta v0.134.4
+   Compiling itertools v0.14.0
+   Compiling tokio-rustls v0.26.4
+   Compiling sha2 v0.10.9
+   Compiling wasmparser v0.252.0
+   Compiling prost-derive v0.14.4
+   Compiling regalloc2 v0.15.2
+   Compiling object v0.39.1
+   Compiling cranelift-codegen v0.134.4
+   Compiling tower v0.5.3
+   Compiling hyper-util v0.1.20
+   Compiling wasmtime-environ v47.0.4
+   Compiling fs-set-times v0.20.3
+   Compiling rustix-linux-procfs v0.1.1
+   Compiling tokio-stream v0.1.19
+   Compiling wit-parser v0.252.0
+   Compiling cobs v0.3.0
+   Compiling opentelemetry v0.31.0
+   Compiling postcard v1.1.3
+   Compiling wasmtime-internal-wit-bindgen v47.0.4
+   Compiling prost v0.14.4
+   Compiling prost-types v0.14.4
+   Compiling wasmtime-internal-component-macro v47.0.4
+   Compiling wasmtime-internal-fiber v47.0.4
+   Compiling wasmtime-internal-cache v47.0.4
+   Compiling rayon v1.12.0
+   Compiling memfd v0.6.5
+   Compiling addr2line v0.26.1
+   Compiling wasmtime-internal-jit-icache-coherence v47.0.4
+   Compiling wasmparser v0.253.0
+   Compiling futures v0.3.34
+   Compiling rust_decimal v1.43.0
+   Compiling axum v0.8.9
+   Compiling petgraph v0.8.3
+   Compiling wiggle-generate v47.0.4
+   Compiling cap-primitives v4.0.3
+   Compiling tempfile v3.27.0
+   Compiling hyper-timeout v0.5.2
+   Compiling hyper-rustls v0.27.9
+   Compiling tower-http v0.6.11
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling icu_normalizer v2.3.0
+   Compiling wasmparser v0.254.0
+   Compiling digest v0.11.3
+   Compiling crc-catalog v2.5.0
+   Compiling arrayvec v0.7.8
+   Compiling crossbeam-utils v0.8.22
+   Compiling parking v2.2.1
+   Compiling event-listener v5.4.2
+   Compiling wasm-encoder v0.253.0
+   Compiling prost-build v0.14.4
+   Compiling crc v3.4.0
+   Compiling idna_adapter v1.2.2
+   Compiling reqwest v0.13.4
+   Compiling tonic v0.14.6
+   Compiling wasmtime-internal-unwinder v47.0.4
+   Compiling cranelift-frontend v0.134.4
+   Compiling cranelift-native v0.134.4
+   Compiling cap-std v4.0.3
+   Compiling wiggle-macro v47.0.4
+   Compiling wasmtime-internal-cranelift v47.0.4
+   Compiling postgres-types v0.2.14
+   Compiling pbjson-build v0.8.0
+   Compiling parking_lot_core v0.9.12
+   Compiling hashlink v0.11.1
+   Compiling futures-executor v0.3.34
+   Compiling futures-sink v0.3.34
+   Compiling schemars v0.8.22
+   Compiling tracing-subscriber v0.3.23
+   Compiling oci-spec v0.9.0
+   Compiling wasmtime v47.0.4
+   Compiling pbjson-types v0.8.0
+   Compiling opentelemetry_sdk v0.31.0
+   Compiling parking_lot v0.12.5
+   Compiling tokio-postgres v0.7.18
+   Compiling cap-primitives v3.4.6
+   Compiling cap-fs-ext v4.0.3
+   Compiling tonic-prost v0.14.6
+   Compiling wasm-encoder v0.254.0
+   Compiling idna v1.1.0
+   Compiling wasm-metadata v0.253.0
+   Compiling wit-parser v0.253.0
+   Compiling jsonwebtoken v10.4.0
+   Compiling olpc-cjson v0.1.4
+   Compiling form_urlencoded v1.2.2
+   Compiling tracing-core v0.1.36
+   Compiling slab v0.4.12
+   Compiling wasmtime-wasi-io v47.0.4
+   Compiling wiggle v47.0.4
+   Compiling wasmtime-wasi v47.0.4
+   Compiling wit-component v0.253.0
+   Compiling oci-client v0.17.0
+   Compiling nkeys v0.4.5
+   Compiling url v2.5.8
+   Compiling wasm-metadata v0.254.0
+   Compiling crossbeam-queue v0.3.13
+   Compiling cap-std v3.4.6
+   Compiling opentelemetry-proto v0.31.0
+   Compiling futures-intrusive v0.5.0
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/components/execution/contract)
+   Compiling wit-parser v0.254.0
+   Compiling hmac v0.13.0
+   Compiling opentelemetry-http v0.31.0
+   Compiling combine v4.6.8
+   Compiling tryhard v0.5.2
+   Compiling deadpool-runtime v0.3.1
+   Compiling itertools v0.13.0
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/components/events/wire)
+   Compiling chrono v0.4.45
+   Compiling atoi v2.0.0
+   Compiling uuid v1.26.0
+   Compiling base64 v0.22.1
+   Compiling dotenvy v0.15.7
+   Compiling proc-macro2 v1.0.107
+   Compiling sqlx-core v0.9.0
+   Compiling boon v0.6.1
+   Compiling async-nats v0.49.1
+   Compiling redis v0.27.6
+   Compiling wit-component v0.254.0
+   Compiling deadpool v0.13.1
+   Compiling opentelemetry-otlp v0.31.1
+   Compiling wasmtime-wasi-http v47.0.4
+   Compiling hkdf v0.13.0
+   Compiling cap-net-ext v3.4.6
+   Compiling oci-wasm v0.6.0
+   Compiling opentelemetry-appender-tracing v0.31.1
+   Compiling tracing-opentelemetry v0.32.1
+   Compiling futures-channel v0.3.34
+   Compiling md-5 v0.11.0
+   Compiling sha2 v0.11.0
+   Compiling itertools v0.15.0
+   Compiling rand v0.10.2
+   Compiling docker_credential v1.4.0
+   Compiling whoami v2.1.3
+   Compiling byteorder v1.5.0
+   Compiling quote v1.0.47
+   Compiling sqlx-postgres v0.9.0
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/crates/execution/run-state)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+   Compiling object_store v0.14.1
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling deadpool-postgres v0.14.2
+   Compiling wamn-router v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/crates/execution/router)
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/crates/identity/platform)
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/crates/control/registry)
+   Compiling clap_builder v4.6.6
+   Compiling sqlx-macros-core v0.9.0
+   Compiling clap v4.6.6
+   Compiling syn v2.0.119
+   Compiling sqlx-macros v0.9.0
+   Compiling wamn-gate-harness v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/test-support/harness)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> test-support/harness/src/ceiling.rs:72:1
+   |
+72 | / pub struct Ramp {
+73 | |     tolerance: f64,
+74 | |     max_levels: usize,
+75 | |     levels: Vec<LevelStats>,
+...  |
+82 | |     retrying: bool,
+83 | | }
+   | |_^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-gate-harness` (lib) generated 1 warning
+   Compiling wasm-encoder v0.251.0
+   Compiling sqlx v0.9.0
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/crates/platform/runtime)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:52:7
+   |
+52 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:114:1
+    |
+114 | / pub struct ConnectionHttp {
+115 | |     postgres: Arc<WamnPostgres>,
+116 | |     vault: Arc<WamnCredentials>,
+117 | |     tenant: Box<str>,
+...   |
+133 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+134 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:55:1
+    |
+ 55 | / pub struct WamnPostgres {
+ 56 | |     /// Resolves a project id → its database connection + policy.
+ 57 | |     provider: Arc<dyn CredentialProvider>,
+ 58 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+121 | |     pub(super) bind_counters: super::BindCounters,
+122 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+   Compiling wamn-execution-host v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/crates/execution/host)
+   Compiling wamn-proof-conformance v0.1.0 (/home/kaalin/.cache/wamn-lanes/p3-http-cutover-20260910/tests/conformance)
+warning: type does not implement `Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> tests/conformance/src/socketguard.rs:26:1
+   |
+26 | pub struct SocketGuardArgs {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-proof-conformance` (lib) generated 1 warning
+warning: `wamn-runtime` (lib) generated 16 warnings
+warning: field `package_component_source` is never read
+  --> tests/conformance/tests/workspace_tiers.rs:74:5
+   |
+70 | struct SourceInventory {
+   |        --------------- field in this struct
+...
+74 |     package_component_source: String,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `SourceInventory` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: fields `manifest_path`, `target_class`, and `bounded_context` are never read
+   --> tests/conformance/tests/workspace_tiers.rs:151:5
+    |
+148 | struct PackageRole {
+    |        ----------- fields in this struct
+...
+151 |     manifest_path: String,
+    |     ^^^^^^^^^^^^^
+152 |     role: Role,
+153 |     target_class: String,
+    |     ^^^^^^^^^^^^
+154 |     bounded_context: String,
+    |     ^^^^^^^^^^^^^^^
+    |
+    = note: `PackageRole` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: `wamn-proof-conformance` (test "workspace_tiers") generated 2 warnings
+warning: `wamn-proof-conformance` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 24s
+     Running unittests src/lib.rs (target/debug/deps/wamn_proof_conformance-5c423867118c0a75)
+
+running 71 tests
+test catalog::tests::catalog_refuses_unresolved_or_noncanonical_definition_inputs ... ok
+test catalog::tests::catalog_artifact_and_resolved_attachment_identity_is_complete ... ok
+test invocation::tests::node_abi_source_and_included_copy_agree ... ok
+test ip_name_lookup::approved_lookup_does_not_grant_raw_socket_authority ... ok
+test ip_name_lookup::exact_lookup_matches_only_the_approved_name ... ok
+test invocation::tests::node_abi_is_live_versioned_and_router_shaped ... ok
+test ip_name_lookup::enforced_empty_allowlist_denies_raw_tcp_and_udp ... ok
+test ip_name_lookup::literal_ip_lookup_matches_only_the_approved_address ... ok
+test ip_name_lookup::local_resources_default_is_an_empty_deny_all_lookup_policy ... ok
+test ip_name_lookup::wildcard_lookup_requires_a_real_subdomain_and_never_matches_an_ip ... ok
+test docker_component_provenance::every_embedded_component_comes_from_the_locked_builder ... ok
+test kubernetes_gate_verdict::tests::future_protocol_versions_are_rejected ... ok
+test docker_component_provenance::build_graph_has_no_shared_or_retired_cook_leg ... ok
+test ip_name_lookup::vanilla_address_defaults_deny_special_ranges_and_allow_private_ranges ... ok
+test kubernetes_gate_verdict::tests::legacy_version_identity_is_rejected ... ok
+test kubernetes_gate_verdict::tests::unknown_record_fields_are_rejected ... ok
+test manifest_dependencies::a_dotted_single_dependency_table_is_scanned_by_the_identity_rule ... ok
+test manifest_dependencies::the_dotted_spelling_does_not_widen_the_self_dev_dependency_exemption ... ok
+test manifest_dependencies::the_catalog_self_dev_dependency_is_still_the_construction_this_guard_exempts ... ok
+test runtime_inventory::component_environment_database_url_mutation_is_rejected ... ok
+test manifest_dependencies::the_self_dev_dependency_exemption_admits_nothing_else ... ok
+test docker_component_provenance::retained_native_images_have_package_scoped_cook_and_build_stages ... ok
+test runtime_inventory::component_environment_pg_url_suffix_mutation_is_rejected ... ok
+test runtime_inventory::database_url_names_and_values_outside_component_environment_are_allowed ... ok
+test runtime_inventory::component_environment_postgres_url_value_mutation_is_rejected ... ok
+test runtime_inventory::host_component_plugins_mutation_is_rejected ... ok
+test runtime_inventory::missing_misspelled_or_duplicate_ip_name_lookup_defaults_are_rejected ... ok
+test runtime_inventory::nonempty_ip_name_lookup_default_mutation_is_rejected ... ok
+test runtime_inventory::nonzero_pool_size_mutation_is_rejected ... ok
+test runtime_inventory::only_positive_pool_sizes_keep_instances_warm ... ok
+test runtime_inventory::execution_host_inventory_ignores_cfg_test_store_constructor ... ok
+test runtime_inventory::release_identity_inventory_accepts_the_welded_shape ... ok
+test runtime_inventory::execution_host_inventory_rejects_removed_or_duplicated_production_constructor ... ok
+test runtime_inventory::release_identity_inventory_rejects_a_half_read_from_elsewhere ... ok
+test runtime_inventory::release_identity_inventory_rejects_a_removed_or_duplicated_construction ... ok
+test runtime_inventory::every_production_release_identity_is_read_off_the_weld ... ok
+test runtime_inventory::one_release_manifest_weld_construction_site_per_host_process ... ok
+test runtime_inventory::the_epoch_pin_survives_upstream_reformatting_but_not_a_retune ... ok
+test runtime_inventory::the_host_router_delivery_bridge_is_metered ... ok
+test runtime_inventory::release_identity_inventory_rejects_a_returning_config_key ... ok
+test runtime_inventory::the_struck_release_identity_config_keys_do_not_return ... ok
+test invocation::tests::all_vendored_node_abi_copies_are_registered_and_match_the_source ... ok
+test runtime_inventory::unrecorded_workload_manifest_mutation_is_rejected ... ok
+test runtime_inventory::wasmtime_feature_policy_tests::control_a_removed_feature_is_refused ... ok
+test runtime_inventory::wasmtime_feature_policy_tests::control_an_unreviewed_feature_is_refused ... ok
+test runtime_inventory::vanished_workload_manifest_mutation_is_rejected ... ok
+test runtime_inventory::wasmtime_feature_policy_tests::control_restoring_wasmtime_defaults_is_refused ... ok
+test runtime_inventory::wasmtime_feature_policy_tests::control_an_absent_pin_is_refused ... ok
+test runtime_inventory::the_retained_workload_manifest_set_is_accepted ... ok
+test runtime_inventory::weld_inventory_rejects_removed_or_duplicated_construction_site ... ok
+test runtime_inventory::wasmtime_feature_policy_tests::the_reviewed_pin_is_accepted ... ok
+test runtime_inventory::weld_inventory_rejects_construction_after_the_first_bind ... ok
+test runtime_inventory::weld_inventory_ignores_cfg_test_construction_sites ... ok
+test schema_drift::run_state_guard_accepts_a_gate_style_stand_in_at_full_column_parity ... ok
+test schema_drift::schema_of_record_satisfies_the_stand_in_contract ... ok
+test schema_drift::run_state_guard_rejects_a_dropped_column_a_longer_name_would_mask - should panic ... ok
+test schema_drift::run_state_guard_rejects_a_status_check_the_run_writers_outgrew - should panic ... ok
+test schema_drift::stand_in_guard_rejects_column_named_only_by_an_index - should panic ... ok
+test schema_drift::run_state_schema_of_record_satisfies_the_stand_in_contract ... ok
+test version_identity::a_missing_watched_file_still_reports_its_missing_occurrence ... ok
+test socketguard::tests::standard_workload_publishes ... ok
+test socketguard::tests::p2_socket_importer_is_refused_naming_the_offense ... ok
+test socketguard::tests::p3_socket_importer_is_refused_naming_the_offense ... ok
+test version_identity::representative_version_mutants_are_rejected ... ok
+test version_identity::governed_wire_schema_and_artifact_versions_stay_at_mvp_identity ... ok
+test version_identity::wamn_wit_packages_stay_at_mvp_version ... ok
+test manifest_dependencies::governed_dependency_identities_are_workspace_owned ... ok
+test version_identity::workspace_owned_packages_stay_at_mvp_version ... ok
+test runtime_inventory::the_manual_store_epoch_tick_still_mirrors_the_runtime_ticker ... ok
+test ip_name_lookup::pinned_runtime_is_direct_upstream_v2_9_0 ... ok
+test runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current ... ok
+
+test result: ok. 71 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.02s
+
+     Running tests/capability_registry.rs (target/debug/deps/capability_registry-e27d5ebb17a9ee8a)
+
+running 3 tests
+test registry_is_closed_and_every_row_is_reachable ... ok
+test vendored_wasi_packages_are_registered_or_deliberately_absent ... ok
+test capability_registry_wasi_rows_match_the_vendored_wit ... FAILED
+
+failures:
+
+---- capability_registry_wasi_rows_match_the_vendored_wit stdout ----
+
+thread 'capability_registry_wasi_rows_match_the_vendored_wit' (1560421) panicked at tests/conformance/tests/capability_registry.rs:100:9:
+registry has wasi:clocks@0.2.12 but the tree vendors {"0.3.0"} — a virtualizer or toolchain bump moved the WASI vocabulary without moving the registry, and every std guest would refuse at admission
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    capability_registry_wasi_rows_match_the_vendored_wit
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p wamn-proof-conformance --test capability_registry`
+     Running tests/guest_workspace_closure.rs (target/debug/deps/guest_workspace_closure-9551d14c0cafb672)
+
+running 4 tests
+test one_commit_built_in_two_checkouts_yields_identical_guest_digests ... ignored, requires two checkouts of one commit built by [GUEST-DIGEST-REPRODUCIBILITY]
+test one_commit_built_under_two_profiles_yields_identical_guest_digests ... ignored, requires one commit built under both profiles by [GUEST-DIGEST-REPRODUCIBILITY]
+test the_shared_guest_build_remaps_the_source_prefix ... ok
+test no_guest_workspace_declares_a_dependency_outside_itself ... ok
+
+test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/workspace_tiers.rs (target/debug/deps/workspace_tiers-8a35e501bf9e304c)
+
+running 9 tests
+test release_tier_requires_sr17_sr26_identity_join ... ok
+test workspace_tier_helper_refuses_invalid_and_empty_selections ... ok
+test workspace_tier_helper_list_matches_manifest ... ok
+test workspace_tier_helper_runs_safely_outside_repository ... ok
+test workspace_tier_helper_dry_run_matches_manifest ... ok
+test workspace_tier_membership_matches_live_classification ... ok
+test bare_cargo_commands_select_exact_defaults_and_workspace_remains_exhaustive ... ok
+test workspace_tier_helper_full_plans_cover_both_workspaces ... ok
+test workspace_tier_inventory_matches_live_cargo_metadata ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.36s
+
+error: 1 target failed:
+    `-p wamn-proof-conformance --test capability_registry`

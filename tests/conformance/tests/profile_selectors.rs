@@ -714,14 +714,15 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             String::from_utf8_lossy(&output.stderr)
         );
 
-        // One metadata read per component workspace, then one build leg per
-        // workspace that owns a selected package. Every leg runs: the second
-        // one is not described by the first one's failure.
+        // Read each workspace once, then isolate the P3 HTTP shell's async
+        // features in an additional invocation with the same workspace target.
+        // Every invocation runs even after an earlier selection fails.
         let selected = component_profile_packages(&root, &contract, profile);
-        let mut expected = COMPONENT_MANIFESTS
+        let expected_metadata = COMPONENT_MANIFESTS
             .iter()
             .map(|manifest| expected_metadata_invocation(&root, &root.join(manifest)))
             .collect::<Vec<_>>();
+        let mut expected = expected_metadata.clone();
         for (manifest, members) in COMPONENT_MANIFESTS.iter().zip(&component_members) {
             let owned = selected
                 .iter()
@@ -732,7 +733,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
                 continue;
             }
             let component_manifest = root.join(manifest);
-            let mut expected_run = vec![
+            let expected_run = vec![
                 root.display().to_string(),
                 "build".to_string(),
                 "--locked".to_string(),
@@ -746,13 +747,54 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
                 "--manifest-path".to_string(),
                 component_manifest.display().to_string(),
             ];
-            append_packages(&mut expected_run, &owned);
-            expected.push(expected_run);
+            let (http_shell, grouped): (Vec<_>, Vec<_>) = owned
+                .into_iter()
+                .partition(|package| package == "http-route");
+            for packages in [grouped, http_shell] {
+                if packages.is_empty() {
+                    continue;
+                }
+                let mut invocation = expected_run.clone();
+                append_packages(&mut invocation, &packages);
+                expected.push(invocation);
+            }
         }
         assert_eq!(
             captured_invocations(&capture),
             expected,
             "component profile {profile} Cargo argv drifted"
+        );
+
+        let _ = fs::remove_file(&capture);
+        let watch_roots = Command::new(root.join(COMPONENT_TOOL))
+            .current_dir(&scratch)
+            .env("CARGO", &fake_cargo)
+            .env("WAMN_FAKE_CARGO_LOG", &capture)
+            .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+            .args(["watch-roots", profile])
+            .output()
+            .expect("failed to execute component watch roots");
+        assert!(
+            watch_roots.status.success(),
+            "component watch roots {profile}: {}",
+            String::from_utf8_lossy(&watch_roots.stderr)
+        );
+        let roots: Value = serde_json::from_slice(&watch_roots.stdout)
+            .expect("watch roots must be machine-readable JSON");
+        let expected_roots = COMPONENT_MANIFESTS.map(|manifest| {
+            manifest
+                .strip_suffix("/Cargo.toml")
+                .expect("component manifest must name a workspace")
+        });
+        assert_eq!(
+            roots,
+            serde_json::json!({"profile": profile, "workspace_roots": expected_roots}),
+            "isolating the HTTP shell must not duplicate a watched workspace"
+        );
+        assert_eq!(
+            captured_invocations(&capture),
+            expected_metadata,
+            "watch roots must only read each workspace's metadata once"
         );
     }
 
@@ -1133,6 +1175,27 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
     let artifact_plan: Value = serde_json::from_slice(&build_only.stdout)
         .expect("build-only stdout must be one machine-readable artifact plan");
     assert_eq!(artifact_plan["profile"], "m1");
+    let build_plan = artifact_plan["build"]
+        .as_array()
+        .expect("artifact plan must contain the Cargo selections");
+    assert_eq!(build_plan.len(), COMPONENT_MANIFESTS.len() + 1);
+    let http_shell = build_plan
+        .iter()
+        .filter(|selection| {
+            selection["packages"]
+                .as_array()
+                .expect("build selection must contain packages")
+                .iter()
+                .any(|package| package == "http-route")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        http_shell,
+        vec![&serde_json::json!({
+            "manifest": COMPONENT_MANIFESTS[0], "packages": ["http-route"]
+        })],
+        "the artifact plan must retain the isolated HTTP shell invocation"
+    );
     assert_eq!(
         artifact_plan["virtualization"]["artifacts"]
             .as_array()
@@ -1392,6 +1455,9 @@ fn unknown_selector_modes_refuse_before_cargo() {
 /// fails only here. So naming a package after an ordinary English word costs
 /// whoever adds it a rename or a fix to this guard. That is the price of the
 /// derivation, and it is the cheaper half of the trade.
+///
+/// The approved HTTP-shell feature boundary exempts one exact selector
+/// constant. All other occurrences, including a copied package list, still fail.
 #[test]
 fn selector_tools_do_not_duplicate_canonical_package_inventory() {
     let root = repository_root();
@@ -1405,6 +1471,17 @@ fn selector_tools_do_not_duplicate_canonical_package_inventory() {
     for tool in [PROFILE_TOOL, COMPONENT_TOOL] {
         let source = fs::read_to_string(root.join(tool))
             .unwrap_or_else(|error| panic!("failed to read {tool}: {error}"));
+        let source = if tool == COMPONENT_TOOL {
+            const HTTP_SHELL_BOUNDARY: &str = "readonly WAMN_HTTP_SHELL_PACKAGE='http-route'\n";
+            assert_eq!(
+                source.matches(HTTP_SHELL_BOUNDARY).count(),
+                1,
+                "the HTTP shell feature boundary must have one explicit selector"
+            );
+            source.replacen(HTTP_SHELL_BOUNDARY, "", 1)
+        } else {
+            source
+        };
         for package in root_metadata
             .packages
             .iter()

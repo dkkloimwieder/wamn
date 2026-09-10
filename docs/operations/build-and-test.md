@@ -73,19 +73,20 @@ cargo test -p wamn-ctl --lib --locked --offline \
   -- --ignored --exact
 ```
 
-Guests live in **two** Cargo workspaces and must not share one invocation —
-feature unification is additive-only and would force `std` into the `no_std`
-guests (`components/Cargo.toml` header, wamn-0h0g.11.56):
+Guests live in two Cargo workspaces because a shared Cargo invocation forces `std` into the `no_std` guests.
+The P3 HTTP shell also builds separately because its async feature changes other guest binaries in a shared invocation.
+Both shell and application builds use the same target directory.
+
+For a debug guest build, name its package explicitly:
 
 ```bash
-(cd components         && cargo build --target wasm32-wasip2)
-(cd components/no-std  && cargo build --target wasm32-wasip2)
+cargo build --manifest-path components/Cargo.toml -p http-route --target wasm32-wasip2
 ```
 
-`tools/build-components m1 | proof` does the same selection from the canonical
-inventory in `architecture/workspace-tiers.json` instead of by hand; it
-requires `jq`. `tools/workspace-tier list|dry-run|run TIER WORKSPACE MODE`
-resolves a named tier's package selectors from the same manifest.
+For the complete production or proof set, run `tools/build-components m1` or `tools/build-components proof`.
+The tool selects declared packages, builds release artifacts, and applies the fixed virtualization profile.
+It requires `jq` and retains both build boundaries.
+`tools/workspace-tier list|dry-run|run TIER WORKSPACE MODE` resolves tier selectors from `architecture/workspace-tiers.json`.
 
 ## Upstream release gate
 
@@ -199,6 +200,52 @@ The duplicate-export case requires WAMN's exact manifest selection and the nativ
 Retain the source and artifact hashes, command, counts, and complete output.
 A passing checkpoint does not close B or prove the application node path.
 Do not change the production lifecycle while a required public-API boundary remains blocked.
+
+### `[P3-HTTP]` production HTTP cutover
+
+`wamn-0h0g.2.7.17` owns the shell, manifests, publication, and matching proof drivers.
+Its [report](../perf/2026.09/p3-http-cutover/report.md) records executed results.
+P3 HTTP components use fresh stores.
+P3 service workloads remain refused.
+WAMN routing, authentication, and delivery imports remain synchronous.
+
+Build and inspect the actual shell in the isolated worktree:
+
+```bash
+cargo build --manifest-path components/Cargo.toml -p http-route \
+  --target wasm32-wasip2 --locked --offline
+wasm-tools validate --features all components/target/wasm32-wasip2/debug/http_route.wasm
+wasm-tools component wit components/target/wasm32-wasip2/debug/http_route.wasm
+cargo test --manifest-path components/Cargo.toml -p http-route \
+  --test adversarial --locked --offline -- --nocapture --test-threads=1
+bash tools/journey-workload-proof
+```
+
+Require the exact `wasi:http/handler@0.3.0` export and retained WAMN imports.
+The platform shell is not a tenant component and does not pass through guest virtualization.
+Keep the tenant registry closed and inspect normalized application imports separately.
+Require all 21 adapter tests, with no ignored cases.
+The authentication-order mutant must fail the named refusal test.
+Restore source bytes and timestamps, remove mutant build outputs, and require the suite to pass again.
+
+Commit the source before the deployed proof and place evidence outside the active worktree.
+Run the existing Receiving correctness journey after its dry run:
+
+```bash
+tools/receiving-cluster-journey-run --receiving-correctness \
+  --evidence-dir /absolute/repository/path/to/new-p3-dry-run
+tools/receiving-cluster-journey-run --apply --receiving-correctness \
+  --evidence-dir /absolute/repository/path/to/new-p3-journey
+```
+
+The journey uses one HTTP artifact for its in-process route proof and OCI publication.
+Require the deployed workload to select the digest from that publication receipt.
+The in-process proof includes eight P3 protocol cases after its existing authenticated route checks.
+These cover origin-form Host handling, stalled-body refusals, exact body limits, transport failure, cancellation cleanup, and a subsequent valid request.
+A failed body after valid JSON must return `body-read-failed` and must not deliver that prefix.
+The cancellation case requires charged guest memory before cancellation and zero retained memory afterward.
+The journey uses its private scratch cluster and must complete resource cleanup.
+This correctness mode runs no throughput benchmark.
 
 ### Rebuilt host process lifecycle
 
