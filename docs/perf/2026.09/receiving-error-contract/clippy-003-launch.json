@@ -1,0 +1,23 @@
+{
+  "pid": 2232595,
+  "argv": [
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/tools/capture.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/receiving-error-contract-20260910",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/clippy-003",
+    "--",
+    "cargo",
+    "clippy",
+    "--manifest-path",
+    "components/Cargo.toml",
+    "-p",
+    "wamn-receiving-data-access",
+    "--lib",
+    "--tests",
+    "--no-deps",
+    "--locked",
+    "--offline"
+  ]
+}

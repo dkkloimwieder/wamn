@@ -1,0 +1,3 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (components/target/debug/deps/wamn_receiving_data_access-f4990377f0114352)
+error: test failed, to rerun pass `-p wamn-receiving-data-access --lib`

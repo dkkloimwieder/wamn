@@ -1,0 +1,12 @@
+{
+  "original_sha256": {
+    "packages/receiving/generated/wamn/purchase_order.rs": "03cc6fe1eb0162c4b1cc230f4d56ac6752449ac9e9d84976dc3585a4b78e3822",
+    "packages/receiving/generated/contracts/purchase_order/update.errors.json": "cbea86e3a6b450ca445bd52f1fb9845d568f08f93402f0c0dc83d8a7a7b21508"
+  },
+  "restored_sha256": {
+    "packages/receiving/generated/wamn/purchase_order.rs": "03cc6fe1eb0162c4b1cc230f4d56ac6752449ac9e9d84976dc3585a4b78e3822",
+    "packages/receiving/generated/contracts/purchase_order/update.errors.json": "cbea86e3a6b450ca445bd52f1fb9845d568f08f93402f0c0dc83d8a7a7b21508"
+  },
+  "restored_exactly": true,
+  "runs": []
+}

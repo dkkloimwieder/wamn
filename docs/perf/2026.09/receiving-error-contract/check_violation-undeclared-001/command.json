@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--manifest-path",
+    "components/Cargo.toml",
+    "-p",
+    "wamn-receiving-data-access",
+    "--lib",
+    "--locked",
+    "--offline",
+    "error::tests::the_hand_copied_vocabulary_agrees_with_the_generated_contracts",
+    "--",
+    "--exact"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-error-contract-20260910"
+}

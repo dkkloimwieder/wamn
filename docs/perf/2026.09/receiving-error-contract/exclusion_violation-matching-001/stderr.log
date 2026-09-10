@@ -1,0 +1,3 @@
+   Compiling wamn-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/receiving-error-contract-20260910/components/data/receiving-data)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.45s
+     Running unittests src/lib.rs (components/target/debug/deps/wamn_receiving_data_access-f4990377f0114352)

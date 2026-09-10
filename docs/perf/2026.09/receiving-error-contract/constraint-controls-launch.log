@@ -1,0 +1,9 @@
+exit_code=0 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/unique_violation-matching-001
+exit_code=101 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/unique_violation-undeclared-001
+exit_code=0 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/foreign_key_violation-matching-001
+exit_code=101 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/foreign_key_violation-undeclared-001
+exit_code=0 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/check_violation-matching-001
+exit_code=101 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/check_violation-undeclared-001
+exit_code=0 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/exclusion_violation-matching-001
+exit_code=101 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/exclusion_violation-undeclared-001
+exit_code=0 evidence=/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/restored-001

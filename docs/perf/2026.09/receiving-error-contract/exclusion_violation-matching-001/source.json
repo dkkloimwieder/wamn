@@ -1,0 +1,8 @@
+{
+  "changed_source_sha256": {
+    "components/data/receiving-data/src/error.rs": "0876a302b76a90c1323f2749119292139ad05644aff2ad1f4558fdfe3e1fa304",
+    "packages/receiving/generated/contracts/purchase_order/update.errors.json": "7afac67988e22482ae5343fdf8ccbdccd4e46c9e045c2fa4dfe9bca43bce53b7",
+    "packages/receiving/generated/wamn/purchase_order.rs": "6b6f385b77b1b0f76978c975612242f20edeaaaa80641f6eb24c4b593a367cf2"
+  },
+  "head": "0cdb9af37e065af305c089e9035526384ae24844"
+}

@@ -462,14 +462,9 @@ mod tests {
             .collect()
     }
 
-    /// The PIN between this crate's hand-copied vocabulary and the generator's.
-    ///
-    /// The generator owns one platform vocabulary, `AccessOperationErrorLiteral`,
-    /// and writes every operation's closed case list from it. Both error enums
-    /// here are HAND copies of the part this package uses, and nothing held the
-    /// copies to the source: when `exclusion_violation` joined the platform
-    /// vocabulary the copies did not grow, and `classify` above had to record
-    /// that gap in prose. This test holds them together in both directions.
+    /// Reachable literals must agree with the generated closed contracts.
+    /// Constraint errors are reachable only when the operation permits names
+    /// of that kind, and those exact names must also appear in its contract.
     #[test]
     fn the_hand_copied_vocabulary_agrees_with_the_generated_contracts() {
         /// Operations this crate implements. `record_receipt` answers with
@@ -484,25 +479,27 @@ mod tests {
             "receiving/load_receipt_screen",
             "receiving/record_receipt",
         ];
-        /// The copy's one live disagreement, held at exactly these three.
-        ///
-        /// No `packages/receiving` contract declares any of them, yet
-        /// `operation::operation_error` puts `AccessErrorKind::literal()`
-        /// straight into the wire `code`. They are out of reach today only
-        /// because every generated `UPDATE_*_CONSTRAINTS` slice is empty;
-        /// naming one constraint in the manifest would put an undeclared code
-        /// on the wire of a contract that says `closed: true`. Whether they
-        /// should be renamed to a domain literal --- the way the manifest
-        /// renames `unique_violation` to `receipt_reference_conflict` --- or
-        /// dropped is a package-level decision this test does not take.
-        const UNDECLARED: &[&str] = &[
-            "unique_violation",
-            "foreign_key_violation",
-            "check_violation",
-        ];
+        use crate::generated::wamn::purchase_order;
 
         let declared = declared(OPERATIONS);
-        let exclusions = crate::generated::wamn::purchase_order::UPDATE_EXCLUSION_CONSTRAINTS;
+        let constraints = [
+            (
+                AccessErrorKind::UniqueViolation,
+                purchase_order::UPDATE_UNIQUE_CONSTRAINTS,
+            ),
+            (
+                AccessErrorKind::ForeignKeyViolation,
+                purchase_order::UPDATE_FOREIGN_KEY_CONSTRAINTS,
+            ),
+            (
+                AccessErrorKind::CheckViolation,
+                purchase_order::UPDATE_CHECK_CONSTRAINTS,
+            ),
+            (
+                AccessErrorKind::ExclusionViolation,
+                purchase_order::UPDATE_EXCLUSION_CONSTRAINTS,
+            ),
+        ];
         let update: serde_json::Value = serde_json::from_slice(
             &std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
                 "../../../packages/receiving/generated/contracts/purchase_order/update.errors.json",
@@ -510,24 +507,31 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let declared_exclusions: std::collections::BTreeSet<&str> = update["cases"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|case| case["literal"] == "exclusion_violation")
-            .map(|case| case["constraint"].as_str().unwrap())
-            .collect();
-        assert_eq!(
-            exclusions
+        for (kind, names) in constraints {
+            let declared_names: std::collections::BTreeSet<&str> = update["cases"]
+                .as_array()
+                .unwrap()
                 .iter()
-                .copied()
-                .collect::<std::collections::BTreeSet<_>>(),
-            declared_exclusions,
-            "the generated exclusion slice and contract disagree"
-        );
+                .filter(|case| case["literal"] == kind.literal())
+                .map(|case| case["constraint"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                names
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>(),
+                declared_names,
+                "the generated {} slice and contract disagree",
+                kind.literal()
+            );
+        }
         let spelled: std::collections::BTreeSet<&str> = AccessErrorKind::ALL
             .iter()
-            .filter(|kind| **kind != AccessErrorKind::ExclusionViolation || !exclusions.is_empty())
+            .filter(|kind| {
+                constraints
+                    .iter()
+                    .all(|(constraint_kind, names)| **kind != *constraint_kind || !names.is_empty())
+            })
             .map(|kind| kind.literal())
             .chain(
                 crate::record_receipt::RecordReceiptErrorKind::ALL
@@ -537,22 +541,9 @@ mod tests {
             .collect();
 
         for literal in &spelled {
-            if UNDECLARED.contains(literal) {
-                assert!(
-                    !declared.contains(*literal),
-                    "{literal} is declared now; drop it from UNDECLARED"
-                );
-            } else {
-                assert!(
-                    declared.contains(*literal),
-                    "{literal} is spelled here but declared by no contract this crate implements"
-                );
-            }
-        }
-        for literal in UNDECLARED {
             assert!(
-                spelled.contains(literal),
-                "{literal} is no longer spelled here; drop it from UNDECLARED"
+                declared.contains(*literal),
+                "{literal} is reachable here but declared by no contract this crate implements"
             );
         }
         for literal in &declared {
