@@ -1,0 +1,24 @@
+{
+  "cleanup": true,
+  "committed_claims": 1,
+  "committed_movements": 1,
+  "exit_code": 0,
+  "http_requests": 2,
+  "label_sha256": "122679aa651954e36523c8901cfcddb579acd1dbf4e1d2fe79310925d0d44481",
+  "location_id": "fc4030f3-0473-4d61-8403-2014e34d1d64",
+  "mode": "success",
+  "move_requests": 1,
+  "movement_id": "4ce47f79-3a3b-4a8d-86e1-a4a3de2d6cb1",
+  "pallet_id": "680a1da3-7625-46ea-9880-64019aa2fd86",
+  "partial_result_and_failure_visible": false,
+  "passed": true,
+  "read_requests": 1,
+  "row_version": 2,
+  "spent_controls_send_nothing": true,
+  "stored": {
+    "container": "labels",
+    "key": "4ce47f79-3a3b-4a8d-86e1-a4a3de2d6cb1"
+  },
+  "stored_key": "wms/4ce47f79-3a3b-4a8d-86e1-a4a3de2d6cb1",
+  "terminal_restored": true
+}

@@ -1,0 +1,1 @@
+{"claims" : 0, "movements" : 0, "command" : null, "movement" : null, "pallet" : {"location_id" : "50208ba6-65a8-4774-aba0-51aacfa108e2", "status" : "available", "row_version" : 1}, "quantity" : [{"product_id" : "fa998805-3cad-440a-a6e2-b7734844a2f1", "quantity" : "10.0000", "status" : "available"}]}

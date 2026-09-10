@@ -1,0 +1,9 @@
+Private live-proof scratch: /tmp/wamn-receiving-parity-live-up14jnmx
+Stage: build-http-route
+Stage: create-registry-auth
+Stage: substrate-up
+Stage: postgres-ready
+Stage: push-http-route
+Stage: receiving-composition-live
+Retained live-proof evidence: /home/kaalin/dev/wamn/docs/perf/2026.09/generated-tui-recipe/run-001/receiving-composition
+Disposable Receiving composition live proof passed.

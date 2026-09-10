@@ -1,0 +1,7 @@
+{
+  "components/target/wasm32-wasip2/debug/http_route.wasm": "229c2ecb1fa576b66c563a6079702e5bc3951d14392c6850006672125ad1817b",
+  "target/debug/wamn": "1641a3bcf8d8b8e613a250ac5bca8837f9c06c6ded1c2b4089ec4a23a8209781",
+  "target/debug/wamn-host": "add0341ce948856e476f037b96a2257c7d32745846d44e45117d165e6ed77a13",
+  "target/debug/wamn-scenario-worker": "6aa2382505744421644368f078b84a620a4eb3f7f8f9d7016c207a05a2f070a9",
+  "target/debug/wamn-receiving": "b04d004b62b7b5be5a97e5d51cfd5f65ee2b7eb92b447fb2ce31de807d910b65"
+}

@@ -1,0 +1,25 @@
+{
+  "after_sha256": {
+    ".gitignore": "306fd52e74fca6746e12acc750f232de15e71da917756a1270d74c91f5eb7368",
+    "Cargo.lock": "ec0ec57194d9f8ae1826b30cd52a483b8b26f0c20c161cae07a6c5ea550b4440",
+    "Cargo.toml": "6b3ffc7fa2fd62831bc632aea8fbb1ad6076597beaba93df77baa56bf45e07ba",
+    "README.md": "c00c669b274ccd273633d7db64ca651a78ff38ea9ca825b9d0407d52bc73ae7a",
+    "src/lib.rs": "13d782bb69445d16a313a78a8cb4d82d9ffb2547268479cbb86a01b38565e249",
+    "src/main.rs": "94a3205e089d4fac030c8035783df23afd6a2a7c070e7f8ba978750916027d5d",
+    "src/screens/mod.rs": "2c45d27962cbabd536936af867d11f91746610e47c0cc5b06d3d88f901a75958",
+    "src/screens/receiving.rs": "71d9136d8b906590c3b9bc7275e012c2ce3665915aaa37c5514ed83daa135196",
+    "tests/scaffold_tracks_contract.rs": "e19bfb65e87d0d84dd5c306c8c602c3d233927d79fa33c1035d3aecf0d9c4522"
+  },
+  "passed": true,
+  "source_sha256": {
+    ".gitignore": "306fd52e74fca6746e12acc750f232de15e71da917756a1270d74c91f5eb7368",
+    "Cargo.toml": "6b3ffc7fa2fd62831bc632aea8fbb1ad6076597beaba93df77baa56bf45e07ba",
+    "README.md": "c00c669b274ccd273633d7db64ca651a78ff38ea9ca825b9d0407d52bc73ae7a",
+    "src/lib.rs": "13d782bb69445d16a313a78a8cb4d82d9ffb2547268479cbb86a01b38565e249",
+    "src/main.rs": "94a3205e089d4fac030c8035783df23afd6a2a7c070e7f8ba978750916027d5d",
+    "src/screens/mod.rs": "2c45d27962cbabd536936af867d11f91746610e47c0cc5b06d3d88f901a75958",
+    "src/screens/receiving.rs": "71d9136d8b906590c3b9bc7275e012c2ce3665915aaa37c5514ed83daa135196",
+    "tests/scaffold_tracks_contract.rs": "e19bfb65e87d0d84dd5c306c8c602c3d233927d79fa33c1035d3aecf0d9c4522"
+  },
+  "source_unchanged": true
+}

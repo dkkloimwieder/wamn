@@ -1,0 +1,12 @@
+Stage: materialize
+Stage: build-cli
+Stage: build-clients
+Stage: shared-and-receiving-tests
+Stage: emitter-tests
+Stage: scaffold-create
+Stage: scaffold-tests
+Stage: regenerate-with-scaffold
+Stage: operator-loop
+Stage: receiving-composition
+Stage: wms-composition
+{"passed": true, "evidence": "/home/kaalin/dev/wamn/docs/perf/2026.09/generated-tui-recipe/run-001", "failure": null}

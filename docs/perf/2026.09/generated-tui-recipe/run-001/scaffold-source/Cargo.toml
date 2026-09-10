@@ -1,0 +1,16 @@
+[package]
+name = "wamn-receiving-ui"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+[dependencies]
+generated = { package = "wamn-generated-receiving-tui", path = "../generated/receiving-tui" }
+wamn-client-tui = { path = "../../../crates/client/tui" }
+wamn-client-terminal = { path = "../../../crates/client/terminal" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+wamn-client = { path = "../../../crates/client/core" }
