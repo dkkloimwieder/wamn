@@ -375,18 +375,23 @@ fn overlay_package_root() -> PathBuf {
 }
 
 fn journey_package_root(package: JourneyPackage) -> PathBuf {
+    let source = if package.id == BASE_PACKAGE_ID {
+        package_root()
+    } else {
+        overlay_package_root()
+    };
     if std::env::var_os(JOURNEY_DOCUMENT_ENV).is_some()
         && let Some(root) = JourneyDocument::required()
             .expect("the journey package source requires a valid input document")
             .fresh_only_packages
     {
-        return root.join(package.id);
+        return root.join(
+            source
+                .file_name()
+                .expect("the proof package has a directory name"),
+        );
     }
-    if package.id == BASE_PACKAGE_ID {
-        package_root()
-    } else {
-        overlay_package_root()
-    }
+    source
 }
 
 async fn permission_write_identity(project: &Client) -> anyhow::Result<Vec<String>> {
@@ -3482,13 +3487,14 @@ fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<
 fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
     anyhow::ensure!(!root.exists(), "fresh-only package directory must be new");
     std::fs::create_dir(root)?;
-    for (id, source) in [
-        (BASE_PACKAGE_ID, package_root()),
-        (OVERLAY_PACKAGE_ID, overlay_package_root()),
-    ] {
-        copy_fresh_only_package(&source, &root.join(id))?;
+    // Generated TUI paths use the source directory name, not the package ID.
+    for source in [package_root(), overlay_package_root()] {
+        let directory = source
+            .file_name()
+            .expect("the proof package has a directory name");
+        copy_fresh_only_package(&source, &root.join(directory))?;
     }
-    let base = root.join(BASE_PACKAGE_ID);
+    let base = root.join("receiving");
     let manifest_path = base.join("wamn.json");
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
     let operation = manifest["custom_operations"]
@@ -3515,7 +3521,16 @@ fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyho
     let scratch = ScratchRoot::create()?;
     let copies = scratch.path().join("packages");
     prepare_fresh_only_packages(&copies)?;
-    let base = copies.join(BASE_PACKAGE_ID);
+    let base = copies.join("receiving");
+    for directory in ["receiving", "client_acme_receiving"] {
+        assert!(
+            copies
+                .join(directory)
+                .join(format!("generated/{directory}-tui/Cargo.toml"))
+                .is_file(),
+            "copied TUI output must retain its source directory name"
+        );
+    }
     let manifest: Value = serde_json::from_slice(&std::fs::read(base.join("wamn.json"))?)?;
     let declaration: Value = serde_json::from_slice(&std::fs::read(
         base.join("publication/components/receiving.json.in"),
