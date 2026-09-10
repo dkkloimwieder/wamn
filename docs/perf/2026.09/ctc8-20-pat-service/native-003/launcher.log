@@ -1,0 +1,12 @@
+suite=service package=wamn-identity test=pat_issuance database=wamn_system
+suite=service exit=0
+suite=bootstrap package=wamn-ctl test=pat_bootstrap_live database=wamn_system
+suite=bootstrap exit=0
+suite=grants package=wamn-control-provision test=identity_issuer_live database=wamn_system
+suite=grants exit=0
+suite=grants-cli package=wamn-ctl test=identity_issuer_live database=wamn_system
+suite=grants-cli exit=0
+suite=session package=wamn-identity test=session_exchange database=wamn_system
+suite=session exit=0
+suite=jwks package=wamn-identity test=https_surface database=wamn_system
+suite=jwks exit=0

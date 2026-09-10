@@ -1,0 +1,3736 @@
+    Checking serde_json v1.0.151
+    Checking futures-io v0.3.34
+    Checking stable_deref_trait v1.2.1
+    Checking semver v1.0.28
+    Checking yoke v0.8.3
+    Checking futures-util v0.3.34
+    Checking zerovec v0.11.8
+    Checking zerotrie v0.2.5
+    Checking wamn-component-policy v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/platform/component-policy)
+    Checking wamn-pg-core v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/platform/pg-core)
+    Checking hashbrown v0.16.1
+    Checking tinystr v0.8.4
+    Checking potential_utf v0.1.6
+    Checking icu_locale_core v2.3.0
+    Checking icu_collections v2.3.0
+    Checking schemars v0.8.22
+    Checking postgres-types v0.2.14
+    Checking wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/components/events/wire)
+    Checking icu_provider v2.3.1
+    Checking icu_properties v2.3.0
+    Checking icu_normalizer v2.3.0
+    Checking wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/components/execution/contract)
+    Checking wamn-control-registry v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/control/registry)
+    Checking either v1.18.0
+    Checking tokio-util v0.7.19
+    Checking wasmparser v0.252.0
+    Checking idna_adapter v1.2.2
+    Checking jmespath v0.3.0
+    Checking idna v1.1.0
+    Checking tokio-postgres v0.7.18
+    Checking url v2.5.8
+    Checking h2 v0.4.19
+    Checking boon v0.6.1
+    Checking wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/catalog/model)
+    Checking wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/schema/introspection)
+    Checking wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/execution/run-state)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+    Checking wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/schema/generator)
+    Checking tower v0.5.3
+    Checking hyper v1.11.0
+    Checking wamn-event-reg v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/components/events/registration)
+    Checking wasm-encoder v0.252.0
+    Checking gimli v0.33.0
+    Checking hyper-util v0.1.20
+    Checking itertools v0.14.0
+    Checking wasmprinter v0.252.0
+    Checking hyper-rustls v0.27.9
+    Checking tower-http v0.6.11
+    Checking wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/control/provision)
+    Checking wamn-schema-control v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/schema/control)
+    Checking wasmtime-environ v47.0.4
+    Checking reqwest v0.13.4
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/identity_issuer.rs:281:9
+    |
+281 | /         sql.push_str(&format!(
+282 | |             " GRANT SELECT ({columns}) ON TABLE {schema}.{table} TO {role};",
+283 | |             schema = quote_ident(schema),
+284 | |             table = quote_ident(table),
+285 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+    = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+    |
+281 ~         let _ = write!(sql, " GRANT SELECT ({columns}) ON TABLE {schema}.{table} TO {role};",
+282 +             schema = quote_ident(schema),
+283 ~             table = quote_ident(table));
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/identity_issuer.rs:292:5
+    |
+292 | /     sql.push_str(&format!(
+293 | |         " GRANT INSERT ({columns}) ON TABLE identity.pats TO {role};"
+294 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+292 -     sql.push_str(&format!(
+293 -         " GRANT INSERT ({columns}) ON TABLE identity.pats TO {role};"
+294 -     ));
+292 +     let _ = write!(sql, " GRANT INSERT ({columns}) ON TABLE identity.pats TO {role};");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/name.rs:502:13
+    |
+502 |             out.push_str(&format!("{b:02X}"));
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+502 -             out.push_str(&format!("{b:02X}"));
+502 +             let _ = write!(out, "{b:02X}");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/sql.rs:556:9
+    |
+556 | /         sql.push_str(&format!(
+557 | |             " GRANT SELECT ON {schema_ident}.{relation} TO {role};",
+558 | |             relation = quote_ident(relation),
+559 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+556 ~         let _ = write!(sql, " GRANT SELECT ON {schema_ident}.{relation} TO {role};",
+557 ~             relation = quote_ident(relation));
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/sql.rs:757:9
+    |
+757 | /         sql.push_str(&format!(
+758 | |             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+759 | |             relation = quote_ident(relation),
+760 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+757 ~         let _ = write!(sql, " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+758 ~             relation = quote_ident(relation));
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/sql.rs:767:5
+    |
+767 | /     sql.push_str(&format!(
+768 | |         " GRANT INSERT ({wiring_insert}) ON TABLE catalog.\"wirings\" TO {role}; \
+769 | |          GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
+770 | |          GRANT SELECT ({run_select}) ON TABLE {schema}.\"runs\" TO {role}; \
+...   |
+773 | |            ON TABLE {schema}.\"run_queue\" TO {role};"
+774 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+767 ~     let _ = write!(sql, " GRANT INSERT ({wiring_insert}) ON TABLE catalog.\"wirings\" TO {role}; \
+768 +          GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
+769 +          GRANT SELECT ({run_select}) ON TABLE {schema}.\"runs\" TO {role}; \
+770 +          GRANT INSERT ({run_insert}) ON TABLE {schema}.\"runs\" TO {role}; \
+771 +          GRANT SELECT ({queue_select}), INSERT ({queue_insert}) \
+772 ~            ON TABLE {schema}.\"run_queue\" TO {role};");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/sql.rs:827:9
+    |
+827 | /         sql.push_str(&format!(
+828 | |             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+829 | |             relation = quote_ident(relation),
+830 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+827 ~         let _ = write!(sql, " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+828 ~             relation = quote_ident(relation));
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/sql.rs:832:5
+    |
+832 | /     sql.push_str(&format!(
+833 | |         " GRANT SELECT ON TABLE app_system.\"permissions\" TO {role}; \
+834 | |          GRANT SELECT ON TABLE app_system.\"users\" TO {role}; \
+835 | |          GRANT SELECT ON TABLE app_system.\"user_roles\" TO {role};"
+836 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+832 ~     let _ = write!(sql, " GRANT SELECT ON TABLE app_system.\"permissions\" TO {role}; \
+833 +          GRANT SELECT ON TABLE app_system.\"users\" TO {role}; \
+834 ~          GRANT SELECT ON TABLE app_system.\"user_roles\" TO {role};");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/sql.rs:936:9
+    |
+936 | /         sql.push_str(&format!(
+937 | |             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+938 | |             relation = quote_ident(relation),
+939 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+936 ~         let _ = write!(sql, " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+937 ~             relation = quote_ident(relation));
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/sql.rs:943:5
+    |
+943 | /     sql.push_str(&format!(
+944 | |         " GRANT SELECT ON TABLE {schema}.\"runs\" TO {role}; \
+945 | |          GRANT UPDATE ({run_update}) ON TABLE {schema}.\"runs\" TO {role}; \
+946 | |          GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
+...   |
+950 | |            {schema}.\"require_executor_platform_authority\"() TO {role};"
+951 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+943 ~     let _ = write!(sql, " GRANT SELECT ON TABLE {schema}.\"runs\" TO {role}; \
+944 +          GRANT UPDATE ({run_update}) ON TABLE {schema}.\"runs\" TO {role}; \
+945 +          GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
+946 +          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
+947 +          GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role}; \
+948 +          GRANT EXECUTE ON FUNCTION \
+949 ~            {schema}.\"require_executor_platform_authority\"() TO {role};");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/src/sql.rs:979:9
+    |
+979 | /         sql.push_str(&format!(
+980 | |             " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+981 | |             relation = quote_ident(relation),
+982 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+979 ~         let _ = write!(sql, " GRANT SELECT ON TABLE catalog.{relation} TO {role};",
+980 ~             relation = quote_ident(relation));
+    |
+
+warning: `format!(..)` appended to existing `String`
+    --> crates/control/provision/src/sql.rs:1071:9
+     |
+1071 | /         sql.push_str(&format!(
+1072 | |             " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
+1073 | |             relation = quote_ident(relation),
+1074 | |         ));
+     | |__________^
+     |
+     = note: you may need to import the `std::fmt::Write` trait
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+     |
+1071 ~         let _ = write!(sql, " GRANT SELECT ON TABLE {schema}.{relation} TO {role};",
+1072 ~             relation = quote_ident(relation));
+     |
+
+warning: `wamn-control-provision` (lib) generated 12 warnings
+    Checking cranelift-codegen v0.134.4
+    Checking opentelemetry v0.31.0
+    Checking winnow v0.7.15
+    Checking id-arena v2.3.0
+    Checking clap_builder v4.6.6
+    Checking toml v0.9.12+spec-1.1.0
+    Checking wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/identity/platform)
+    Checking clap v4.6.6
+    Checking rayon v1.12.0
+    Checking addr2line v0.26.1
+    Checking futures v0.3.34
+    Checking wasmparser v0.253.0
+    Checking tokio-stream v0.1.19
+    Checking unicode-truncate v2.0.1
+    Checking axum v0.8.9
+    Checking wasmtime-internal-cache v47.0.4
+    Checking wasmtime-internal-fiber v47.0.4
+    Checking prost v0.14.4
+    Checking hyper-timeout v0.5.2
+    Checking kasuari v0.4.12
+    Checking wasmparser v0.254.0
+    Checking wasm-encoder v0.253.0
+    Checking ratatui-core v0.1.2
+    Checking tonic v0.14.6
+    Checking futures-executor v0.3.34
+    Checking oci-spec v0.9.0
+    Checking tonic-prost v0.14.6
+    Checking tracing-subscriber v0.3.23
+    Checking opentelemetry_sdk v0.31.0
+    Checking wasm-metadata v0.253.0
+    Checking wit-parser v0.253.0
+    Checking wasm-encoder v0.254.0
+    Checking jsonwebtoken v10.4.0
+    Checking olpc-cjson v0.1.4
+    Checking oci-client v0.17.0
+    Checking wasm-metadata v0.254.0
+    Checking wit-parser v0.254.0
+    Checking wit-component v0.253.0
+    Checking opentelemetry-proto v0.31.0
+    Checking opentelemetry-http v0.31.0
+    Checking combine v4.6.8
+    Checking cranelift-native v0.134.4
+    Checking cranelift-frontend v0.134.4
+    Checking wasmtime-internal-unwinder v47.0.4
+    Checking itertools v0.13.0
+    Checking async-nats v0.49.1
+    Checking wasmtime-internal-cranelift v47.0.4
+    Checking pbjson-types v0.8.0
+    Checking wasmtime v47.0.4
+    Checking ratatui-widgets v0.3.2
+    Checking redis v0.27.6
+    Checking opentelemetry-otlp v0.31.1
+    Checking wit-component v0.254.0
+    Checking oci-wasm v0.6.0
+    Checking ratatui-crossterm v0.1.2
+    Checking tracing-opentelemetry v0.32.1
+    Checking opentelemetry-appender-tracing v0.31.1
+    Checking wamn-client v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/client/core)
+    Checking itertools v0.15.0
+    Checking docker_credential v1.4.0
+    Checking wamn-client-tui v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/client/tui)
+    Checking ratatui v0.30.2
+    Checking deadpool-postgres v0.14.2
+    Checking object_store v0.14.1
+    Checking wamn-router v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/execution/router)
+    Checking wamn-client-terminal v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/client/terminal)
+    Checking wamn-authoring-model v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/authoring/model)
+    Checking wast v252.0.0
+    Checking wit-parser v0.252.0
+    Checking wasm-metadata v0.252.0
+    Checking wamn-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/services/identity)
+warning: use of `format!` to build up a string from an iterator
+   --> services/identity/src/session.rs:201:23
+    |
+201 |     let jti: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: call `fold` instead
+   --> services/identity/src/session.rs:201:37
+    |
+201 |     let jti: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    |                                     ^^^
+help: ... and use the `write!` macro here
+   --> services/identity/src/session.rs:201:48
+    |
+201 |     let jti: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+    |                                                ^^^^^^^^^^^^^^^^^^^^^
+    = note: this can be written more efficiently by appending to a `String` directly
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_collect
+    = note: `-W clippy::format-collect` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_collect)]`
+
+warning: `wamn-identity` (lib) generated 1 warning
+warning: `wamn-identity` (lib test) generated 1 warning (1 duplicate)
+warning: casting `u64` to `i64` may wrap around the value
+   --> services/identity/tests/pat_issuance.rs:210:19
+    |
+210 |       let started = SystemTime::now()
+    |  ___________________^
+211 | |         .duration_since(UNIX_EPOCH)
+212 | |         .expect_redacted("fixture clock")
+213 | |         .as_secs() as i64;
+    | |_________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#cast_possible_wrap
+    = note: `-W clippy::cast-possible-wrap` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_possible_wrap)]`
+help: if this is intentional, use `cast_signed()` instead
+    |
+210 ~     let started = SystemTime::now()
+211 +         .duration_since(UNIX_EPOCH)
+212 +         .expect_redacted("fixture clock")
+213 ~         .as_secs().cast_signed();
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:507:5
+    |
+507 |     assert!(response.headers()["cache-control"] == "no-store");
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+    = note: `-W clippy::manual-assert-eq` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::manual_assert_eq)]`
+help: replace it with `assert_eq!(..)`
+    |
+507 -     assert!(response.headers()["cache-control"] == "no-store");
+507 +     assert_eq!(response.headers()["cache-control"], "no-store");
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:508:5
+    |
+508 |     assert!(response.headers()["content-type"] == "application/json");
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+508 -     assert!(response.headers()["content-type"] == "application/json");
+508 +     assert_eq!(response.headers()["content-type"], "application/json");
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:520:5
+    |
+520 | /     assert!(
+521 | |         fields
+522 | |             == BTreeSet::from([
+523 | |                 "token",
+...   |
+528 | |             ])
+529 | |     );
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+520 ~     assert_eq!(
+521 ~         fields, BTreeSet::from([
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:530:5
+    |
+530 |     assert!(value["principal_id"] == principal.as_str());
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+530 -     assert!(value["principal_id"] == principal.as_str());
+530 +     assert_eq!(value["principal_id"], principal.as_str());
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:536:5
+    |
+536 |     assert!(authenticated.principal().id() == principal);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+536 -     assert!(authenticated.principal().id() == principal);
+536 +     assert_eq!(authenticated.principal().id(), principal);
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:539:5
+    |
+539 |     assert!(record.get::<_, String>(0) == principal.as_str());
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+539 -     assert!(record.get::<_, String>(0) == principal.as_str());
+539 +     assert_eq!(record.get::<_, String>(0), principal.as_str());
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:544:5
+    |
+544 |     assert!(record.get::<_, String>(2) == label.trim());
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+544 -     assert!(record.get::<_, String>(2) == label.trim());
+544 +     assert_eq!(record.get::<_, String>(2), label.trim());
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:663:5
+    |
+663 |     assert!(response.headers()["cache-control"] == "no-store");
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+663 -     assert!(response.headers()["cache-control"] == "no-store");
+663 +     assert_eq!(response.headers()["cache-control"], "no-store");
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:664:5
+    |
+664 |     assert!(response.headers()["content-type"] == "application/json");
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+664 -     assert!(response.headers()["content-type"] == "application/json");
+664 +     assert_eq!(response.headers()["content-type"], "application/json");
+    |
+
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/pat_issuance.rs:687:5
+    |
+687 |     assert!(response.headers()["cache-control"] == "public, max-age=300");
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+help: replace it with `assert_eq!(..)`
+    |
+687 -     assert!(response.headers()["cache-control"] == "public, max-age=300");
+687 +     assert_eq!(response.headers()["cache-control"], "public, max-age=300");
+    |
+
+warning: `wamn-identity` (test "pat_issuance") generated 11 warnings (run `cargo clippy --fix --test "pat_issuance" -p wamn-identity -- --no-deps` to apply 10 suggestions)
+    Checking wiggle v47.0.4
+    Checking wasmtime-wasi-io v47.0.4
+    Checking wat v1.252.0
+    Checking wit-component v0.252.0
+warning: unnecessary hashes around raw string literal
+   --> crates/control/provision/tests/control_portable_store.rs:487:13
+    |
+487 | /             r#"
+488 | | DO $identity$ BEGIN
+489 | |   ASSERT session_user = '{author_a}';
+490 | |   ASSERT current_user = session_user;
+...   |
+552 | | $denied$;
+553 | | "#
+    | |__^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_raw_string_hashes
+    = note: `-W clippy::needless-raw-string-hashes` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_raw_string_hashes)]`
+help: remove all the hashes around the string literal
+    |
+487 ~             r"
+488 | DO $identity$ BEGIN
+...
+552 | $denied$;
+553 ~ "
+    |
+
+warning: unnecessary hashes around raw string literal
+   --> crates/control/provision/tests/control_portable_store.rs:561:13
+    |
+561 | /             r#"
+562 | | SET app.tenant = 'tenant-b';
+563 | | DO $second$ BEGIN
+564 | |   ASSERT session_user = '{author_b}';
+...   |
+570 | | $second$;
+571 | | "#
+    | |__^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_raw_string_hashes
+help: remove all the hashes around the string literal
+    |
+561 ~             r"
+562 | SET app.tenant = 'tenant-b';
+...
+570 | $second$;
+571 ~ "
+    |
+
+warning: unnecessary hashes around raw string literal
+   --> crates/control/provision/tests/control_portable_store.rs:636:13
+    |
+636 | /             r#"
+637 | | SET ROLE wamn_system;
+638 | | SET app.tenant = 'tenant-a';
+639 | | {project};
+...   |
+737 | | RESET ROLE;
+738 | | "#,
+    | |__^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_raw_string_hashes
+help: remove all the hashes around the string literal
+    |
+636 ~             r"
+637 | SET ROLE wamn_system;
+...
+737 | RESET ROLE;
+738 ~ ",
+    |
+
+warning: redundant closure
+   --> crates/control/provision/tests/control_portable_store.rs:179:51
+    |
+179 |     let _serialized = STORE.lock().unwrap_or_else(|poison| poison.into_inner());
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+    = note: `-W clippy::redundant-closure-for-method-calls` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/control/provision/tests/control_portable_store.rs:419:5
+    |
+419 |     const PASSWORD: &str = "control-author-live-proof";
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_statements
+    = note: `-W clippy::items-after-statements` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::items_after_statements)]`
+
+warning: redundant closure
+   --> crates/control/provision/tests/control_portable_store.rs:403:51
+    |
+403 |     let _serialized = STORE.lock().unwrap_or_else(|poison| poison.into_inner());
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+
+warning: redundant closure
+   --> crates/control/provision/tests/control_portable_store.rs:599:51
+    |
+599 |     let _serialized = STORE.lock().unwrap_or_else(|poison| poison.into_inner());
+    |                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+
+warning: `wamn-control-provision` (test "control_portable_store") generated 7 warnings (run `cargo clippy --fix --test "control_portable_store" -p wamn-control-provision -- --no-deps` to apply 6 suggestions)
+warning: used `assert!` with an equality comparison
+   --> services/identity/tests/session_exchange.rs:587:5
+    |
+587 |     assert!(body["token_type"] == "Bearer");
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_assert_eq
+    = note: `-W clippy::manual-assert-eq` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::manual_assert_eq)]`
+help: replace it with `assert_eq!(..)`
+    |
+587 -     assert!(body["token_type"] == "Bearer");
+587 +     assert_eq!(body["token_type"], "Bearer");
+    |
+
+warning: `wamn-identity` (test "session_exchange") generated 1 warning (run `cargo clippy --fix --test "session_exchange" -p wamn-identity -- --no-deps` to apply 1 suggestion)
+warning: `format!(..)` appended to existing `String`
+  --> crates/control/provision/tests/provision.rs:62:5
+   |
+62 | /     script.push_str(&format!(
+63 | |         "DO $$ BEGIN \
+64 | |            IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '{db}') THEN \
+65 | |              RAISE EXCEPTION 'project database {db} was not created'; \
+...  |
+84 | |          END $$;\n"
+85 | |     ));
+   | |______^
+   |
+   = note: you may need to import the `std::fmt::Write` trait
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+   = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+   |
+62 ~     let _ = write!(script, "DO $$ BEGIN \
+63 +            IF NOT EXISTS (SELECT FROM pg_database WHERE datname = '{db}') THEN \
+64 +              RAISE EXCEPTION 'project database {db} was not created'; \
+65 +            END IF; \
+66 +            IF (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '{db}') \
+67 +                 <> '{DB_OWNER_ROLE}' THEN \
+68 +              RAISE EXCEPTION 'project database {db} is not owned by {DB_OWNER_ROLE}'; \
+69 +            END IF; \
+70 +            IF NOT has_database_privilege('wamn_app', '{db}', 'CONNECT') THEN \
+71 +              RAISE EXCEPTION 'wamn_app lacks CONNECT on {db} (GRANT missing)'; \
+72 +            END IF; \
+73 +            IF has_database_privilege('wamn_app', '{db}', 'CREATE') \
+74 +               OR has_database_privilege('wamn_app', '{db}', 'TEMPORARY') THEN \
+75 +              RAISE EXCEPTION 'wamn_app inherited database-owner authority on {db}'; \
+76 +            END IF; \
+77 +            IF EXISTS ( \
+78 +              SELECT 1 FROM pg_database d, aclexplode(d.datacl) a \
+79 +              WHERE d.datname = '{db}' AND a.grantee = 0 AND a.privilege_type = 'CONNECT' \
+80 +            ) THEN \
+81 +              RAISE EXCEPTION 'PUBLIC still has CONNECT on {db} (REVOKE missing)'; \
+82 +            END IF; \
+83 ~          END $$;\n");
+   |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/provision.rs:102:5
+    |
+102 | /     script.push_str(&format!(
+103 | |         "DO $$ DECLARE r pg_roles%ROWTYPE; BEGIN \
+104 | |            SELECT * INTO r FROM pg_roles WHERE rolname = '{DB_OWNER_ROLE}'; \
+105 | |            IF r IS NULL THEN RAISE EXCEPTION '{DB_OWNER_ROLE} role missing'; END IF; \
+...   |
+114 | |          END $$;\n"
+115 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+102 ~     let _ = write!(script, "DO $$ DECLARE r pg_roles%ROWTYPE; BEGIN \
+103 +            SELECT * INTO r FROM pg_roles WHERE rolname = '{DB_OWNER_ROLE}'; \
+104 +            IF r IS NULL THEN RAISE EXCEPTION '{DB_OWNER_ROLE} role missing'; END IF; \
+105 +            IF r.rolcanlogin OR r.rolsuper OR r.rolcreatedb OR r.rolcreaterole \
+106 +               OR r.rolinherit OR r.rolreplication OR r.rolbypassrls THEN \
+107 +              RAISE EXCEPTION '{DB_OWNER_ROLE} is not a NOLOGIN title-only role'; \
+108 +            END IF; \
+109 +            IF (SELECT rolpassword IS NOT NULL FROM pg_authid \
+110 +                 WHERE rolname = '{DB_OWNER_ROLE}') THEN \
+111 +              RAISE EXCEPTION '{DB_OWNER_ROLE} unexpectedly has a password'; \
+112 +            END IF; \
+113 ~          END $$;\n");
+    |
+
+warning: `wamn-control-provision` (test "provision") generated 2 warnings
+warning: empty String is being created manually
+   --> crates/control/provision/tests/session_target.rs:287:9
+    |
+287 |         "".to_owned(),
+    |         ^^^^^^^^^^^^^ help: consider using: `String::new()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_string_new
+    = note: `-W clippy::manual-string-new` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::manual_string_new)]`
+
+warning: `wamn-control-provision` (test "session_target") generated 1 warning (run `cargo clippy --fix --test "session_target" -p wamn-control-provision -- --no-deps` to apply 1 suggestion)
+    Checking wasmtime-wasi v47.0.4
+warning: unnecessary hashes around raw string literal
+   --> crates/control/provision/tests/database_owner.rs:162:13
+    |
+162 | /             r#"
+163 | | DO $$ BEGIN
+164 | |   -- 1. Ownership sits on the NOLOGIN title role, on BOTH databases.
+165 | |   ASSERT (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '{first}')
+...   |
+235 | | END $$;
+236 | | "#
+    | |__^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_raw_string_hashes
+    = note: `-W clippy::needless-raw-string-hashes` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_raw_string_hashes)]`
+help: remove all the hashes around the string literal
+    |
+162 ~             r"
+163 | DO $$ BEGIN
+...
+235 | END $$;
+236 ~ "
+    |
+
+warning: called `ok().expect()` on a `Result` value
+  --> crates/control/provision/tests/session_role_reader_live.rs:27:26
+   |
+27 |     let mut public_url = Url::parse(url).ok().expect("fixture URL");
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ok_expect
+   = note: `-W clippy::ok-expect` implied by `-W clippy::style`
+   = help: to override `-W clippy::style` add `#[allow(clippy::ok_expect)]`
+help: call `expect()` directly on the `Result`
+   |
+27 -     let mut public_url = Url::parse(url).ok().expect("fixture URL");
+27 +     let mut public_url = Url::parse(url).expect("fixture URL");
+   |
+
+warning: `wamn-control-provision` (test "database_owner") generated 1 warning (run `cargo clippy --fix --test "database_owner" -p wamn-control-provision -- --no-deps` to apply 1 suggestion)
+warning: `wamn-control-provision` (test "session_role_reader_live") generated 1 warning (run `cargo clippy --fix --test "session_role_reader_live" -p wamn-control-provision -- --no-deps` to apply 1 suggestion)
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/system_reader_grants.rs:116:9
+    |
+116 | /         script.push_str(&format!(
+117 | |             "DO $reset$ BEGIN \
+118 | |                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
+119 | |                  EXECUTE 'DROP OWNED BY \"{role}\"'; \
+...   |
+122 | |              END $reset$;\n"
+123 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+    = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+    |
+116 ~         let _ = write!(script, "DO $reset$ BEGIN \
+117 +                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
+118 +                  EXECUTE 'DROP OWNED BY \"{role}\"'; \
+119 +                  EXECUTE 'DROP ROLE \"{role}\"'; \
+120 +                END IF; \
+121 ~              END $reset$;\n");
+    |
+
+warning: redundant closure
+   --> crates/control/provision/tests/system_reader_grants.rs:237:52
+    |
+237 |     let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+    = note: `-W clippy::redundant-closure-for-method-calls` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:200:9
+    |
+200 | /         script.push_str(&format!(
+201 | |             "DO $reset$ BEGIN \
+202 | |                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
+203 | |                  EXECUTE 'DROP OWNED BY \"{role}\"'; \
+...   |
+206 | |              END $reset$;\n"
+207 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+    = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+    |
+200 ~         let _ = write!(script, "DO $reset$ BEGIN \
+201 +                IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') THEN \
+202 +                  EXECUTE 'DROP OWNED BY \"{role}\"'; \
+203 +                  EXECUTE 'DROP ROLE \"{role}\"'; \
+204 +                END IF; \
+205 ~              END $reset$;\n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/system_reader_grants.rs:299:9
+    |
+299 | /         probes.push_str(&format!(
+300 | |             "  ASSERT NOT has_schema_privilege(r, '{schema}', 'USAGE'), \
+301 | |                'the registry reader reaches the {schema} schema'; \n"
+302 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+299 ~         let _ = write!(probes, "  ASSERT NOT has_schema_privilege(r, '{schema}', 'USAGE'), \
+300 ~                'the registry reader reaches the {schema} schema'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/system_reader_grants.rs:315:13
+    |
+315 | /             probes.push_str(&format!(
+316 | |                 "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
+317 | |                    'the registry reader holds {privilege} on {relation}'; \n"
+318 | |             ));
+    | |______________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+315 ~             let _ = write!(probes, "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
+316 ~                    'the registry reader holds {privilege} on {relation}'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/system_reader_grants.rs:323:9
+    |
+323 | /         probes.push_str(&format!(
+324 | |             "  ASSERT NOT has_table_privilege(r, 'registry.event_readers', '{privilege}'), \
+325 | |                'the registry reader holds {privilege} on its own relation'; \n"
+326 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+323 ~         let _ = write!(probes, "  ASSERT NOT has_table_privilege(r, 'registry.event_readers', '{privilege}'), \
+324 ~                'the registry reader holds {privilege} on its own relation'; \n");
+    |
+
+warning: redundant closure
+   --> crates/control/provision/tests/system_reader_grants.rs:414:52
+    |
+414 |     let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/system_reader_grants.rs:485:9
+    |
+485 | /         probes.push_str(&format!(
+486 | |             "  ASSERT has_table_privilege(r, '{relation}', 'SELECT'), \
+487 | |                'the identity reader cannot read {relation}'; \n"
+488 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+485 ~         let _ = write!(probes, "  ASSERT has_table_privilege(r, '{relation}', 'SELECT'), \
+486 ~                'the identity reader cannot read {relation}'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/system_reader_grants.rs:491:13
+    |
+491 | /             probes.push_str(&format!(
+492 | |                 "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
+493 | |                    'the identity reader holds {privilege} on {relation}'; \n"
+494 | |             ));
+    | |______________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+491 ~             let _ = write!(probes, "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
+492 ~                    'the identity reader holds {privilege} on {relation}'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/system_reader_grants.rs:498:9
+    |
+498 | /         probes.push_str(&format!(
+499 | |             "  ASSERT NOT has_schema_privilege(r, '{schema}', 'USAGE'), \
+500 | |                'the identity reader reaches the {schema} schema'; \n"
+501 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+498 ~         let _ = write!(probes, "  ASSERT NOT has_schema_privilege(r, '{schema}', 'USAGE'), \
+499 ~                'the identity reader reaches the {schema} schema'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/system_reader_grants.rs:508:9
+    |
+508 | /         probes.push_str(&format!(
+509 | |             "  ASSERT NOT has_table_privilege(r, '{relation}', 'SELECT'), \
+510 | |                'the identity reader can read {relation}'; \n"
+511 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+508 ~         let _ = write!(probes, "  ASSERT NOT has_table_privilege(r, '{relation}', 'SELECT'), \
+509 ~                'the identity reader can read {relation}'; \n");
+    |
+
+warning: redundant closure
+   --> crates/control/provision/tests/family_surface_grants.rs:233:52
+    |
+233 |     let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+    = note: `-W clippy::redundant-closure-for-method-calls` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+
+warning: redundant closure
+   --> crates/control/provision/tests/family_surface_grants.rs:452:52
+    |
+452 |     let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:538:9
+    |
+538 | /         probes.push_str(&format!(
+539 | |             "  ASSERT has_table_privilege(r, 'catalog.{relation}', 'SELECT'), \
+540 | |                'cannot read catalog.{relation}'; \
+541 | |              ASSERT NOT has_table_privilege(r, 'catalog.{relation}', 'INSERT') \
+...   |
+544 | |                'the executor writes nothing in the catalog plane'; \n"
+545 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+538 ~         let _ = write!(probes, "  ASSERT has_table_privilege(r, 'catalog.{relation}', 'SELECT'), \
+539 +                'cannot read catalog.{relation}'; \
+540 +              ASSERT NOT has_table_privilege(r, 'catalog.{relation}', 'INSERT') \
+541 +                AND NOT has_table_privilege(r, 'catalog.{relation}', 'UPDATE') \
+542 +                AND NOT has_table_privilege(r, 'catalog.{relation}', 'DELETE'), \
+543 ~                'the executor writes nothing in the catalog plane'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:560:13
+    |
+560 | /             probes.push_str(&format!(
+561 | |                 "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
+562 | |                    'the executor holds {privilege} on {relation}'; \n"
+563 | |             ));
+    | |______________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+560 ~             let _ = write!(probes, "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
+561 ~                    'the executor holds {privilege} on {relation}'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:586:9
+    |
+586 | /         probes.push_str(&format!(
+587 | |             "  ASSERT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \
+588 | |                'the executor cannot write runs.{column}, which one of its six \
+589 | |                 UPDATE statements sets'; \n"
+590 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+586 ~         let _ = write!(probes, "  ASSERT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \
+587 +                'the executor cannot write runs.{column}, which one of its six \
+588 ~                 UPDATE statements sets'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:609:9
+    |
+609 | /         probes.push_str(&format!(
+610 | |             "  ASSERT NOT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \
+611 | |                'the executor can rewrite runs.{column}: the admission pins and the \
+612 | |                 frozen wiring identity are not a claim''s to move'; \n"
+613 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+609 ~         let _ = write!(probes, "  ASSERT NOT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \
+610 +                'the executor can rewrite runs.{column}: the admission pins and the \
+611 ~                 frozen wiring identity are not a claim''s to move'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:616:9
+    |
+616 | /         probes.push_str(&format!(
+617 | |             "  ASSERT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
+618 | |                'the executor cannot write run_queue.{column}'; \n"
+619 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+616 ~         let _ = write!(probes, "  ASSERT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
+617 ~                'the executor cannot write run_queue.{column}'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:628:9
+    |
+628 | /         probes.push_str(&format!(
+629 | |             "  ASSERT NOT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
+630 | |                'the executor can move run_queue.{column}: the FIFO position and the \
+631 | |                 crash budget belong to admission'; \n"
+632 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+628 ~         let _ = write!(probes, "  ASSERT NOT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \
+629 +                'the executor can move run_queue.{column}: the FIFO position and the \
+630 ~                 crash budget belong to admission'; \n");
+    |
+
+warning: redundant closure
+   --> crates/control/provision/tests/family_surface_grants.rs:721:52
+    |
+721 |     let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::sync::PoisonError::into_inner`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:823:9
+    |
+823 | /         probes.push_str(&format!(
+824 | |             "  ASSERT has_table_privilege(r, 'catalog.{relation}', 'SELECT'), \
+825 | |                'cannot read catalog.{relation}, which its one statement joins'; \
+826 | |              ASSERT NOT has_table_privilege(r, 'catalog.{relation}', 'INSERT') \
+...   |
+829 | |                'the callable-HTTP admitter writes nothing anywhere'; \n"
+830 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+823 ~         let _ = write!(probes, "  ASSERT has_table_privilege(r, 'catalog.{relation}', 'SELECT'), \
+824 +                'cannot read catalog.{relation}, which its one statement joins'; \
+825 +              ASSERT NOT has_table_privilege(r, 'catalog.{relation}', 'INSERT') \
+826 +                AND NOT has_table_privilege(r, 'catalog.{relation}', 'UPDATE') \
+827 +                AND NOT has_table_privilege(r, 'catalog.{relation}', 'DELETE'), \
+828 ~                'the callable-HTTP admitter writes nothing anywhere'; \n");
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:833:9
+    |
+833 | /         probes.push_str(&format!(
+834 | |             "  ASSERT has_table_privilege(r, 'app_system.{relation}', 'SELECT'), \
+835 | |                'cannot read the human permission relation app_system.{relation}'; \
+836 | |              ASSERT NOT has_table_privilege(r, 'app_system.{relation}', 'INSERT') \
+...   |
+839 | |                'the callable-HTTP admitter writes human permission authority'; \n"
+840 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+833 ~         let _ = write!(probes, "  ASSERT has_table_privilege(r, 'app_system.{relation}', 'SELECT'), \
+834 +                'cannot read the human permission relation app_system.{relation}'; \
+835 +              ASSERT NOT has_table_privilege(r, 'app_system.{relation}', 'INSERT') \
+836 +                AND NOT has_table_privilege(r, 'app_system.{relation}', 'UPDATE') \
+837 +                AND NOT has_table_privilege(r, 'app_system.{relation}', 'DELETE'), \
+838 ~                'the callable-HTTP admitter writes human permission authority'; \n");
+    |
+
+warning: `wamn-control-provision` (test "system_reader_grants") generated 10 warnings (run `cargo clippy --fix --test "system_reader_grants" -p wamn-control-provision -- --no-deps` to apply 2 suggestions)
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/family_surface_grants.rs:853:13
+    |
+853 | /             probes.push_str(&format!(
+854 | |                 "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
+855 | |                    'the callable-HTTP admitter holds {privilege} on {relation}'; \n"
+856 | |             ));
+    | |______________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+853 ~             let _ = write!(probes, "  ASSERT NOT has_table_privilege(r, '{relation}', '{privilege}'), \
+854 ~                    'the callable-HTTP admitter holds {privilege} on {relation}'; \n");
+    |
+
+warning: `wamn-control-provision` (test "family_surface_grants") generated 13 warnings (run `cargo clippy --fix --test "family_surface_grants" -p wamn-control-provision -- --no-deps` to apply 3 suggestions)
+warning: unnecessary hashes around raw string literal
+   --> crates/control/provision/tests/cdc.rs:104:13
+    |
+104 | /             r#"
+105 | | CREATE TABLE {schema}.receipts (id uuid PRIMARY KEY, qty numeric(8,3));
+106 | | DO $$ BEGIN
+107 | |   ASSERT (SELECT count(*) FROM pg_publication WHERE pubname = '{cdc}') = 1,
+...   |
+139 | | END $$;
+140 | | "#,
+    | |__^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_raw_string_hashes
+    = note: `-W clippy::needless-raw-string-hashes` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_raw_string_hashes)]`
+help: remove all the hashes around the string literal
+    |
+104 ~             r"
+105 | CREATE TABLE {schema}.receipts (id uuid PRIMARY KEY, qty numeric(8,3));
+...
+139 | END $$;
+140 ~ ",
+    |
+
+warning: `wamn-control-provision` (test "cdc") generated 1 warning (run `cargo clippy --fix --test "cdc" -p wamn-control-provision -- --no-deps` to apply 1 suggestion)
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/control/provision/tests/control_storage.rs:760:5
+    |
+760 |     use std::io::Write;
+    |     ^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_statements
+    = note: `-W clippy::items-after-statements` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::items_after_statements)]`
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/control/provision/tests/control_storage.rs:761:5
+    |
+761 |     use std::process::{Command as Proc, Stdio};
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_statements
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/control/provision/tests/control_storage.rs:761:24
+    |
+761 |     use std::process::{Command as Proc, Stdio};
+    |                        ^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_statements
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> crates/control/provision/tests/control_storage.rs:761:41
+    |
+761 |     use std::process::{Command as Proc, Stdio};
+    |                                         ^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_statements
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/control_storage.rs:619:5
+    |
+619 | /     script.push_str(&format!(
+620 | |         "PREPARE up (text,text,text) AS {upsert};\n\
+621 | |          EXECUTE up('demo','pooled','wamn-pg');\n\
+622 | |          EXECUTE up('demo','dedicated',NULL);\n\
+...   |
+632 | |         upsert = wamn_control_registry::sql::upsert_org_sql(),
+633 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+    = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+    |
+619 ~     let _ = write!(script, "PREPARE up (text,text,text) AS {upsert};\n\
+620 +          EXECUTE up('demo','pooled','wamn-pg');\n\
+621 +          EXECUTE up('demo','dedicated',NULL);\n\
+622 +          DO $$ BEGIN\n\
+623 +            ASSERT (SELECT count(*) FROM registry.orgs WHERE id='demo')=1,\n\
+624 ~              'upsert_org_sql is idempotent — one row after two upserts';\n\
+625 +            ASSERT (SELECT placement_kind FROM registry.orgs WHERE id='demo')='dedicated',\n\
+626 +              'the second upsert refreshed the placement (ON CONFLICT DO UPDATE)';\n\
+627 +            ASSERT (SELECT pool_cluster FROM registry.orgs WHERE id='demo') IS NULL,\n\
+628 +              'the second (dedicated) upsert cleared the pool cluster';\n\
+629 +          END $$;\n\
+630 +          DEALLOCATE up;\n",
+631 ~         upsert = wamn_control_registry::sql::upsert_org_sql());
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/control_storage.rs:638:5
+    |
+638 | /     script.push_str(&format!(
+639 | |         "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text,text) AS {stamp};\n",
+640 | |         stamp = wamn_control_registry::sql::stamp_env_policy_sql(),
+641 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+638 ~     let _ = write!(script, "PREPARE stamp (text,text,text,int,int,text,text,text,text,text,text,text,text) AS {stamp};\n",
+639 ~         stamp = wamn_control_registry::sql::stamp_env_policy_sql());
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/control_storage.rs:660:5
+    |
+660 | /     script.push_str(&format!(
+661 | |         "PREPARE upp (text,text) AS {up_project};\n\
+662 | |          PREPARE upe (text,text,text,text,text,text,boolean) AS {up_env};\n\
+663 | |          EXECUTE upp('demo','app');\n\
+...   |
+695 | |         up_env = wamn_control_registry::sql::upsert_project_env_sql(),
+696 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+660 ~     let _ = write!(script, "PREPARE upp (text,text) AS {up_project};\n\
+661 +          PREPARE upe (text,text,text,text,text,text,boolean) AS {up_env};\n\
+662 +          EXECUTE upp('demo','app');\n\
+663 +          EXECUTE upp('demo','app');\n\
+664 +          EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev-OLD', NULL, 'k3m9x2p7', true);\n\
+665 +          EXECUTE upe('demo','app','dev','wamn-db-demo--app--dev', NULL, 'r4n8c6v2', false);\n\
+666 +          DO $$ BEGIN\n\
+667 +            ASSERT (SELECT count(*) FROM registry.projects WHERE org='demo' AND id='app')=1,\n\
+668 ~              'upsert_project_sql is idempotent — one project row after two upserts';\n\
+669 +            ASSERT (SELECT secret_name FROM registry.project_envs\n\
+670 +                      WHERE org='demo' AND project='app' AND env='dev')='wamn-db-demo--app--dev',\n\
+671 +              'the second project-env upsert refreshed the Secret reference (ON CONFLICT DO UPDATE)';\n\
+672 +            ASSERT (SELECT instance_suffix FROM registry.project_envs\n\
+673 +                      WHERE org='demo' AND project='app' AND env='dev')='k3m9x2p7',\n\
+674 +              'the second project-env upsert preserved the originally minted instance suffix';\n\
+675 +            ASSERT NOT (SELECT disposable FROM registry.project_envs\n\
+676 +                      WHERE org='demo' AND project='app' AND env='dev'),\n\
+677 +              'the disposable marker follows THIS provisioning, unlike the minted suffix';\n\
+678 +            -- Ask the SERVER what an unstated marker means, not the DDL text.\n\
+679 +            ASSERT (SELECT attnotnull FROM pg_attribute\n\
+680 +                      WHERE attrelid='registry.project_envs'::regclass\n\
+681 +                        AND attname='disposable'),\n\
+682 +              'the disposable marker must be NOT NULL';\n\
+683 +            ASSERT (SELECT pg_get_expr(default_value.adbin, default_value.adrelid)\n\
+684 +                      FROM pg_attribute AS column_meta\n\
+685 +                      JOIN pg_attrdef AS default_value\n\
+686 +                        ON default_value.adrelid = column_meta.attrelid\n\
+687 +                       AND default_value.adnum = column_meta.attnum\n\
+688 +                     WHERE column_meta.attrelid='registry.project_envs'::regclass\n\
+689 +                       AND column_meta.attname='disposable') = 'false',\n\
+690 +              'an environment nobody marked disposable must default to durable';\n\
+691 +          END $$;\n\
+692 +          DEALLOCATE upp; DEALLOCATE upe;\n",
+693 +         up_project = wamn_control_registry::sql::upsert_project_sql(),
+694 ~         up_env = wamn_control_registry::sql::upsert_project_env_sql());
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/control_storage.rs:700:5
+    |
+700 | /     script.push_str(&format!(
+701 | |         "PREPARE getpol (text,text) AS {get};\n\
+702 | |          CREATE TEMP TABLE policy_probe AS EXECUTE getpol('demo','dev');\n\
+703 | |          CREATE TEMP TABLE policy_probe_other AS EXECUTE getpol('ghost','dev');\n\
+...   |
+713 | |         get = wamn_control_registry::sql::select_env_policy_sql(),
+714 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+700 ~     let _ = write!(script, "PREPARE getpol (text,text) AS {get};\n\
+701 +          CREATE TEMP TABLE policy_probe AS EXECUTE getpol('demo','dev');\n\
+702 +          CREATE TEMP TABLE policy_probe_other AS EXECUTE getpol('ghost','dev');\n\
+703 +          DO $$ BEGIN\n\
+704 +            ASSERT (SELECT count(*) FROM policy_probe)=1,\n\
+705 +              'select_env_policy_sql returns exactly one row for the org';\n\
+706 +            ASSERT (SELECT name FROM policy_probe)='dev',\n\
+707 +              'select_env_policy_sql returns the named policy';\n\
+708 +            ASSERT (SELECT count(*) FROM policy_probe_other)=0,\n\
+709 +              'select_env_policy_sql never returns another org''s policy (org-keyed)';\n\
+710 +          END $$;\n\
+711 +          DROP TABLE policy_probe; DROP TABLE policy_probe_other; DEALLOCATE getpol;\n",
+712 ~         get = wamn_control_registry::sql::select_env_policy_sql());
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/control_storage.rs:721:5
+    |
+721 | /     script.push_str(&format!(
+722 | |         "PREPARE uper (text,text,text,text,text,text,text,text,boolean) AS {upsert};\n\
+723 | |          PREPARE geter (text,text,text) AS {select};\n\
+724 | |          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev',\
+...   |
+754 | |         select = wamn_control_registry::sql::select_event_reader_sql(),
+755 | |     ));
+    | |______^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+721 ~     let _ = write!(script, "PREPARE uper (text,text,text,text,text,text,text,text,boolean) AS {upsert};\n\
+722 +          PREPARE geter (text,text,text) AS {select};\n\
+723 +          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev',\
+724 +                       'EVT_demo_dev','wamn-cdc-demo--app--dev',NULL,true);\n\
+725 +          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev_v2',\
+726 +                       'EVT_demo_dev','wamn-cdc-demo--app--dev',NULL,false);\n\
+727 +          CREATE TEMP TABLE reader_probe AS EXECUTE geter('demo','app','dev');\n\
+728 +          DO $$ BEGIN\n\
+729 +            ASSERT (SELECT count(*) FROM registry.event_readers\n\
+730 +                      WHERE org='demo' AND project='app' AND env='dev')=1,\n\
+731 ~              'upsert_event_reader_sql is idempotent — one row after two upserts';\n\
+732 +            ASSERT (SELECT slot FROM reader_probe)='wamn_cdc_demo__app__dev_v2'\n\
+733 +               AND (SELECT enabled FROM reader_probe)=false,\n\
+734 +              'the second upsert refreshed slot + enabled (ON CONFLICT DO UPDATE)';\n\
+735 +            ASSERT (SELECT stream FROM reader_probe)='EVT_demo_dev'\n\
+736 +               AND (SELECT replication_secret_name FROM reader_probe)='wamn-cdc-demo--app--dev',\n\
+737 +              'select_event_reader_sql returns the stream + replication-Secret reference';\n\
+738 +          END $$;\n\
+739 +          DO $$ BEGIN BEGIN\n\
+740 +            INSERT INTO registry.event_readers\n\
+741 +                (org, project, env, publication, slot, stream, replication_secret_name)\n\
+742 +              VALUES ('demo','app','prod','p','s','EVT_demo_prod','sec');\n\
+743 +            ASSERT false, 'a registration for an unprovisioned project-env must be rejected (FK)';\n\
+744 +          EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;\n\
+745 +          DROP TABLE reader_probe;\n\
+746 +          DELETE FROM registry.orgs WHERE id='demo';\n\
+747 +          DO $$ BEGIN\n\
+748 +            ASSERT (SELECT count(*) FROM registry.event_readers WHERE org='demo')=0,\n\
+749 +              'deleting an org cascades its CDC registrations (through project_envs)';\n\
+750 +          END $$;\n\
+751 +          DEALLOCATE uper; DEALLOCATE geter;\n",
+752 +         upsert = wamn_control_registry::sql::upsert_event_reader_sql(),
+753 ~         select = wamn_control_registry::sql::select_event_reader_sql());
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> crates/control/provision/tests/control_storage.rs:793:9
+    |
+793 | /         s.push_str(&format!(
+794 | |             "EXECUTE stamp('{org}','{name}','{recovery}',{rank},{inst},\
+795 | |              '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}','{durability}');\n",
+796 | |             name = p.name,
+...   |
+806 | |             durability = p.durability_class.as_sql(),
+807 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+793 ~         let _ = write!(s, "EXECUTE stamp('{org}','{name}','{recovery}',{rank},{inst},\
+794 +              '{storage}','{cpu}','{memory}','{image}','{backup}','{wal}','{hib}','{durability}');\n",
+795 +             name = p.name,
+796 +             rank = p.promotion_rank,
+797 +             inst = p.instances,
+798 +             storage = p.storage,
+799 +             cpu = p.cpu,
+800 +             memory = p.memory,
+801 +             image = p.image,
+802 +             backup = p.backup_cadence,
+803 +             wal = p.wal_retention,
+804 +             hib = p.hibernation,
+805 ~             durability = p.durability_class.as_sql());
+    |
+
+warning: `wamn-control-provision` (test "control_storage") generated 10 warnings
+warning: `wamn-control-provision` (lib test) generated 12 warnings (12 duplicates)
+    Checking wasmtime-wasi-http v47.0.4
+    Checking wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+    Checking wamn-runtime v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/platform/runtime)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:52:7
+   |
+52 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:114:1
+    |
+114 | / pub struct ConnectionHttp {
+115 | |     postgres: Arc<WamnPostgres>,
+116 | |     vault: Arc<WamnCredentials>,
+117 | |     tenant: Box<str>,
+...   |
+133 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+134 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:55:1
+    |
+ 55 | / pub struct WamnPostgres {
+ 56 | |     /// Resolves a project id → its database connection + policy.
+ 57 | |     provider: Arc<dyn CredentialProvider>,
+ 58 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+121 | |     pub(super) bind_counters: super::BindCounters,
+122 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib) generated 16 warnings
+    Checking wamn-ctl v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/services/ctl)
+warning: binding's name is too similar to existing binding
+   --> services/ctl/src/dev/environment.rs:355:9
+    |
+355 |     let issued = provision_project_env::run(args).await;
+    |         ^^^^^^
+    |
+note: existing binding defined here
+   --> services/ctl/src/dev/environment.rs:352:9
+    |
+352 |     let issuer = super::pat_issuer::start(system_url, root).await?;
+    |         ^^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#similar_names
+    = note: `-W clippy::similar-names` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::similar_names)]`
+
+warning: binding's name is too similar to existing binding
+   --> services/ctl/src/dev/verification_database.rs:879:21
+    |
+879 |                 let stale: Option<String> = client
+    |                     ^^^^^
+    |
+note: existing binding defined here
+   --> services/ctl/src/dev/verification_database.rs:870:33
+    |
+870 |         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+    |                                 ^^^^^
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#similar_names
+
+warning: binding's name is too similar to existing binding
+    --> services/ctl/src/dev/watch.rs:1732:9
+     |
+1732 |         expected_state: DevSourceState,
+     |         ^^^^^^^^^^^^^^
+     |
+note: existing binding defined here
+    --> services/ctl/src/dev/watch.rs:1731:9
+     |
+1731 |         expected_stage: DevStage,
+     |         ^^^^^^^^^^^^^^
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#similar_names
+
+warning: function `run_once_stages` is never used
+   --> services/ctl/src/dev.rs:604:10
+    |
+604 | async fn run_once_stages<R>(
+    |          ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `verify_source_package_with_client` is never used
+    --> services/ctl/src/push_component.rs:1301:10
+     |
+1301 | async fn verify_source_package_with_client(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unnecessary boolean `not` operation
+   --> services/ctl/src/apply_package.rs:340:9
+    |
+340 | /         if !outcome.changed {
+341 | |             " (already converged)"
+342 | |         } else {
+343 | |             ""
+344 | |         }
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#if_not_else
+    = note: `-W clippy::if-not-else` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::if_not_else)]`
+help: try
+    |
+340 ~         if outcome.changed {
+341 +             ""
+342 +         } else {
+343 +             " (already converged)"
+344 +         }
+    |
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> services/ctl/src/apply_package.rs:572:37
+    |
+572 |             execute(&tx, statement, &coordinate_text).await?;
+    |                                     ^^^^^^^^^^^^^^^^ help: change this to: `coordinate_text`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_borrow
+    = note: `-W clippy::needless-borrow` implied by `-W clippy::style`
+    = help: to override `-W clippy::style` add `#[allow(clippy::needless_borrow)]`
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> services/ctl/src/apply_package.rs:576:37
+    |
+576 |             execute(&tx, statement, &coordinate_text).await?;
+    |                                     ^^^^^^^^^^^^^^^^ help: change this to: `coordinate_text`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_borrow
+
+warning: variables can be used directly in the `format!` string
+   --> services/ctl/src/bind_connection.rs:138:39
+    |
+138 |               Some(Value::String(_)) => bail!(
+    |  _______________________________________^
+139 | |                 "the generation definition's {coordinate} is empty; {:?} needs it",
+140 | |                 requirement_type
+141 | |             ),
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#uninlined_format_args
+    = note: `-W clippy::uninlined-format-args` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::uninlined_format_args)]`
+
+warning: variables can be used directly in the `format!` string
+   --> services/ctl/src/bind_connection.rs:142:24
+    |
+142 |               Some(_) => bail!(
+    |  ________________________^
+143 | |                 "the generation definition's {coordinate} must be a string; {:?} reads it as one",
+144 | |                 requirement_type
+145 | |             ),
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#uninlined_format_args
+
+warning: variables can be used directly in the `format!` string
+   --> services/ctl/src/bind_connection.rs:146:21
+    |
+146 |               None => bail!(
+    |  _____________________^
+147 | |                 "the generation definition lacks {coordinate}; {:?} reads it at resolve time",
+148 | |                 requirement_type
+149 | |             ),
+    | |_____________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#uninlined_format_args
+
+warning: variables can be used directly in the `format!` string
+   --> services/ctl/src/bind_connection.rs:153:9
+    |
+153 | /         ensure!(
+154 | |             requirement_type.coordinates().contains(&key.as_str()),
+155 | |             "the generation definition carries {key}, which {:?} never reads; \
+156 | |              a coordinate nobody reads is a coordinate nobody validates",
+157 | |             requirement_type
+158 | |         );
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#uninlined_format_args
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/activation.rs:374:5
+    |
+374 | /     async fn spawn_host(&mut self, spec: &HostProcessSpec) -> Result<(), Self::Error> {
+375 | |         self.child = Some(spawn_host_process(spec)?);
+376 | |         Ok(())
+377 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+    = note: `-W clippy::unused-async-trait-impl` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unused_async_trait_impl)]`
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+    |
+374 ~     fn spawn_host(&mut self, spec: &HostProcessSpec) -> impl Future<Output = Result<(), Self::Error>> {
+375 ~         self.child = Some(std::future::ready(spawn_host_process(spec)?));
+376 ~         std::future::ready(Ok(()))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/activation.rs:415:5
+    |
+415 | /     async fn terminate_host(&mut self) -> Result<(), Self::Error> {
+416 | |         let Some(raw_pid) = self.child()?.id() else {
+417 | |             return Ok(());
+418 | |         };
+...   |
+423 | |         Ok(kill_process(pid, Signal::TERM).context("send SIGTERM to local wamn-host")?)
+424 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+    |
+415 ~     fn terminate_host(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+416 ~         let Some(raw_pid) = std::future::ready(self.child()?).id() else {
+417 ~             return std::future::ready(Ok(()));
+418 |         };
+419 ~         let pid = std::future::ready(i32::try_from(raw_pid)
+420 +             .ok()
+421 +             .and_then(Pid::from_raw)
+422 ~             .context("local wamn-host PID is outside the platform range")?);
+423 ~         std::future::ready(Ok(kill_process(pid, Signal::TERM).context("send SIGTERM to local wamn-host")?))std::future::ready(kill_process(pid, Signal::TERM).context("send SIGTERM to local wamn-host")?))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/activation.rs:433:5
+    |
+433 | /     async fn kill_host(&mut self) -> Result<(), Self::Error> {
+434 | |         Ok(self
+435 | |             .child()?
+436 | |             .start_kill()
+437 | |             .context("kill unresponsive local wamn-host")?)
+438 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+    |
+433 ~     fn kill_host(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+434 ~         std::future::ready(Ok(self
+435 +             .child()?
+436 +             .start_kill()
+437 +             .context("kill unresponsive local wamn-host")?))
+438 ~         Ok(std::future::ready(self
+439 +             .child()?)
+440 ~         Ok(std::future::ready(self
+441 +             .child()?
+442 +             .start_kill()
+443 ~             .context("kill unresponsive local wamn-host")?))
+    |
+
+warning: manual `Debug` impl does not include all fields
+   --> services/ctl/src/dev/config.rs:603:1
+    |
+603 | / impl fmt::Debug for DevConfig {
+604 | |     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+605 | |         formatter
+606 | |             .debug_struct("DevConfig")
+...   |
+676 | | }
+    | |_^
+    |
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:571:5
+    |
+571 |     verification_database_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:572:5
+    |
+572 |     target_database_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:576:5
+    |
+576 |     system_database_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:577:5
+    |
+577 |     identity_database_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:578:5
+    |
+578 |     guest_database_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:579:5
+    |
+579 |     executor_platform_database_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:580:5
+    |
+580 |     http_admitter_database_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:581:5
+    |
+581 |     event_materializer_database_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:582:5
+    |
+582 |     scheduler_nats_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:583:5
+    |
+583 |     event_nats_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:584:5
+    |
+584 |     tempo_query_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:585:5
+    |
+585 |     otel_exporter_otlp_endpoint: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:586:5
+    |
+586 |     component_artifact_base: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:587:5
+    |
+587 |     release_artifact_base: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:590:5
+    |
+590 |     gate_url: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:591:5
+    |
+591 |     gate_bearer_token: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:592:5
+    |
+592 |     operator_bearer_token: Option<Box<str>>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:594:5
+    |
+594 |     flow_http_workload_image: Box<str>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: this field is unused
+   --> services/ctl/src/dev/config.rs:600:5
+    |
+600 |     probes: Box<[ReachabilityProbe]>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = help: consider including all fields in this `Debug` impl
+    = help: consider calling `.finish_non_exhaustive()` if you intend to ignore fields
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#missing_fields_in_debug
+    = note: `-W clippy::missing-fields-in-debug` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::missing_fields_in_debug)]`
+
+warning: redundant closure
+   --> services/ctl/src/dev/coordinator.rs:289:18
+    |
+289 |             .map(|column| column.name())
+    |                  ^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `wamn_schema_introspection::ir::Column::name`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+    = note: `-W clippy::redundant-closure-for-method-calls` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+
+warning: use of `format!` to build up a string from an iterator
+    --> services/ctl/src/dev/coordinator.rs:1474:13
+     |
+1474 |             bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: call `fold` instead
+    --> services/ctl/src/dev/coordinator.rs:1474:26
+     |
+1474 |             bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+     |                          ^^^
+help: ... and use the `write!` macro here
+    --> services/ctl/src/dev/coordinator.rs:1474:37
+     |
+1474 |             bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+     |                                     ^^^^^^^^^^^^^^^^^^^^^
+     = note: this can be written more efficiently by appending to a `String` directly
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_collect
+     = note: `-W clippy::format-collect` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_collect)]`
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/coordinator.rs:1504:5
+     |
+1504 | /     async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
+1505 | |         // Generate is the one stage whose whole output is files in the
+1506 | |         // worktree, so it is the one stage a later run can find already done.
+1507 | |         if stage != DevStage::Generate {
+...    |
+1515 | |         Ok(false)
+1516 | |     }
+     | |_____^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<bool, Self::Error>>` instead
+     |
+1504 ~     fn stage_is_unchanged(&mut self, stage: DevStage) -> impl Future<Output = Result<bool, Self::Error>> {
+1505 |         // Generate is the one stage whose whole output is files in the
+1506 |         // worktree, so it is the one stage a later run can find already done.
+1507 |         if stage != DevStage::Generate {
+1508 ~             return std::future::ready(Ok(false));
+1509 |         }
+1510 ~         let digest = std::future::ready(self.generate_inputs_digest()?);
+1511 |         if self.generate_input_digest.as_deref() == Some(digest.as_str()) {
+1512 ~             return std::future::ready(Ok(true));
+1513 |         }
+1514 |         self.generate_input_candidate = Some(digest);
+1515 ~         std::future::ready(Ok(false))
+     |
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> services/ctl/src/dev/environment.rs:378:24
+    |
+378 |         .batch_execute(&wamn_schema_control::ensure_scenario_author_role_sql())
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: change this to: `wamn_schema_control::ensure_scenario_author_role_sql()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_borrow
+
+warning: `format!(..)` appended to existing `String`
+   --> services/ctl/src/dev/environment.rs:544:9
+    |
+544 | /         sql.push_str(&format!(
+545 | |             "GRANT {privilege} ON DATABASE {quoted} TO {}{};\n",
+546 | |             Identifier::new(grantee)?.quoted(),
+547 | |             if grantable { " WITH GRANT OPTION" } else { "" }
+548 | |         ));
+    | |__________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+    = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+    |
+544 ~         let _ = write!(sql, "GRANT {privilege} ON DATABASE {quoted} TO {}{};\n",
+545 +             Identifier::new(grantee)?.quoted(),
+546 ~             if grantable { " WITH GRANT OPTION" } else { "" });
+    |
+
+warning: matching over `()` is more explicit
+   --> services/ctl/src/dev/environment.rs:942:19
+    |
+942 |         .map_err(|_| anyhow::anyhow!("set the generated Gate role in its verification URL"))?;
+    |                   ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ignored_unit_patterns
+    = note: `-W clippy::ignored-unit-patterns` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::ignored_unit_patterns)]`
+
+warning: matching over `()` is more explicit
+   --> services/ctl/src/dev/environment.rs:945:19
+    |
+945 |         .map_err(|_| anyhow::anyhow!("set the generated Gate password in its verification URL"))?;
+    |                   ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ignored_unit_patterns
+
+warning: this function has too many arguments (9/7)
+   --> services/ctl/src/dev/environment.rs:972:1
+    |
+972 | / pub fn write_dev_config(
+973 | |     root: &Path,
+974 | |     system_url: &str,
+975 | |     template: &str,
+...   |
+981 | |     identity: &DevActivationIdentity,
+982 | | ) -> anyhow::Result<PathBuf> {
+    | |____________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#too_many_arguments
+    = note: `-W clippy::too-many-arguments` implied by `-W clippy::complexity`
+    = help: to override `-W clippy::complexity` add `#[allow(clippy::too_many_arguments)]`
+
+warning: this method chain can be written more clearly with `if .. else ..`
+   --> services/ctl/src/dev/watch.rs:229:21
+    |
+229 |           let state = status
+    |  _____________________^
+230 | |             .stdout
+231 | |             .split(|byte| *byte == b'\n')
+232 | |             .any(|line| !line.is_empty() && !line.starts_with(b"# "))
+233 | |             .then_some(DevSourceState::Dirty)
+234 | |             .unwrap_or(DevSourceState::Clean);
+    | |_____________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#obfuscated_if_else
+    = note: `-W clippy::obfuscated-if-else` implied by `-W clippy::style`
+    = help: to override `-W clippy::style` add `#[allow(clippy::obfuscated_if_else)]`
+help: try
+    |
+229 ~         let state = if status
+230 +             .stdout
+231 +             .split(|byte| *byte == b'\n')
+232 ~             .any(|line| !line.is_empty() && !line.starts_with(b"# ")) { DevSourceState::Dirty } else { DevSourceState::Clean };
+    |
+
+warning: manual `Debug` impl does not include all fields
+    --> services/ctl/src/dev/watch.rs:1134:1
+     |
+1134 | / impl fmt::Debug for FilesystemInvalidationSource {
+1135 | |     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+1136 | |         formatter
+1137 | |             .debug_struct("FilesystemInvalidationSource")
+...    |
+1145 | | }
+     | |_^
+     |
+note: this field is unused
+    --> services/ctl/src/dev/watch.rs:1126:5
+     |
+1126 |     inotify: AsyncFd<OwnedFd>,
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+     = help: consider including all fields in this `Debug` impl
+     = help: consider calling `.finish_non_exhaustive()` if you intend to ignore fields
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#missing_fields_in_debug
+
+warning: this `continue` expression is redundant
+    --> services/ctl/src/dev/watch.rs:1365:38
+     |
+1365 |                 Err(_would_block) => continue,
+     |                                      ^^^^^^^^
+     |
+     = help: consider dropping the `continue` expression
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_continue
+     = note: `-W clippy::needless-continue` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_continue)]`
+
+warning: allocating a local array larger than 16384 bytes
+    --> services/ctl/src/dev/watch.rs:1518:22
+     |
+1518 |     let mut buffer = [MaybeUninit::uninit(); INOTIFY_BUFFER_BYTES];
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: consider allocating on the heap with `vec![MaybeUninit::uninit(); INOTIFY_BUFFER_BYTES].into_boxed_slice()`
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#large_stack_arrays
+     = note: `-W clippy::large-stack-arrays` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::large_stack_arrays)]`
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev.rs:200:5
+    |
+200 | /     async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
+201 | |         Ok(self.0)
+202 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<DevSourceState, Self::Error>>` instead
+    |
+200 ~     fn source_state(&mut self) -> impl Future<Output = Result<DevSourceState, Self::Error>> {
+201 ~         std::future::ready(Ok(self.0))
+    |
+
+warning: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
+   --> services/ctl/src/enable_cdc_project_env.rs:159:19
+    |
+159 |       let cluster = match &args.cluster {
+    |  ___________________^
+160 | |         Some(c) => c.clone(),
+161 | |         None => {
+162 | |             let url = args.system_database_url.as_deref().context(
+...   |
+167 | |     };
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#single_match_else
+    = note: `-W clippy::single-match-else` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::single_match_else)]`
+help: try
+    |
+159 ~     let cluster = if let Some(c) = &args.cluster { c.clone() } else {
+160 +         let url = args.system_database_url.as_deref().context(
+161 +             "pass --cluster, or --system-database-url to resolve the target cluster from the registry",
+162 +         )?;
+163 +         crate::provision_project_env::resolve_cluster(url, &args.org, &args.env).await?
+164 ~     };
+    |
+
+warning: it is more idiomatic to use `Option<&T>` instead of `&Option<T>`
+   --> services/ctl/src/enable_cdc_project_env.rs:302:1
+    |
+302 | / fn emit_json(path: &Option<PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
+303 | |     emit_text(path, label, &serde_json::to_string_pretty(doc)?)
+304 | | }
+    | |_^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ref_option
+    = note: `-W clippy::ref-option` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::ref_option)]`
+help: change this to
+    |
+302 - fn emit_json(path: &Option<PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
+302 + fn emit_json(path: Option<&PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
+    |
+
+warning: it is more idiomatic to use `Option<&T>` instead of `&Option<T>`
+   --> services/ctl/src/enable_cdc_project_env.rs:306:1
+    |
+306 | / fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
+307 | |     match path {
+308 | |         Some(p) if p.as_os_str() != "-" => {
+309 | |             std::fs::write(p, text).with_context(|| format!("write {}", p.display()))?;
+...   |
+314 | |     Ok(())
+315 | | }
+    | |_^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ref_option
+help: change this to
+    |
+306 - fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
+306 + fn emit_text(path: Option<&PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
+    |
+
+warning: adding items after statements is confusing, since items exist from the start of the scope
+   --> services/ctl/src/identity_issuer.rs:260:5
+    |
+260 |     const PAT_RETURN_COLUMNS: [&str; 3] = ["id", "label", "created_at"];
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#items_after_statements
+    = note: `-W clippy::items-after-statements` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::items_after_statements)]`
+
+warning: matching over `()` is more explicit
+   --> services/ctl/src/identity_issuer.rs:475:42
+    |
+475 |         url.set_username(&role).map_err(|_| anyhow::anyhow!("cannot encode identity credential user"))?;
+    |                                          ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ignored_unit_patterns
+
+warning: matching over `()` is more explicit
+   --> services/ctl/src/identity_issuer.rs:476:52
+    |
+476 |         url.set_password(Some(&password)).map_err(|_| anyhow::anyhow!("cannot encode identity credential password"))?;
+    |                                                    ^ help: use `()` instead of `_`: `()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ignored_unit_patterns
+
+warning: this argument is passed by value, but not consumed in the function body
+   --> services/ctl/src/promote.rs:561:10
+    |
+561 |     row: Row,
+    |          ^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+    = note: `-W clippy::needless-pass-by-value` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider taking a reference instead
+    |
+561 |     row: &Row,
+    |          +
+
+warning: this argument is passed by value, but not consumed in the function body
+   --> services/ctl/src/promote.rs:611:28
+    |
+611 | fn decode_requirement(row: Row) -> anyhow::Result<PortableRequirement> {
+    |                            ^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+    |
+611 | fn decode_requirement(row: &Row) -> anyhow::Result<PortableRequirement> {
+    |                            +
+
+warning: consider adding a `;` to the last statement for consistent formatting
+   --> services/ctl/src/promote.rs:671:13
+    |
+671 |             copy_portable_facts(&tx, source, &args.tenant).await?
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: add a `;` here: `copy_portable_facts(&tx, source, &args.tenant).await?;`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#semicolon_if_nothing_returned
+    = note: `-W clippy::semicolon-if-nothing-returned` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::semicolon_if_nothing_returned)]`
+
+warning: called `map(<f>).unwrap_or(<a>)` on an `Option` value
+   --> services/ctl/src/provision.rs:153:16
+    |
+153 |     let host = app_host.map(str::to_string).unwrap_or(default_host);
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#map_unwrap_or
+    = note: `-W clippy::map-unwrap-or` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::map_unwrap_or)]`
+help: use `map_or(<a>, <f>)` instead
+    |
+153 -     let host = app_host.map(str::to_string).unwrap_or(default_host);
+153 +     let host = app_host.map_or(default_host, str::to_string);
+    |
+
+warning: wildcard matches only a single variant and will also match any future added variants
+   --> services/ctl/src/provision.rs:236:13
+    |
+236 |             _ => None,
+    |             ^ help: try: `tokio_postgres::config::Host::Unix(_)`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#match_wildcard_for_single_variants
+    = note: `-W clippy::match-wildcard-for-single-variants` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::match_wildcard_for_single_variants)]`
+
+warning: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
+   --> services/ctl/src/provision_org.rs:153:20
+    |
+153 |       let policies = match &client {
+    |  ____________________^
+154 | |         Some((c, _)) => {
+155 | |             record_org(c, &org, &stamped).await?;
+156 | |             println!(
+...   |
+169 | |     };
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#single_match_else
+help: try
+    |
+153 ~     let policies = if let Some((c, _)) = &client {
+154 +         record_org(c, &org, &stamped).await?;
+155 +         println!(
+156 +             "recorded org {id:?} (template {tpl:?}) in registry.orgs + {n} env \
+157 +              policy row(s) stamped insert-if-absent (wamn_system)",
+158 +             id = org.id,
+159 +             tpl = template.name,
+160 +             n = stamped.len(),
+161 +         );
+162 +         read_env_policies(c, &org.id).await?
+163 +     } else {
+164 +         println!("(no --system-database-url: org not recorded; template policies used)");
+165 +         template.policies.clone()
+166 ~     };
+    |
+
+warning: redundant closure
+   --> services/ctl/src/provision_org.rs:304:14
+    |
+304 |         .map(|i| i.to_string())
+    |              ^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `std::string::ToString::to_string`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+
+warning: you seem to be trying to use `match` for destructuring a single pattern. Consider using `if let`
+   --> services/ctl/src/provision_project_env.rs:644:19
+    |
+644 |       let cluster = match &args.cluster {
+    |  ___________________^
+645 | |         Some(c) => c.clone(),
+646 | |         None => {
+647 | |             let url = args.system_database_url.as_deref().context(
+...   |
+652 | |     };
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#single_match_else
+help: try
+    |
+644 ~     let cluster = if let Some(c) = &args.cluster { c.clone() } else {
+645 +         let url = args.system_database_url.as_deref().context(
+646 +             "pass --cluster, or --system-database-url to resolve the target cluster from the registry",
+647 +         )?;
+648 +         resolve_cluster(url, org, env).await?
+649 ~     };
+    |
+
+warning: variables can be used directly in the `format!` string
+   --> services/ctl/src/provision_project_env.rs:699:5
+    |
+699 | /     println!(
+700 | |         "recorded project {:?} + project-env {} in the registry (wamn_system)",
+701 | |         project, triple
+702 | |     );
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#uninlined_format_args
+
+warning: more than 3 bools in a struct
+   --> services/ctl/src/provision_project_env.rs:726:1
+    |
+726 | / struct WorkloadRoleState {
+727 | |     login: bool,
+728 | |     superuser: bool,
+729 | |     inherit: bool,
+...   |
+745 | |     owned_objects: i64,
+746 | | }
+    | |_^
+    |
+    = help: consider using a state machine or refactoring bools into two-variant enums
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#struct_excessive_bools
+    = note: `-W clippy::struct-excessive-bools` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::struct_excessive_bools)]`
+
+warning: this `if` statement can be collapsed
+    --> services/ctl/src/provision_project_env.rs:1375:5
+     |
+1375 | /     if let Some(legacy_role) = legacy_desired_role {
+1376 | |         if let Some(legacy) =
+1377 | |             converge_workload_generation_state(&transaction, lifecycle, legacy_role).await?
+...    |
+1384 | |     }
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+     = note: `-W clippy::collapsible-if` implied by `-W clippy::style`
+     = help: to override `-W clippy::style` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+     |
+1375 ~     if let Some(legacy_role) = legacy_desired_role
+1376 ~         && let Some(legacy) =
+1377 |             converge_workload_generation_state(&transaction, lifecycle, legacy_role).await?
+ ...
+1382 |             );
+1383 ~         }
+     |
+
+warning: matching over `()` is more explicit
+    --> services/ctl/src/provision_project_env.rs:1880:19
+     |
+1880 |         .map_err(|_| anyhow::anyhow!("set workload URL username"))?;
+     |                   ^ help: use `()` instead of `_`: `()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ignored_unit_patterns
+
+warning: matching over `()` is more explicit
+    --> services/ctl/src/provision_project_env.rs:1882:19
+     |
+1882 |         .map_err(|_| anyhow::anyhow!("set workload URL password"))?;
+     |                   ^ help: use `()` instead of `_`: `()`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ignored_unit_patterns
+
+warning: constructing a `Duration` using a smaller unit when a larger unit would be more readable
+    --> services/ctl/src/provision_project_env.rs:2911:27
+     |
+2911 | const PAT_TTL: Duration = Duration::from_secs(2_592_000);
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#duration_suboptimal_units
+     = note: `-W clippy::duration-suboptimal-units` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::duration_suboptimal_units)]`
+help: try using from_hours
+     |
+2911 - const PAT_TTL: Duration = Duration::from_secs(2_592_000);
+2911 + const PAT_TTL: Duration = Duration::from_hours(720);
+     |
+
+warning: this `continue` expression is redundant
+    --> services/ctl/src/provision_project_env.rs:3232:80
+     |
+3232 |             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+     |                                                                                ^^^^^^^^
+     |
+     = help: consider dropping the `continue` expression
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_continue
+
+warning: it is more idiomatic to use `Option<&T>` instead of `&Option<T>`
+    --> services/ctl/src/provision_project_env.rs:3536:1
+     |
+3536 | / fn emit_json(path: &Option<PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
+3537 | |     emit_text(path, label, &serde_json::to_string_pretty(doc)?)
+3538 | | }
+     | |_^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ref_option
+help: change this to
+     |
+3536 - fn emit_json(path: &Option<PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
+3536 + fn emit_json(path: Option<&PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
+     |
+
+warning: it is more idiomatic to use `Option<&T>` instead of `&Option<T>`
+    --> services/ctl/src/provision_project_env.rs:3540:1
+     |
+3540 | / fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
+3541 | |     match path {
+3542 | |         Some(p) if p.as_os_str() != "-" => {
+3543 | |             std::fs::write(p, text).with_context(|| format!("write {}", p.display()))?;
+...    |
+3548 | |     Ok(())
+3549 | | }
+     | |_^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ref_option
+help: change this to
+     |
+3540 - fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
+3540 + fn emit_text(path: Option<&PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
+     |
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+   --> services/ctl/src/publish_release.rs:877:6
+    |
+877 |   ) -> Result<
+    |  ______^
+878 | |     (
+879 | |         BTreeMap<String, wamn_schema_generator::PackageManifest>,
+880 | |         BTreeMap<String, String>,
+881 | |     ),
+882 | |     MintManifestError,
+883 | | > {
+    | |_^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+    = note: `-W clippy::type-complexity` implied by `-W clippy::complexity`
+    = help: to override `-W clippy::complexity` add `#[allow(clippy::type_complexity)]`
+
+warning: this argument is passed by value, but not consumed in the function body
+    --> services/ctl/src/publish_release.rs:1526:13
+     |
+1526 |     stored: String,
+     |             ^^^^^^ help: consider changing the type to: `&str`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+
+warning: this boolean expression can be simplified
+    --> services/ctl/src/push_component.rs:1108:12
+     |
+1108 |           || !path
+     |  ____________^
+1109 | |             .extension()
+1110 | |             .is_some_and(|observed| observed == extension)
+     | |__________________________________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#nonminimal_bool
+     = note: `-W clippy::nonminimal-bool` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::nonminimal_bool)]`
+help: try
+     |
+1108 ~         || path
+1109 +             .extension().is_none_or(|observed| observed != extension)
+     |
+
+warning: this function has too many arguments (8/7)
+    --> services/ctl/src/push_component.rs:1451:1
+     |
+1451 | / async fn persist_plane(
+1452 | |     database_config: &PgConfig,
+1453 | |     plane: ProjectionPlane,
+1454 | |     component: &AdmittedComponent,
+...    |
+1459 | |     package_path: &std::path::Path,
+1460 | | ) -> anyhow::Result<ProjectionOutcome> {
+     | |______________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#too_many_arguments
+
+warning: this function has too many arguments (8/7)
+    --> services/ctl/src/push_component.rs:1489:1
+     |
+1489 | / async fn persist_with_client(
+1490 | |     client: &mut PgClient,
+1491 | |     plane: ProjectionPlane,
+1492 | |     component: &AdmittedComponent,
+...    |
+1497 | |     package_path: &std::path::Path,
+1498 | | ) -> anyhow::Result<ProjectionOutcome> {
+     | |______________________________________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#too_many_arguments
+
+warning: casts from `bool` to `usize` can be expressed infallibly using `From`
+    --> services/ctl/src/push_component.rs:1612:34
+     |
+1612 |           requirements_inserted += append_or_verify_requirement(
+     |  __________________________________^
+1613 | |             &transaction,
+1614 | |             &component.scope.tenant_id,
+1615 | |             environment_instance.as_deref(),
+...    |
+1618 | |         .await? as usize;
+     | |________________________^
+     |
+     = help: an `as` cast can become silently lossy if the types change in the future
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#cast_lossless
+     = note: `-W clippy::cast-lossless` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::cast_lossless)]`
+help: use `usize::from` instead
+     |
+1612 ~         requirements_inserted += usize::from(append_or_verify_requirement(
+1613 +             &transaction,
+1614 +             &component.scope.tenant_id,
+1615 +             environment_instance.as_deref(),
+1616 +             requirement,
+1617 +         )
+1618 ~         .await?);
+     |
+
+warning: these match arms have identical bodies
+   --> services/ctl/src/push_release_manifest.rs:495:9
+    |
+495 |         OciDistributionError::ImageManifestNotFoundError(_) => true,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+507 |         OciDistributionError::ServerError { code: 404, .. } => true,
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: if this is unintentional make the arms return different values
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#match_same_arms
+    = note: `-W clippy::match-same-arms` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::match_same_arms)]`
+help: otherwise merge the patterns into a single arm
+    |
+495 ~         OciDistributionError::RegistryError { envelope, .. } => {
+496 |             !envelope.errors.is_empty()
+...
+505 |         }
+506 ~         OciDistributionError::ImageManifestNotFoundError(_) | OciDistributionError::ServerError { code: 404, .. } => true,
+    |
+
+warning: this `if` statement can be collapsed
+   --> services/ctl/src/reconcile_run_plane.rs:501:5
+    |
+501 | /     if !retires_node_runs {
+502 | |         if let Some(action) = dispatch_reader_read_surface_action(schema, &obs, !plan.is_noop()) {
+503 | |             plan.actions.push(action);
+504 | |         }
+505 | |     }
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+help: collapse nested if block
+    |
+501 ~     if !retires_node_runs
+502 ~         && let Some(action) = dispatch_reader_read_surface_action(schema, &obs, !plan.is_noop()) {
+503 |             plan.actions.push(action);
+504 ~         }
+    |
+
+warning: this lint expectation is unfulfilled
+    --> services/ctl/src/apply_package.rs:1370:5
+     |
+1370 |     clippy::too_many_arguments,
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: the arguments preserve exact refusal context at the effect boundary
+     = note: `#[warn(unfulfilled_lint_expectations)]` on by default
+
+warning: `wamn-ctl` (lib) generated 59 warnings (run `cargo clippy --fix --lib -p wamn-ctl -- --no-deps` to apply 28 suggestions)
+warning: redundant closure
+   --> services/ctl/tests/terminalize_effect_uncertain_live.rs:505:37
+    |
+505 |             error.as_db_error().map(|database| database.message()),
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `tokio_postgres::error::DbError::message`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+    = note: `-W clippy::redundant-closure-for-method-calls` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::redundant_closure_for_method_calls)]`
+
+warning: `wamn-ctl` (test "terminalize_effect_uncertain_live") generated 1 warning (run `cargo clippy --fix --test "terminalize_effect_uncertain_live" -p wamn-ctl -- --no-deps` to apply 1 suggestion)
+warning: large size difference between variants
+  --> services/ctl/src/main.rs:26:1
+   |
+26 | / enum Command {
+27 | |     /// Provision a per-project Postgres database + credential on the shared cluster (2.3)
+28 | |     ProvisionProject(provision::ProvisionProjectArgs),
+29 | |     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (w...
+...  |
+32 | |     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
+   | |     ------------------------------------------------------------------- the largest variant contains at least 592 bytes
+...  |
+40 | |     EnableCdcProjectEnv(enable_cdc_project_env::EnableCdcProjectEnvArgs),
+   | |     -------------------------------------------------------------------- the second-largest variant contains at least 344 bytes
+...  |
+67 | |     TerminalizeEffectUncertain(terminalize_effect_uncertain::TerminalizeEffectUncertainArgs),
+68 | | }
+   | |_^ the entire enum is at least 592 bytes
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#large_enum_variant
+   = note: `-W clippy::large-enum-variant` implied by `-W clippy::perf`
+   = help: to override `-W clippy::perf` add `#[allow(clippy::large_enum_variant)]`
+help: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+   |
+32 -     ProvisionProjectEnv(provision_project_env::ProvisionProjectEnvArgs),
+32 +     ProvisionProjectEnv(Box<provision_project_env::ProvisionProjectEnvArgs>),
+   |
+
+warning: `wamn-ctl` (bin "wamn-ctl") generated 1 warning
+warning: used `assert_eq!` with a literal bool
+   --> services/ctl/tests/apply_package_live.rs:541:5
+    |
+541 | /     assert_eq!(
+542 | |         client
+543 | |             .query_one(
+544 | |                 "SELECT apply_effective_role::text = current_user::text \
+...   |
+554 | |         "apply-package did not RESET ROLE before its trusted migration-ledger write"
+555 | |     );
+    | |_____^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#bool_assert_comparison
+    = note: `-W clippy::bool-assert-comparison` implied by `-W clippy::style`
+    = help: to override `-W clippy::style` add `#[allow(clippy::bool_assert_comparison)]`
+help: replace it with `assert!(..)`
+    |
+541 ~     assert!(
+542 |         client
+...
+551 |             .expect("read server-visible authority used for the migration ledger")
+552 ~             .get::<_, bool>(0),
+    |
+
+warning: `wamn-ctl` (test "apply_package_live") generated 1 warning (run `cargo clippy --fix --test "apply_package_live" -p wamn-ctl -- --no-deps` to apply 1 suggestion)
+warning: calling `PatIssuerArgs::default()` is more clear than this expression
+  --> services/ctl/tests/guest_generation_live.rs:99:21
+   |
+99 |         pat_issuer: Default::default(),
+   |                     ^^^^^^^^^^^^^^^^^^ help: try: `PatIssuerArgs::default()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#default_trait_access
+   = note: `-W clippy::default-trait-access` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::default_trait_access)]`
+
+warning: `wamn-ctl` (test "guest_generation_live") generated 1 warning
+warning: calling `PatIssuerArgs::default()` is more clear than this expression
+   --> services/ctl/tests/management_admitter_generation_live.rs:101:21
+    |
+101 |         pat_issuer: Default::default(),
+    |                     ^^^^^^^^^^^^^^^^^^ help: try: `PatIssuerArgs::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#default_trait_access
+    = note: `-W clippy::default-trait-access` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::default_trait_access)]`
+
+warning: more than 3 bools in function parameters
+   --> services/ctl/tests/management_admitter_generation_live.rs:147:1
+    |
+147 | / async fn assert_role(
+148 | |     admin: &Client,
+149 | |     role: &str,
+150 | |     login: bool,
+...   |
+206 | |     assert_eq!(row.get::<_, i64>("owned_objects"), 0);
+207 | | }
+    | |_^
+    |
+    = help: consider refactoring bools into two-variant enums
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#fn_params_excessive_bools
+    = note: `-W clippy::fn-params-excessive-bools` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::fn_params_excessive_bools)]`
+
+warning: `format!(..)` appended to existing `String`
+   --> services/ctl/tests/management_admitter_generation_live.rs:305:13
+    |
+305 | /             ddl.push_str(&format!(
+306 | |                 " CREATE TABLE catalog.\"{relation}\" ({columns});",
+307 | |                 columns = column_ddl(&wiring_columns),
+308 | |             ));
+    | |______________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+    = note: `-W clippy::format-push-string` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::format_push_string)]`
+help: consider using `write!` to avoid the extra allocation
+    |
+305 ~             let _ = write!(ddl, " CREATE TABLE catalog.\"{relation}\" ({columns});",
+306 ~                 columns = column_ddl(&wiring_columns));
+    |
+
+warning: `format!(..)` appended to existing `String`
+   --> services/ctl/tests/management_admitter_generation_live.rs:310:13
+    |
+310 | /             ddl.push_str(&format!(
+311 | |                 " CREATE TABLE catalog.\"{relation}\" (id bigint);"
+312 | |             ));
+    | |______________^
+    |
+    = note: you may need to import the `std::fmt::Write` trait
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#format_push_string
+help: consider using `write!` to avoid the extra allocation
+    |
+310 -             ddl.push_str(&format!(
+311 -                 " CREATE TABLE catalog.\"{relation}\" (id bigint);"
+312 -             ));
+310 +             let _ = write!(ddl, " CREATE TABLE catalog.\"{relation}\" (id bigint);");
+    |
+
+warning: this argument is passed by value, but not consumed in the function body
+   --> services/ctl/src/bind_connection.rs:368:30
+    |
+368 |     fn blobstore(definition: Value) -> anyhow::Result<()> {
+    |                              ^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+    = note: `-W clippy::needless-pass-by-value` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider taking a reference instead
+    |
+368 |     fn blobstore(definition: &Value) -> anyhow::Result<()> {
+    |                              +
+
+warning: `wamn-ctl` (test "management_admitter_generation_live") generated 4 warnings
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1326:9
+     |
+1326 | /         async fn subscribe_heartbeats(&mut self, subject: &str) -> Result<(), Self::Error> {
+1327 | |             self.record(Event::Subscribe(subject.to_owned()));
+1328 | |             Ok(())
+1329 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1326 ~         fn subscribe_heartbeats(&mut self, subject: &str) -> impl Future<Output = Result<(), Self::Error>> {
+1327 |             self.record(Event::Subscribe(subject.to_owned()));
+1328 ~             std::future::ready(Ok(()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1331:9
+     |
+1331 | /         async fn flush(&mut self) -> Result<(), Self::Error> {
+1332 | |             self.record(Event::Flush);
+1333 | |             Ok(())
+1334 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1331 ~         fn flush(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+1332 |             self.record(Event::Flush);
+1333 ~             std::future::ready(Ok(()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1336:9
+     |
+1336 | /         async fn spawn_host(&mut self, spec: &HostProcessSpec) -> Result<(), Self::Error> {
+1337 | |             self.record(Event::Spawn);
+1338 | |             *self
+1339 | |                 .shared
+...    |
+1343 | |             Ok(())
+1344 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1336 ~         fn spawn_host(&mut self, spec: &HostProcessSpec) -> impl Future<Output = Result<(), Self::Error>> {
+1337 |             self.record(Event::Spawn);
+ ...
+1342 |                 .expect("process-spec lock is not poisoned") = Some(spec.clone());
+1343 ~             std::future::ready(Ok(()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1346:9
+     |
+1346 | /         async fn next_heartbeat(
+1347 | |             &mut self,
+1348 | |             _deadline: Instant,
+1349 | |         ) -> Result<Option<RuntimeMessage>, Self::Error> {
+1350 | |             self.record(Event::Heartbeat);
+1351 | |             Ok(self.heartbeats.pop_front())
+1352 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<Option<RuntimeMessage>, Self::Error>>` instead
+     |
+1346 ~         fn next_heartbeat(
+1347 |             &mut self,
+1348 |             _deadline: Instant,
+1349 ~         ) -> impl Future<Output = Result<Option<RuntimeMessage>, Self::Error>> {
+1350 |             self.record(Event::Heartbeat);
+1351 ~             std::future::ready(Ok(self.heartbeats.pop_front()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1354:9
+     |
+1354 | /         async fn request(
+1355 | |             &mut self,
+1356 | |             subject: &str,
+1357 | |             payload: &[u8],
+...    |
+1368 | |                 .ok_or(FakeError("no response configured"))
+1369 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<Box<[u8]>, Self::Error>>` instead
+     |
+1354 ~         fn request(
+1355 |             &mut self,
+ ...
+1358 |             _deadline: Instant,
+1359 ~         ) -> impl Future<Output = Result<Box<[u8]>, Self::Error>> {
+1360 |             self.record(Event::Request(subject.to_owned()));
+ ...
+1365 |                 .push((subject.to_owned(), payload.into()));
+1366 ~             std::future::ready(self.responses
+1367 +                 .pop_front()
+1368 +                 .ok_or(FakeError("no response configured")))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1371:9
+     |
+1371 | /         async fn terminate_host(&mut self) -> Result<(), Self::Error> {
+1372 | |             self.record(Event::Terminate);
+1373 | |             Ok(())
+1374 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1371 ~         fn terminate_host(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+1372 |             self.record(Event::Terminate);
+1373 ~             std::future::ready(Ok(()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1376:9
+     |
+1376 | /         async fn wait_host(&mut self, deadline: Instant) -> Result<Option<bool>, Self::Error> {
+1377 | |             self.record(Event::Wait);
+1378 | |             if Instant::now() + self.host_exit_after > deadline {
+1379 | |                 return Ok(None);
+...    |
+1383 | |                 .ok_or(FakeError("no wait outcome configured"))
+1384 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<Option<bool>, Self::Error>>` instead
+     |
+1376 ~         fn wait_host(&mut self, deadline: Instant) -> impl Future<Output = Result<Option<bool>, Self::Error>> {
+1377 |             self.record(Event::Wait);
+1378 |             if Instant::now() + self.host_exit_after > deadline {
+1379 ~                 return std::future::ready(Ok(None));
+1380 |             }
+1381 ~             std::future::ready(self.waits
+1382 +                 .pop_front()
+1383 +                 .ok_or(FakeError("no wait outcome configured")))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1386:9
+     |
+1386 | /         async fn kill_host(&mut self) -> Result<(), Self::Error> {
+1387 | |             self.record(Event::Kill);
+1388 | |             Ok(())
+1389 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1386 ~         fn kill_host(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+1387 |             self.record(Event::Kill);
+1388 ~             std::future::ready(Ok(()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev/activation.rs:1391:9
+     |
+1391 | /         async fn reap_host(&mut self, deadline: Instant) -> Result<(), Self::Error> {
+1392 | |             self.record(Event::Reap);
+1393 | |             *self
+1394 | |                 .shared
+...    |
+1398 | |             Ok(())
+1399 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1391 ~         fn reap_host(&mut self, deadline: Instant) -> impl Future<Output = Result<(), Self::Error>> {
+1392 |             self.record(Event::Reap);
+ ...
+1397 |                 .expect("reap-deadline lock is not poisoned") = Some(deadline);
+1398 ~             std::future::ready(Ok(()))
+     |
+
+warning: calling `PatIssuerArgs::default()` is more clear than this expression
+   --> services/ctl/tests/effect_writer_generation_live.rs:105:21
+    |
+105 |         pat_issuer: Default::default(),
+    |                     ^^^^^^^^^^^^^^^^^^ help: try: `PatIssuerArgs::default()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#default_trait_access
+    = note: `-W clippy::default-trait-access` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::default_trait_access)]`
+
+warning: this could be rewritten as `let...else`
+    --> services/ctl/src/dev/activation.rs:1861:13
+     |
+1861 | /             let error = match activate_backend(request, pull_secret(), backend).await {
+1862 | |                 Ok(_) => panic!("a terminal start response must fail fast"),
+1863 | |                 Err(error) => error,
+1864 | |             };
+     | |______________^ help: consider writing: `let Err(error) = activate_backend(request, pull_secret(), backend).await else { panic!("a terminal start response must fail fast") };`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_let_else
+     = note: `-W clippy::manual-let-else` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::manual_let_else)]`
+
+warning: this could be rewritten as `let...else`
+    --> services/ctl/src/dev/activation.rs:1924:9
+     |
+1924 | /         let error = match activate_backend(request, pull_secret(), backend).await {
+1925 | |             Ok(_) => panic!("missing exact identity must refuse"),
+1926 | |             Err(error) => error,
+1927 | |         };
+     | |__________^ help: consider writing: `let Err(error) = activate_backend(request, pull_secret(), backend).await else { panic!("missing exact identity must refuse") };`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_let_else
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/command.rs:738:9
+    |
+738 | /         async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+739 | |             Ok(self.0.pop_front())
+740 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<Option<DevInvalidation>, Self::Error>>` instead
+    |
+738 ~         fn next(&mut self) -> impl Future<Output = Result<Option<DevInvalidation>, Self::Error>> {
+739 ~             std::future::ready(Ok(self.0.pop_front()))
+    |
+
+warning: `wamn-ctl` (test "effect_writer_generation_live") generated 1 warning
+warning: unnecessary use of `clone` to create a slice from a reference
+    --> services/ctl/src/dev/config.rs:2082:9
+     |
+2082 |         assert_eq!(error.searched_roots(), [overlay_root.clone()]);
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#cloned_ref_to_slice_refs
+     = note: `-W clippy::cloned-ref-to-slice-refs` implied by `-W clippy::perf`
+     = help: to override `-W clippy::perf` add `#[allow(clippy::cloned_ref_to_slice_refs)]`
+
+warning: redundant closure
+    --> services/ctl/src/dev/coordinator.rs:2331:22
+     |
+2331 |                 .map(|column| column.name())
+     |                      ^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `wamn_schema_introspection::ir::Column::name`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+
+warning: redundant closure
+    --> services/ctl/src/dev/coordinator.rs:2339:22
+     |
+2339 |                 .map(|constraint| constraint.name())
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: replace the closure with the method itself: `wamn_schema_introspection::ir::Constraint::name`
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#redundant_closure_for_method_calls
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/verification_database.rs:422:9
+    |
+422 | /         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+423 | |             self.events.record(Event::Stage(stage));
+424 | |             Ok(())
+425 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+    |
+422 ~         fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> {
+423 |             self.events.record(Event::Stage(stage));
+424 ~             std::future::ready(Ok(()))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/verification_database.rs:435:9
+    |
+435 | /         async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+436 | |             Ok(self.events.pop_front())
+437 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<Option<DevInvalidation>, Self::Error>>` instead
+    |
+435 ~         fn next(&mut self) -> impl Future<Output = Result<Option<DevInvalidation>, Self::Error>> {
+436 ~             std::future::ready(Ok(self.events.pop_front()))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/verification_database.rs:504:9
+    |
+504 | /         async fn try_acquire_database(
+505 | |             &self,
+506 | |             database: &Identifier,
+507 | |         ) -> Result<bool, VerificationDatabaseError> {
+508 | |             self.record(Event::Acquire(database.as_str().into()));
+509 | |             Ok(self.lease_available)
+510 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<bool, VerificationDatabaseError>>` instead
+    |
+504 ~         fn try_acquire_database(
+505 |             &self,
+506 |             database: &Identifier,
+507 ~         ) -> impl Future<Output = Result<bool, VerificationDatabaseError>> {
+508 |             self.record(Event::Acquire(database.as_str().into()));
+509 ~             std::future::ready(Ok(self.lease_available))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/verification_database.rs:512:9
+    |
+512 | /         async fn release_database(
+513 | |             &self,
+514 | |             database: &Identifier,
+515 | |         ) -> Result<(), VerificationDatabaseError> {
+516 | |             self.record(Event::Release(database.as_str().into()));
+517 | |             Ok(())
+518 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), VerificationDatabaseError>>` instead
+    |
+512 ~         fn release_database(
+513 |             &self,
+514 |             database: &Identifier,
+515 ~         ) -> impl Future<Output = Result<(), VerificationDatabaseError>> {
+516 |             self.record(Event::Release(database.as_str().into()));
+517 ~             std::future::ready(Ok(()))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/verification_database.rs:520:9
+    |
+520 | /         async fn drop_database(
+521 | |             &self,
+522 | |             database: &Identifier,
+523 | |         ) -> Result<(), VerificationDatabaseError> {
+524 | |             self.record(Event::Drop(database.as_str().into()));
+525 | |             Ok(())
+526 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), VerificationDatabaseError>>` instead
+    |
+520 ~         fn drop_database(
+521 |             &self,
+522 |             database: &Identifier,
+523 ~         ) -> impl Future<Output = Result<(), VerificationDatabaseError>> {
+524 |             self.record(Event::Drop(database.as_str().into()));
+525 ~             std::future::ready(Ok(()))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/verification_database.rs:528:9
+    |
+528 | /         async fn create_database(
+529 | |             &self,
+530 | |             database: &Identifier,
+531 | |         ) -> Result<(), VerificationDatabaseError> {
+...   |
+541 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), VerificationDatabaseError>>` instead
+    |
+528 ~         fn create_database(
+529 |             &self,
+530 |             database: &Identifier,
+531 ~         ) -> impl Future<Output = Result<(), VerificationDatabaseError>> {
+532 |             self.record(Event::Create(database.as_str().into()));
+533 ~             std::future::ready(if self.refuse_create {
+534 +                 Err(VerificationDatabaseError::new(
+535 +                     VerificationDatabaseErrorKind::CreateFailed,
+536 +                     "grant the verification credential CREATEDB authority for its disposable database",
+537 +                 ))
+538 +             } else {
+539 +                 Ok(())
+540 +             })
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev/verification_database.rs:543:9
+    |
+543 | /         async fn revoke_public_connect(
+544 | |             &self,
+545 | |             database: &Identifier,
+546 | |         ) -> Result<(), VerificationDatabaseError> {
+...   |
+556 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), VerificationDatabaseError>>` instead
+    |
+543 ~         fn revoke_public_connect(
+544 |             &self,
+545 |             database: &Identifier,
+546 ~         ) -> impl Future<Output = Result<(), VerificationDatabaseError>> {
+547 |             self.record(Event::RevokePublicConnect(database.as_str().into()));
+548 ~             std::future::ready(if self.refuse_revoke_public_connect {
+549 +                 Err(VerificationDatabaseError::new(
+550 +                     VerificationDatabaseErrorKind::CreateFailed,
+551 +                     "grant the verification credential authority to revoke PUBLIC CONNECT on its disposable database",
+552 +                 ))
+553 +             } else {
+554 +                 Ok(())
+555 +             })
+    |
+
+warning: this could be rewritten as `let...else`
+   --> services/ctl/src/dev/verification_database.rs:775:9
+    |
+775 | /         let error = match DatabaseSpec::from_url(
+776 | |             "postgresql://verification:do-not-print@127.0.0.1:5432/postgres",
+777 | |         ) {
+778 | |             Ok(_) => panic!("maintenance database cannot be disposable"),
+779 | |             Err(error) => error,
+780 | |         };
+    | |__________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_let_else
+help: consider writing
+    |
+775 ~         let Err(error) = DatabaseSpec::from_url(
+776 +             "postgresql://verification:do-not-print@127.0.0.1:5432/postgres",
+777 +         ) else { panic!("maintenance database cannot be disposable") };
+    |
+
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> services/ctl/src/dev/verification_world.rs:592:65
+    |
+592 |         project_admitted_component_for_verification(&admission, &url)
+    |                                                                 ^^^^ help: change this to: `url`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_borrow
+
+warning: this argument is passed by value, but not consumed in the function body
+   --> services/ctl/tests/run_plane_live.rs:740:26
+    |
+740 | fn assert_db_code(error: tokio_postgres::Error, expected: &str, context: &str) {
+    |                          ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+    = note: `-W clippy::needless-pass-by-value` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider taking a reference instead
+    |
+740 | fn assert_db_code(error: &tokio_postgres::Error, expected: &str, context: &str) {
+    |                          +
+
+warning: called `map(<f>).unwrap_or(<a>)` on an `Option` value
+   --> services/ctl/tests/run_plane_live.rs:741:18
+    |
+741 |       let actual = error
+    |  __________________^
+742 | |         .as_db_error()
+743 | |         .map(|database| database.code().code())
+744 | |         .unwrap_or("non-database-error");
+    | |________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#map_unwrap_or
+    = note: `-W clippy::map-unwrap-or` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::map_unwrap_or)]`
+help: use `map_or(<a>, <f>)` instead
+    |
+743 -         .map(|database| database.code().code())
+744 -         .unwrap_or("non-database-error");
+743 +         .map_or("non-database-error", |database| database.code().code());
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev.rs:902:9
+    |
+902 | /         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+903 | |             self.invoked.push(stage);
+904 | |             Ok(())
+905 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+    |
+902 ~         fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> {
+903 |             self.invoked.push(stage);
+904 ~             std::future::ready(Ok(()))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev.rs:958:9
+    |
+958 | /         async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
+959 | |             Ok(*self.0.lock().expect("shared source-state lock"))
+960 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<DevSourceState, Self::Error>>` instead
+    |
+958 ~         fn source_state(&mut self) -> impl Future<Output = Result<DevSourceState, Self::Error>> {
+959 ~             std::future::ready(Ok(*self.0.lock().expect("shared source-state lock")))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev.rs:972:9
+    |
+972 | /         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+973 | |             self.invoked.push(stage);
+974 | |             if stage == DevStage::Generate {
+975 | |                 *self
+...   |
+981 | |             Ok(())
+982 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+    |
+972 ~         fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> {
+973 |             self.invoked.push(stage);
+...
+980 |             }
+981 ~             std::future::ready(Ok(()))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> services/ctl/src/dev.rs:991:9
+    |
+991 | /         async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
+992 | |             Ok(self
+993 | |                 .0
+994 | |                 .pop_front()
+995 | |                 .expect("one source state exists for every reached boundary"))
+996 | |         }
+    | |_________^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<DevSourceState, Self::Error>>` instead
+    |
+991 ~         fn source_state(&mut self) -> impl Future<Output = Result<DevSourceState, Self::Error>> {
+992 ~             std::future::ready(Ok(self
+993 +                 .0
+994 +                 .pop_front()
+995 +                 .expect("one source state exists for every reached boundary")))
+    |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev.rs:1002:9
+     |
+1002 | /         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+1003 | |             self.invoked.push(stage);
+1004 | |             if self.fail_at == Some(stage) {
+1005 | |                 Err(SyntheticStageError(stage))
+...    |
+1009 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1002 ~         fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> {
+1003 |             self.invoked.push(stage);
+1004 ~             std::future::ready(if self.fail_at == Some(stage) {
+1005 +                 Err(SyntheticStageError(stage))
+1006 +             } else {
+1007 +                 Ok(())
+1008 +             })
+     |
+
+warning: `wamn-ctl` (bin "wamn-ctl" test) generated 1 warning (1 duplicate)
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev.rs:1045:9
+     |
+1045 | /         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+1046 | |             if stage == self.fail_at {
+1047 | |                 Err(SyntheticStageError(stage))
+1048 | |             } else {
+...    |
+1051 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1045 ~         fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> {
+1046 ~             std::future::ready(if stage == self.fail_at {
+1047 +                 Err(SyntheticStageError(stage))
+1048 +             } else {
+1049 +                 Ok(())
+1050 +             })
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev.rs:1085:9
+     |
+1085 | /         async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+1086 | |             Ok(self.events.pop())
+1087 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<Option<DevInvalidation>, Self::Error>>` instead
+     |
+1085 ~         fn next(&mut self) -> impl Future<Output = Result<Option<DevInvalidation>, Self::Error>> {
+1086 ~             std::future::ready(Ok(self.events.pop()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev.rs:1132:9
+     |
+1132 | /         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+1133 | |             self.invoked.push(stage);
+1134 | |             if self.inject_at == Some(stage) {
+1135 | |                 self.inject_at = None;
+...    |
+1145 | |             Ok(())
+1146 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1132 ~         fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> {
+1133 |             self.invoked.push(stage);
+ ...
+1142 |                 self.fail_once_at = None;
+1143 ~                 return std::future::ready(Err(SyntheticStageError(stage)));
+1144 |             }
+1145 ~             std::future::ready(Ok(()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev.rs:1232:9
+     |
+1232 | /         async fn prepare_run(&mut self) -> Result<(), Self::Error> {
+1233 | |             self.prepared += 1;
+1234 | |             if self.refuse_preparation {
+1235 | |                 return Err(SyntheticStageError(DevStage::Migrate));
+1236 | |             }
+1237 | |             Ok(())
+1238 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1232 ~         fn prepare_run(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+1233 |             self.prepared += 1;
+1234 |             if self.refuse_preparation {
+1235 ~                 return std::future::ready(Err(SyntheticStageError(DevStage::Migrate)));
+1236 |             }
+1237 ~             std::future::ready(Ok(()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev.rs:1240:9
+     |
+1240 | /         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+1241 | |             self.invoked.push(stage);
+1242 | |             Ok(())
+1243 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1240 ~         fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> {
+1241 |             self.invoked.push(stage);
+1242 ~             std::future::ready(Ok(()))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev.rs:1276:9
+     |
+1276 | /         async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
+1277 | |             Ok(self.unchanged == Some(stage))
+1278 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<bool, Self::Error>>` instead
+     |
+1276 ~         fn stage_is_unchanged(&mut self, stage: DevStage) -> impl Future<Output = Result<bool, Self::Error>> {
+1277 ~             std::future::ready(Ok(self.unchanged == Some(stage)))
+     |
+
+warning: unused `async` for async trait impl function with no `.await` statements
+    --> services/ctl/src/dev.rs:1280:9
+     |
+1280 | /         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+1281 | |             self.invoked.push(stage);
+1282 | |             Ok(())
+1283 | |         }
+     | |_________^
+     |
+     = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), Self::Error>>` instead
+     |
+1280 ~         fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> {
+1281 |             self.invoked.push(stage);
+1282 ~             std::future::ready(Ok(()))
+     |
+
+warning: for loop over a single element
+    --> services/ctl/tests/run_plane_live.rs:4754:5
+     |
+4754 | /     for plan in [&converge] {
+4755 | |         assert!(
+4756 | |             !plan
+4757 | |                 .actions
+...    |
+4767 | |         );
+4768 | |     }
+     | |_____^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#single_element_loop
+     = note: `-W clippy::single-element-loop` implied by `-W clippy::complexity`
+     = help: to override `-W clippy::complexity` add `#[allow(clippy::single_element_loop)]`
+help: try
+     |
+4754 ~     {
+4755 +         let plan = &converge;
+4756 +         assert!(
+4757 +             !plan
+4758 +                 .actions
+4759 +                 .iter()
+4760 +                 .any(|action| action.target.contains("gate_reports")),
+4761 +             "the project reconciler planned against the CONTROL plane's record: {:#?}",
+4762 +             plan.actions
+4763 +         );
+4764 +         assert!(
+4765 +             !plan.at_target.iter().any(|table| table == "gate_reports"),
+4766 +             "the control-plane relation was counted as a project record table: {:?}",
+4767 +             plan.at_target
+4768 +         );
+4769 +     }
+     |
+
+warning: constructing a `Duration` using a smaller unit when a larger unit would be more readable
+   --> services/ctl/src/pat_client.rs:267:32
+    |
+267 |     const LIFETIME: Duration = Duration::from_secs(2_592_000);
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#duration_suboptimal_units
+    = note: `-W clippy::duration-suboptimal-units` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::duration_suboptimal_units)]`
+help: try using from_hours
+    |
+267 -     const LIFETIME: Duration = Duration::from_secs(2_592_000);
+267 +     const LIFETIME: Duration = Duration::from_hours(720);
+    |
+
+warning: this argument is passed by value, but not consumed in the function body
+   --> services/ctl/src/promote.rs:561:10
+    |
+561 |     row: Row,
+    |          ^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+help: consider taking a reference instead
+    |
+561 |     row: &Row,
+    |          +
+
+warning: called `ok().expect()` on a `Result` value
+  --> services/ctl/tests/pat_bootstrap_live.rs:28:27
+   |
+28 |       let (admin, driver) = connect(&url)
+   |  ___________________________^
+29 | |         .await
+30 | |         .ok()
+31 | |         .expect("connect the disposable database");
+   | |__________________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ok_expect
+   = note: `-W clippy::ok-expect` implied by `-W clippy::style`
+   = help: to override `-W clippy::style` add `#[allow(clippy::ok_expect)]`
+help: call `expect()` directly on the `Result`
+   |
+29 -         .await
+30 -         .ok()
+31 -         .expect("connect the disposable database");
+29 +         .await.expect("connect the disposable database");
+   |
+
+warning: called `ok().expect()` on a `Result` value
+  --> services/ctl/tests/pat_bootstrap_live.rs:51:5
+   |
+51 | /     provision_journey_control(&url, admin.as_ref())
+52 | |         .await
+53 | |         .ok()
+54 | |         .expect("provision system authority");
+   | |_____________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ok_expect
+help: call `expect()` directly on the `Result`
+   |
+52 -         .await
+53 -         .ok()
+54 -         .expect("provision system authority");
+52 +         .await.expect("provision system authority");
+   |
+
+warning: called `ok().expect()` on a `Result` value
+  --> services/ctl/tests/pat_bootstrap_live.rs:70:17
+   |
+70 |       let route = provision_route(
+   |  _________________^
+71 | |         &url,
+72 | |         admin.as_ref(),
+73 | |         &files.0,
+...  |
+77 | |     .ok()
+78 | |     .expect("mint first PATs through the native identity service");
+   | |__________________________________________________________________^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ok_expect
+help: call `expect()` directly on the `Result`
+   |
+76 -     .await
+77 -     .ok()
+78 -     .expect("mint first PATs through the native identity service");
+76 +     .await.expect("mint first PATs through the native identity service");
+   |
+
+warning: called `ok().expect()` on a `Result` value
+   --> services/ctl/tests/pat_bootstrap_live.rs:143:5
+    |
+143 | /     revoke_pat(admin.as_ref(), &route.token_prefix)
+144 | |         .await
+145 | |         .ok()
+146 | |         .expect("revoke route PAT");
+    | |___________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#ok_expect
+help: call `expect()` directly on the `Result`
+    |
+144 -         .await
+145 -         .ok()
+146 -         .expect("revoke route PAT");
+144 +         .await.expect("revoke route PAT");
+    |
+
+warning: `wamn-ctl` (test "run_plane_live") generated 3 warnings (run `cargo clippy --fix --test "run_plane_live" -p wamn-ctl -- --no-deps` to apply 2 suggestions)
+warning: `wamn-ctl` (test "pat_bootstrap_live") generated 4 warnings (run `cargo clippy --fix --test "pat_bootstrap_live" -p wamn-ctl -- --no-deps` to apply 4 suggestions)
+warning: calling `PatIssuerArgs::default()` is more clear than this expression
+  --> services/ctl/tests/provisioning_order_live.rs:87:21
+   |
+87 |         pat_issuer: Default::default(),
+   |                     ^^^^^^^^^^^^^^^^^^ help: try: `PatIssuerArgs::default()`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#default_trait_access
+   = note: `-W clippy::default-trait-access` implied by `-W clippy::pedantic`
+   = help: to override `-W clippy::pedantic` add `#[allow(clippy::default_trait_access)]`
+
+warning: `wamn-ctl` (test "provisioning_order_live") generated 1 warning
+warning: constructing a `Duration` using a smaller unit when a larger unit would be more readable
+    --> services/ctl/src/provision_project_env.rs:2911:27
+     |
+2911 | const PAT_TTL: Duration = Duration::from_secs(2_592_000);
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#duration_suboptimal_units
+help: try using from_hours
+     |
+2911 - const PAT_TTL: Duration = Duration::from_secs(2_592_000);
+2911 + const PAT_TTL: Duration = Duration::from_hours(720);
+     |
+
+warning: constructing a `Duration` using a smaller unit when a larger unit would be more readable
+    --> services/ctl/src/provision_project_env.rs:3769:29
+     |
+3769 |         assert_eq!(PAT_TTL, Duration::from_secs(2_592_000));
+     |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#duration_suboptimal_units
+help: try using from_hours
+     |
+3769 -         assert_eq!(PAT_TTL, Duration::from_secs(2_592_000));
+3769 +         assert_eq!(PAT_TTL, Duration::from_hours(720));
+     |
+
+warning: `wamn-ctl` (lib test) generated 98 warnings (55 duplicates) (run `cargo clippy --fix --lib -p wamn-ctl --tests -- --no-deps` to apply 6 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 31s

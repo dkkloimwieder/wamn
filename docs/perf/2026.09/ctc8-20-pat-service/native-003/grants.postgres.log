@@ -1,0 +1,138 @@
+The files belonging to this database system will be owned by user "postgres".
+This user must also own the server process.
+
+The database cluster will be initialized with locale "en_US.utf8".
+The default database encoding has accordingly been set to "UTF8".
+The default text search configuration will be set to "english".
+
+Data page checksums are enabled.
+
+fixing permissions on existing directory /var/lib/postgresql/18/docker ... ok
+creating subdirectories ... ok
+selecting dynamic shared memory implementation ... posix
+selecting default "max_connections" ... 100
+selecting default "shared_buffers" ... 128MB
+selecting default time zone ... Etc/UTC
+creating configuration files ... ok
+running bootstrap script ... ok
+performing post-bootstrap initialization ... ok
+syncing data to disk ... ok
+
+
+Success. You can now start the database server using:
+
+    pg_ctl -D /var/lib/postgresql/18/docker -l logfile start
+
+initdb: warning: enabling "trust" authentication for local connections
+initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+waiting for server to start....2026-09-10 15:27:25.973 UTC [53] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-09-10 15:27:25.982 UTC [53] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-09-10 15:27:26.020 UTC [59] LOG:  database system was shut down at 2026-09-10 15:27:25 UTC
+2026-09-10 15:27:26.046 UTC [53] LOG:  database system is ready to accept connections
+ done
+server started
+CREATE DATABASE
+
+
+/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+
+2026-09-10 15:27:26.462 UTC [53] LOG:  received fast shutdown request
+waiting for server to shut down....2026-09-10 15:27:26.472 UTC [53] LOG:  aborting any active transactions
+2026-09-10 15:27:26.478 UTC [53] LOG:  background worker "logical replication launcher" (PID 62) exited with exit code 1
+2026-09-10 15:27:26.484 UTC [57] LOG:  shutting down
+2026-09-10 15:27:26.499 UTC [57] LOG:  checkpoint starting: shutdown immediate
+2026-09-10 15:27:26.938 UTC [57] LOG:  checkpoint complete: wrote 943 buffers (5.8%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.063 s, sync=0.331 s, total=0.454 s; sync files=303, longest=0.022 s, average=0.002 s; distance=4352 kB, estimate=4352 kB; lsn=0/1BA1BE8, redo lsn=0/1BA1BE8
+2026-09-10 15:27:27.047 UTC [53] LOG:  database system is shut down
+ done
+server stopped
+
+PostgreSQL init process complete; ready for start up.
+
+2026-09-10 15:27:27.136 UTC [1] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-09-10 15:27:27.136 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2026-09-10 15:27:27.136 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2026-09-10 15:27:27.517 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-09-10 15:27:27.581 UTC [75] LOG:  database system was shut down at 2026-09-10 15:27:26 UTC
+2026-09-10 15:27:27.607 UTC [1] LOG:  database system is ready to accept connections
+2026-09-10 15:27:55.538 UTC [94] WARNING:  role "wamn_identity_reader" has not been granted membership in role "wamn_platform" by role "postgres"
+2026-09-10 15:27:55.538 UTC [94] CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_identity_reader""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-10 15:27:55.539 UTC [94] WARNING:  role "wamn_identity_reader_8aaee2a4745eb8ff812536e6d10c887ccf1f6d6d_a" has not been granted membership in role "wamn_identity_reader" by role "postgres"
+2026-09-10 15:27:55.901 UTC [102] ERROR:  permission denied for table project_envs
+2026-09-10 15:27:55.901 UTC [102] STATEMENT:  SELECT secret_name FROM registry.project_envs
+2026-09-10 15:27:55.942 UTC [103] ERROR:  permission denied for table project_roles
+2026-09-10 15:27:55.942 UTC [103] STATEMENT:  SELECT * FROM identity.project_roles
+2026-09-10 15:27:55.984 UTC [104] ERROR:  permission denied for table principals
+2026-09-10 15:27:55.984 UTC [104] STATEMENT:  UPDATE identity.principals SET status = 'disabled'
+2026-09-10 15:27:56.032 UTC [105] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.032 UTC [105] STATEMENT:  UPDATE identity.pats SET revoked_at = now()
+2026-09-10 15:27:56.072 UTC [106] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.072 UTC [106] STATEMENT:  DELETE FROM identity.pats
+2026-09-10 15:27:56.119 UTC [107] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.119 UTC [107] STATEMENT:  INSERT INTO identity.pats (id) VALUES (DEFAULT)
+2026-09-10 15:27:56.160 UTC [108] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.160 UTC [108] STATEMENT:  INSERT INTO identity.pats (created_at) VALUES (DEFAULT)
+2026-09-10 15:27:56.200 UTC [109] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.200 UTC [109] STATEMENT:  INSERT INTO identity.pats (revoked_at) VALUES (NULL)
+2026-09-10 15:27:56.241 UTC [110] ERROR:  permission denied for table principals
+2026-09-10 15:27:56.241 UTC [110] STATEMENT:  INSERT INTO identity.principals (kind, subject, display_name) VALUES ('human', 'escape', 'Escape')
+2026-09-10 15:27:56.283 UTC [111] ERROR:  permission denied for table project_env_memberships
+2026-09-10 15:27:56.283 UTC [111] STATEMENT:  INSERT INTO identity.project_env_memberships (principal_id, org, project, env) VALUES ('00000000-0000-0000-0000-000000000001', 'acme', 'receiving', 'dev')
+2026-09-10 15:27:56.323 UTC [112] ERROR:  permission denied for table project_env_memberships
+2026-09-10 15:27:56.323 UTC [112] STATEMENT:  DELETE FROM identity.project_env_memberships
+2026-09-10 15:27:56.365 UTC [113] ERROR:  permission denied for table project_envs
+2026-09-10 15:27:56.365 UTC [113] STATEMENT:  UPDATE registry.project_envs SET instance_suffix = 'z9z9z9z9'
+2026-09-10 15:27:56.544 UTC [117] ERROR:  permission denied for table project_envs
+2026-09-10 15:27:56.544 UTC [117] STATEMENT:  SELECT secret_name FROM registry.project_envs
+2026-09-10 15:27:56.586 UTC [118] ERROR:  permission denied for table project_roles
+2026-09-10 15:27:56.586 UTC [118] STATEMENT:  SELECT * FROM identity.project_roles
+2026-09-10 15:27:56.628 UTC [119] ERROR:  permission denied for table principals
+2026-09-10 15:27:56.628 UTC [119] STATEMENT:  UPDATE identity.principals SET status = 'disabled'
+2026-09-10 15:27:56.672 UTC [120] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.672 UTC [120] STATEMENT:  UPDATE identity.pats SET revoked_at = now()
+2026-09-10 15:27:56.716 UTC [121] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.716 UTC [121] STATEMENT:  DELETE FROM identity.pats
+2026-09-10 15:27:56.757 UTC [122] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.757 UTC [122] STATEMENT:  INSERT INTO identity.pats (id) VALUES (DEFAULT)
+2026-09-10 15:27:56.801 UTC [123] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.801 UTC [123] STATEMENT:  INSERT INTO identity.pats (created_at) VALUES (DEFAULT)
+2026-09-10 15:27:56.844 UTC [124] ERROR:  permission denied for table pats
+2026-09-10 15:27:56.844 UTC [124] STATEMENT:  INSERT INTO identity.pats (revoked_at) VALUES (NULL)
+2026-09-10 15:27:56.890 UTC [125] ERROR:  permission denied for table principals
+2026-09-10 15:27:56.890 UTC [125] STATEMENT:  INSERT INTO identity.principals (kind, subject, display_name) VALUES ('human', 'escape', 'Escape')
+2026-09-10 15:27:56.936 UTC [126] ERROR:  permission denied for table project_env_memberships
+2026-09-10 15:27:56.936 UTC [126] STATEMENT:  INSERT INTO identity.project_env_memberships (principal_id, org, project, env) VALUES ('00000000-0000-0000-0000-000000000001', 'acme', 'receiving', 'dev')
+2026-09-10 15:27:56.982 UTC [127] ERROR:  permission denied for table project_env_memberships
+2026-09-10 15:27:56.982 UTC [127] STATEMENT:  DELETE FROM identity.project_env_memberships
+2026-09-10 15:27:57.031 UTC [128] ERROR:  permission denied for table project_envs
+2026-09-10 15:27:57.031 UTC [128] STATEMENT:  UPDATE registry.project_envs SET instance_suffix = 'z9z9z9z9'
+2026-09-10 15:27:57.171 UTC [131] ERROR:  permission denied for table principals
+2026-09-10 15:27:57.171 UTC [131] STATEMENT:  SELECT * FROM identity.principals
+2026-09-10 15:27:57.214 UTC [132] ERROR:  permission denied for table orgs
+2026-09-10 15:27:57.214 UTC [132] STATEMENT:  SELECT * FROM registry.orgs
+2026-09-10 15:27:57.255 UTC [133] ERROR:  permission denied to create role
+2026-09-10 15:27:57.255 UTC [133] DETAIL:  Only roles with the CREATEROLE attribute may create roles.
+2026-09-10 15:27:57.255 UTC [133] STATEMENT:  CREATE ROLE identity_escape
+2026-09-10 15:27:57.305 UTC [134] ERROR:  permission denied for database wamn_system
+2026-09-10 15:27:57.305 UTC [134] STATEMENT:  CREATE SCHEMA identity_escape
+2026-09-10 15:27:57.349 UTC [135] ERROR:  permission denied for schema identity at character 14
+2026-09-10 15:27:57.349 UTC [135] STATEMENT:  CREATE TABLE identity.identity_escape (n int)
+2026-09-10 15:27:57.390 UTC [136] ERROR:  permission denied to create temporary tables in database "wamn_system" at character 19
+2026-09-10 15:27:57.390 UTC [136] STATEMENT:  CREATE TEMP TABLE identity_escape (n int)
+2026-09-10 15:27:57.431 UTC [137] ERROR:  permission denied to set role "wamn_system"
+2026-09-10 15:27:57.431 UTC [137] STATEMENT:  SET ROLE wamn_system
+2026-09-10 15:27:57.472 UTC [138] ERROR:  permission denied to set role "wamn_identity_issuer"
+2026-09-10 15:27:57.472 UTC [138] STATEMENT:  SET ROLE wamn_identity_issuer
+2026-09-10 15:27:57.515 UTC [139] ERROR:  permission denied for table session_keys
+2026-09-10 15:27:57.515 UTC [139] STATEMENT:  TRUNCATE identity.session_keys CASCADE
+2026-09-10 15:27:57.557 UTC [140] ERROR:  must be owner of table session_keys
+2026-09-10 15:27:57.557 UTC [140] STATEMENT:  ALTER TABLE identity.session_keys ADD COLUMN escape text
+2026-09-10 15:27:57.599 UTC [141] ERROR:  permission denied for table session_keys
+2026-09-10 15:27:57.599 UTC [141] STATEMENT:  SELECT private_pkcs8 FROM identity.session_keys
+2026-09-10 15:27:57.639 UTC [142] ERROR:  permission denied for table session_signing_state
+2026-09-10 15:27:57.639 UTC [142] STATEMENT:  SELECT * FROM identity.session_signing_state
+2026-09-10 15:27:57.696 UTC [144] FATAL:  permission denied for database "postgres"
+2026-09-10 15:27:57.696 UTC [144] DETAIL:  User does not have CONNECT privilege.
+2026-09-10 15:27:57.888 UTC [148] FATAL:  password authentication failed for user "wamn_identity_issuer_21608cfc4d1a4f9d4ee70605bf87aa52d9221a1c_a"
+2026-09-10 15:27:57.888 UTC [148] DETAIL:  User "wamn_identity_issuer_21608cfc4d1a4f9d4ee70605bf87aa52d9221a1c_a" has no password assigned.
+	Connection matched file "/var/lib/postgresql/18/docker/pg_hba.conf" line 128: "host all all all scram-sha-256"

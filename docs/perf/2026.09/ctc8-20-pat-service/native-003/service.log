@@ -1,0 +1,113 @@
+    Blocking waiting for file lock on build directory
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling smallvec v1.15.2
+   Compiling bytes v1.12.1
+   Compiling serde_core v1.0.229
+   Compiling mio v1.2.2
+   Compiling serde v1.0.229
+   Compiling slab v0.4.12
+   Compiling futures-task v0.3.34
+   Compiling futures-util v0.3.34
+   Compiling synstructure v0.13.2
+   Compiling serde_json v1.0.151
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerofrom v0.1.8
+   Compiling zeroize v1.9.0
+   Compiling aws-lc-rs v1.18.0
+   Compiling num-traits v0.2.19
+   Compiling yoke v0.8.3
+   Compiling rustls-pki-types v1.15.1
+   Compiling form_urlencoded v1.2.2
+   Compiling serde_derive_internals v0.29.1
+   Compiling http v1.5.0
+   Compiling getrandom v0.3.4
+   Compiling postgres-protocol v0.6.12
+   Compiling zerovec-derive v0.11.6
+   Compiling displaydoc v0.2.7
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive v1.0.229
+   Compiling zerovec v0.11.8
+   Compiling tokio v1.53.1
+   Compiling zerotrie v0.2.5
+   Compiling schemars_derive v0.8.22
+   Compiling tinystr v0.8.4
+   Compiling icu_locale_core v2.3.0
+   Compiling potential_utf v0.1.6
+   Compiling icu_collections v2.3.0
+   Compiling icu_provider v2.3.1
+   Compiling icu_properties v2.3.0
+   Compiling icu_normalizer v2.3.0
+   Compiling http-body v1.1.0
+   Compiling ref-cast-impl v1.0.27
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling parking_lot_core v0.9.12
+   Compiling rustls v0.23.43
+   Compiling regex-automata v0.4.18
+   Compiling rustls-webpki v0.103.15
+   Compiling tokio-util v0.7.19
+   Compiling schemars v0.8.22
+   Compiling parking_lot v0.12.5
+   Compiling chrono v0.4.45
+   Compiling ref-cast v1.0.27
+   Compiling postgres-types v0.2.14
+   Compiling async-trait v0.1.92
+   Compiling fluent-uri v0.3.2
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/components/execution/contract)
+   Compiling regex v1.13.1
+   Compiling tokio-postgres v0.7.18
+   Compiling ahash v0.8.12
+   Compiling tracing-core v0.1.36
+   Compiling boon v0.6.1
+   Compiling tracing v0.1.44
+   Compiling hyper v1.11.0
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/components/events/wire)
+   Compiling getrandom v0.2.17
+   Compiling hyper-util v0.1.20
+   Compiling ring v0.17.14
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/catalog/model)
+   Compiling tokio-rustls v0.26.4
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/schema/introspection)
+   Compiling clap_builder v4.6.6
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/schema/generator)
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/execution/run-state)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling clap_derive v4.6.4
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/control/registry)
+   Compiling http-body-util v0.1.5
+   Compiling deranged v0.5.8
+   Compiling tower v0.5.3
+   Compiling time v0.3.55
+   Compiling clap v4.6.6
+   Compiling rustls-native-certs v0.8.4
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/identity/platform)
+   Compiling bitflags v2.13.1
+   Compiling tower-http v0.6.11
+   Compiling yasna v0.6.0
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling hyper-rustls v0.27.9
+   Compiling rcgen v0.14.8
+   Compiling reqwest v0.13.4
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/crates/control/provision)
+   Compiling wamn-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-20-pat-service-20260910/services/identity)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 11s
+     Running tests/pat_issuance.rs (target/debug/deps/pat_issuance-a64073f3a0a82aee)
+
+running 2 tests
+test operator_ca_configuration_refuses_missing_or_malformed_roots ... ok
+test operator_pat_issuance_over_https ... OPERATOR_PAT_ISSUANCE result=pass native_process=pass mtls=pass anonymous_surfaces=pass bearer_refused=pass token_predicates=pass no_side_effects=pass redaction=pass
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s
+
