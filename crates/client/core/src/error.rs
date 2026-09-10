@@ -113,16 +113,21 @@ impl ClientError {
             // No detail, deliberately: distinguishing "unknown token" from
             // "expired token" hands an attacker an oracle.
             401 => Self::Unauthenticated,
-            403 => Self::PermissionDenied {
-                operation: serde_json::from_str::<serde_json::Value>(body)
-                    .ok()
-                    .and_then(|body| {
-                        body.get("operation")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_default(),
-            },
+            403 => {
+                let body = serde_json::from_str::<serde_json::Value>(body).unwrap_or_default();
+                let error = &body["error"];
+                if error["code"].as_str() == Some("fresh-credential-required") {
+                    return Self::Operation {
+                        literal: "fresh-credential-required".to_owned(),
+                        detail: serde_json::json!({
+                            "operation": error["operation"].as_str().unwrap_or_default(),
+                        }),
+                    };
+                }
+                Self::PermissionDenied {
+                    operation: body["operation"].as_str().unwrap_or_default().to_owned(),
+                }
+            }
             other => Self::Transport {
                 detail: format!("status {other}"),
             },
@@ -145,6 +150,11 @@ impl core::fmt::Display for ClientError {
                 "the row moved: wrote against revision {expected_row_version}, it now carries \
                  {observed_row_version}"
             ),
+            Self::Operation { literal, .. } if literal == "fresh-credential-required" => {
+                formatter.write_str(
+                    "fresh-credential-required: this operation requires a PAT. The request was not retried",
+                )
+            }
             Self::Operation { literal, .. } => write!(formatter, "{literal}"),
             Self::Transport { detail } => write!(formatter, "transport failed: {detail}"),
             Self::MalformedResponse { detail } => {

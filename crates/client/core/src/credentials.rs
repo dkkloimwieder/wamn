@@ -1,8 +1,11 @@
 //! Where a caller's credential comes from.
 //!
-//! A PROVIDER, not a token. The v1 implementation holds a static PAT, but the
-//! interface exists so a refreshing source can replace it without touching a
-//! call site — and so nothing above this layer stores a credential itself.
+//! Providers supply either a static PAT or an in-memory session. Fresh-only
+//! operations request a PAT explicitly and never replay a refused session call.
+
+mod session;
+
+pub use session::{SessionCredentials, SessionTarget};
 
 /// Why a credential could not be supplied.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +40,15 @@ pub trait CredentialProvider: Send + Sync + core::fmt::Debug {
     ///
     /// [`CredentialError`] when no credential can be supplied.
     async fn bearer(&self) -> Result<String, CredentialError>;
+
+    /// Supply a PAT for an operation that requires fresh authentication.
+    ///
+    /// # Errors
+    ///
+    /// Refuses unless the provider explicitly supports fresh credentials.
+    async fn fresh_bearer(&self) -> Result<String, CredentialError> {
+        Err(CredentialError::new("a fresh PAT is not available"))
+    }
 }
 
 /// The v1 implementation: one static personal access token.
@@ -72,6 +84,10 @@ impl core::fmt::Debug for StaticPat {
 #[async_trait::async_trait]
 impl CredentialProvider for StaticPat {
     async fn bearer(&self) -> Result<String, CredentialError> {
+        Ok(self.token.clone())
+    }
+
+    async fn fresh_bearer(&self) -> Result<String, CredentialError> {
         Ok(self.token.clone())
     }
 }

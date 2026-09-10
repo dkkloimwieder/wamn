@@ -19,12 +19,13 @@
 //! PAT, and `WAMN_HOST` supplies the routing host header when the deployment
 //! routes by host. All three are deployment facts, so none of them is
 //! compiled in.
+//! `WAMN_SESSION_ISSUER` and `WAMN_SESSION_AUDIENCE` optionally select session
+//! login. Configure both or neither. `WAMN_TOKEN` remains the PAT source.
 //!
 //! Where those three values come from against a `wamn dev` session, the keys
 //! this binary reads, and the teardown, are the `[RECEIVING-TUI]` recipe in
 //! `docs/operations/build-and-test.md`.
 
-use std::collections::BTreeMap;
 use std::io;
 use std::sync::Arc;
 
@@ -32,11 +33,9 @@ use anyhow::Context as _;
 use crossterm::event::{Event as TerminalEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures_util::StreamExt as _;
 use serde_json::{Value, json};
-use wamn_client::{
-    ClientError, CredentialProvider, HttpRequest, HttpResponse, RouteMetadata, StaticPat,
-    Transport, WamnClient,
-};
+use wamn_client::{ClientError, HttpRequest, HttpResponse, ItemOutcome, Transport, WamnClient};
 use wamn_client_terminal::TerminalSession;
+use wamn_receiving_tui::login;
 use wamn_receiving_tui::model::{Location, PurchaseOrderRow, ReceiptLine, Screen};
 use wamn_receiving_tui::request::{ClientSupplied, record_receipt};
 use wamn_receiving_tui::screen::AppScreen;
@@ -157,15 +156,25 @@ struct HttpTransport {
     client: reqwest::Client,
 }
 
+fn http_transport(builder: reqwest::ClientBuilder) -> Result<HttpTransport, ClientError> {
+    let client = builder
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| ClientError::Transport {
+            detail: "HTTP client configuration failed".to_owned(),
+        })?;
+    Ok(HttpTransport { client })
+}
+
 #[async_trait::async_trait]
 impl Transport for HttpTransport {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
-        let failed = |error: reqwest::Error| ClientError::Transport {
-            detail: error.to_string(),
+        let failed = |_: reqwest::Error| ClientError::Transport {
+            detail: "HTTP exchange failed".to_owned(),
         };
-        let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|error| {
+        let method = reqwest::Method::from_bytes(request.method.as_bytes()).map_err(|_| {
             ClientError::Transport {
-                detail: error.to_string(),
+                detail: "HTTP method is invalid".to_owned(),
             }
         })?;
         let mut builder = self.client.request(method, &request.url);
@@ -211,19 +220,9 @@ impl App {
     }
 }
 
-/// Invoke one single-item operation and return its value.
-///
-/// The route is taken, not built: every caller passes an emitted `*_route()`,
-/// so the method and template are the release's own facts.
-async fn call(
-    client: &WamnClient,
-    route: RouteMetadata,
-    request_id: &str,
-    mut item: Value,
-) -> Result<Value, ClientError> {
-    item["request_id"] = json!(request_id);
-    let outcomes = client.invoke(&route, &BTreeMap::new(), &[item]).await?;
-    outcomes
+/// Extract the single outcome returned by a generated operation wrapper.
+fn single_result(result: Result<Vec<ItemOutcome>, ClientError>) -> Result<Value, ClientError> {
+    result?
         .into_iter()
         .next()
         .expect("one sent item yields one outcome")
@@ -258,12 +257,8 @@ fn integer(row: &Value, member: &str) -> i64 {
 async fn load_orders(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
     app.begin("purchase_order.query", screen)?;
     let request_id = app.next_request_id();
-    let event = match call(
-        &app.client,
-        purchase_order::query_route(),
-        &request_id,
-        json!({}),
-    ).await {
+    let result = purchase_order::query(&app.client, &[json!({ "request_id": request_id })]).await;
+    let event = match single_result(result) {
         Ok(page) => Event::OrdersLoaded {
             // A `page` result is NOT a `bounded_list`: it spells its rows
             // `item` and its continuation `next_cursor`. Reading `rows` and
@@ -297,13 +292,9 @@ async fn open_receipt(app: &mut App, screen: &mut TerminalSession) -> io::Result
 
     app.begin("receiving.load_receipt_screen", screen)?;
     let request_id = app.next_request_id();
-    let item = json!({ "purchase_order_id": order.id });
-    let event = match call(
-        &app.client,
-        receiving::load_receipt_screen_route(),
-        &request_id,
-        item,
-    ).await {
+    let item = json!({ "request_id": request_id, "purchase_order_id": order.id });
+    let result = receiving::load_receipt_screen(&app.client, &[item]).await;
+    let event = match single_result(result) {
         Ok(value) => Event::ReceiptLoaded {
             lines: rows(&value)
                 .iter()
@@ -330,12 +321,8 @@ async fn open_receipt(app: &mut App, screen: &mut TerminalSession) -> io::Result
 
     app.begin("location.list", screen)?;
     let request_id = app.next_request_id();
-    let event = match call(
-        &app.client,
-        location::list_route(),
-        &request_id,
-        json!({}),
-    ).await {
+    let result = location::list(&app.client, &[json!({ "request_id": request_id })]).await;
+    let event = match single_result(result) {
         Ok(value) => Event::LocationsLoaded {
             locations: rows(&value)
                 .iter()
@@ -387,21 +374,7 @@ async fn submit(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
     };
 
     app.begin("receiving.record_receipt", screen)?;
-    let sent = app
-        .client
-        .invoke(
-            &receiving::record_receipt_route(),
-            &BTreeMap::new(),
-            &items,
-        )
-        .await
-        .and_then(|outcomes| {
-            outcomes
-                .into_iter()
-                .next()
-                .expect("one sent item yields one outcome")
-                .into_result()
-        });
+    let sent = single_result(receiving::record_receipt(&app.client, &items).await);
     let event = match sent {
         Ok(value) => Event::ReceiptRecorded {
             receipt_id: text(&value, "receipt_id"),
@@ -415,19 +388,24 @@ async fn submit(app: &mut App, screen: &mut TerminalSession) -> io::Result<()> {
 async fn main() -> anyhow::Result<()> {
     let base_url = std::env::var("WAMN_BASE_URL")
         .context("WAMN_BASE_URL must name the deployment this client talks to")?;
-    let token =
-        std::env::var("WAMN_TOKEN").context("WAMN_TOKEN must carry the operator's access token")?;
+    let token = std::env::var("WAMN_TOKEN")
+        .map_err(|_| anyhow::anyhow!("WAMN_TOKEN must carry the operator's access token"))?;
     let host = std::env::var("WAMN_HOST").ok();
+    let session_setting = |name| match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(anyhow::anyhow!("{name} must contain Unicode text"))
+        }
+    };
+    let issuer = session_setting("WAMN_SESSION_ISSUER")?;
+    let audience = session_setting("WAMN_SESSION_AUDIENCE")?;
+    let target = login::session_target(issuer.as_deref(), audience.as_deref())?;
+    let transport: Arc<dyn Transport> = Arc::new(http_transport(reqwest::Client::builder())?);
+    let credentials = login::credentials(token, target, transport.clone()).await?;
 
     let mut app = App {
-        client: WamnClient::new(
-            base_url,
-            host,
-            Arc::new(StaticPat::new(token)?) as Arc<dyn CredentialProvider>,
-            Arc::new(HttpTransport {
-                client: reqwest::Client::new(),
-            }) as Arc<dyn Transport>,
-        ),
+        client: WamnClient::new(base_url, host, credentials, transport),
         state: AppState::default(),
         focus: Focus::default(),
         requests: 0,
@@ -458,8 +436,13 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Action, Focus, action};
+    use super::{Action, Focus, action, http_transport, single_result};
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    use std::collections::BTreeMap;
+    use std::io::{BufRead as _, BufReader, Write as _};
+    use std::net::TcpListener;
+    use std::time::Duration;
+    use wamn_client::{ClientError, HttpRequest, ItemOutcome, Transport as _};
     use wamn_receiving_tui::Event;
     use wamn_receiving_tui::model::Screen;
 
@@ -469,6 +452,94 @@ mod tests {
 
     fn control(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn the_single_result_preserves_values_and_both_refusal_layers() {
+        let value = serde_json::json!({ "receipt_id": "fixture-receipt" });
+        assert_eq!(
+            single_result(Ok(vec![ItemOutcome {
+                request_id: "r1".to_owned(),
+                value: Some(value.clone()),
+                error: None,
+            }])),
+            Ok(value),
+        );
+        let refusal = ClientError::from_status(
+            403,
+            r#"{"error":{"code":"fresh-credential-required","operation":"receiving.record_receipt"}}"#,
+        );
+        assert_eq!(single_result(Err(refusal.clone())), Err(refusal));
+        let item_refusal = single_result(Ok(vec![ItemOutcome {
+            request_id: "r2".to_owned(),
+            value: None,
+            error: Some(serde_json::json!({ "code": "invalid_input" })),
+        }]))
+        .expect_err("preserve an item-level refusal");
+        assert_eq!(item_refusal.code(), "invalid_input");
+    }
+
+    #[tokio::test]
+    async fn the_real_transport_returns_a_redirect_without_following_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("redirect fixture listener");
+        let address = listener.local_addr().expect("redirect fixture address");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("one request");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("bounded header read");
+            let mut reader = BufReader::new(&stream);
+            let mut headers = String::new();
+            while !headers.ends_with("\r\n\r\n") {
+                assert!(reader.read_line(&mut headers).expect("request header") > 0);
+                assert!(headers.len() < 8192, "bounded request headers");
+            }
+            let response = format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://{address}/other\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("redirect response");
+        });
+        let transport = http_transport(
+            reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5)),
+        )
+        .expect("real HTTP transport");
+        let response = transport
+            .send(HttpRequest {
+                url: format!("http://{address}/session"),
+                method: "POST".to_owned(),
+                headers: BTreeMap::from([(
+                    "authorization".to_owned(),
+                    "Bearer receiving-redirect-fixture-pat".to_owned(),
+                )]),
+                body: Vec::new(),
+            })
+            .await;
+        server.join().expect("redirect fixture completed");
+        assert_eq!(response.expect("one redirect response").status, 307);
+    }
+
+    #[tokio::test]
+    async fn transport_failures_do_not_render_request_credentials() {
+        let sentinel = "receiving-error-fixture-pat";
+        let transport =
+            http_transport(reqwest::Client::builder().no_proxy()).expect("real HTTP transport");
+        let error = transport
+            .send(HttpRequest {
+                url: format!("invalid-relative-url/{sentinel}"),
+                method: "POST".to_owned(),
+                headers: BTreeMap::from([(
+                    "authorization".to_owned(),
+                    format!("Bearer {sentinel}"),
+                )]),
+                body: Vec::new(),
+            })
+            .await
+            .expect_err("refuse the invalid request URL");
+        assert!(!format!("{error:?} {error}").contains(sentinel));
     }
 
     /// The same character reaches a different entry under a different focus —

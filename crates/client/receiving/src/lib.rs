@@ -15,6 +15,7 @@
 //! currently lives with the developer client in services/ctl and moves out
 //! when this crate takes a binary (wamn-10yt.5.9).
 
+pub mod login;
 pub mod model;
 pub mod reduce;
 pub mod request;

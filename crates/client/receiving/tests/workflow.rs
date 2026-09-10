@@ -105,6 +105,44 @@ fn screen_contains(state: &AppState, needle: &str) -> bool {
 }
 
 #[tokio::test]
+async fn a_nested_fresh_credential_refusal_is_visible_without_a_retry() {
+    let deployment = Deployment::new();
+    deployment.answer(
+        "/receiving/record_receipt",
+        403,
+        r#"{"error":{"code":"fresh-credential-required","operation":"receiving.record_receipt"}}"#,
+    );
+    let client = WamnClient::new(
+        "http://flow-http.wamn-system.svc",
+        None,
+        Arc::new(StaticPat::new("receiving-refusal-fixture-token").expect("fixture credential")),
+        Arc::clone(&deployment) as Arc<dyn Transport>,
+    );
+    let entered = reduce(&AppState::default(), Event::TypeReference('R'));
+    let pending = reduce(
+        &entered,
+        Event::Sent {
+            operation: "receiving.record_receipt".to_owned(),
+        },
+    );
+    let error = client
+        .invoke(
+            &route("/receiving/record_receipt"),
+            &BTreeMap::new(),
+            &[serde_json::json!({"request_id":"r1"})],
+        )
+        .await
+        .expect_err("the nested callee requires a fresh credential");
+    assert_eq!(error.code(), "fresh-credential-required");
+    let state = reduce(&pending, Event::Failed { error });
+    assert!(state.pending.is_none(), "the refusal must not schedule another request");
+    assert_eq!(state.receipt_reference, entered.receipt_reference);
+    assert!(screen_contains(&state, "fresh-credential-required"));
+    assert!(screen_contains(&state, "requires a PAT"));
+    assert_eq!(deployment.sent.lock().expect("sent requests").len(), 1);
+}
+
+#[tokio::test]
 async fn the_receipt_entry_workflow_runs_end_to_end() {
     let deployment = Deployment::new();
     deployment.answer(
