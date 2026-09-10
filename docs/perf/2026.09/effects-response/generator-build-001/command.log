@@ -1,0 +1,13 @@
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/components/execution/contract)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.68s

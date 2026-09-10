@@ -312,6 +312,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "map".to_owned(),
                     ComponentOperationDeclaration {
+                        committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: None,
                         dependencies: Vec::new(),

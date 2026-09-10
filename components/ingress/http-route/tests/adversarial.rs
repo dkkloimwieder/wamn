@@ -665,3 +665,85 @@ fn provider_and_body_faults_are_bounded() {
     assert_eq!(error_code(&output.body), "body-read-failed");
     assert!(backend.deliveries.is_empty());
 }
+
+#[test]
+fn partial_completion_preserves_only_committed_result_and_existing_failure() {
+    use http_route::{FailedOutcome, PartialCompletion};
+    use wamn_execution_contract::EffectOutcome;
+    let committed =
+        json!([{"request_id":"move-1","value":{"movement_id":"movement-1","row_version":2}}]);
+    for observed in std::iter::once(None).chain(EffectOutcome::ALL.into_iter().map(Some)) {
+        let mut backend = FakeBackend::new(route());
+        backend.delivery = Ok(DeliveryOutcome::PartiallyCompleted(PartialCompletion {
+            committed_result: committed.to_string(),
+            failed_outcome: FailedOutcome::Failed(DeliveryFailure {
+                kind: DeliveryFailureKind::Terminal,
+                code: Some("write_failed".to_owned()),
+                message: "label store failed".to_owned(),
+            }),
+            effect_outcome: observed,
+        }));
+        let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+        let mut expected = json!({
+            "committed_result":[{"request_id":"move-1","value":{"movement_id":"movement-1","row_version":2}}],
+            "failed_outcome":{"code":"write_failed","message":"label store failed"}
+        });
+        if let Some(observed) = observed {
+            expected["failed_outcome"]["effect_outcome"] = json!(observed.label());
+        }
+        assert_eq!(output.status, 500);
+        assert_eq!(output.body, serde_json::to_vec(&expected).unwrap());
+        assert_eq!(backend.deliveries.len(), 1);
+    }
+}
+
+#[test]
+fn partial_completion_keeps_nested_authorization_and_cancellation_truth() {
+    use http_route::{FailedOutcome, PartialCompletion};
+    for (failed_outcome, status, expected) in [
+        (
+            FailedOutcome::Error(DeliveryError::FreshCredentialRequired {
+                operation: "inventory.move".to_owned(),
+            }),
+            403,
+            json!({"code":"fresh-credential-required","operation":"inventory.move"}),
+        ),
+        (
+            FailedOutcome::Error(DeliveryError::ExecutionFailed),
+            503,
+            json!({"code":"execution-failed"}),
+        ),
+        (
+            FailedOutcome::Cancelled,
+            503,
+            json!({"code":"execution-cancelled"}),
+        ),
+        (
+            FailedOutcome::Failed(DeliveryFailure {
+                kind: DeliveryFailureKind::InvalidInput,
+                code: Some("missing_field".to_owned()),
+                message: "label input is missing".to_owned(),
+            }),
+            400,
+            json!({"code":"missing_field","message":"label input is missing"}),
+        ),
+    ] {
+        let mut backend = FakeBackend::new(route());
+        backend.delivery = Ok(DeliveryOutcome::PartiallyCompleted(PartialCompletion {
+            committed_result: r#"[{"request_id":"move-1","value":{"movement_id":"movement-1"}}]"#
+                .to_owned(),
+            failed_outcome,
+            effect_outcome: None,
+        }));
+        let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+        assert_eq!(output.status, status);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.body).unwrap(),
+            json!({
+                "committed_result":[{"request_id":"move-1","value":{"movement_id":"movement-1"}}],
+                "failed_outcome":expected
+            })
+        );
+        assert_eq!(backend.deliveries.len(), 1);
+    }
+}

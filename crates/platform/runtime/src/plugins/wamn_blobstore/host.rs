@@ -35,6 +35,7 @@
 //! because the environment owns the container, which is the ordinary operation
 //! of the ownership split rather than a deviation from the contract.
 
+use wamn_execution_contract::EffectOutcome;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 
@@ -51,7 +52,7 @@ use super::plugin::{WAMN_BLOBSTORE_ID, WamnBlobstore};
 use super::store::{BoundContainer, StoreError};
 use super::wit_error::to_wit;
 
-use crate::plugins::effect_span::{EffectOutcome, EffectOutcomeGuard};
+use crate::plugins::effect_span::EffectOutcomeGuard;
 
 /// The refusal a store-owned verb returns.
 fn refused(verb: &'static str, reason: &'static str) -> WitError {
@@ -396,7 +397,10 @@ where
     let span = super::plugin::blobstore_span(&plugin, &component_id, operation);
     // Declared before the effect so it outlives the instrumented future. An
     // effect dropped mid-flight records `cancelled` through this guard.
-    let mut observed = EffectOutcomeGuard::new(&span);
+    let evidence = plugin
+        .invocation(&component_id)
+        .and_then(|invocation| invocation.effects);
+    let mut observed = EffectOutcomeGuard::new(&span, evidence);
     let started = std::time::Instant::now();
     let outcome = effect.instrument(span).await;
     crate::plugins::effect_span::record_effect_ms(
@@ -407,7 +411,7 @@ where
         started.elapsed(),
     );
     let observation = store_outcome(outcome.as_ref().err());
-    observed.settle(observation);
+    observed.settle(observation, outcome.is_err());
     if let Err(error) = &outcome {
         tracing::warn!(
             effect.operation = operation,
@@ -451,6 +455,21 @@ mod tests {
     use super::*;
     use crate::plugins::wamn_blobstore::confinement::KeyRefusal;
     use crate::plugins::wamn_blobstore::intake::IntakeError;
+
+    #[test]
+    fn a_blobstore_error_that_responded_supplies_failure_evidence_but_success_does_not() {
+        let evidence = crate::plugins::EffectEvidence::new();
+        for result in [Ok(()), Err(StoreError::NoSuchObject)] {
+            let failed = result.is_err();
+            let mut guard = EffectOutcomeGuard::new(&tracing::Span::none(), Some(evidence.clone()));
+            guard.settle(store_outcome(result.as_ref().err()), failed);
+            drop(guard);
+            assert_eq!(
+                evidence.outcome(),
+                failed.then_some(EffectOutcome::Responded),
+            );
+        }
+    }
 
     /// A key the wall refused never reached the store. A missing object is the
     /// store answering. The two must not read alike.

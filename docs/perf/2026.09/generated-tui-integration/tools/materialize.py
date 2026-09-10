@@ -128,8 +128,10 @@ def interrupted(_signum, _frame):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tree", type=Path, default=Path(__file__).resolve().parents[5])
+    parser.add_argument("--evidence-root", type=Path,
+                        help="repository that retains evidence, defaults to --tree")
     parser.add_argument("--evidence-dir", required=True, type=Path,
-                        help="new evidence directory inside the selected repository")
+                        help="new evidence directory inside the evidence repository")
     args = parser.parse_args()
     os.umask(0o077)
     tree = args.tree.resolve(strict=True)
@@ -141,7 +143,9 @@ def main():
     require(not args.evidence_dir.exists() and not args.evidence_dir.is_symlink(),
             "evidence directory must be new")
     evidence = args.evidence_dir.resolve()
-    require(evidence.is_relative_to(tree), "evidence directory must be inside the repository")
+    evidence_root = args.evidence_root.resolve(strict=True) if args.evidence_root else tree
+    require((evidence_root / ".git").exists(), "evidence root must be a repository")
+    require(evidence.is_relative_to(evidence_root), "evidence directory must be inside the repository")
     for package, _, migrations in PACKAGES:
         root = tree / "packages" / package
         require(not evidence.is_relative_to(root / "generated"), "evidence cannot be generated output")

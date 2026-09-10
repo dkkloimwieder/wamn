@@ -7,6 +7,7 @@ edition.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 wit-bindgen = { workspace = true }
+wamn-execution-contract = { workspace = true }
 
 [lib]
 crate-type = ["cdylib", "rlib"]

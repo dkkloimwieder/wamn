@@ -295,6 +295,12 @@ fn emit_response(source: &mut String, operation: &OperationIr, fields: &str) {
     };
     source.push_str("    response: submission::ResponseContract {\n");
     writeln!(source, "        schema: {:?},", json_text(schema)).expect("write to String");
+    writeln!(
+        source,
+        "        partial_schema: {:?},",
+        json_text(response.and_then(|response| response.partial_schema.as_ref()))
+    )
+    .expect("write to String");
     writeln!(source, "        fields: {fields}_RESULT_SCHEMA,").expect("write to String");
     writeln!(source, "        result_class: {result_class:?},").expect("write to String");
     source.push_str("        errors: &[\n");

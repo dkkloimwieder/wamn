@@ -2052,6 +2052,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
                 AdmittedComponentOperation {
+                    committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: Some(
                         "wamn-receiving:purchase-order/get@1.0.0".to_owned(),
@@ -2089,6 +2090,14 @@ mod tests {
                     (
                         export,
                         AdmittedComponentOperation {
+                            committed_result_schema: operation.committed_result_schema.map(
+                                |schema| wamn_catalog::ComponentSchema {
+                                    schema_digest: wamn_execution_contract::canonical_json_sha256(
+                                        &schema,
+                                    ),
+                                    schema,
+                                },
+                            ),
                             registered_operation: operation.registered_operation,
                             fresh_only: operation.fresh_only,
                             dependencies: operation.dependencies,
@@ -2323,6 +2332,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation,
                 AdmittedComponentOperation {
+                    committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
@@ -2374,6 +2384,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn:node/handler@0.1.0".to_owned(),
                 AdmittedComponentOperation {
+                    committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: registered.map(str::to_owned),
                     dependencies: Vec::new(),
@@ -3356,6 +3367,7 @@ mod tests {
                     operations: BTreeMap::from([(
                         operation.to_owned(),
                         ComponentOperationDeclaration {
+                            committed_result_schema: None,
                             fresh_only: false,
                             registered_operation: None,
                             dependencies: Vec::new(),

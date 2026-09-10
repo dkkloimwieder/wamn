@@ -15,6 +15,7 @@ use tracing::Instrument as _;
 use wamn_catalog::{
     ArtifactHash, ConnectionTypeDescriptor, DefinitionHash, ServingManifest, ServingWiring,
 };
+use wamn_execution_contract::EffectOutcome;
 use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -27,7 +28,7 @@ use crate::connection_authority::{
     parse_http_connection_authority, resolve_http_request,
 };
 use crate::plugins::effect_span::{
-    EFFECT_OPERATION, EffectIdentity, EffectOutcome, EffectOutcomeGuard, EffectWiring,
+    EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
     HTTP_EFFECT_DURATION_MS, effect_span, record_effect_ms, record_wiring,
 };
 use crate::release_manifest::ReleaseManifestWeld;
@@ -78,6 +79,8 @@ pub struct ConnectionInvocation {
     pub component: String,
     pub operation: String,
     pub closure: ConnectionExecutionClosure,
+    /// Optional bounded failure evidence owned by this invocation.
+    pub effects: Option<EffectEvidence>,
 }
 
 /// Host-owned authority closure for one component invocation.
@@ -868,7 +871,10 @@ impl http::Host for ActiveCtx<'_> {
         let span = http_span(&plugin, self.component_id.as_ref());
         // Declared before the effect so it outlives the instrumented future. A
         // send dropped mid-flight records `cancelled` through this guard.
-        let mut observed = EffectOutcomeGuard::new(&span);
+        let evidence = plugin
+            .invocation(self.component_id.as_ref())
+            .and_then(|invocation| invocation.effects);
+        let mut observed = EffectOutcomeGuard::new(&span, evidence);
         let started = std::time::Instant::now();
         let result = plugin
             .send(self.component_id.as_ref(), &request)
@@ -882,7 +888,7 @@ impl http::Host for ActiveCtx<'_> {
             started.elapsed(),
         );
         let outcome = http_outcome(&result);
-        observed.settle(outcome);
+        observed.settle(outcome, result.is_err());
         if let Err(error) = &result {
             let invocation = plugin.invocation(self.component_id.as_ref());
             tracing::warn!(
@@ -928,6 +934,7 @@ mod tests {
             component: "notifier".to_string(),
             operation: "orders:notify/dispatch@1.0.0".to_string(),
             closure: ConnectionExecutionClosure::Released,
+            effects: None,
         }
     }
 
@@ -1033,6 +1040,7 @@ mod tests {
                     snapshot.operation.expect("operation"),
                     ServingComponentOperation {
                         fresh_only: false,
+                        committed_result_schema: None,
                         registered_operation: snapshot.registered_operation,
                         dependencies: Vec::new(),
                         statements: BTreeMap::new(),
@@ -1374,8 +1382,44 @@ mod tests {
         result: &Result<Response, ConnectionError>,
     ) {
         let span = http_span(plugin, component_id);
-        let mut observed = EffectOutcomeGuard::new(&span);
-        observed.settle(http_outcome(result));
+        let evidence = plugin
+            .invocation(component_id)
+            .and_then(|invocation| invocation.effects);
+        let mut observed = EffectOutcomeGuard::new(&span, evidence);
+        observed.settle(http_outcome(result), result.is_err());
+    }
+
+    #[test]
+    fn bound_http_failure_evidence_uses_the_existing_classifier_and_resets_on_rebind() {
+        let plugin = offline_plugin();
+        let component_id = "component-evidence-test";
+        let evidence = EffectEvidence::new();
+        let mut bound = invocation();
+        bound.effects = Some(evidence.clone());
+        plugin.bind_invocation(component_id, bound).unwrap();
+        observed_http_span(&plugin, component_id, &Err(ConnectionError::Timeout));
+        assert_eq!(evidence.outcome(), Some(EffectOutcome::Timeout));
+        observed_http_span(
+            &plugin,
+            component_id,
+            &Err(ConnectionError::Transport(RESPONSE_BODY_LOST.to_owned())),
+        );
+        assert_eq!(evidence.outcome(), None);
+        plugin.revoke_invocation(component_id);
+        let replacement = EffectEvidence::new();
+        let mut bound = invocation();
+        bound.effects = Some(replacement.clone());
+        plugin.bind_invocation(component_id, bound).unwrap();
+        observed_http_span(
+            &plugin,
+            component_id,
+            &Err(ConnectionError::AuthorityDenied),
+        );
+        assert_eq!(
+            replacement.outcome(),
+            Some(EffectOutcome::RefusedBeforeDispatch)
+        );
+        assert_eq!(evidence.outcome(), None);
     }
 
     /// THE TEST THAT WOULD HAVE CAUGHT THE OLD BEHAVIOUR. Every failure of this

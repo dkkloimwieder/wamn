@@ -8,6 +8,7 @@ pub mod wamn_logging;
 pub mod wamn_postgres;
 
 pub use connection_http::ConnectionHttp;
+pub use effect_span::EffectEvidence;
 pub use flow_http_routing::FlowHttpRouting;
 pub use wamn_credentials::WamnCredentials;
 pub use wamn_jetstream::WamnJetstream;

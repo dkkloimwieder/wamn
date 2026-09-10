@@ -5750,6 +5750,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "boon",
  "futures-util",
  "opentelemetry",
  "opentelemetry_sdk",
@@ -5761,6 +5762,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-registry",
  "wamn-event-wire",
+ "wamn-execution-contract",
  "wamn-router",
  "wamn-runtime",
  "wash-runtime",

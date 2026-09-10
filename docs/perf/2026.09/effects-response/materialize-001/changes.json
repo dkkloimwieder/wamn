@@ -1,0 +1,16 @@
+{
+  "added": [],
+  "modified": [
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/purchase_order.rs",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/quality.rs",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/receiving.rs",
+    "packages/receiving/generated/receiving-tui/src/screens/location.rs",
+    "packages/receiving/generated/receiving-tui/src/screens/purchase_order.rs",
+    "packages/receiving/generated/receiving-tui/src/screens/receipt.rs",
+    "packages/receiving/generated/receiving-tui/src/screens/receiving.rs",
+    "packages/wms/generated/client/inventory.rs",
+    "packages/wms/generated/wms-tui/src/screens/inventory.rs",
+    "packages/wms/generated/wms-tui/src/screens/pallet.rs"
+  ],
+  "removed": []
+}

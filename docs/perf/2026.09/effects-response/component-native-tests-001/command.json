@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--manifest-path",
+    "components/Cargo.toml",
+    "-p",
+    "http-route",
+    "-p",
+    "materializer",
+    "-p",
+    "wamn-execution-contract",
+    "--all-targets",
+    "--offline",
+    "--no-fail-fast",
+    "--",
+    "--include-ignored",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908"
+}

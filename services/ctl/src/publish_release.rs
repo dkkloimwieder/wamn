@@ -2100,6 +2100,14 @@ fn project_serving_component(
                 (
                     name.clone(),
                     ServingComponentOperation {
+                        committed_result_schema: operation.committed_result_schema.as_ref().map(
+                            |schema| {
+                                String::from_utf8(wamn_execution_contract::canonical_json_bytes(
+                                    &schema.schema,
+                                ))
+                                .expect("canonical JSON uses UTF-8")
+                            },
+                        ),
                         registered_operation: operation.registered_operation.clone(),
                         fresh_only: operation.fresh_only,
                         dependencies: operation.dependencies.clone(),
@@ -2636,6 +2644,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.to_owned(),
                 AdmittedComponentOperation {
+                    committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: registered_operation.map(str::to_owned),
                     dependencies: Vec::new(),
@@ -2856,6 +2865,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.clone(),
                 AdmittedComponentOperation {
+                    committed_result_schema: None,
                     fresh_only: declared.fresh_only,
                     registered_operation: declared.registered_operation,
                     dependencies: declared.dependencies,

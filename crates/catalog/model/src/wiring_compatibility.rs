@@ -159,6 +159,39 @@ fn validate_resolved_edges(
     wiring: &WiringDocument,
     resolved: &BTreeMap<&str, ResolvedOperation<'_>>,
 ) -> Result<(), WiringCompatibilityError> {
+    if let Some(node_id) = wiring
+        .response
+        .as_ref()
+        .and_then(|response| response.committed_result.as_deref())
+    {
+        let operation = resolved
+            .get(node_id)
+            .ok_or_else(|| {
+                WiringCompatibilityError::new(
+                    WiringCompatibilityErrorKind::MissingOperation,
+                    format!("committed-result node {node_id:?} has no resolved operation"),
+                )
+            })?
+            .operation;
+        if operation.committed_result_schema.is_none() {
+            return Err(WiringCompatibilityError::new(
+                WiringCompatibilityErrorKind::MissingOperation,
+                format!(
+                    "committed-result node {node_id:?} has no admitted committed result schema"
+                ),
+            ));
+        }
+        crate::component_library::validate_committed_result_schema(
+            operation.registered_operation.as_deref(),
+            operation.committed_result_schema.as_ref(),
+        )
+        .map_err(|error| {
+            WiringCompatibilityError::new(
+                WiringCompatibilityErrorKind::MissingOperation,
+                format!("committed-result node {node_id:?} has invalid admitted facts: {error}"),
+            )
+        })?;
+    }
     for edge in &wiring.edges {
         let source = resolved
             .get(edge.from.as_str())
@@ -402,6 +435,7 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.to_string(),
                 AdmittedComponentOperation {
+                    committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
@@ -500,6 +534,36 @@ mod tests {
             required: true,
         }];
         vec![source, target]
+    }
+
+    #[test]
+    fn response_commit_selection_requires_the_selected_admitted_promise() {
+        let mut wiring = wiring();
+        wiring.response = Some(crate::WiringResponse {
+            node: "target".to_owned(),
+            schema: json!({"type": "array"}),
+            committed_result: Some("source".to_owned()),
+        });
+        let mut facts = components();
+        assert!(validate_wiring_compatibility(&wiring, &scope(), &facts).is_err());
+        let operation = operation_mut(&mut facts[0], "read");
+        operation.committed_result_schema = Some(schema(json!({"type": "object"})));
+        assert!(validate_wiring_compatibility(&wiring, &scope(), &facts).is_err());
+        let registered = "app:order/read@1.0.0";
+        let mut operation = facts[0].operations.remove("read").unwrap();
+        operation.registered_operation = Some(registered.to_owned());
+        facts[0].operations.insert(registered.to_owned(), operation);
+        wiring.nodes.get_mut("source").unwrap().operation = registered.to_owned();
+        validate_wiring_compatibility(&wiring, &scope(), &facts)
+            .expect("response and edge schemas remain separate");
+        let resolved = BTreeMap::from([
+            ("source".to_owned(), facts[0].clone()),
+            ("target".to_owned(), facts[1].clone()),
+        ]);
+        validate_resolved_wiring_compatibility(&wiring, &resolved)
+            .expect("release resolution enforces the same admitted promise");
+        wiring.response.as_mut().unwrap().committed_result = Some("target".to_owned());
+        assert!(validate_resolved_wiring_compatibility(&wiring, &resolved).is_err());
     }
 
     #[test]

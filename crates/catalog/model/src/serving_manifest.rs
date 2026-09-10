@@ -140,6 +140,9 @@ pub struct ServingComponentOperation {
     /// Require a fresh originating credential at this operation boundary.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_only: bool,
+    /// Canonical JSON for this registered operation's admitted committed result schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_result_schema: Option<String>,
     /// Exact typed imports this operation may invoke through the host.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<ComponentOperationDependency>,
@@ -359,6 +362,27 @@ impl ServingManifest {
                         "component export {export:?} and registered operation {:?} differ",
                         operation.registered_operation
                     ));
+                }
+                if let Some(schema) = &operation.committed_result_schema {
+                    let value: Value = serde_json::from_str(schema).map_err(|error| {
+                        CatalogIdentityError::InvalidDefinition {
+                            message: format!("committed-result schema is invalid JSON: {error}"),
+                        }
+                    })?;
+                    if wamn_execution_contract::canonical_json_bytes(&value) != schema.as_bytes() {
+                        return invalid("committed-result schema must be canonical JSON");
+                    }
+                    let normalized =
+                        crate::component_library::normalize_schema(value, "committed-result")
+                            .and_then(|schema| {
+                                crate::component_library::validate_committed_result_schema(
+                                    operation.registered_operation.as_deref(),
+                                    Some(&schema),
+                                )
+                            });
+                    normalized.map_err(|error| CatalogIdentityError::InvalidDefinition {
+                        message: format!("serving component operation {export:?} carries invalid committed-result facts: {error}"),
+                    })?;
                 }
                 crate::component_library::validate_operation_statement_facts(
                     export,
@@ -710,6 +734,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "overlay:transform/map@3.0.0".into(),
                     ServingComponentOperation {
+                        committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: Some("overlay:transform/map@3.0.0".into()),
                         dependencies: vec![ComponentOperationDependency {
@@ -730,6 +755,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     "base:purchase-order/get@1.0.0".into(),
                     ServingComponentOperation {
+                        committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: Some("base:purchase-order/get@1.0.0".into()),
                         dependencies: Vec::new(),
@@ -795,6 +821,50 @@ mod tests {
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
         .expect("fixture manifest is valid")
+    }
+
+    #[test]
+    fn committed_result_schema_is_canonical_and_changes_the_release_identity() {
+        let original = manifest();
+        let mut document = serde_json::to_value(&original).unwrap();
+        let operation = document["components"][0]["operations"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        document["components"][0]["operations"][&operation]["committed-result-schema"] =
+            serde_json::json!("{\"type\":\"array\"}");
+        let (declared, digest) = ServingManifest::from_canonical_bytes(
+            &wamn_execution_contract::canonical_json_bytes(&document),
+        )
+        .expect("canonical committed schema loads");
+        assert_ne!(digest, original.digest());
+        assert_eq!(serde_json::to_value(&declared).unwrap(), document);
+        for schema in ["{ \"type\": \"array\" }", "{\"type\":\"unknown\"}", "{"] {
+            document["components"][0]["operations"][&operation]["committed-result-schema"] =
+                serde_json::json!(schema);
+            assert!(
+                ServingManifest::from_canonical_bytes(
+                    &wamn_execution_contract::canonical_json_bytes(&document),
+                )
+                .is_err(),
+                "{schema}"
+            );
+        }
+        document["components"][0]["operations"][&operation]["committed-result-schema"] =
+            serde_json::json!("{}");
+        document["components"][0]["operations"][&operation]
+            .as_object_mut()
+            .unwrap()
+            .remove("registered-operation");
+        assert!(
+            ServingManifest::from_canonical_bytes(&wamn_execution_contract::canonical_json_bytes(
+                &document
+            ),)
+            .is_err()
+        );
     }
 
     #[test]

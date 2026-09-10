@@ -23,6 +23,7 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 use crate::router_driver::{
     OperationRefusal, OperationRefusalKind, authorize_registered_operation,
 };
+use crate::router_response::{InterruptedResponse, PartialEvidence};
 use crate::{RouterDriver, RouterDriverRequest, WiringResolution};
 
 mod bindings {
@@ -38,8 +39,9 @@ mod bindings {
 }
 
 use bindings::wamn::router_delivery::delivery::{
-    self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryRequest, Emission,
-    FailureKind as WireFailureKind, ParentCausation, PermissionDenial, Source,
+    self, DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryRequest,
+    EffectOutcome as WireEffectOutcome, Emission, FailedOutcome, FailureKind as WireFailureKind,
+    ParentCausation, PartialCompletion, PermissionDenial, Source,
 };
 
 /// Host-plugin identity for the one guest-to-router bridge.
@@ -205,7 +207,29 @@ impl RouterDeliveryBridge {
                 .await;
                 self.publish_emit(&target.package_id, &delivery.outcome, causation)
                     .await?;
-                lower_outcome(delivery.outcome)
+                lower_with_evidence(delivery.outcome, delivery.partial)
+            }
+            Err(error) if error.downcast_ref::<InterruptedResponse>().is_some() => {
+                let interrupted = error
+                    .downcast_ref::<InterruptedResponse>()
+                    .expect("guarded partial response");
+                let failure = interrupted
+                    .source
+                    .downcast_ref::<OperationRefusal>()
+                    .map(|denial| lower_operation_refusal(denial.clone()))
+                    .unwrap_or(DeliveryError::ExecutionFailed);
+                self.record(&attributes, DeliveryClass::ExecutionFailed);
+                self.tap(
+                    source,
+                    &delivery_id,
+                    &target.wiring_id,
+                    target.wiring_version,
+                    RouterTapPhase::Settled(EXECUTION_FAILED),
+                    &serde_json::Value::Null,
+                )
+                .await;
+                tracing::warn!(error = %format_args!("{:#}", interrupted.source), "router delivery failed after a declared committed result");
+                partial_outcome(interrupted.evidence.clone(), FailedOutcome::Error(failure))
             }
             Err(error) if error.downcast_ref::<OperationRefusal>().is_some() => {
                 let denial = error
@@ -677,6 +701,48 @@ fn settled_preview(outcome: &Outcome) -> (&'static str, Cow<'_, serde_json::Valu
             }
         },
     }
+}
+
+fn lower_with_evidence(
+    outcome: Outcome,
+    evidence: Option<PartialEvidence>,
+) -> Result<DeliveryOutcome, DeliveryError> {
+    let lowered = lower_outcome(outcome);
+    match (lowered, evidence) {
+        (Ok(DeliveryOutcome::Failed(failure)), Some(evidence)) => {
+            partial_outcome(evidence, FailedOutcome::Failed(failure))
+        }
+        (Ok(DeliveryOutcome::Cancelled), Some(evidence)) => {
+            partial_outcome(evidence, FailedOutcome::Cancelled)
+        }
+        (Err(error), Some(evidence)) => partial_outcome(evidence, FailedOutcome::Error(error)),
+        (outcome, _) => outcome,
+    }
+}
+
+fn partial_outcome(
+    evidence: PartialEvidence,
+    failed_outcome: FailedOutcome,
+) -> Result<DeliveryOutcome, DeliveryError> {
+    let committed_result = serde_json::to_string(&evidence.committed_result)
+        .map_err(|_| DeliveryError::ExecutionFailed)?;
+    let effect_outcome = evidence.effect_outcome.map(|outcome| match outcome {
+        wamn_execution_contract::EffectOutcome::RefusedBeforeDispatch => {
+            WireEffectOutcome::RefusedBeforeDispatch
+        }
+        wamn_execution_contract::EffectOutcome::Responded => WireEffectOutcome::Responded,
+        wamn_execution_contract::EffectOutcome::Timeout => WireEffectOutcome::Timeout,
+        wamn_execution_contract::EffectOutcome::Cancelled => WireEffectOutcome::Cancelled,
+        wamn_execution_contract::EffectOutcome::EffectUncertain => {
+            WireEffectOutcome::EffectUncertain
+        }
+        wamn_execution_contract::EffectOutcome::ResponseLost => WireEffectOutcome::ResponseLost,
+    });
+    Ok(DeliveryOutcome::PartiallyCompleted(PartialCompletion {
+        committed_result,
+        failed_outcome,
+        effect_outcome,
+    }))
 }
 
 fn lower_outcome(outcome: Outcome) -> Result<DeliveryOutcome, DeliveryError> {
@@ -1261,5 +1327,72 @@ mod tests {
             *result,
             serde_json::json!({"code": "bad-order", "message": "order is invalid"})
         );
+    }
+}
+
+#[cfg(test)]
+mod partial_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn evidence() -> PartialEvidence {
+        PartialEvidence {
+            committed_result: json!([{"request_id":"move-1","value":{"movement_id":"movement-1"}}]),
+            effect_outcome: Some(wamn_execution_contract::EffectOutcome::ResponseLost),
+        }
+    }
+
+    #[test]
+    fn declared_evidence_crosses_the_bridge_with_the_original_failure() {
+        let outcome = Outcome {
+            status: WalkStatus::Failed,
+            result: json!({"unselected":"must not cross the boundary"}),
+            failure: Some(wamn_router::Failure {
+                node: "store".to_owned(),
+                kind: FailureKind::Terminal,
+                detail: wamn_router::ErrorDetail::coded("write_failed", "label store failed"),
+            }),
+            hops: 3,
+            verdict: None,
+        };
+        let DeliveryOutcome::PartiallyCompleted(partial) =
+            lower_with_evidence(outcome, Some(evidence())).unwrap()
+        else {
+            panic!("a declared committed result must survive the downstream failure")
+        };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&partial.committed_result).unwrap(),
+            evidence().committed_result
+        );
+        assert!(matches!(
+            partial.effect_outcome,
+            Some(WireEffectOutcome::ResponseLost)
+        ));
+        let FailedOutcome::Failed(failure) = partial.failed_outcome else {
+            panic!("original node failure")
+        };
+        assert!(matches!(failure.kind, WireFailureKind::Terminal));
+        assert_eq!(failure.code.as_deref(), Some("write_failed"));
+        assert_eq!(failure.message, "label store failed");
+    }
+
+    #[test]
+    fn existing_verdict_still_wins_over_later_partial_evidence() {
+        let outcome = Outcome {
+            status: WalkStatus::Failed,
+            result: json!({"later":"ignored"}),
+            failure: None,
+            hops: 3,
+            verdict: Some(Verdict::Respond {
+                node_id: "respond".to_owned(),
+                payload: json!({"first":true}),
+            }),
+        };
+        let DeliveryOutcome::Respond(payload) =
+            lower_with_evidence(outcome, Some(evidence())).unwrap()
+        else {
+            panic!("first verdict stands")
+        };
+        assert_eq!(payload, r#"{"first":true}"#);
     }
 }

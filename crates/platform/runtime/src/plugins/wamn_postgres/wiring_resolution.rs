@@ -6,7 +6,9 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use serde::Deserialize;
 use tokio_postgres::types::ToSql;
-use wamn_catalog::{AdmittedComponent, WiringDocument};
+use wamn_catalog::{
+    AdmittedComponent, WiringDocument, WiringResponse, validate_resolved_wiring_compatibility,
+};
 use wamn_router::Wiring;
 use wamn_run_state::AuthorityClass;
 
@@ -432,6 +434,7 @@ pub struct ResolvedActiveWiring {
     pub effective_release_id: u32,
     pub graph_hash: Arc<str>,
     pub wiring: Wiring,
+    pub response: Option<WiringResponse>,
     pub components: Arc<[AdmittedComponent]>,
 }
 
@@ -967,6 +970,10 @@ fn lower_resolved_wiring(
     resolved: BTreeMap<String, AdmittedComponent>,
     components: Vec<AdmittedComponent>,
 ) -> anyhow::Result<ResolvedActiveWiring> {
+    if decoded.document.response.is_some() {
+        validate_resolved_wiring_compatibility(&decoded.document, &resolved)
+            .context("validate resolved response contracts")?;
+    }
     let mut executable = decoded.document.clone();
     let mut operations = Vec::with_capacity(resolved.len());
     for (node_id, component) in resolved {
@@ -1020,6 +1027,7 @@ fn lower_resolved_wiring(
         effective_release_id: decoded.effective_release_id,
         graph_hash: Arc::from(decoded.graph_hash),
         wiring,
+        response: decoded.document.response,
         components: components.into(),
     })
 }
@@ -1069,6 +1077,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     operation.to_owned(),
                     ComponentOperationDeclaration {
+                        committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: None,
                         dependencies: Vec::new(),
@@ -1088,6 +1097,54 @@ mod tests {
         )
         .expect("fixture component admits")
         .component
+    }
+
+    #[test]
+    fn resolved_response_preserves_the_frozen_contract_and_requires_committed_facts() {
+        let registered = "orders:entity/create@1.2.0";
+        let document = WiringDocument::parse(&json!({
+            "format-version": "0.1", "wiring-id": "create-order", "version": 1,
+            "entry": "write",
+            "nodes": {"write": {
+                "component": "entity", "interface-version": "0.1.0",
+                "operation": registered, "terminal": "respond"
+            }},
+            "response": {"node": "write", "schema": {"type": "array"}, "committed-result": "write"}
+        }))
+        .unwrap();
+        let mut admitted = component("entity", "create", 'a');
+        let mut operation = admitted.operations.remove("create").unwrap();
+        operation.registered_operation = Some(registered.to_owned());
+        admitted.operations.insert(registered.to_owned(), operation);
+        let resolve = |admitted: AdmittedComponent| {
+            lower_resolved_wiring(
+                "tenant-a",
+                "orders",
+                "prod",
+                DecodedWiring {
+                    version: 1,
+                    effective_release_id: 7,
+                    package_version: "1.2.0".to_owned(),
+                    graph_hash: document.wiring_hash().as_str().to_owned(),
+                    document: document.clone(),
+                },
+                BTreeMap::from([("write".to_owned(), admitted.clone())]),
+                vec![admitted],
+            )
+        };
+        assert!(resolve(admitted.clone()).is_err());
+        let schema = json!({"type": "array"});
+        admitted
+            .operations
+            .get_mut(registered)
+            .unwrap()
+            .committed_result_schema = Some(wamn_catalog::ComponentSchema {
+            schema_digest: wamn_execution_contract::canonical_json_sha256(&schema),
+            schema,
+        });
+        let resolved = resolve(admitted.clone()).expect("admitted committed result resolves");
+        assert_eq!(resolved.response, document.response);
+        assert_eq!(resolved.components.as_ref(), &[admitted]);
     }
 
     #[test]
@@ -1242,6 +1299,7 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_owned(),
                 AdmittedComponentOperation {
+                    committed_result_schema: None,
                     fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),

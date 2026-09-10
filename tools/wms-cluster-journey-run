@@ -11,6 +11,7 @@ Without --apply, print the immutable plan and exit.
 
   --apply              Build and run the journey, then tear down owned resources
   --measure-startup    Cold, restart-first and steady pallet.get requests with trace breakdowns
+  --prove-partial-completion  Prove a committed move survives a missing labels bucket
   --demo               Hold the environment afterwards and serve the route at
                        http://127.0.0.1:8080/ -- see THE DEMO below
   --evidence-dir DIR   New directory retaining commands and machine evidence
@@ -35,6 +36,7 @@ EOF
 
 apply=false
 measure_startup=false
+prove_partial_completion=false
 demo=false
 evidence_dir=
 demo_node_port=30950
@@ -58,12 +60,17 @@ while (($#)); do
   case "$1" in
     --apply) apply=true; shift ;;
     --measure-startup) measure_startup=true; shift ;;
+    --prove-partial-completion) prove_partial_completion=true; shift ;;
     --demo) demo=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
+if [[ "$prove_partial_completion" == true && ( "$demo" == true || "$measure_startup" == true ) ]]; then
+  echo "--prove-partial-completion requires the normal journey without --demo or --measure-startup" >&2
+  exit 2
+fi
 if [[ "$demo" == true ]]; then
   if [[ "$apply" != true ]]; then
     echo "--demo needs --apply: it holds a real environment" >&2
@@ -201,6 +208,9 @@ if [[ "$apply" != true ]]; then
   else
     printf '  order: build -> mint through wamn-ctl (provision, apply, push x3, gate+author, publish) -> fixture seed -> JetStream -> operator 2.9.0 -> host + idle materializer ready -> route smoke -> route-not-found -> cross-environment refusal -> exact teardown\n'
   fi
+  if [[ "$prove_partial_completion" == true ]]; then
+    printf '  partial proof: remove owned labels bucket -> one move -> HTTP and database evidence -> restore bucket\n'
+  fi
   exit 0
 fi
 
@@ -295,6 +305,7 @@ reader_owned=false
 reader_pid=
 host_image_owned=false
 run_complete=false
+partial_bucket_removed=false
 
 cleanup() {
   # FIRST, because $? is the journey's exit status only until the next
@@ -303,6 +314,9 @@ cleanup() {
   # below never fired (run 5, wamn-362o.44).
   local status=$? cleanup_failed=false failure_capture_errors
   trap - EXIT HUP INT TERM
+  if [[ "$partial_bucket_removed" == true ]]; then
+    restore_partial_bucket || cleanup_failed=true
+  fi
   # The authoring gate is a LOCAL process this journey spawned; on any exit
   # after it started -- a gate refusal exits inside the wiring loop -- it must
   # die here or it outlives the run, still bound to its port, and the next
@@ -2246,6 +2260,95 @@ label_key=$(jq -rs '.[0].key // empty' "$evidence_dir/labels-objects.json")
 printf 'verdict=pass movement_id=%s labels=%s operations=pass split_pallet_id=%s\n' \
   "$winning_movement_id" "$label_count" "$split_pallet_id" \
   >"$evidence_dir/wms-runtime.receipt"
+if [[ "$prove_partial_completion" == true ]]; then
+  restore_partial_bucket() {
+    run_sensitive restore-partial-labels-bucket \
+      docker run --rm --network kind --entrypoint sh minio/mc -c \
+      "mc alias set journey '$minio_endpoint' '$minio_access_key' '$minio_secret_key' >/dev/null && mc mb --ignore-existing journey/labels" \
+      >"$evidence_dir/partial-bucket-restored.log" 2>&1 || return "$?"
+    partial_bucket_removed=false
+  }
+  # The normal object proof finished above. Remove only this journey's bucket.
+  partial_bucket_removed=true
+  run_sensitive remove-partial-labels-bucket \
+    docker run --rm --network kind --entrypoint sh minio/mc -c \
+    "mc alias set journey '$minio_endpoint' '$minio_access_key' '$minio_secret_key' >/dev/null && mc rb --force journey/labels" \
+    >"$evidence_dir/partial-bucket-removed.log" 2>&1
+  amend_journey_document "$journey_schema" "$journey_document" runtime \
+    "$(jq -n --arg endpoint "http://$runtime_node_ip:$runtime_node_port" \
+        --arg pallet "$app_fixture_pallet_id" --arg to "$app_fixture_location_a_id" \
+        '{route_endpoint: $endpoint, pallet_id: $pallet, to_location_id: $to}')"
+  record_command cargo test wms_runtime_live::committed_move_survives_label_store_failure \
+    '<journey document with the runtime phase redacted>'
+  partial_status=0
+  if WAMN_JOURNEY_DOCUMENT="$journey_document" \
+      CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+      cargo test -p wamn-proof-integration --lib --locked --offline \
+      wms_runtime_live::committed_move_survives_label_store_failure \
+      -- --include-ignored --exact --nocapture --test-threads=1 \
+      2>&1 | tee "$evidence_dir/wms-partial.log"; then
+    partial_status=0
+  else
+    partial_status=$?
+  fi
+  if ! restore_partial_bucket; then
+    echo "failed to restore the owned labels bucket after the partial proof" >&2
+    [[ $partial_status -ne 0 ]] || partial_status=1
+  fi
+  sed -n 's/^WMS_PARTIAL_HTTP_RESPONSE //p' "$evidence_dir/wms-partial.log" \
+    >"$evidence_dir/wms-partial-http.json"
+  sed -n 's/^WMS_PARTIAL_COMPLETION_PASS //p' "$evidence_dir/wms-partial.log" \
+    >"$evidence_dir/wms-partial-response.receipt.json"
+  [[ $partial_status -eq 0 ]] || exit "$partial_status"
+  assert_one_test_ran "$evidence_dir/wms-partial.log" \
+    committed_move_survives_label_store_failure
+  jq -se 'length == 1 and .[0].status == 500' \
+    "$evidence_dir/wms-partial-http.json" >/dev/null
+  jq -se 'length == 1 and .[0].command_requests == 1 and .[0].effect_outcome == "responded"' \
+    "$evidence_dir/wms-partial-response.receipt.json" >/dev/null
+  partial_key=$(jq -er .idempotency_key "$evidence_dir/wms-partial-response.receipt.json")
+  partial_movement=$(jq -er .movement_id "$evidence_dir/wms-partial-response.receipt.json")
+  # Move writes one history row per quantity row. The fixture retains one after split and merge.
+  run_sensitive read-partial-committed-rows "${psql_admin[@]}" -d "$project_database" \
+    -At -v command_key="$partial_key" -v pallet="$app_fixture_pallet_id" -f - \
+    >"$evidence_dir/wms-partial-database.json" <<'SQL'
+SELECT json_build_object(
+    'command_count', (SELECT count(*) FROM wms.inventory_move_command WHERE idempotency_key = :'command_key'),
+    'movement_count', (SELECT count(*) FROM wms.inventory_movement WHERE idempotency_key = :'command_key'),
+    'quantity_count', (SELECT count(*) FROM wms.pallet_quantity WHERE pallet_id = :'pallet'),
+    'command', (SELECT row_to_json(command) FROM (
+        SELECT movement_id, pallet_id, pallet_status, row_version
+        FROM wms.inventory_move_command WHERE idempotency_key = :'command_key'
+    ) AS command),
+    'movement', (SELECT row_to_json(movement) FROM (
+        SELECT id, idempotency_key, pallet_id, from_location_id, to_location_id, kind
+        FROM wms.inventory_movement WHERE idempotency_key = :'command_key'
+    ) AS movement),
+    'pallet', (SELECT row_to_json(pallet) FROM (
+        SELECT id, location_id, status, row_version FROM wms.pallet WHERE id = :'pallet'
+    ) AS pallet)
+);
+SQL
+  jq -e --slurpfile receipt "$evidence_dir/wms-partial-response.receipt.json" '
+    $receipt[0] as $expected |
+    .command_count == 1 and .movement_count == 1 and .quantity_count == 1 and
+    .command.movement_id == $expected.movement_id and
+    .command.pallet_id == $expected.pallet_id and
+    .command.pallet_status == $expected.pallet_status and
+    .command.row_version == $expected.row_version and
+    .movement.idempotency_key == $expected.idempotency_key and
+    .movement.pallet_id == $expected.pallet_id and
+    .movement.to_location_id == $expected.location_id and
+    .movement.from_location_id != .movement.to_location_id and
+    .movement.kind == "move" and
+    .pallet.id == $expected.pallet_id and
+    .pallet.location_id == $expected.location_id and
+    .pallet.status == $expected.pallet_status and
+    .pallet.row_version == $expected.row_version
+  ' "$evidence_dir/wms-partial-database.json" >/dev/null
+  printf 'verdict=pass movement_id=%s command_rows=1 movement_rows=1 command_requests=1 effect_outcome=responded bucket_restored=true\n' \
+    "$partial_movement" >"$evidence_dir/wms-partial.receipt"
+fi
 # --demo keeps the route reachable while the environment is held. Teardown still
 # deletes the whole cluster, so nothing outlives the run either way.
 if [[ "$demo" != true ]]; then
@@ -2454,7 +2557,8 @@ assert_can_i no delete events.events.k8s.io "$operator_subject" "$events_rbac_re
 assert_can_i no deletecollection events.events.k8s.io "$operator_subject" "$events_rbac_receipt"
 
 jq -n --arg source "$head" --arg namespace "$namespace" \
-  --arg digest "$manifest_digest" --arg host "$route_host" '
+  --arg digest "$manifest_digest" --arg host "$route_host" \
+  --argjson partial "$prove_partial_completion" '
   {
     schema:"wamn-wms-cluster-journey/v0.1",
     verdict:"pass",
@@ -2475,7 +2579,7 @@ jq -n --arg source "$head" --arg namespace "$namespace" \
       "wms-released-operations",
       "one-label-object-for-winning-movement",
       "cross-environment-scheduling-refusal"
-    ],
+    ] + (if $partial then ["committed-move-with-failed-label-store"] else [] end),
     evidence_scope:{
       cited_immutable_rc:{
         close:"851acb80",

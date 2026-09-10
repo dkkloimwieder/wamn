@@ -44,7 +44,7 @@ pub use serving_manifest::{
 };
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
-    WiringOperationDependency, WiringTerminal,
+    WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,
 };
 pub use wiring_activation::{
     WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, flip_activation,

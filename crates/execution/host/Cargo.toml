@@ -12,12 +12,14 @@ test-util = []
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
+wamn-execution-contract = { workspace = true }
 wamn-router = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
 futures-util = { workspace = true }
 anyhow = { workspace = true }
+boon = { workspace = true }
 async-trait = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 tracing-opentelemetry = { workspace = true }

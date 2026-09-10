@@ -2975,6 +2975,49 @@ What the journey deliberately does not do: nothing flows through the
 materializer, which is deployed and asserted idle because the overlay mounts
 its family.
 
+#### Partial completion after a committed move
+
+`--prove-partial-completion` adds the platform HTTP proof for `wamn-b2m6.10`
+after the normal journey assertions. The generated TUI proof remains in
+`wamn-10yt.62.7`. This recipe defines the assertions and does not record a live
+pass.
+
+Run from a clean, committed source tree. Choose an unused value for
+`effects_run`.
+
+```bash
+effects_run=live-001
+tools/wms-cluster-journey-run --apply --prove-partial-completion \
+  --evidence-dir "/home/kaalin/dev/wamn/docs/perf/2026.09/effects-response/${effects_run}/journey"
+```
+
+After the normal object assertions pass, the harness removes its own `labels`
+bucket while MinIO stays running. It runs
+`wms_runtime_live::committed_move_survives_label_store_failure` once, with the
+existing journey document. The test sends one fresh move and requires HTTP500
+with only `committed_result` and `failed_outcome`. The committed result must
+preserve the original movement fields and match the submitted `request_id`.
+The failed outcome must contain exactly `code`, `message`, and `effect_outcome`.
+Their values must be `write_failed`, a nonempty error message, and `responded`.
+
+A later `pallet.get` must return the committed location and revision. SQL
+assertions require one matching claim, one movement history row, and one
+quantity row for the fixture pallet. The claim supplies the public
+`movement_id`. The history row matches through `idempotency_key`, and the
+stored pallet state must match the HTTP result.
+
+The harness restores the bucket before it reports a test failure, with a
+cleanup fallback for earlier interruption. The flag refuses `--demo` and
+`--measure-startup`. This arm sends one move and does not repeat it. Database
+row counts cannot prove that repeating the composed route is safe. The arm
+covers an observed store refusal after commit, not timeout or response loss.
+
+The evidence directory retains `wms-partial-http.json`,
+`wms-partial-response.receipt.json`, `wms-partial-database.json`, and
+`wms-partial.log`. Bucket removal and restoration each produce a log.
+`wms-partial.receipt` records passing assertions, and `verdict.json` includes
+`committed-move-with-failed-label-store` only after the journey passes.
+
 #### `--demo` — the WMS demo, the command and the URL
 
 `--demo` holds the environment after a passing run and makes the released route

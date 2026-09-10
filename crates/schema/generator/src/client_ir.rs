@@ -37,7 +37,7 @@ use crate::client_fields::{fields_of, input_fields_of, schema_fields};
 
 /// IR shape version. A consumer that does not recognise it must refuse rather
 /// than guess at a field's meaning.
-pub const CLIENT_IR_FORMAT_VERSION: u32 = 2;
+pub const CLIENT_IR_FORMAT_VERSION: u32 = 3;
 
 /// Why a contract projection could not be read as an IR.
 #[derive(Debug)]
@@ -170,6 +170,7 @@ pub struct RouteIr {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ResponseIr {
     pub schema: Option<Value>,
+    pub partial_schema: Option<Value>,
     pub result_class: Option<String>,
     pub fields: Vec<FieldIr>,
     pub errors: Vec<ErrorCaseIr>,
@@ -663,9 +664,21 @@ fn route_index(attachments: &Path) -> Result<BTreeMap<String, RouteIr>, ClientIr
                 fields: evidence
                     .output_schema
                     .as_ref()
-                    .map(|schema| schema_fields(schema, &[]))
+                    .map(|schema| {
+                        schema_fields(
+                            schema.pointer("/items/properties/value").unwrap_or(schema),
+                            &[],
+                        )
+                    })
                     .unwrap_or_default(),
+                result_class: evidence
+                    .output_schema
+                    .as_ref()
+                    .and_then(|schema| schema.pointer("/items/properties/value/type"))
+                    .filter(|kind| *kind == "object")
+                    .map(|_| "one".to_owned()),
                 schema: evidence.output_schema,
+                partial_schema: evidence.partial_schema,
                 ..ResponseIr::default()
             },
             replay: None,
@@ -972,8 +985,10 @@ fn bind_served_contracts(models: &mut [ModelIr]) {
                 .as_ref()
                 .and_then(|id| operations.get(id))
             {
-                route.response.result_class = Some(terminal.result_class.clone());
-                route.response.fields = terminal.result_fields.clone();
+                if route.response.result_class.is_none() {
+                    route.response.result_class = Some(terminal.result_class.clone());
+                    route.response.fields = terminal.result_fields.clone();
+                }
                 route.response.errors = terminal.errors.clone();
             }
             if route.direct {

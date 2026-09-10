@@ -113,6 +113,22 @@ pub struct Emission {
     pub dedup_id: String,
 }
 
+/// An existing node or bridge failure after a declared command result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FailedOutcome {
+    Failed(DeliveryFailure),
+    Error(DeliveryError),
+    Cancelled,
+}
+
+/// The narrow evidence supplied by the host for a composed failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartialCompletion {
+    pub committed_result: String,
+    pub failed_outcome: FailedOutcome,
+    pub effect_outcome: Option<wamn_execution_contract::EffectOutcome>,
+}
+
 /// One terminal result from inline router execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryOutcome {
@@ -120,6 +136,7 @@ pub enum DeliveryOutcome {
     Emit(Emission),
     Discard,
     Failed(DeliveryFailure),
+    PartiallyCompleted(PartialCompletion),
     Cancelled,
 }
 
@@ -646,7 +663,42 @@ fn delivery_response(outcome: DeliveryOutcome) -> HttpResponse {
                 None,
             )
         }
+        DeliveryOutcome::PartiallyCompleted(partial) => partial_response(partial),
         DeliveryOutcome::Cancelled => error_response(503, "execution-cancelled"),
+    }
+}
+
+fn partial_response(partial: PartialCompletion) -> HttpResponse {
+    let Ok(committed_result) = serde_json::from_str::<Value>(&partial.committed_result) else {
+        return error_response(503, "execution-failed");
+    };
+    let failure = match partial.failed_outcome {
+        FailedOutcome::Failed(failure) => delivery_response(DeliveryOutcome::Failed(failure)),
+        FailedOutcome::Error(error) => delivery_error_response(error),
+        FailedOutcome::Cancelled => delivery_response(DeliveryOutcome::Cancelled),
+    };
+    let mut document: Value =
+        serde_json::from_slice(&failure.body).expect("the existing error response serializes JSON");
+    let mut failed_outcome = document
+        .as_object_mut()
+        .and_then(|object| object.remove("error"))
+        .expect("the existing error response has an error member");
+    if let Some(outcome) = partial.effect_outcome {
+        failed_outcome
+            .as_object_mut()
+            .expect("the existing error is an object")
+            .insert(
+                "effect_outcome".to_owned(),
+                Value::String(outcome.label().to_owned()),
+            );
+    }
+    HttpResponse {
+        status: failure.status,
+        content_type: "application/json",
+        body: serde_json::to_vec(
+            &json!({"committed_result": committed_result, "failed_outcome": failed_outcome}),
+        )
+        .expect("the declared response contains JSON values"),
     }
 }
 
