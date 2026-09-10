@@ -1,0 +1,235 @@
+contract-diff: authoring
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running tests/contract.rs (target/debug/deps/contract-c96c4b23b16c02b5)
+
+running 14 tests
+test query_inventory_and_operation_pairing_are_exact ... ok
+test query_refusal_preserves_version_and_query_id ... ok
+test public_numeric_and_test_set_bounds_match_their_owners ... ok
+test query_request_is_exactly_the_three_ratified_fields ... ok
+test operation_specific_refusal_pairing_rejects_cross_operation_reason ... ok
+test command_inventory_and_operation_pairing_are_exact ... ok
+test the_effect_free_clause_has_a_typed_refusal_on_the_wire ... ok
+test unsupported_version_is_classified_without_dispatch ... ok
+test query_id_enforces_exact_utf8_byte_boundary ... ok
+test exact_two_commands_and_one_query_round_trip ... ok
+test finalized_report_projects_only_current_control_store_facts ... ok
+test publish_carries_the_document_and_derives_no_identity_from_the_wire ... ok
+test the_collapsed_draft_operations_no_longer_decode ... ok
+test retired_and_forbidden_vocabulary_is_absent ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+contract-diff: runtime-vendored-flow-http-routing
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:52:7
+   |
+52 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:114:1
+    |
+114 | / pub struct ConnectionHttp {
+115 | |     postgres: Arc<WamnPostgres>,
+116 | |     vault: Arc<WamnCredentials>,
+117 | |     tenant: Box<str>,
+...   |
+133 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+134 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:55:1
+    |
+ 55 | / pub struct WamnPostgres {
+ 56 | |     /// Resolves a project id → its database connection + policy.
+ 57 | |     provider: Arc<dyn CredentialProvider>,
+ 58 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+121 | |     pub(super) bind_counters: super::BindCounters,
+122 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib) generated 16 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/flow_http_routing_wit_coherence.rs (target/debug/deps/flow_http_routing_wit_coherence-a9963dea24f08a2a)
+
+running 3 tests
+test the_flow_http_routing_copies_stay_byte_identical ... ok
+test the_router_delivery_copies_stay_byte_identical ... ok
+test every_flow_http_routing_copy_is_registered ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+contract-diff: http-route
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running tests/adversarial.rs (components/target/debug/deps/adversarial-1738024d8902b783)
+
+running 19 tests
+test an_authentication_refusal_never_reaches_delivery ... ok
+test authentication_backend_outage_has_one_generic_service_refusal ... ok
+test encoded_slash_stays_in_one_path_segment_and_maps_decoded ... ok
+test explicit_anonymous_admission_delivers_without_a_caller_identity ... ok
+test fresh_only_refusal_names_the_operation_without_repeating_delivery ... ok
+test every_bridge_refusal_has_a_bounded_http_answer ... ok
+test identical_requests_receive_distinct_delivery_ids ... ok
+test invalid_percent_encoding_and_payload_ceiling_refuse_before_delivery ... ok
+test missing_exact_operation_is_a_discoverable_forbidden_refusal ... ok
+test partial_body_selected_attachment_mapping_and_delivery ... ok
+test every_router_outcome_is_mapped_exhaustively ... ok
+test malformed_oversize_mapping_schema_and_auth_refusals_never_deliver ... ok
+test partial_completion_keeps_nested_authorization_and_cancellation_truth ... ok
+test route_permit_is_released_after_a_typed_delivery_error ... ok
+test route_precedence_is_static_then_parameter_then_catch_all ... ok
+test saturated_selected_route_sheds_immediately_without_delivery ... ok
+test provider_and_body_faults_are_bounded ... ok
+test partial_completion_preserves_only_committed_result_and_existing_failure ... ok
+test default_raw_body_ceiling_accepts_one_mebibyte_and_refuses_the_next_byte ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

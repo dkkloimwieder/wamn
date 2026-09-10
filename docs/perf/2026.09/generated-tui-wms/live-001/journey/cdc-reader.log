@@ -1,0 +1,42 @@
+2026-09-10T12:14:30.202394Z  INFO wamn_cdc_reader: registration loaded publication="wamn_cdc_acme__wms__dev__ygww41s9" slot="wamn_cdc_acme__wms__dev__ygww41s9" stream="EVT_acme_dev"
+2026-09-10T12:14:30.204396Z  INFO async_nats::connector: connected successfully server=4222 max_payload=1048576
+2026-09-10T12:14:30.204493Z  INFO async_nats: event: connected
+2026-09-10T12:14:30.246091Z  INFO wamn_cdc_reader: preflight: slot healthy (resume position = confirmed LSN) slot="wamn_cdc_acme__wms__dev__ygww41s9" active=false confirmed_flush_lsn="0/2FEE738" wal_status="reserved"
+2026-09-10T12:14:30.246169Z  INFO pg_walstream::stream: Creating logical replication stream with retry support
+2026-09-10T12:14:30.246199Z  INFO pg_walstream::retry: Attempting to connect to PostgreSQL with retry logic
+2026-09-10T12:14:30.284441Z  INFO pg_walstream::retry: Successfully connected to PostgreSQL on attempt 1 after 38.231287ms
+2026-09-10T12:14:30.284487Z  INFO pg_walstream::stream: Starting logical replication stream
+2026-09-10T12:14:30.284493Z  INFO pg_walstream::stream: Initializing replication stream
+2026-09-10T12:14:30.284638Z  INFO pg_walstream::stream: System identification successful
+2026-09-10T12:14:30.284651Z  INFO pg_walstream::stream: Creating replication slot: wamn_cdc_acme__wms__dev__ygww41s9
+2026-09-10T12:14:30.285070Z  WARN pg_walstream::stream: Replication slot already exists, continuing
+2026-09-10T12:14:30.285084Z  INFO pg_walstream::stream: Replication stream initialized
+2026-09-10T12:14:30.285937Z  INFO pg_walstream::stream: Logical replication started with LSN: 0/0
+2026-09-10T12:14:30.285959Z  INFO wamn_cdc_reader: walsender session open; draining reopens=0
+2026-09-10T12:15:00.295815Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/34BFF68, flushed=0/0, applied=0/0, reply_requested=false
+2026-09-10T12:15:30.297268Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/3537D08, flushed=0/0, applied=0/0, reply_requested=false
+2026-09-10T12:16:00.300848Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/3538150, flushed=0/0, applied=0/0, reply_requested=false
+2026-09-10T12:16:21.490472Z  INFO wamn_cdc_reader: CDC exclusion resolved table=inventory_move_command relation_oid=18966 package_id="wamn_wms" relation="inventory_move_command"
+2026-09-10T12:16:21.553008Z  INFO wamn_cdc_reader: entity resolved table=inventory_movement relation_oid=19040 package_id="wamn_wms" entity="inventory_movement"
+2026-09-10T12:16:21.607580Z  INFO wamn_cdc_reader: entity resolved table=pallet relation_oid=18913 package_id="wamn_wms" entity="pallet"
+2026-09-10T12:16:21.609054Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_move_command": 2}
+2026-09-10T12:16:22.254807Z  INFO wamn_cdc_reader: CDC exclusion resolved table=inventory_adjust_command relation_oid=18984 package_id="wamn_wms" relation="inventory_adjust_command"
+2026-09-10T12:16:22.254943Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/3539028, flushed=0/3538F88, applied=0/3538F88, reply_requested=false
+2026-09-10T12:16:22.315451Z  INFO wamn_cdc_reader: entity resolved table=pallet_quantity relation_oid=18939 package_id="wamn_wms" entity="pallet_quantity"
+2026-09-10T12:16:22.316315Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_move_command": 2}
+2026-09-10T12:16:22.371484Z  INFO wamn_cdc_reader: CDC exclusion resolved table=inventory_split_command relation_oid=19020 package_id="wamn_wms" relation="inventory_split_command"
+2026-09-10T12:16:22.372728Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_move_command": 2, "wamn_wms::inventory_split_command": 2}
+2026-09-10T12:16:22.432015Z  INFO wamn_cdc_reader: CDC exclusion resolved table=inventory_merge_command relation_oid=19002 package_id="wamn_wms" relation="inventory_merge_command"
+2026-09-10T12:16:22.433128Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_merge_command": 2, "wamn_wms::inventory_move_command": 2, "wamn_wms::inventory_split_command": 2}
+2026-09-10T12:16:23.579431Z  INFO wamn_cdc_reader: entity resolved table=product relation_oid=18889 package_id="wamn_wms" entity="product"
+2026-09-10T12:16:23.623700Z  INFO wamn_cdc_reader: entity resolved table=location relation_oid=18901 package_id="wamn_wms" entity="location"
+2026-09-10T12:16:24.170305Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_merge_command": 2, "wamn_wms::inventory_move_command": 4, "wamn_wms::inventory_split_command": 2}
+2026-09-10T12:16:25.685361Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_merge_command": 2, "wamn_wms::inventory_move_command": 5, "wamn_wms::inventory_split_command": 2}
+2026-09-10T12:16:27.511768Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_merge_command": 2, "wamn_wms::inventory_move_command": 7, "wamn_wms::inventory_split_command": 2}
+2026-09-10T12:16:29.029501Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_merge_command": 2, "wamn_wms::inventory_move_command": 8, "wamn_wms::inventory_split_command": 2}
+2026-09-10T12:16:29.623647Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_merge_command": 2, "wamn_wms::inventory_move_command": 10, "wamn_wms::inventory_split_command": 2}
+2026-09-10T12:16:52.266916Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/35410A8, flushed=0/353D830, applied=0/353D830, reply_requested=false
+2026-09-10T12:17:07.443538Z  INFO wamn::event_reader: drain summary commits=15 events_published=42 deduped=0 excluded_by_relation={"wamn_wms::inventory_adjust_command": 2, "wamn_wms::inventory_merge_command": 2, "wamn_wms::inventory_move_command": 10, "wamn_wms::inventory_split_command": 2} ending="shutdown"
+2026-09-10T12:17:07.443681Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/35410E0, flushed=0/353D830, applied=0/353D830, reply_requested=false
+2026-09-10T12:17:07.443702Z  INFO pg_walstream::stream: Stopping logical replication stream (last received LSN: 0/35410E0)
+2026-09-10T12:17:07.443713Z  INFO wamn_cdc_reader: shutdown requested; exiting cleanly reopens=0 commits=15

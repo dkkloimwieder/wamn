@@ -1,0 +1,21 @@
+{
+  "binary": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/target/debug/examples/wms_move",
+  "binary_sha256": "471bc45e8341da705f11b1137670fe91cda6f182ca5215da475514b46f314ea0",
+  "driver_sha256": "38e77d21b8216d2919f84c01da4bc7dd0a2e9af37ca1daf2c8c414707ad14200",
+  "endpoint": "http://172.28.0.7:30815",
+  "fixture_ids": {
+    "destination": "83be6ceb-0494-4f7a-908a-8f01cb7f0bf9",
+    "pallet": "d6beedfc-6826-4ecc-9040-b392cb9e8a54",
+    "product": "b96b38f1-1fd2-413b-b131-594c15472008",
+    "source": "5835bc13-daf7-432d-b029-b3e5cc9ede8a"
+  },
+  "fixture_prefix": "WMS-TUI-bb87d1ac",
+  "host": "wms.localhost",
+  "mode": "partial",
+  "support_sha256": "b9ebe9e843473d1865c9e9f796a5faa14f539d02febe92bed85d02bc19f2ae22",
+  "target_instance": "1ae05366-e838-4e03-acf7-0dc18bf5f6b7",
+  "terminal_columns": 260,
+  "terminal_helper_sha256": "10f2d209349e905b3cd2e7d737929fcc041bf64abff9464cf9c1126931ed0568",
+  "terminal_rows": 60,
+  "timeout_seconds": 60.0
+}

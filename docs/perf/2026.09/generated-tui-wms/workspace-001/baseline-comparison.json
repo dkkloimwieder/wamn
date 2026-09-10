@@ -1,0 +1,12 @@
+{
+  "baseline": "docs/perf/2026.09/generated-tui-parity/workspace-001/workspace-results.json",
+  "baseline_sha256": "9068f5d1d454236a26ce90d9028df1fa92dab7ca6f4a3e08c4bce4f125a4a11a",
+  "current": "docs/perf/2026.09/generated-tui-wms/workspace-001/workspace-results.json",
+  "current_sha256": "78293d57fdb5e92a28c6f3d0cac41b0d5c878f7c135579d52f45079e53ea6168",
+  "baseline_failures": 74,
+  "current_failures": 74,
+  "matching_identities_and_classified_causes": 74,
+  "changed_classified_causes": [],
+  "absent_baseline_failures": [],
+  "added_failures": []
+}
