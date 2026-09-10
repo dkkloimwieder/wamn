@@ -48,6 +48,8 @@ wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
 proptest.workspace = true
+wamn-schema-generator = { workspace = true }
+wat = "=1.252.0"
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 uuid = { workspace = true }

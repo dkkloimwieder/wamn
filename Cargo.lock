@@ -6007,10 +6007,12 @@ dependencies = [
  "wamn-runtime",
  "wamn-scenario-worker",
  "wamn-schema-control",
+ "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+ "wat",
 ]
 
 [[package]]

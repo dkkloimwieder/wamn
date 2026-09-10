@@ -62,6 +62,13 @@
     "flow_http_wasm": {
       "type": "string"
     },
+    "fresh_only_packages": {
+      "description": "Copied package sources for the dedicated fresh-only proof. The initial phase creates this directory before any package admission.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "host_secret_directory": {
       "type": "string"
     },

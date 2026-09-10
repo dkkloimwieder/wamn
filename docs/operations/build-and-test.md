@@ -1483,6 +1483,40 @@ The private token fixture stays in disposable storage, not in the retained evide
 The runner removes its own cluster, database, images, and temporary credentials.
 Normal package routes remain PAT-only until this proof and the fresh-only proof pass.
 
+### `[FRESH-ONLY-HTTP]` operation boundaries
+
+This gate covers `wamn-ctc8.15.4`.
+The runner copies the Receiving packages before their first admission.
+Only those copies declare the base receipt operation as fresh-only.
+The generated contract, component declaration, and released facts must carry the same property.
+Published package sources remain unchanged, and the manifest format remains 1.
+
+The proof sends a session and the same human's PAT through direct and nested operation calls.
+The session must receive `fresh-credential-required`, and the valid PAT must succeed.
+After role removal, the next PAT request must receive `permission-denied`.
+After environment membership removal, the next PAT request must receive `unauthorized`.
+The proof also compares committed Receipt rows before and after these requests.
+
+A separate fixture commits a counter update before its nested fresh-only call.
+The session refusal must leave the counter at one.
+An explicit PAT request must succeed and move the counter to two.
+This fixture uses the actual PostgreSQL adapter and a separate released component.
+It does not rely on command replay protection to hide repeated execution.
+
+Set `WAMN_FRESH_ONLY_EVIDENCE` to a new directory under the main checkout's `docs/perf/2026.09/ctc8-15-4-fresh-only/` directory.
+Create its parent directory first.
+Run the gate from a clean source worktree:
+
+```bash
+tools/receiving-cluster-journey-run --fresh-only-proof --apply \
+  --evidence-dir "$WAMN_FRESH_ONLY_EVIDENCE"
+```
+
+Keep the evidence directory outside the source worktree during the run.
+The runner uses the same disposable identity service and two-host infrastructure as `[HOST-SESSION-HTTP]`.
+It keeps private credentials outside the retained evidence and removes only its own resources.
+Keep ordinary routes PAT-only until their operation policy and all required proofs permit session access.
+
 ### Identity foundation rollout
 
 For an existing database, install the two key tables as the `wamn_system` owner.
