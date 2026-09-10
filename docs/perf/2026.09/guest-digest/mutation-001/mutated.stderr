@@ -1,0 +1,208 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:52:7
+   |
+52 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:114:1
+    |
+114 | / pub struct ConnectionHttp {
+115 | |     postgres: Arc<WamnPostgres>,
+116 | |     vault: Arc<WamnCredentials>,
+117 | |     tenant: Box<str>,
+...   |
+133 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+134 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:55:1
+    |
+ 55 | / pub struct WamnPostgres {
+ 56 | |     /// Resolves a project id → its database connection + policy.
+ 57 | |     provider: Arc<dyn CredentialProvider>,
+ 58 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+121 | |     pub(super) bind_counters: super::BindCounters,
+122 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib) generated 16 warnings
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> test-support/harness/src/ceiling.rs:72:1
+   |
+72 | / pub struct Ramp {
+73 | |     tolerance: f64,
+74 | |     max_levels: usize,
+75 | |     levels: Vec<LevelStats>,
+...  |
+82 | |     retrying: bool,
+83 | | }
+   | |_^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-gate-harness` (lib) generated 1 warning
+warning: type does not implement `Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> tests/conformance/src/socketguard.rs:26:1
+   |
+26 | pub struct SocketGuardArgs {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-proof-conformance` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running tests/profile_selectors.rs (target/debug/deps/profile_selectors-44c7c89ad93b8f35)
+
+thread 'selector_tools_execute_exact_fake_cargo_argv' (2166460) panicked at tests/conformance/tests/profile_selectors.rs:770:9:
+assertion `left == right` failed: component profile m1 Cargo argv drifted
+  left: [["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "metadata", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "--locked", "--offline", "--no-deps", "--format-version", "1"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "metadata", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/no-std/Cargo.toml", "--locked", "--offline", "--no-deps", "--format-version", "1"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "-p", "blob-put", "-p", "client-acme-receiving", "-p", "materializer", "-p", "receiving", "-p", "wms"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "-p", "http-route"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/no-std/Cargo.toml", "-p", "http-request", "-p", "label-render", "-p", "transform"]]
+ right: [["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "metadata", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "--locked", "--offline", "--no-deps", "--format-version", "1"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "metadata", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/no-std/Cargo.toml", "--locked", "--offline", "--no-deps", "--format-version", "1"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "-p", "blob-put"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "-p", "client-acme-receiving"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "-p", "http-route"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "-p", "materializer"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "-p", "receiving"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/Cargo.toml", "-p", "wms"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/no-std/Cargo.toml", "-p", "http-request"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/no-std/Cargo.toml", "-p", "label-render"], ["/home/kaalin/.cache/wamn-lanes/guest-digest-20260910", "build", "--locked", "--offline", "--release", "--target", "wasm32-wasip2", "--manifest-path", "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910/components/no-std/Cargo.toml", "-p", "transform"]]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p wamn-proof-conformance --test profile_selectors`

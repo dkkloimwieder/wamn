@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "env",
+    "WAMN_DIGEST_PROFILE_M1_PLAN=/home/kaalin/dev/wamn/docs/perf/2026.09/guest-digest/m1-build-001/stdout.log",
+    "WAMN_DIGEST_PROFILE_PROOF_PLAN=/home/kaalin/dev/wamn/docs/perf/2026.09/guest-digest/proof-build-001/stdout.log",
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-conformance",
+    "--test",
+    "guest_workspace_closure",
+    "one_commit_built_under_two_profiles_yields_identical_guest_digests",
+    "--",
+    "--include-ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910"
+}

@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "mutated_exit_code": 101,
+  "restored_exit_code": 0,
+  "named_failure": true,
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-conformance",
+    "--test",
+    "profile_selectors",
+    "selector_tools_execute_exact_fake_cargo_argv",
+    "--",
+    "--include-ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "base": "a48f7af827bb835b619eb8aa24db745916d24824",
+  "restored_sha256": "52e76bd30329d357c5ed2a0855f46e5ff561f96db415d1ad196a2c7ed7f9692d",
+  "source_restored": true
+}

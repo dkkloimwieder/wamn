@@ -74,8 +74,9 @@ cargo test -p wamn-ctl --lib --locked --offline \
 ```
 
 Guests live in two Cargo workspaces because a shared Cargo invocation forces `std` into the `no_std` guests.
-The P3 HTTP shell also builds separately because its async feature changes other guest binaries in a shared invocation.
-Both shell and application builds use the same target directory.
+`tools/build-components` gives every selected package its own Cargo invocation to prevent feature changes from other selected packages.
+This also isolates the P3 HTTP shell's async features.
+Each invocation uses its workspace's existing target directory and release profile.
 
 For a debug guest build, name its package explicitly:
 
@@ -85,7 +86,7 @@ cargo build --manifest-path components/Cargo.toml -p http-route --target wasm32-
 
 For the complete production or proof set, run `tools/build-components m1` or `tools/build-components proof`.
 The tool selects declared packages, builds release artifacts, and applies the fixed virtualization profile.
-It requires `jq` and retains both build boundaries.
+It requires `jq` and builds one package at a time within each workspace.
 `tools/workspace-tier list|dry-run|run TIER WORKSPACE MODE` resolves tier selectors from `architecture/workspace-tiers.json`.
 
 ## Upstream release gate
@@ -1013,8 +1014,9 @@ trap - EXIT
 The two containers and their ports are owned by this invocation. Never point
 the gate at shared infrastructure or the frozen cluster.
 The build command produces release artifacts, so both inputs above use that profile.
-After any proof build, run `tools/build-components m1` before a production journey.
-That rebuild restores production inputs but does not close the separate cross-profile digest finding, `wamn-10yt.61`.
+The per-package invocations isolate production guests from additional packages in the `proof` selection.
+Use `[GUEST-DIGEST-REPRODUCIBILITY]` to compare the shared artifacts from both profiles.
+A later `m1` rebuild alone does not prove that the two profiles produce identical digests.
 
 ### `[CLAIM-LAW-LIVE]` — the emitted claim contract tests, executed
 
@@ -3026,7 +3028,7 @@ Rules the harness enforces rather than asks for:
   main checkout until `up` reports ok; after that the run uses binaries already
   built, and the agent compiles only inside its own worktree.
 
-### `[GUEST-DIGEST-REPRODUCIBILITY]` — one commit, two checkouts, one digest
+### `[GUEST-DIGEST-REPRODUCIBILITY]`: one commit, two checkouts, one digest
 
 A component digest must be a function of the bytes an author wrote. It was not:
 the same commit produced a different digest in every worktree, so a pin minted
@@ -3042,78 +3044,99 @@ absolute `file!()` strings baked in by `include!`d package sources, fixed by
 structurally on every run. This gate proves the property they exist to protect.
 It builds one commit in two worktrees and compares every virtualized artifact.
 
+Keep worktrees and build targets under `$HOME/.cache/wamn-lanes`.
+Keep plans and logs under the main repository's `docs/perf` directory.
+If a command fails, retain its scratch directory until you inspect the logs.
+
 ```bash
 set -euo pipefail
+GUEST_REPRO_ROOT="$(git rev-parse --show-toplevel)"
 GUEST_REPRO_COMMIT="$(git rev-parse HEAD)"
-GUEST_REPRO_A="$(mktemp -d /tmp/wamn-guest-repro-a.XXXXXX)"
-GUEST_REPRO_B="$(mktemp -d /tmp/wamn-guest-repro-b.XXXXXX)"
-git worktree add --detach "$GUEST_REPRO_A/tree" "$GUEST_REPRO_COMMIT"
-git worktree add --detach "$GUEST_REPRO_B/tree" "$GUEST_REPRO_COMMIT"
-for side in "$GUEST_REPRO_A" "$GUEST_REPRO_B"; do
-  ( cd "$side/tree" \
-    && CARGO_TARGET_DIR="$side/target" RUSTC_WRAPPER= \
-       ./tools/build-components build-only m1 > "$side/plan.json" \
-    && CARGO_TARGET_DIR="$side/target" RUSTC_WRAPPER= \
-       ./tools/build-components virtualize-only "$side/plan.json" >/dev/null )
+GUEST_REPRO_RUN="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+GUEST_REPRO_SCRATCH="$HOME/.cache/wamn-lanes/guest-repro-$GUEST_REPRO_RUN"
+GUEST_REPRO_EVIDENCE="$GUEST_REPRO_ROOT/docs/perf/$(date -u +%Y.%m)/guest-digest-repro/$GUEST_REPRO_RUN"
+mkdir -p -- "$HOME/.cache/wamn-lanes" "$GUEST_REPRO_EVIDENCE"
+mkdir -- "$GUEST_REPRO_SCRATCH"
+printf '%s\n' "$GUEST_REPRO_COMMIT" > "$GUEST_REPRO_EVIDENCE/commit.txt"
+for side in a b; do
+  mkdir -- "$GUEST_REPRO_SCRATCH/$side"
+  git worktree add --detach "$GUEST_REPRO_SCRATCH/$side/tree" "$GUEST_REPRO_COMMIT"
+  (
+    cd "$GUEST_REPRO_SCRATCH/$side/tree"
+    CARGO_TARGET_DIR="$GUEST_REPRO_SCRATCH/$side/target" RUSTC_WRAPPER= \
+      ./tools/build-components build-only m1 \
+      > "$GUEST_REPRO_EVIDENCE/$side-plan.json" \
+      2> "$GUEST_REPRO_EVIDENCE/$side-build.log"
+    CARGO_TARGET_DIR="$GUEST_REPRO_SCRATCH/$side/target" RUSTC_WRAPPER= \
+      ./tools/build-components virtualize-only "$GUEST_REPRO_EVIDENCE/$side-plan.json" \
+      > "$GUEST_REPRO_EVIDENCE/$side-virtualize.log" 2>&1
+  )
 done
-WAMN_DIGEST_REPRO_A="$GUEST_REPRO_A/target/virtualized/std-empty-environment" \
-WAMN_DIGEST_REPRO_B="$GUEST_REPRO_B/target/virtualized/std-empty-environment" \
-  cargo test -p wamn-proof-conformance --test guest_workspace_closure \
+CARGO_TARGET_DIR="$GUEST_REPRO_SCRATCH/test-target" \
+WAMN_DIGEST_REPRO_A="$GUEST_REPRO_SCRATCH/a/target/virtualized/std-empty-environment" \
+WAMN_DIGEST_REPRO_B="$GUEST_REPRO_SCRATCH/b/target/virtualized/std-empty-environment" \
+  cargo test --locked --offline -p wamn-proof-conformance --test guest_workspace_closure \
   one_commit_built_in_two_checkouts_yields_identical_guest_digests \
-  -- --ignored --exact --nocapture
-git worktree remove --force "$GUEST_REPRO_A/tree"
-git worktree remove --force "$GUEST_REPRO_B/tree"
-rm -rf -- "$GUEST_REPRO_A" "$GUEST_REPRO_B"
+  -- --include-ignored --exact --nocapture \
+  > "$GUEST_REPRO_EVIDENCE/gate.log" 2>&1
+git worktree remove "$GUEST_REPRO_SCRATCH/a/tree"
+git worktree remove "$GUEST_REPRO_SCRATCH/b/tree"
+rm -r -- "$GUEST_REPRO_SCRATCH"
 ```
 
-Run it whenever a guest workspace gains a member or a build flag changes. A
-failure means a component digest has started depending on the build directory
-again, and every pin minted since is a claim about a checkout.
+Run this comparison whenever a guest workspace gains a member or a build flag changes.
+A failure means that the artifacts still depend on the checkout path.
+Both sides build `m1`, so this comparison does not test differences between profiles.
 
-**Both sides of that arm run `build-only m1`, so it cannot see the third
-channel** (`wamn-10yt.61`). A component profile decides which packages one
-`cargo build` compiles, and Cargo unifies features across everything in that one
-invocation, so a package the `proof` profile adds can turn a feature on in a
-crate the `m1` guests already link. The resolved feature NAME LIST goes into
-`-C metadata` whether or not the feature compiles to anything, so the artifact
-moves. Measured at `2a4cd288` and again at `7b456f81`: all four virtualized
-artifacts differ between the two profiles. The three `components/no-std` guests
-are byte-identical, because that workspace is a separate invocation.
+Cargo combines dependency features across packages in one invocation.
+With grouped builds, additional packages selected by `proof` changed the features used by guests also selected by `m1`.
+The resolved feature list enters `-C metadata`, even when a feature adds no executable code.
+Measurements at `2a4cd288` and `7b456f81` found different digests for all four virtualized artifacts across the two profiles.
+The three `components/no-std` guests remained identical because their workspace used a separate invocation.
 
-The cross-profile arm builds ONE tree twice, once per profile, and compares the
-shared packages. It needs no worktrees; `build-only` already prints the raw
-digest of every artifact it declares, so no virtualization pass runs.
+The owner approved one Cargo invocation per selected package for `wamn-10yt.61`.
+`tools/build-components` now uses that rule for both profiles, with the existing workspace target directories and normal release profile.
+The HTTP shell also retains its separate invocation.
+The comparison below tests the resulting digests without a virtualization pass.
+`build-only` records each declared artifact's raw digest in its plan.
 
 ```bash
 set -euo pipefail
-GUEST_PROFILE_SCRATCH="$(mktemp -d /tmp/wamn-guest-profile.XXXXXX)"
+GUEST_PROFILE_ROOT="$(git rev-parse --show-toplevel)"
+GUEST_PROFILE_RUN="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+GUEST_PROFILE_SCRATCH="$HOME/.cache/wamn-lanes/guest-profile-$GUEST_PROFILE_RUN"
+GUEST_PROFILE_EVIDENCE="$GUEST_PROFILE_ROOT/docs/perf/$(date -u +%Y.%m)/guest-digest-profile/$GUEST_PROFILE_RUN"
+mkdir -p -- "$HOME/.cache/wamn-lanes" "$GUEST_PROFILE_EVIDENCE"
+mkdir -- "$GUEST_PROFILE_SCRATCH"
+git rev-parse HEAD > "$GUEST_PROFILE_EVIDENCE/commit.txt"
 for profile in m1 proof; do
   CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/$profile" RUSTC_WRAPPER= \
     ./tools/build-components build-only "$profile" \
-    > "$GUEST_PROFILE_SCRATCH/$profile.json"
+    > "$GUEST_PROFILE_EVIDENCE/$profile.json" \
+    2> "$GUEST_PROFILE_EVIDENCE/$profile-build.log"
 done
-WAMN_DIGEST_PROFILE_M1_PLAN="$GUEST_PROFILE_SCRATCH/m1.json" \
-WAMN_DIGEST_PROFILE_PROOF_PLAN="$GUEST_PROFILE_SCRATCH/proof.json" \
-  cargo test -p wamn-proof-conformance --test guest_workspace_closure \
+CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/test-target" \
+WAMN_DIGEST_PROFILE_M1_PLAN="$GUEST_PROFILE_EVIDENCE/m1.json" \
+WAMN_DIGEST_PROFILE_PROOF_PLAN="$GUEST_PROFILE_EVIDENCE/proof.json" \
+  cargo test --locked --offline -p wamn-proof-conformance --test guest_workspace_closure \
   one_commit_built_under_two_profiles_yields_identical_guest_digests \
-  -- --ignored --exact --nocapture
-rm -rf -- "$GUEST_PROFILE_SCRATCH"
+  -- --include-ignored --exact --nocapture \
+  > "$GUEST_PROFILE_EVIDENCE/gate.log" 2>&1
+rm -r -- "$GUEST_PROFILE_SCRATCH"
 ```
 
-Separate target directories are the point: one shared directory makes the second
-profile a rebuild of the first, and a rebuild that reuses cached artifacts hides
-the very difference this arm exists to find. `RUSTC_WRAPPER=` is emptied for the
-same reason a wrapper's cache would answer from the other profile's build.
+Use separate target directories for the two profiles.
+A shared target directory lets the second build reuse the first build's artifacts.
+The empty `RUSTC_WRAPPER` prevents a wrapper from reusing cached artifacts across the two profiles.
 
-Run it whenever a Cargo dependency is added or its features change anywhere
-under `components/`. A failure names the packages that moved. To find the cause,
-diff the `features` field of every `.fingerprint/*/lib-*.json` in the two target
-directories; that names the crate whose resolved feature list differs, and
-`cargo tree -e features -i <crate>` names the requester.
+Run this comparison whenever a dependency or its features change under `components/`.
+If the comparison fails, inspect the named packages.
+Compare the `features` fields in `.fingerprint/*/lib-*.json` under the two targets.
+Use `cargo tree -e features -i <crate>` to identify the dependency that requested a different feature.
 
-**THIS ARM IS RED ON ARRIVAL, and `wamn-10yt.61`'s stated cause is refuted.**
+The following result records the failed grouped-build comparison before `wamn-10yt.61`.
 Measured at `7b456f81` plus the `postgres-sqlx` fix, all four artifacts still
-differ. The bead attributed it to two ungoverned `default-features` declarations
+differed. The bead attributed it to two ungoverned `default-features` declarations
 in `components/data/postgres-sqlx/Cargo.toml`, saying `futures-util`'s default
 set turns on `io`. It does not: `futures-util` 0.3.34 declares
 `default = ["std", "async-await", "async-await-macro"]`, and `io` is not in it.
@@ -3131,12 +3154,11 @@ four digests and converged none:
 | `receiving` | `666745eb` | `b724c5c4` | `6ae3d667` |
 | `wms` | `e1e14ee6` | `f4e4a629` | `d3c17f29` |
 
-The residual channel is that the `proof` selection compiles `sqlx-core` and `m1`
-does not, so no declaration in this repository closes it. Closing it needs a
-ruling — one `cargo` invocation per guest (measured 116s against 47s and
-declined), or the same member set under both profiles, or a `sqlx-core` fork, or
-profile-scoped pins. Until then, mint every pin under `m1`, which is what
-`[EFFECTIVE-RELEASE-POC]` and `[RECEIVING-ROUTE-JOURNEY]` both build.
+The grouped `proof` invocation compiled `sqlx-core`, while the grouped `m1` invocation did not.
+The approved per-package invocations remove that difference in feature selection.
+An earlier measurement took 116 seconds with separate invocations, compared with 47 seconds for grouped builds.
+Those historical timings do not establish the duration or outcome of a current run.
+Record the current plans and comparison result before updating digest pins.
 
 ### `[RECEIVING-CORRECTNESS]` — real Receiving command histories
 

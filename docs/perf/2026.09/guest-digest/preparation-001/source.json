@@ -1,0 +1,14 @@
+{
+  "base": "a48f7af827bb835b619eb8aa24db745916d24824",
+  "sha256": {
+    "tools/build-components": "52e76bd30329d357c5ed2a0855f46e5ff561f96db415d1ad196a2c7ed7f9692d",
+    "tests/conformance/tests/profile_selectors.rs": "eb32633968f974cc8b3539b082a324ed657c0f10f415d84f6cd8bef2e5fac254",
+    "tests/conformance/tests/guest_workspace_closure.rs": "5627b6f2b2002398fc9ed8e713b1fe0b6e00a79a8f205ac27e39bd53c4b62cfd",
+    "architecture/workspace-tiers.json": "21ee9fac8f9f08a7562e43b5d9d1292c7429866ed0a62f47a562169fc01707f5",
+    "tools/component-virtualization.json": "904bb30f14a6ef899efdf1d6b5ed2d1ecb1e12fa46f534bb1de58a9b4a283693",
+    "components/Cargo.toml": "09ce2141d46030f9f45b6ea2cff231d9309b14fe8ee816ca58cebff67f93e1e4",
+    "components/Cargo.lock": "3b44f325ea7584ac6f2153ba2874624b50c54cf4ccc95b9222c99092c95c4a5d",
+    "components/no-std/Cargo.toml": "9e3bee081a9f24d0ad4d4868dab0fbb57e4ced92cbbcbd27b7cb07afcd62011c",
+    "components/no-std/Cargo.lock": "43b63a298427ab10d65e738eced2426d8d3a12c77e9594ef4bd41051dce2ac8d"
+  }
+}

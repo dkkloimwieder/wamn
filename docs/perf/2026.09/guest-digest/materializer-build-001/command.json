@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-schema-generator",
+    "--example",
+    "materialize_package"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910"
+}

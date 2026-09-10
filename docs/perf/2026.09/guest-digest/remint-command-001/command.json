@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/guest-digest/tools/remint.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/guest-digest/remint-001",
+    "--build-evidence",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/guest-digest/m1-normal-001"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/guest-digest-20260910"
+}

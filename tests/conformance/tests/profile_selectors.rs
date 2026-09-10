@@ -565,6 +565,14 @@ if [[ "${1:-}" == run ]]; then
   fi
   exit "$status"
 fi
+if [[ "${1:-}" == build && -n "${WAMN_FAKE_FAIL_PACKAGE:-}" ]]; then
+  while (($# > 0)); do
+    if [[ "$1" == -p && "${2:-}" == "$WAMN_FAKE_FAIL_PACKAGE" ]]; then
+      exit 23
+    fi
+    shift
+  done
+fi
 exit "${WAMN_FAKE_BUILD_STATUS:-23}"
 "#,
     )
@@ -696,12 +704,19 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
     }
 
     for profile in ["m1", "proof"] {
+        let selected = component_profile_packages(&root, &contract, profile);
+        let first_package = component_members
+            .iter()
+            .find_map(|members| selected.iter().find(|package| members.contains(*package)))
+            .expect("component profile must select at least one package");
         let _ = fs::remove_file(&capture);
         let output = Command::new(root.join(COMPONENT_TOOL))
             .current_dir(&scratch)
             .env("CARGO", &fake_cargo)
             .env("WAMN_FAKE_CARGO_LOG", &capture)
             .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+            .env("WAMN_FAKE_BUILD_STATUS", "0")
+            .env("WAMN_FAKE_FAIL_PACKAGE", first_package)
             .arg(profile)
             .output()
             .unwrap_or_else(|error| {
@@ -714,10 +729,9 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             String::from_utf8_lossy(&output.stderr)
         );
 
-        // Read each workspace once, then isolate the P3 HTTP shell's async
-        // features in an additional invocation with the same workspace target.
-        // Every invocation runs even after an earlier selection fails.
-        let selected = component_profile_packages(&root, &contract, profile);
+        // Read each workspace once, then build each selected package separately.
+        // The first build fails, but all later builds must run and succeed.
+        // Preserve the failure status after those successful invocations.
         let expected_metadata = COMPONENT_MANIFESTS
             .iter()
             .map(|manifest| expected_metadata_invocation(&root, &root.join(manifest)))
@@ -747,15 +761,9 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
                 "--manifest-path".to_string(),
                 component_manifest.display().to_string(),
             ];
-            let (http_shell, grouped): (Vec<_>, Vec<_>) = owned
-                .into_iter()
-                .partition(|package| package == "http-route");
-            for packages in [grouped, http_shell] {
-                if packages.is_empty() {
-                    continue;
-                }
+            for package in owned {
                 let mut invocation = expected_run.clone();
-                append_packages(&mut invocation, &packages);
+                invocation.extend(["-p".to_string(), package]);
                 expected.push(invocation);
             }
         }
@@ -789,7 +797,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         assert_eq!(
             roots,
             serde_json::json!({"profile": profile, "workspace_roots": expected_roots}),
-            "isolating the HTTP shell must not duplicate a watched workspace"
+            "separate package builds must not duplicate a watched workspace"
         );
         assert_eq!(
             captured_invocations(&capture),
@@ -980,8 +988,14 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
     fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
 
     let mut target_directories = BTreeMap::new();
+    let mut component_members = BTreeMap::new();
     for manifest in COMPONENT_MANIFESTS {
         let output = cargo_metadata_output(&root, manifest);
+        let metadata = parse_metadata(&output, manifest);
+        component_members.insert(
+            manifest,
+            set(&names_for_ids(&metadata, &metadata.workspace_members)),
+        );
         let target_directory = scratch.join(format!("{} target", manifest.replace('/', "-")));
         fs::create_dir(&target_directory).expect("failed to create fake target directory");
         let rewritten = metadata_with_target_directory(&output.stdout, &target_directory);
@@ -1178,23 +1192,20 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
     let build_plan = artifact_plan["build"]
         .as_array()
         .expect("artifact plan must contain the Cargo selections");
-    assert_eq!(build_plan.len(), COMPONENT_MANIFESTS.len() + 1);
-    let http_shell = build_plan
-        .iter()
-        .filter(|selection| {
-            selection["packages"]
-                .as_array()
-                .expect("build selection must contain packages")
-                .iter()
-                .any(|package| package == "http-route")
-        })
-        .collect::<Vec<_>>();
+    let selected = component_profile_packages(&root, &read_contract(&root), "m1");
+    let mut expected_build_plan = Vec::new();
+    for manifest in COMPONENT_MANIFESTS {
+        for package in &selected {
+            if component_members[manifest].contains(package) {
+                expected_build_plan
+                    .push(serde_json::json!({"manifest": manifest, "packages": [package]}));
+            }
+        }
+    }
+    assert_eq!(build_plan.len(), selected.len());
     assert_eq!(
-        http_shell,
-        vec![&serde_json::json!({
-            "manifest": COMPONENT_MANIFESTS[0], "packages": ["http-route"]
-        })],
-        "the artifact plan must retain the isolated HTTP shell invocation"
+        build_plan, &expected_build_plan,
+        "the artifact plan must build each selected package once, in deterministic order"
     );
     assert_eq!(
         artifact_plan["virtualization"]["artifacts"]
@@ -1455,9 +1466,6 @@ fn unknown_selector_modes_refuse_before_cargo() {
 /// fails only here. So naming a package after an ordinary English word costs
 /// whoever adds it a rename or a fix to this guard. That is the price of the
 /// derivation, and it is the cheaper half of the trade.
-///
-/// The approved HTTP-shell feature boundary exempts one exact selector
-/// constant. All other occurrences, including a copied package list, still fail.
 #[test]
 fn selector_tools_do_not_duplicate_canonical_package_inventory() {
     let root = repository_root();
@@ -1471,17 +1479,6 @@ fn selector_tools_do_not_duplicate_canonical_package_inventory() {
     for tool in [PROFILE_TOOL, COMPONENT_TOOL] {
         let source = fs::read_to_string(root.join(tool))
             .unwrap_or_else(|error| panic!("failed to read {tool}: {error}"));
-        let source = if tool == COMPONENT_TOOL {
-            const HTTP_SHELL_BOUNDARY: &str = "readonly WAMN_HTTP_SHELL_PACKAGE='http-route'\n";
-            assert_eq!(
-                source.matches(HTTP_SHELL_BOUNDARY).count(),
-                1,
-                "the HTTP shell feature boundary must have one explicit selector"
-            );
-            source.replacen(HTTP_SHELL_BOUNDARY, "", 1)
-        } else {
-            source
-        };
         for package in root_metadata
             .packages
             .iter()
