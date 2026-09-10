@@ -146,4 +146,13 @@ Its [blocked export receipt](combined-workspace-001/host-lifecycle/host-blocked-
 No second workspace sweep or cluster proof follows the test-only correction.
 
 The effects implementation and integration validation are complete.
-Main publication remains a separate integration step.
+The [main integration](combined-main-landing-001/main-integration-result.json) lands at `2433bb47f053234fa745214a4e3446e1388fe4da`.
+The [remote receipt](combined-main-landing-001/remote-main.json) records the matching pushed commit.
+The integration preserves the original permissions of 1,472 evidence files and the unrelated files named in its receipt.
+Receiving retains the original testing draft in its approved specification evidence before the main integration.
+
+`wamn-b2m6.10` closes locally with the implementation and proof commits.
+The shared Dolt publication remains blocked by an automatic approval rejection in the identity lane.
+The integrator does not retry that rejected publication through another lane.
+Receiving parity `wamn-10yt.62.6` still waits for the landed `wamn-ctc8.15.5` credential provider handoff.
+The remaining WMS TUI proof and recipe keep their approved execution order.

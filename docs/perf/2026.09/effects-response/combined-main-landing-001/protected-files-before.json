@@ -1,0 +1,14 @@
+{
+  ".beads/issues.jsonl": {
+    "sha256": "9425c1053bdadfbb11030bf69c9772e701fa5324fab25f85bd8d4cef3464cd52",
+    "mode": 420
+  },
+  ".beads/interactions.jsonl": {
+    "sha256": "ad5821303c57224497a0bde901f90e4cbf73b9ad63e897786b3e38a87164c512",
+    "mode": 436
+  },
+  "docs/poc/generated-tui-spec.md": {
+    "sha256": "9205b1b56955bcc1af4817aa5f8dac0d4c35913ad048c7200c0b9e0e6aa71d5a",
+    "mode": 436
+  }
+}
