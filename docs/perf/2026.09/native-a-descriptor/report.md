@@ -11,6 +11,8 @@ The change fills an embedding omission and removes no predecessor code.
 ## Source and artifacts
 
 The initial source base is `6228917e74744eadb69a7422a912a7ea319e3925`.
+The final clean proof uses `de444a64ebc862815f0c604058dcc83785a292b1`, based on Receiving boundary `d853e132cb7056cf0822bca115f1f215ddc11e4b`.
+The [final inputs](final-001/inputs.json) and [proof](final-001/proof/result.json) retain that source identity and both rebuilt binary hashes.
 The exact added service code is identified by SHA-256 in [build inputs](build-001/inputs.json).
 The proof also records every selected source hash and each binary hash in its result.
 Upstream remains unmodified wasmCloud 2.9.0 at `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
@@ -29,6 +31,7 @@ The runtime emits 16 existing warnings, with no new service warning.
 | [Initial subprocess proof](proof-001/result.json) | 4 | 0 | 0 | Pass |
 | [Helper omission mutant](mutation-001/proof/result.json) | 2 | 2 | 0 | Expected failure |
 | [Rebuilt restored source](restore-001/proof/result.json) | 4 | 0 | 0 | Pass |
+| [Final clean source after rebase](final-001/proof/result.json) | 4 | 0 | 0 | Pass |
 
 Both binaries start each case in a separate subprocess.
 The raise cases start with soft 256 and hard 4096.
@@ -42,6 +45,7 @@ It fails `host_raises_low_soft` and `executor_raises_low_soft` for the lower eff
 The two hard-ceiling cases continue to pass.
 The [mutation receipt](mutation-001/result.json) records both named failures and the exact source restoration.
 The [restore receipt](restore-001/result.json) records the fresh rebuild and passing rerun.
+The [final receipt](final-001/result.json) records a successful incremental build and four passes after the Receiving landing.
 
 ## Scope and remaining deviations
 

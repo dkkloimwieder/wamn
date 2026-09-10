@@ -1,0 +1,21 @@
+{
+  "source_commit": "de444a64ebc862815f0c604058dcc83785a292b1",
+  "base_commit": "d853e132cb7056cf0822bca115f1f215ddc11e4b",
+  "build_command": [
+    "cargo",
+    "build",
+    "-p",
+    "wamn-host",
+    "-p",
+    "wamn-executor",
+    "--locked",
+    "--offline"
+  ],
+  "source_sha256": {
+    "Cargo.toml": "60ed3fa20c4b104ab03be599a97946df16187974c1d4ef490e31022ad04edb69",
+    "Cargo.lock": "8b3385e1b54617fac6f8eaedc69cd56de71c88c8efa5c3973713b2642b8fabac",
+    "services/host/src/host.rs": "8ebb4a5d63be5f97dddcbf2348f65e8eebb02218778cfd6c225b81cf07a9b897",
+    "services/executor/src/lib.rs": "134e088f63a441c6dfa8d98ea62023c069a6ab2137312c145a153401fd83ce71",
+    "tools/native-descriptor-limit-check": "21e84118aa88308c3e46da6673b3d293ab58b9333643288e9b0a4d7a4cc41efd"
+  }
+}
