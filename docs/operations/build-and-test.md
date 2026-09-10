@@ -2717,6 +2717,7 @@ tools/receiving-cluster-journey-run --apply --receiving-correctness \
 Use a new evidence directory for each run.
 The runner owns the cluster, PostgreSQL, registry, broker, images, and cleanup.
 This mode uses the separate `wamn-receiving-correctness` scratch cluster.
+Its local authoring Gate binds to `127.0.0.1:18090`.
 The frozen `kind-wamn` cluster remains outside this recipe.
 The runner uses the standard host image and debug test executable.
 It stops after the Receiving assertions and resource cleanup.
