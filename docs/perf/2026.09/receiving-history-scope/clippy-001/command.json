@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "cargo",
+    "clippy",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-integration",
+    "--test",
+    "receiving_command_histories_live",
+    "--no-deps"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-history-scope-20260910"
+}

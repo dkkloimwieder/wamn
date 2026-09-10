@@ -1,0 +1,9 @@
+{
+  "argv": [
+    "rustfmt",
+    "--edition",
+    "2024",
+    "tests/integration/tests/receiving_command_histories_live.rs"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-history-scope-20260910"
+}

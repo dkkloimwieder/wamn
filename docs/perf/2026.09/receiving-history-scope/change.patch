@@ -1,0 +1,41 @@
+diff --git a/tests/integration/tests/receiving_command_histories_live.rs b/tests/integration/tests/receiving_command_histories_live.rs
+index 93a15933..8d1ee9da 100644
+--- a/tests/integration/tests/receiving_command_histories_live.rs
++++ b/tests/integration/tests/receiving_command_histories_live.rs
+@@ -1027,21 +1027,22 @@ fn production_receiving_command_histories() -> Result<()> {
+     let mut runner = TestRunner::new(config);
+     // Each shrink replays against a new valid fixture. UUIDs are fixture-local;
+     // the history contains stable key and line indices instead of those UUIDs.
+-    let evidence_cell = std::cell::RefCell::new(&mut evidence);
+     let failures = std::cell::RefCell::new(ShrinkFailures::default());
+-    let generated = runner.run(&model::histories(), |case| {
+-        if failures.borrow().infrastructure.is_some() {
+-            return Ok(());
+-        }
+-        let result = runtime.block_on(history(
+-            &db.client,
+-            &route,
+-            &case,
+-            &mut evidence_cell.borrow_mut(),
+-        ));
+-        shrink_result(&mut failures.borrow_mut(), &case, result)
+-    });
+-    drop(evidence_cell);
++    let generated = {
++        let evidence_cell = std::cell::RefCell::new(&mut evidence);
++        runner.run(&model::histories(), |case| {
++            if failures.borrow().infrastructure.is_some() {
++                return Ok(());
++            }
++            let result = runtime.block_on(history(
++                &db.client,
++                &route,
++                &case,
++                &mut evidence_cell.borrow_mut(),
++            ));
++            shrink_result(&mut failures.borrow_mut(), &case, result)
++        })
++    };
+     let failures = failures.into_inner();
+     if let Err(error) = generated {
+         if let Some((case, failure)) = &failures.infrastructure {
