@@ -1,0 +1,323 @@
+[
+  {
+    "name": "start",
+    "argv": [
+      "docker",
+      "run",
+      "--detach",
+      "--name",
+      "wamn-exclusion-72da71f89485",
+      "-e",
+      "POSTGRES_PASSWORD=probe",
+      "-p",
+      "127.0.0.1::5432",
+      "postgres:18"
+    ],
+    "exit_code": 0,
+    "seconds": 0.63
+  },
+  {
+    "name": "receiving-database",
+    "argv": [
+      "docker",
+      "exec",
+      "wamn-exclusion-72da71f89485",
+      "createdb",
+      "-U",
+      "postgres",
+      "proof_receiving"
+    ],
+    "exit_code": 0,
+    "seconds": 0.242
+  },
+  {
+    "name": "receiving-schema",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt"
+    ],
+    "exit_code": 0,
+    "seconds": 0.131
+  },
+  {
+    "name": "receiving-receiving-0001_initial",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/packages/receiving/migrations/0001_initial.sql"
+    ],
+    "exit_code": 0,
+    "seconds": 0.111
+  },
+  {
+    "name": "receiving-constraint",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt"
+    ],
+    "exit_code": 0,
+    "seconds": 0.052
+  },
+  {
+    "name": "receiving-materialize",
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "write",
+      "/tmp/wamn-exclusion-fixtures-kwfrq79e/receiving"
+    ],
+    "exit_code": 0,
+    "seconds": 0.747
+  },
+  {
+    "name": "receiving-server-refusal",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt"
+    ],
+    "exit_code": 0,
+    "seconds": 0.061
+  },
+  {
+    "name": "client_acme_receiving-database",
+    "argv": [
+      "docker",
+      "exec",
+      "wamn-exclusion-72da71f89485",
+      "createdb",
+      "-U",
+      "postgres",
+      "proof_client_acme_receiving"
+    ],
+    "exit_code": 0,
+    "seconds": 0.212
+  },
+  {
+    "name": "client_acme_receiving-schema",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt"
+    ],
+    "exit_code": 0,
+    "seconds": 0.088
+  },
+  {
+    "name": "client_acme_receiving-receiving-0001_initial",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/packages/receiving/migrations/0001_initial.sql"
+    ],
+    "exit_code": 0,
+    "seconds": 0.084
+  },
+  {
+    "name": "client_acme_receiving-client_acme_receiving-0001_add_inspection_required",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/packages/client_acme_receiving/migrations/0001_add_inspection_required.sql"
+    ],
+    "exit_code": 0,
+    "seconds": 0.071
+  },
+  {
+    "name": "client_acme_receiving-client_acme_receiving-0002_quality_inspection",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/packages/client_acme_receiving/migrations/0002_quality_inspection.sql"
+    ],
+    "exit_code": 0,
+    "seconds": 0.053
+  },
+  {
+    "name": "client_acme_receiving-constraint",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt"
+    ],
+    "exit_code": 0,
+    "seconds": 0.051
+  },
+  {
+    "name": "client_acme_receiving-materialize",
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "write",
+      "/tmp/wamn-exclusion-fixtures-kwfrq79e/client_acme_receiving"
+    ],
+    "exit_code": 0,
+    "seconds": 0.599
+  },
+  {
+    "name": "client_acme_receiving-server-refusal",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt"
+    ],
+    "exit_code": 0,
+    "seconds": 0.081
+  },
+  {
+    "name": "generated-policies",
+    "argv": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "components/Cargo.toml",
+      "--locked",
+      "--offline",
+      "--no-fail-fast",
+      "-p",
+      "wamn-receiving-data-access",
+      "-p",
+      "wamn-client-acme-receiving-data-access",
+      "--lib",
+      "operation::tests::generated_update_exclusion_from_postgres",
+      "--",
+      "--exact",
+      "--include-ignored",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "seconds": 0.86
+  },
+  {
+    "name": "receiving-disconnected-policy",
+    "argv": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "components/Cargo.toml",
+      "--locked",
+      "--offline",
+      "--no-fail-fast",
+      "-p",
+      "wamn-receiving-data-access",
+      "--lib",
+      "operation::tests::generated_update_exclusion_from_postgres",
+      "--",
+      "--exact",
+      "--include-ignored",
+      "--nocapture"
+    ],
+    "exit_code": 101,
+    "seconds": 0.732
+  },
+  {
+    "name": "receiving-restored-policy",
+    "argv": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "components/Cargo.toml",
+      "--locked",
+      "--offline",
+      "--no-fail-fast",
+      "-p",
+      "wamn-receiving-data-access",
+      "--lib",
+      "operation::tests::generated_update_exclusion_from_postgres",
+      "--",
+      "--exact",
+      "--include-ignored",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "seconds": 0.716
+  },
+  {
+    "name": "client_acme_receiving-disconnected-policy",
+    "argv": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "components/Cargo.toml",
+      "--locked",
+      "--offline",
+      "--no-fail-fast",
+      "-p",
+      "wamn-client-acme-receiving-data-access",
+      "--lib",
+      "operation::tests::generated_update_exclusion_from_postgres",
+      "--",
+      "--exact",
+      "--include-ignored",
+      "--nocapture"
+    ],
+    "exit_code": 101,
+    "seconds": 0.528
+  },
+  {
+    "name": "client_acme_receiving-restored-policy",
+    "argv": [
+      "cargo",
+      "test",
+      "--manifest-path",
+      "components/Cargo.toml",
+      "--locked",
+      "--offline",
+      "--no-fail-fast",
+      "-p",
+      "wamn-client-acme-receiving-data-access",
+      "--lib",
+      "operation::tests::generated_update_exclusion_from_postgres",
+      "--",
+      "--exact",
+      "--include-ignored",
+      "--nocapture"
+    ],
+    "exit_code": 0,
+    "seconds": 0.59
+  }
+]

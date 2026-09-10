@@ -1,0 +1,83 @@
+   Compiling wamn-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/components/data/receiving-data)
+   Compiling wamn-client-acme-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/components/data/client-acme-receiving-data)
+   Compiling client-acme-receiving v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/components/application/client-acme-receiving)
+   Compiling receiving v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/components/application/receiving)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.23s
+     Running unittests src/lib.rs (components/target/debug/deps/client_acme_receiving-c2a8b139e9b1cfd4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (components/target/debug/deps/receiving-956057ba19a7784e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (components/target/debug/deps/wamn_client_acme_receiving_data_access-59b30bdf0407741f)
+
+running 14 tests
+test error::tests::only_exact_allowed_exclusions_cross_the_boundary ... ok
+test error::tests::only_contractual_database_classes_cross_the_boundary ... ok
+test error::tests::the_hand_copied_vocabulary_agrees_with_the_generated_contracts ... ok
+test operation::tests::a_noncanonical_base_purchase_order_id_still_refuses_internally ... ok
+test operation::tests::envelope_requires_all_request_ids_before_item_processing ... ok
+test operation::tests::two_spellings_of_one_int64_make_one_command ... ok
+test operation::tests::two_spellings_of_one_uuid_make_one_command ... ok
+test operation::tests::update_preserves_omitted_null_and_value_states ... ok
+test operation::tests::private_event_requires_insert_and_receipt_id_without_caller_fields ... ok
+test operation::tests::record_receipt_projection_preserves_exact_base_refusals_without_sql ... ok
+test operation::tests::exclusion_refusal_retains_only_allowed_constraint_detail ... ok
+SKIP: WAMN_EXCLUSION_DIAGNOSTICS requires the disposable PostgreSQL fixture
+test operation::tests::generated_update_exclusion_from_postgres ... ok
+test operation::tests::non_int64_and_non_uuid_wire_scalars_refuse ... ok
+test operation::tests::persisted_int64_and_structured_refusals_keep_closed_wire_shapes ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (components/target/debug/deps/wamn_receiving_data_access-f4990377f0114352)
+
+running 38 tests
+test cursor::tests::malformed_noncanonical_or_mismatched_cursor_is_invalid_input ... ok
+test cursor::tests::noncanonical_timestamp_is_invalid_input ... ok
+test cursor::tests::text_cursor_uses_the_ambient_string_type ... ok
+test cursor::tests::timestamp_cursor_has_one_wire_spelling_and_round_trips ... ok
+test error::tests::non_constraint_transport_meanings_are_preserved ... ok
+test error::tests::operation_contract_exposes_only_exact_names_of_the_expected_kind ... ok
+test error::tests::reads_hide_all_named_constraint_violations ... ok
+test operation::tests::an_uppercase_uuid_input_is_respelled_rather_than_refused ... ok
+test operation::tests::envelope_requires_all_request_ids_before_item_processing ... ok
+SKIP: WAMN_EXCLUSION_DIAGNOSTICS requires the disposable PostgreSQL fixture
+test error::tests::the_hand_copied_vocabulary_agrees_with_the_generated_contracts ... ok
+test operation::tests::generated_update_exclusion_from_postgres ... ok
+test operation::tests::dto_unknown_fields_and_non_int64_wire_scalars_refuse_in_memory ... ok
+test operation::tests::bounded_projection_rows_preserve_the_declared_wire_scalars ... ok
+test operation::tests::exclusion_refusal_retains_only_allowed_constraint_detail ... ok
+test operation::tests::update_preserves_omitted_null_and_value_states ... ok
+test operation::tests::persisted_int64_and_structured_errors_have_closed_wire_shapes ... ok
+test operation::tests::envelope_preserves_order_and_removes_only_correlation_identity ... ok
+test operation::tests::two_spellings_of_one_int64_make_one_command ... ok
+test purchase_order::tests::cursor_field_direction_and_key_type_are_bound_to_the_sort ... ok
+test purchase_order::tests::omitted_limit_is_one_hundred_and_out_of_range_is_invalid ... ok
+test purchase_order::tests::cursor_limit_and_filter_refusals_are_typed ... ok
+test receipt::tests::limit_defaults_and_refuses_outside_the_closed_range ... ok
+test purchase_order::tests::extra_row_mints_cursor_from_last_returned_row_and_normalizes_utc ... ok
+test purchase_order::tests::generated_update_outcomes_map_to_the_closed_contract ... ok
+test purchase_order::tests::no_extra_row_has_no_next_cursor ... ok
+test purchase_order::tests::supplier_update_preserves_omitted_null_and_value_states ... ok
+test receipt::tests::complete_page_has_no_continuation_cursor ... ok
+test record_receipt::tests::a_noncanonical_timestamp_is_respelled_rather_than_refused ... ok
+test receipt::tests::lookahead_row_yields_cursor_from_last_returned_item ... ok
+test record_receipt::tests::database_source_is_retained_but_not_exposed_by_the_operation_error ... ok
+test record_receipt::tests::malformed_shapes_refuse_with_invalid_input ... ok
+test record_receipt::tests::a_respelled_quantity_makes_the_same_command ... ok
+test record_receipt::tests::two_spellings_of_one_uuid_make_one_command ... ok
+test record_receipt::tests::all_closed_literals_are_distinct ... ok
+test record_receipt::tests::arbitrary_request_id_is_preserved_in_each_outcome ... ok
+test record_receipt::tests::canonical_command_treats_line_order_as_presentation ... ok
+test record_receipt::tests::lexical_scale_remains_command_identity ... ok
+test record_receipt::tests::two_spellings_of_one_instant_make_one_command ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

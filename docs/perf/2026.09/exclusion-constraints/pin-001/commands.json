@@ -1,0 +1,105 @@
+[
+  {
+    "name": "start",
+    "argv": [
+      "docker",
+      "run",
+      "--detach",
+      "--name",
+      "wamn-exclusion-remint-23c5fc14e195",
+      "-e",
+      "POSTGRES_PASSWORD=probe",
+      "-p",
+      "127.0.0.1::5432",
+      "postgres:18"
+    ],
+    "exit_code": 0,
+    "seconds": 0.44
+  },
+  {
+    "name": "schema",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit_code": 0,
+    "seconds": 0.051
+  },
+  {
+    "name": "receiving-0001_initial",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/packages/receiving/migrations/0001_initial.sql"
+    ],
+    "exit_code": 0,
+    "seconds": 0.085
+  },
+  {
+    "name": "client_acme_receiving-0001_add_inspection_required",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/packages/client_acme_receiving/migrations/0001_add_inspection_required.sql"
+    ],
+    "exit_code": 0,
+    "seconds": 0.056
+  },
+  {
+    "name": "client_acme_receiving-0002_quality_inspection",
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/packages/client_acme_receiving/migrations/0002_quality_inspection.sql"
+    ],
+    "exit_code": 0,
+    "seconds": 0.055
+  },
+  {
+    "name": "materialize-write",
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "write",
+      "packages/client_acme_receiving"
+    ],
+    "exit_code": 0,
+    "seconds": 0.785
+  },
+  {
+    "name": "materialize-check",
+    "argv": [
+      "cargo",
+      "run",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package",
+      "--",
+      "check",
+      "packages/client_acme_receiving"
+    ],
+    "exit_code": 0,
+    "seconds": 0.771
+  }
+]

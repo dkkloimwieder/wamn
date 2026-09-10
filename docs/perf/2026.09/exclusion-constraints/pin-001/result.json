@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "container": "wamn-exclusion-remint-23c5fc14e195",
+  "before_digest": "sha256:5326f1a794dfe01736dbf08a41a73593a908f4551c76e116c2e9a79f3b6795b3",
+  "after_digest": "sha256:cd494c3413f9987a645ea9320f64f3d9dc5b269296feb6a3289edb84ef065d2d",
+  "build_evidence": "/home/kaalin/dev/wamn/docs/perf/2026.09/exclusion-constraints/m1-remint-001",
+  "cleanup_complete": true,
+  "changed_generated_paths": [
+    "packages/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json",
+    "packages/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json",
+    "packages/client_acme_receiving/generated/platform-policy/data-access.json",
+    "packages/client_acme_receiving/generated/source-map/receiving_record_receipt.json"
+  ]
+}

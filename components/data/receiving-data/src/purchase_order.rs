@@ -10,10 +10,11 @@ use crate::generated::wamn::purchase_order as generated;
 pub use crate::generated::wamn::purchase_order::PurchaseOrderRow;
 
 const MAX_PAGE_SIZE: i64 = 100;
-const UPDATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints::new(
+pub(crate) const UPDATE_CONSTRAINTS: AllowedConstraints = AllowedConstraints::new(
     generated::UPDATE_UNIQUE_CONSTRAINTS,
     generated::UPDATE_FOREIGN_KEY_CONSTRAINTS,
     generated::UPDATE_CHECK_CONSTRAINTS,
+    generated::UPDATE_EXCLUSION_CONSTRAINTS,
 );
 
 /// Closed `purchase_order.status` vocabulary.

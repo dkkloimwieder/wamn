@@ -1,0 +1,23 @@
+   Compiling wamn-client-acme-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/components/data/client-acme-receiving-data)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s
+     Running unittests src/lib.rs (components/target/debug/deps/wamn_client_acme_receiving_data_access-bb4581547d4a6d1a)
+
+running 1 test
+
+thread 'operation::tests::generated_update_exclusion_from_postgres' (1520060) panicked at data/client-acme-receiving-data/src/operation.rs:952:9:
+assertion `left == right` failed
+  left: "[{\"request_id\":\"exclusion-proof\",\"error\":{\"code\":\"internal_error\",\"detail\":{}}}]"
+ right: "[{\"request_id\":\"exclusion-proof\",\"error\":{\"code\":\"exclusion_violation\",\"detail\":{\"constraint\":\"purchase_order_acme_quality_status_excl\"}}}]"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test operation::tests::generated_update_exclusion_from_postgres ... FAILED
+
+failures:
+
+failures:
+    operation::tests::generated_update_exclusion_from_postgres
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p wamn-client-acme-receiving-data-access --lib`
+error: 1 target failed:
+    `-p wamn-client-acme-receiving-data-access --lib`

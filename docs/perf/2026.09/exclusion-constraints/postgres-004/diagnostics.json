@@ -1,0 +1,12 @@
+{
+  "receiving": {
+    "sqlstate": "23P01",
+    "constraint": "purchase_order_supplier_id_excl",
+    "message": "conflicting key value violates exclusion constraint \"purchase_order_supplier_id_excl\""
+  },
+  "client_acme_receiving": {
+    "sqlstate": "23P01",
+    "constraint": "purchase_order_acme_quality_status_excl",
+    "message": "conflicting key value violates exclusion constraint \"purchase_order_acme_quality_status_excl\""
+  }
+}

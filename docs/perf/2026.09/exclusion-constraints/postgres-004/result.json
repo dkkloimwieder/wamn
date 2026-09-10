@@ -1,0 +1,35 @@
+{
+  "passed": true,
+  "container": "wamn-exclusion-72da71f89485",
+  "mutants": {
+    "receiving": {
+      "exit_code": 101,
+      "named_test_failed": true,
+      "source_sha256": "acf75ef83a1da260b3474a7091a9b6ec00558c904ebdd8a065271d82d5d9ebcb"
+    },
+    "client_acme_receiving": {
+      "exit_code": 101,
+      "named_test_failed": true,
+      "source_sha256": "1a79a7a2addc12dbdc645c6f5a9dac8918d5191737fa389049b438cdabd52ae2"
+    }
+  },
+  "diagnostics": {
+    "receiving": {
+      "sqlstate": "23P01",
+      "constraint": "purchase_order_supplier_id_excl",
+      "message": "conflicting key value violates exclusion constraint \"purchase_order_supplier_id_excl\""
+    },
+    "client_acme_receiving": {
+      "sqlstate": "23P01",
+      "constraint": "purchase_order_acme_quality_status_excl",
+      "message": "conflicting key value violates exclusion constraint \"purchase_order_acme_quality_status_excl\""
+    }
+  },
+  "generated_outputs_restored": true,
+  "original_generated_sha256": {
+    "packages/receiving/generated/wamn/purchase_order.rs": "03cc6fe1eb0162c4b1cc230f4d56ac6752449ac9e9d84976dc3585a4b78e3822",
+    "packages/client_acme_receiving/generated/wamn/purchase_order.rs": "6e9120a6178a987b3e3dfba771af574dd334176ec456765cc9b707d6fac5ae50"
+  },
+  "cleanup_complete": true,
+  "seconds": 9.105
+}

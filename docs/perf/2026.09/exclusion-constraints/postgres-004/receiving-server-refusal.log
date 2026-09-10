@@ -1,0 +1,1 @@
+{"sqlstate" : "23P01", "constraint" : "purchase_order_supplier_id_excl", "message" : "conflicting key value violates exclusion constraint \"purchase_order_supplier_id_excl\""}

@@ -285,6 +285,7 @@ impl RecordReceiptError {
             | AccessErrorKind::UniqueViolation
             | AccessErrorKind::ForeignKeyViolation
             | AccessErrorKind::CheckViolation
+            | AccessErrorKind::ExclusionViolation
             | AccessErrorKind::InternalError => RecordReceiptErrorKind::InternalError,
         };
         Self {
@@ -551,6 +552,7 @@ async fn record_receipt_in(
 
     let receipt_constraints = AllowedConstraints::new(
         &["receipt_purchase_order_id_receipt_reference_key"],
+        &[],
         &[],
         &[],
     );

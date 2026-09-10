@@ -1,0 +1,35 @@
+{
+  "baseline_count": 114,
+  "current_count": 112,
+  "added": [],
+  "removed": [
+    [
+      "warning",
+      "clippy::match_same_arms",
+      "these match arms have identical bodies",
+      [
+        [
+          "data/receiving-data/src/error.rs",
+          [
+            "StatementErrorKind::UniqueViolation",
+            "| StatementErrorKind::ForeignKeyViolation",
+            "| StatementErrorKind::CheckViolation => (AccessErrorKind::InternalError, None),"
+          ]
+        ],
+        [
+          "data/receiving-data/src/error.rs",
+          [
+            "StatementErrorKind::UnknownStatement",
+            "| StatementErrorKind::StatementContractMismatch",
+            "| StatementErrorKind::RowLimitExceeded",
+            "| StatementErrorKind::ExclusionViolation",
+            "| StatementErrorKind::QueryError",
+            "| StatementErrorKind::InvalidResult => (AccessErrorKind::InternalError, None),"
+          ]
+        ]
+      ],
+      2
+    ]
+  ],
+  "source_restored": true
+}

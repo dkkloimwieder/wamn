@@ -83,6 +83,7 @@ fn private_node_error(error: &AccessError) -> NodeError {
         AccessErrorKind::Timeout => "timeout",
         AccessErrorKind::NotFound
         | AccessErrorKind::ConcurrencyConflict
+        | AccessErrorKind::ExclusionViolation
         | AccessErrorKind::PermissionDenied
         | AccessErrorKind::InternalError => "internal_error",
     };
@@ -95,6 +96,7 @@ fn private_node_error(error: &AccessError) -> NodeError {
         AccessErrorKind::Retry | AccessErrorKind::Timeout => NodeError::Retryable(detail),
         AccessErrorKind::NotFound
         | AccessErrorKind::ConcurrencyConflict
+        | AccessErrorKind::ExclusionViolation
         | AccessErrorKind::PermissionDenied
         | AccessErrorKind::InternalError => NodeError::Terminal(detail),
     }

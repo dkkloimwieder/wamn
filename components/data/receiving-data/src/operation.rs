@@ -619,7 +619,8 @@ fn access_error(
         }
         AccessErrorKind::UniqueViolation
         | AccessErrorKind::ForeignKeyViolation
-        | AccessErrorKind::CheckViolation => {
+        | AccessErrorKind::CheckViolation
+        | AccessErrorKind::ExclusionViolation => {
             let Some(constraint) = error.constraint() else {
                 return internal();
             };
@@ -1042,6 +1043,62 @@ pub async fn receiving_record_receipt(input: &str) -> Result<String, InvocationE
 mod tests {
     use super::*;
     use wamn_postgres_statements::{Numeric, TimestampTz, Uuid};
+
+    fn exclusion_refusal(constraint: Option<&str>, allowed: AllowedConstraints) -> String {
+        let error = AccessError::from_statement_parts(
+            "update purchase_order",
+            wamn_postgres_statements::StatementErrorKind::ExclusionViolation,
+            constraint,
+            allowed,
+        );
+        let result: ItemResult<()> = refused(
+            "exclusion-proof".into(),
+            access_error(&error, "purchase_order.update", None, Some(1)),
+        );
+        serialized(&[result])
+    }
+
+    #[test]
+    fn exclusion_refusal_retains_only_allowed_constraint_detail() {
+        let allowed = AllowedConstraints::new(&[], &[], &[], &["purchase_order_allowed_exclusion"]);
+        assert_eq!(
+            exclusion_refusal(Some("purchase_order_allowed_exclusion"), allowed),
+            r#"[{"request_id":"exclusion-proof","error":{"code":"exclusion_violation","detail":{"constraint":"purchase_order_allowed_exclusion"}}}]"#
+        );
+        for (constraint, allowed) in [
+            (None, allowed),
+            (Some("unlisted_exclusion"), allowed),
+            (
+                Some("purchase_order_allowed_exclusion"),
+                AllowedConstraints::NONE,
+            ),
+        ] {
+            assert_eq!(
+                exclusion_refusal(constraint, allowed),
+                r#"[{"request_id":"exclusion-proof","error":{"code":"internal_error","detail":{}}}]"#
+            );
+        }
+    }
+
+    #[test]
+    fn generated_update_exclusion_from_postgres() {
+        let Some(path) = std::env::var_os("WAMN_EXCLUSION_DIAGNOSTICS") else {
+            eprintln!(
+                "SKIP: WAMN_EXCLUSION_DIAGNOSTICS requires the disposable PostgreSQL fixture"
+            );
+            return;
+        };
+        let diagnostics: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let diagnostic = &diagnostics["receiving"];
+        assert_eq!(diagnostic["sqlstate"], "23P01");
+        let constraint = diagnostic["constraint"]
+            .as_str()
+            .expect("server constraint name");
+        assert_eq!(
+            exclusion_refusal(Some(constraint), crate::purchase_order::UPDATE_CONSTRAINTS),
+            r#"[{"request_id":"exclusion-proof","error":{"code":"exclusion_violation","detail":{"constraint":"purchase_order_supplier_id_excl"}}}]"#
+        );
+    }
 
     #[test]
     fn envelope_requires_all_request_ids_before_item_processing() {

@@ -9,6 +9,7 @@ pub(crate) struct AllowedConstraints {
     unique: &'static [&'static str],
     foreign_key: &'static [&'static str],
     check: &'static [&'static str],
+    exclusion: &'static [&'static str],
 }
 
 impl AllowedConstraints {
@@ -17,6 +18,7 @@ impl AllowedConstraints {
         unique: &[],
         foreign_key: &[],
         check: &[],
+        exclusion: &[],
     };
 
     /// Build one operation policy from generator-owned constraint slices.
@@ -24,11 +26,13 @@ impl AllowedConstraints {
         unique: &'static [&'static str],
         foreign_key: &'static [&'static str],
         check: &'static [&'static str],
+        exclusion: &'static [&'static str],
     ) -> Self {
         Self {
             unique,
             foreign_key,
             check,
+            exclusion,
         }
     }
 
@@ -43,6 +47,10 @@ impl AllowedConstraints {
     fn permits_check(self, name: &str) -> bool {
         self.check.contains(&name)
     }
+
+    fn permits_exclusion(self, name: &str) -> bool {
+        self.exclusion.contains(&name)
+    }
 }
 
 /// Stable operation-level error class returned by Receiving accessors.
@@ -54,6 +62,7 @@ pub enum AccessErrorKind {
     UniqueViolation,
     ForeignKeyViolation,
     CheckViolation,
+    ExclusionViolation,
     Retry,
     Timeout,
     PermissionDenied,
@@ -71,6 +80,7 @@ impl AccessErrorKind {
         Self::UniqueViolation,
         Self::ForeignKeyViolation,
         Self::CheckViolation,
+        Self::ExclusionViolation,
         Self::Retry,
         Self::Timeout,
         Self::PermissionDenied,
@@ -86,6 +96,7 @@ impl AccessErrorKind {
             Self::UniqueViolation => "unique_violation",
             Self::ForeignKeyViolation => "foreign_key_violation",
             Self::CheckViolation => "check_violation",
+            Self::ExclusionViolation => "exclusion_violation",
             Self::Retry => "retry",
             Self::Timeout => "timeout",
             Self::PermissionDenied => "permission_denied",
@@ -183,7 +194,21 @@ impl AccessError {
         source: &StatementError,
         allowed_constraints: AllowedConstraints,
     ) -> Self {
-        let (kind, constraint) = classify(source.kind(), source.constraint(), allowed_constraints);
+        Self::from_statement_parts(
+            context,
+            source.kind(),
+            source.constraint(),
+            allowed_constraints,
+        )
+    }
+
+    pub(crate) fn from_statement_parts(
+        context: impl Into<Box<str>>,
+        kind: StatementErrorKind,
+        constraint: Option<&str>,
+        allowed_constraints: AllowedConstraints,
+    ) -> Self {
+        let (kind, constraint) = classify(kind, constraint, allowed_constraints);
         Self {
             kind,
             context: context.into(),
@@ -257,18 +282,22 @@ fn classify(
                 constraint.expect("guarded"),
             )
         }
+        StatementErrorKind::ExclusionViolation
+            if constraint.is_some_and(|name| allowed_constraints.permits_exclusion(name)) =>
+        {
+            named_violation(
+                AccessErrorKind::ExclusionViolation,
+                constraint.expect("guarded"),
+            )
+        }
+        StatementErrorKind::PermissionDenied => (AccessErrorKind::PermissionDenied, None),
         StatementErrorKind::UniqueViolation
         | StatementErrorKind::ForeignKeyViolation
-        | StatementErrorKind::CheckViolation => (AccessErrorKind::InternalError, None),
-        StatementErrorKind::PermissionDenied => (AccessErrorKind::PermissionDenied, None),
-        // This package declares no exclusion constraint, and `AccessErrorKind`
-        // carries no literal for one. Classifying it here exactly as the host
-        // classified it before 23P01 had a variant keeps this guest's behaviour
-        // unchanged; giving it a typed refusal is a package-level change.
-        StatementErrorKind::UnknownStatement
+        | StatementErrorKind::CheckViolation
+        | StatementErrorKind::ExclusionViolation
+        | StatementErrorKind::UnknownStatement
         | StatementErrorKind::StatementContractMismatch
         | StatementErrorKind::RowLimitExceeded
-        | StatementErrorKind::ExclusionViolation
         | StatementErrorKind::QueryError
         | StatementErrorKind::InvalidResult => (AccessErrorKind::InternalError, None),
     }
@@ -287,6 +316,7 @@ mod tests {
         unique: &["allowed_unique"],
         foreign_key: &["allowed_foreign_key"],
         check: &["allowed_check"],
+        exclusion: &["allowed_exclusion"],
     };
 
     #[test]
@@ -298,6 +328,7 @@ mod tests {
                 "hidden_foreign_key",
             ),
             (StatementErrorKind::CheckViolation, "hidden_check"),
+            (StatementErrorKind::ExclusionViolation, "hidden_exclusion"),
         ];
 
         for (kind, constraint) in errors {
@@ -326,6 +357,10 @@ mod tests {
                 (StatementErrorKind::CheckViolation, "allowed_check"),
                 AccessErrorKind::CheckViolation,
             ),
+            (
+                (StatementErrorKind::ExclusionViolation, "allowed_exclusion"),
+                AccessErrorKind::ExclusionViolation,
+            ),
         ];
 
         for ((error, expected_constraint), expected_kind) in accepted {
@@ -342,6 +377,9 @@ mod tests {
             ),
             (StatementErrorKind::CheckViolation, "unknown_check"),
             (StatementErrorKind::CheckViolation, "allowed_unique"),
+            (StatementErrorKind::ExclusionViolation, "unknown_exclusion"),
+            (StatementErrorKind::ExclusionViolation, "allowed_unique"),
+            (StatementErrorKind::UniqueViolation, "allowed_exclusion"),
         ];
 
         for (kind, constraint) in rejected {
@@ -380,6 +418,17 @@ mod tests {
                 AccessErrorKind::InternalError,
             ),
         ];
+
+        for constraint in [None, Some("ALLOWED_EXCLUSION")] {
+            assert_eq!(
+                classify(
+                    StatementErrorKind::ExclusionViolation,
+                    constraint,
+                    UPDATE_CONSTRAINTS
+                ),
+                (AccessErrorKind::InternalError, None)
+            );
+        }
 
         for (kind, expected_kind) in cases {
             assert_eq!(
@@ -453,8 +502,32 @@ mod tests {
         ];
 
         let declared = declared(OPERATIONS);
+        let exclusions = crate::generated::wamn::purchase_order::UPDATE_EXCLUSION_CONSTRAINTS;
+        let update: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../../../packages/receiving/generated/contracts/purchase_order/update.errors.json",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let declared_exclusions: std::collections::BTreeSet<&str> = update["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|case| case["literal"] == "exclusion_violation")
+            .map(|case| case["constraint"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            exclusions
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            declared_exclusions,
+            "the generated exclusion slice and contract disagree"
+        );
         let spelled: std::collections::BTreeSet<&str> = AccessErrorKind::ALL
             .iter()
+            .filter(|kind| **kind != AccessErrorKind::ExclusionViolation || !exclusions.is_empty())
             .map(|kind| kind.literal())
             .chain(
                 crate::record_receipt::RecordReceiptErrorKind::ALL

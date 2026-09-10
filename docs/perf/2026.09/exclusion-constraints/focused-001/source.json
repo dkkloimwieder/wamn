@@ -1,0 +1,14 @@
+{
+  "changed_source_sha256": {
+    "components/application/client-acme-receiving/src/lib.rs": "63399e08c7d00f29b2478c8d0de3278a5c62f27b76ed21256f0fc12613eeeca1",
+    "components/data/client-acme-receiving-data/src/error.rs": "33513188ded84bc6d33a4b4538729e4e5a56f2648039712cf574234d07c108ac",
+    "components/data/client-acme-receiving-data/src/generated.rs": "1ace7770b94001cdbea0775cae7fa59d45ec88ceaa02c448347afb73c28ba268",
+    "components/data/client-acme-receiving-data/src/operation.rs": "684e4e628ff1ed359cd300e52418dc8f2057ed883a2e94756599b20af9ffadd7",
+    "components/data/receiving-data/src/error.rs": "7997e4dc49bd2627f674ce05c8ed239fa5eca9d02721efd9222ce2efdc4d1a4e",
+    "components/data/receiving-data/src/generated.rs": "88710e692596cd801249cb7de45760b934118ca49db639a7eac1fae48da3847f",
+    "components/data/receiving-data/src/operation.rs": "7fa453a80f8867dfa69c377f7df7cd8101c757cb640372273ab042073b1ffc3c",
+    "components/data/receiving-data/src/purchase_order.rs": "acf75ef83a1da260b3474a7091a9b6ec00558c904ebdd8a065271d82d5d9ebcb",
+    "components/data/receiving-data/src/record_receipt.rs": "0ce1ff5cd2eeaf7c273da02c495e28eb516534687bf35cb111294aacd210c3bb"
+  },
+  "head": "b214506aa6cda434202e22d22941ff19390c37c8"
+}

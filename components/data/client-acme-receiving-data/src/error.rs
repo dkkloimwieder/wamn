@@ -3,12 +3,27 @@ use std::fmt;
 
 use wamn_postgres_statements::{StatementError, StatementErrorKind};
 
+/// Exact exclusion names an operation contract permits callers to observe.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AllowedConstraints {
+    pub(crate) exclusion: &'static [&'static str],
+}
+
+impl AllowedConstraints {
+    pub(crate) const NONE: Self = Self { exclusion: &[] };
+
+    fn permits_exclusion(self, name: &str) -> bool {
+        self.exclusion.contains(&name)
+    }
+}
+
 /// Stable operation-level failure class.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessErrorKind {
     InvalidInput,
     NotFound,
     ConcurrencyConflict,
+    ExclusionViolation,
     Retry,
     Timeout,
     PermissionDenied,
@@ -23,6 +38,7 @@ impl AccessErrorKind {
         Self::InvalidInput,
         Self::NotFound,
         Self::ConcurrencyConflict,
+        Self::ExclusionViolation,
         Self::Retry,
         Self::Timeout,
         Self::PermissionDenied,
@@ -35,6 +51,7 @@ impl AccessErrorKind {
             Self::InvalidInput => "invalid_input",
             Self::NotFound => "not_found",
             Self::ConcurrencyConflict => "concurrency_conflict",
+            Self::ExclusionViolation => "exclusion_violation",
             Self::Retry => "retry",
             Self::Timeout => "timeout",
             Self::PermissionDenied => "permission_denied",
@@ -48,6 +65,7 @@ impl AccessErrorKind {
 pub struct AccessError {
     kind: AccessErrorKind,
     context: Box<str>,
+    constraint: Option<Box<str>>,
     field: Option<&'static str>,
     observed_row_version: Option<i64>,
 }
@@ -61,6 +79,11 @@ impl AccessError {
     /// Stable contextual description for the node error boundary.
     pub fn context(&self) -> &str {
         &self.context
+    }
+
+    /// Named PostgreSQL constraint for typed violation cases.
+    pub fn constraint(&self) -> Option<&str> {
+        self.constraint.as_deref()
     }
 
     /// Input field owned by an invalid-input refusal.
@@ -77,6 +100,7 @@ impl AccessError {
         Self {
             kind: AccessErrorKind::InvalidInput,
             context: context.into(),
+            constraint: None,
             field: Some(field),
             observed_row_version: None,
         }
@@ -93,6 +117,7 @@ impl AccessError {
         Self {
             kind: AccessErrorKind::ConcurrencyConflict,
             context: context.into(),
+            constraint: None,
             field: None,
             observed_row_version: Some(observed_row_version),
         }
@@ -103,13 +128,39 @@ impl AccessError {
     }
 
     pub(crate) fn from_statement(context: impl Into<Box<str>>, source: &StatementError) -> Self {
-        Self::new(classify(source.kind()), context)
+        Self::from_statement_with_constraints(context, source, AllowedConstraints::NONE)
+    }
+
+    pub(crate) fn from_statement_with_constraints(
+        context: impl Into<Box<str>>,
+        source: &StatementError,
+        allowed_constraints: AllowedConstraints,
+    ) -> Self {
+        Self::from_statement_parts(
+            context,
+            source.kind(),
+            source.constraint(),
+            allowed_constraints,
+        )
+    }
+
+    pub(crate) fn from_statement_parts(
+        context: impl Into<Box<str>>,
+        kind: StatementErrorKind,
+        constraint: Option<&str>,
+        allowed_constraints: AllowedConstraints,
+    ) -> Self {
+        let (kind, constraint) = classify(kind, constraint, allowed_constraints);
+        let mut error = Self::new(kind, context);
+        error.constraint = constraint;
+        error
     }
 
     fn new(kind: AccessErrorKind, context: impl Into<Box<str>>) -> Self {
         Self {
             kind,
             context: context.into(),
+            constraint: None,
             field: None,
             observed_row_version: None,
         }
@@ -124,13 +175,25 @@ impl fmt::Display for AccessError {
 
 impl Error for AccessError {}
 
-fn classify(kind: StatementErrorKind) -> AccessErrorKind {
+fn classify(
+    kind: StatementErrorKind,
+    constraint: Option<&str>,
+    allowed_constraints: AllowedConstraints,
+) -> (AccessErrorKind, Option<Box<str>>) {
     match kind {
         StatementErrorKind::SerializationFailure | StatementErrorKind::ConnectionUnavailable => {
-            AccessErrorKind::Retry
+            (AccessErrorKind::Retry, None)
         }
-        StatementErrorKind::StatementTimeout => AccessErrorKind::Timeout,
-        StatementErrorKind::PermissionDenied => AccessErrorKind::PermissionDenied,
+        StatementErrorKind::StatementTimeout => (AccessErrorKind::Timeout, None),
+        StatementErrorKind::PermissionDenied => (AccessErrorKind::PermissionDenied, None),
+        StatementErrorKind::ExclusionViolation
+            if constraint.is_some_and(|name| allowed_constraints.permits_exclusion(name)) =>
+        {
+            (
+                AccessErrorKind::ExclusionViolation,
+                Some(constraint.expect("guarded").into()),
+            )
+        }
         StatementErrorKind::UnknownStatement
         | StatementErrorKind::StatementContractMismatch
         | StatementErrorKind::RowLimitExceeded
@@ -139,13 +202,13 @@ fn classify(kind: StatementErrorKind) -> AccessErrorKind {
         | StatementErrorKind::CheckViolation
         | StatementErrorKind::ExclusionViolation
         | StatementErrorKind::QueryError
-        | StatementErrorKind::InvalidResult => AccessErrorKind::InternalError,
+        | StatementErrorKind::InvalidResult => (AccessErrorKind::InternalError, None),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AccessErrorKind, classify};
+    use super::{AccessErrorKind, AllowedConstraints, classify};
     use wamn_postgres_statements::StatementErrorKind;
 
     #[test]
@@ -172,7 +235,51 @@ mod tests {
                 AccessErrorKind::InternalError,
             ),
         ] {
-            assert_eq!(classify(source), expected);
+            assert_eq!(
+                classify(source, None, AllowedConstraints::NONE),
+                (expected, None)
+            );
+        }
+    }
+
+    #[test]
+    fn only_exact_allowed_exclusions_cross_the_boundary() {
+        let allowed = AllowedConstraints {
+            exclusion: &["allowed_exclusion"],
+        };
+        assert_eq!(
+            classify(
+                StatementErrorKind::ExclusionViolation,
+                Some("allowed_exclusion"),
+                allowed
+            ),
+            (
+                AccessErrorKind::ExclusionViolation,
+                Some("allowed_exclusion".into())
+            )
+        );
+        for constraint in [None, Some("hidden_exclusion"), Some("ALLOWED_EXCLUSION")] {
+            assert_eq!(
+                classify(StatementErrorKind::ExclusionViolation, constraint, allowed),
+                (AccessErrorKind::InternalError, None)
+            );
+        }
+        for kind in [
+            StatementErrorKind::UniqueViolation,
+            StatementErrorKind::ForeignKeyViolation,
+            StatementErrorKind::CheckViolation,
+            StatementErrorKind::ExclusionViolation,
+        ] {
+            assert_eq!(
+                classify(kind, Some("allowed_exclusion"), AllowedConstraints::NONE),
+                (AccessErrorKind::InternalError, None)
+            );
+            if kind != StatementErrorKind::ExclusionViolation {
+                assert_eq!(
+                    classify(kind, Some("allowed_exclusion"), allowed),
+                    (AccessErrorKind::InternalError, None)
+                );
+            }
         }
     }
 
@@ -216,8 +323,32 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .collect();
+        let exclusions = crate::generated::purchase_order::UPDATE_EXCLUSION_CONSTRAINTS;
+        let update: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                "../../../packages/client_acme_receiving/generated/contracts/purchase_order/update.errors.json",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let declared_exclusions: std::collections::BTreeSet<&str> = update["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|case| case["literal"] == "exclusion_violation")
+            .map(|case| case["constraint"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            exclusions
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>(),
+            declared_exclusions,
+            "the generated exclusion slice and contract disagree"
+        );
         let spelled: std::collections::BTreeSet<&str> = AccessErrorKind::ALL
             .iter()
+            .filter(|kind| **kind != AccessErrorKind::ExclusionViolation || !exclusions.is_empty())
             .map(|kind| kind.literal())
             .collect();
 
