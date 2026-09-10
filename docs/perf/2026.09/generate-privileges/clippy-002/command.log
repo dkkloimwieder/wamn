@@ -1,0 +1,147 @@
+    Checking wamn-component-policy v0.1.0 (/home/kaalin/.cache/wamn-lanes/generate-privileges-20260910/crates/platform/component-policy)
+    Checking wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/generate-privileges-20260910/crates/schema/introspection)
+    Checking wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/generate-privileges-20260910/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+    Checking wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/generate-privileges-20260910/crates/schema/generator)
+warning: you seem to want to iterate on a map's keys
+    --> crates/schema/generator/src/generate.rs:1326:22
+     |
+1326 |     for (name, _) in &declaration.constraint_errors {
+     |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#for_kv_map
+     = note: `-W clippy::for-kv-map` implied by `-W clippy::style`
+     = help: to override `-W clippy::style` add `#[allow(clippy::for_kv_map)]`
+help: use the corresponding method
+     |
+1326 -     for (name, _) in &declaration.constraint_errors {
+1326 +     for name in declaration.constraint_errors.keys() {
+     |
+
+warning: using `contains()` instead of `iter().any()` is more efficient
+   --> crates/schema/generator/src/manifest.rs:883:17
+    |
+883 |               if !dependency
+    |  _________________^
+884 | |                 .operations
+885 | |                 .iter()
+886 | |                 .any(|candidate| *candidate == inherited.operation)
+    | |___________________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#manual_contains
+    = note: `-W clippy::manual-contains` implied by `-W clippy::perf`
+    = help: to override `-W clippy::perf` add `#[allow(clippy::manual_contains)]`
+help: try
+    |
+883 ~             if !dependency
+884 +                 .operations.contains(&inherited.operation)
+    |
+
+warning: this `if` statement can be collapsed
+    --> crates/schema/generator/src/manifest.rs:1075:9
+     |
+1075 | /         if let Some(limit) = limit {
+1076 | |             if limit.minimum == 0 || limit.maximum < limit.minimum {
+1077 | |                 return Err(GenerateError::new(
+1078 | |                     GenerateErrorKind::InvalidOperation,
+...    |
+1082 | |         }
+     | |_________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+     = note: `-W clippy::collapsible-if` implied by `-W clippy::style`
+     = help: to override `-W clippy::style` add `#[allow(clippy::collapsible_if)]`
+help: collapse nested if block
+     |
+1075 ~         if let Some(limit) = limit
+1076 ~             && (limit.minimum == 0 || limit.maximum < limit.minimum) {
+1077 |                 return Err(GenerateError::new(
+ ...
+1080 |                 ));
+1081 ~             }
+     |
+
+warning: this `if` statement can be collapsed
+    --> crates/schema/generator/src/manifest.rs:1107:9
+     |
+1107 | /         if !field.values.is_empty() {
+1108 | |             if field.ty != wamn_schema_introspection::ir::ColumnType::Text
+1109 | |                 || field.values.iter().any(String::is_empty)
+1110 | |                 || field.values.iter().collect::<BTreeSet<_>>().len() != field.values.len()
+...    |
+1120 | |         }
+     | |_________^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#collapsible_if
+help: collapse nested if block
+     |
+1107 ~         if !field.values.is_empty()
+1108 ~             && (field.ty != wamn_schema_introspection::ir::ColumnType::Text
+1109 |                 || field.values.iter().any(String::is_empty)
+1110 ~                 || field.values.iter().collect::<BTreeSet<_>>().len() != field.values.len())
+1111 |             {
+ ...
+1118 |                 ));
+1119 ~             }
+     |
+
+warning: case-sensitive file extension comparison
+   --> crates/schema/generator/src/materialize.rs:278:12
+    |
+278 |         if file.path().ends_with(".sql") {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: consider using a case-insensitive comparison instead
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#case_sensitive_file_extension_comparisons
+    = note: `-W clippy::case-sensitive-file-extension-comparisons` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::case_sensitive_file_extension_comparisons)]`
+help: use std::path::Path
+    |
+278 ~         if std::path::Path::new(file.path())
+279 +             .extension()
+280 ~             .is_some_and(|ext| ext.eq_ignore_ascii_case("sql")) {
+    |
+
+warning: `wamn-schema-generator` (lib) generated 5 warnings (run `cargo clippy --fix --lib -p wamn-schema-generator -- --no-deps` to apply 4 suggestions)
+warning: this argument is passed by value, but not consumed in the function body
+    --> crates/schema/generator/tests/generation.rs:4107:51
+     |
+4107 | fn state_command(declaration: &mut Value, guards: Value) {
+     |                                                   ^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#needless_pass_by_value
+     = note: `-W clippy::needless-pass-by-value` implied by `-W clippy::pedantic`
+     = help: to override `-W clippy::pedantic` add `#[allow(clippy::needless_pass_by_value)]`
+help: consider taking a reference instead
+     |
+4107 | fn state_command(declaration: &mut Value, guards: &Value) {
+     |                                                   +
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+    --> crates/schema/generator/tests/generation.rs:4132:16
+     |
+4132 |     let cases: [(&str, fn(&mut Value)); 7] = [
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+     = note: `-W clippy::type-complexity` implied by `-W clippy::complexity`
+     = help: to override `-W clippy::complexity` add `#[allow(clippy::type_complexity)]`
+
+warning: very complex type used. Consider factoring parts into `type` definitions
+    --> crates/schema/generator/tests/generation.rs:4222:16
+     |
+4222 |     let cases: [(&str, fn(&mut Value)); 5] = [
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+
+warning: `wamn-schema-generator` (test "generation") generated 3 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.74s

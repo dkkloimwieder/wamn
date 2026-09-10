@@ -1,0 +1,20 @@
+{
+  "asserted_values": {
+    "left": "InvalidOperation: receiving.record_receipt receiving.purchase_order privilege declaration does not match verified SQL reads, writes, and row locks.\nVerified SQL: {\"insert_fields\":[],\"lock\":false,\"select_fields\":[\"id\",\"row_version\",\"status\"],\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\nDeclared: {\"insert_fields\":[],\"lock\":false,\"select_fields\":[\"id\",\"row_version\",\"status\"],\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\nRETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true.",
+    "right": "InvalidOperation: receiving.record_receipt receiving.purchase_order privilege declaration does not match verified SQL reads, writes, and row locks.\nVerified SQL: {\"insert_fields\":[],\"lock\":true,\"select_fields\":[\"id\",\"row_version\",\"status\"],\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\nDeclared: {\"insert_fields\":[],\"lock\":false,\"select_fields\":[\"id\",\"row_version\",\"status\"],\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\nRETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true."
+  },
+  "baseline": "/home/kaalin/dev/wamn/docs/perf/2026.09/generate-privileges/generation-001",
+  "changed_only_reported_sql_lock": true,
+  "compiled_mutant": true,
+  "mutant_exit_code": 101,
+  "mutated_sha256": "f11c24d8b39ac7857dcc9341c90f818c5cf805ca314049140447c1cc73511094",
+  "named_test_failed": true,
+  "named_test_restored": true,
+  "needle": "\"lock\": observed.lock,",
+  "original_sha256": "347deafcb91786e95ee6a3d1cd906cb3782c95668bf6ba0a85a5d55d87eef0ad",
+  "passed": true,
+  "replacement": "\"lock\": declared.lock,",
+  "restored_exit_code": 0,
+  "restored_sha256": "347deafcb91786e95ee6a3d1cd906cb3782c95668bf6ba0a85a5d55d87eef0ad",
+  "test": "command_privilege_mismatch_reports_for_update_lock_and_declared_value"
+}

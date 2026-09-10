@@ -2630,6 +2630,67 @@ fn command_privilege_declarations_match_sql_effects_and_row_locks() {
 }
 
 #[test]
+fn command_privilege_mismatch_reports_returning_reads_and_declared_writes() {
+    let mut manifest = shipped_manifest();
+    let receipt = manifest["custom_operations"]["receiving.record_receipt"]["relations"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|relation| relation["table"] == "receipt")
+        .unwrap();
+    receipt["select_fields"] = json!([]);
+    receipt["insert_fields"] = json!(["id"]);
+    receipt["update_fields"] = json!(["receipt_reference", "id"]);
+    let error = shipped_generation(&receiving_catalog(), &manifest).unwrap_err();
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert_eq!(error.object(), Some("receiving.receipt"));
+    assert_eq!(
+        error.to_string(),
+        concat!(
+            "InvalidOperation: receiving.record_receipt receiving.receipt privilege declaration ",
+            "does not match verified SQL reads, writes, and row locks.\n",
+            "Verified SQL: {\"insert_fields\":[\"id\",\"idempotency_key\",\"occurred_at\",",
+            "\"purchase_order_id\",\"receipt_reference\"],\"lock\":false,",
+            "\"select_fields\":[\"id\"],\"update_fields\":[]}\n",
+            "Declared: {\"insert_fields\":[\"id\"],\"lock\":false,\"select_fields\":[],",
+            "\"update_fields\":[\"id\",\"receipt_reference\"]}\n",
+            "RETURNING columns require select_fields. ",
+            "Row-lock clauses such as FOR UPDATE require lock=true.",
+        )
+    );
+}
+
+#[test]
+fn command_privilege_mismatch_reports_for_update_lock_and_declared_value() {
+    let mut manifest = shipped_manifest();
+    let purchase_order = manifest["custom_operations"]["receiving.record_receipt"]["relations"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|relation| relation["table"] == "purchase_order")
+        .unwrap();
+    purchase_order["lock"] = json!(false);
+    let error = shipped_generation(&receiving_catalog(), &manifest).unwrap_err();
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert_eq!(error.object(), Some("receiving.purchase_order"));
+    assert_eq!(
+        error.to_string(),
+        concat!(
+            "InvalidOperation: receiving.record_receipt receiving.purchase_order privilege declaration ",
+            "does not match verified SQL reads, writes, and row locks.\n",
+            "Verified SQL: {\"insert_fields\":[],\"lock\":true,",
+            "\"select_fields\":[\"id\",\"row_version\",\"status\"],",
+            "\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\n",
+            "Declared: {\"insert_fields\":[],\"lock\":false,",
+            "\"select_fields\":[\"id\",\"row_version\",\"status\"],",
+            "\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\n",
+            "RETURNING columns require select_fields. ",
+            "Row-lock clauses such as FOR UPDATE require lock=true.",
+        )
+    );
+}
+
+#[test]
 fn shipped_command_source_map_parity_and_bind_fixtures_align_structurally() {
     let manifest = shipped_manifest();
     let package = shipped_generation(&receiving_catalog(), &manifest).unwrap();

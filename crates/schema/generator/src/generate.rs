@@ -1398,8 +1398,24 @@ fn validate_static_sql_relation_access(
             return Err(GenerateError::for_object(
                 GenerateErrorKind::InvalidOperation,
                 format!(
-                    "{operation} {}.{} privilege declaration does not match verified SQL reads, writes, and row locks",
-                    relation.schema, relation.table
+                    "{operation} {}.{} privilege declaration does not match verified SQL reads, writes, and row locks.\n\
+                     Verified SQL: {}\n\
+                     Declared: {}\n\
+                     RETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true.",
+                    relation.schema,
+                    relation.table,
+                    serde_json::json!({
+                        "select_fields": observed.select_fields,
+                        "insert_fields": observed.insert_fields,
+                        "update_fields": observed.update_fields,
+                        "lock": observed.lock,
+                    }),
+                    serde_json::json!({
+                        "select_fields": declared.select_fields,
+                        "insert_fields": declared.insert_fields,
+                        "update_fields": declared.update_fields,
+                        "lock": declared.lock,
+                    }),
                 ),
                 format!("{}.{}", relation.schema, relation.table),
             ));

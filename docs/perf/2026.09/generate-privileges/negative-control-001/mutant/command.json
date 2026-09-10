@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-schema-generator",
+    "--test",
+    "generation",
+    "command_privilege_mismatch_reports_for_update_lock_and_declared_value",
+    "--",
+    "--exact",
+    "--include-ignored"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/generate-privileges-20260910"
+}

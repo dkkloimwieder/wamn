@@ -1,0 +1,79 @@
+{
+  "all_primary_warning_lines_unchanged": true,
+  "baseline": "b214506aa6cda434202e22d22941ff19390c37c8",
+  "limits": "Source-line comparison, not a separate baseline Clippy run.",
+  "warnings": [
+    {
+      "baseline_line": 792,
+      "line": 792,
+      "message": "function `canonical_serialized` is never used",
+      "path": "crates/catalog/model/src/lib.rs",
+      "source_line": "fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {",
+      "unchanged": true
+    },
+    {
+      "baseline_line": 1326,
+      "line": 1326,
+      "message": "you seem to want to iterate on a map's keys",
+      "path": "crates/schema/generator/src/generate.rs",
+      "source_line": "    for (name, _) in &declaration.constraint_errors {",
+      "unchanged": true
+    },
+    {
+      "baseline_line": 883,
+      "line": 883,
+      "message": "using `contains()` instead of `iter().any()` is more efficient",
+      "path": "crates/schema/generator/src/manifest.rs",
+      "source_line": "            if !dependency",
+      "unchanged": true
+    },
+    {
+      "baseline_line": 1075,
+      "line": 1075,
+      "message": "this `if` statement can be collapsed",
+      "path": "crates/schema/generator/src/manifest.rs",
+      "source_line": "        if let Some(limit) = limit {",
+      "unchanged": true
+    },
+    {
+      "baseline_line": 1107,
+      "line": 1107,
+      "message": "this `if` statement can be collapsed",
+      "path": "crates/schema/generator/src/manifest.rs",
+      "source_line": "        if !field.values.is_empty() {",
+      "unchanged": true
+    },
+    {
+      "baseline_line": 278,
+      "line": 278,
+      "message": "case-sensitive file extension comparison",
+      "path": "crates/schema/generator/src/materialize.rs",
+      "source_line": "        if file.path().ends_with(\".sql\") {",
+      "unchanged": true
+    },
+    {
+      "baseline_line": 4046,
+      "line": 4107,
+      "message": "this argument is passed by value, but not consumed in the function body",
+      "path": "crates/schema/generator/tests/generation.rs",
+      "source_line": "fn state_command(declaration: &mut Value, guards: Value) {",
+      "unchanged": true
+    },
+    {
+      "baseline_line": 4071,
+      "line": 4132,
+      "message": "very complex type used. Consider factoring parts into `type` definitions",
+      "path": "crates/schema/generator/tests/generation.rs",
+      "source_line": "    let cases: [(&str, fn(&mut Value)); 7] = [",
+      "unchanged": true
+    },
+    {
+      "baseline_line": 4161,
+      "line": 4222,
+      "message": "very complex type used. Consider factoring parts into `type` definitions",
+      "path": "crates/schema/generator/tests/generation.rs",
+      "source_line": "    let cases: [(&str, fn(&mut Value)); 5] = [",
+      "unchanged": true
+    }
+  ]
+}

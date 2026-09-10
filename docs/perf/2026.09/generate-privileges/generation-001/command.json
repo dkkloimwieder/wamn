@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-schema-generator",
+    "--test",
+    "generation",
+    "--",
+    "--include-ignored"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/generate-privileges-20260910"
+}

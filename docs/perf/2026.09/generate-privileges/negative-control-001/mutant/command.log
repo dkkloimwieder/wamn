@@ -1,0 +1,33 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/generate-privileges-20260910/crates/schema/generator)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.25s
+     Running tests/generation.rs (target/debug/deps/generation-228e6c79f0773dac)
+
+running 1 test
+test command_privilege_mismatch_reports_for_update_lock_and_declared_value ... FAILED
+
+failures:
+
+---- command_privilege_mismatch_reports_for_update_lock_and_declared_value stdout ----
+
+thread 'command_privilege_mismatch_reports_for_update_lock_and_declared_value' (1399180) panicked at crates/schema/generator/tests/generation.rs:2676:5:
+assertion `left == right` failed
+  left: "InvalidOperation: receiving.record_receipt receiving.purchase_order privilege declaration does not match verified SQL reads, writes, and row locks.\nVerified SQL: {\"insert_fields\":[],\"lock\":false,\"select_fields\":[\"id\",\"row_version\",\"status\"],\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\nDeclared: {\"insert_fields\":[],\"lock\":false,\"select_fields\":[\"id\",\"row_version\",\"status\"],\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\nRETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true."
+ right: "InvalidOperation: receiving.record_receipt receiving.purchase_order privilege declaration does not match verified SQL reads, writes, and row locks.\nVerified SQL: {\"insert_fields\":[],\"lock\":true,\"select_fields\":[\"id\",\"row_version\",\"status\"],\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\nDeclared: {\"insert_fields\":[],\"lock\":false,\"select_fields\":[\"id\",\"row_version\",\"status\"],\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\nRETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true."
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    command_privilege_mismatch_reports_for_update_lock_and_declared_value
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 54 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p wamn-schema-generator --test generation`
