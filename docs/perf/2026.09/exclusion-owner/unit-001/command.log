@@ -1,0 +1,206 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling libc v0.2.189
+   Compiling syn v3.0.4
+   Compiling syn v2.0.119
+   Compiling cfg-if v1.0.4
+   Compiling synstructure v0.13.2
+   Compiling zerofrom-derive v0.1.7
+   Compiling zerofrom v0.1.8
+   Compiling yoke-derive v0.8.2
+   Compiling stable_deref_trait v1.2.1
+   Compiling typenum v1.20.1
+   Compiling yoke v0.8.3
+   Compiling zerovec-derive v0.11.6
+   Compiling hybrid-array v0.4.14
+   Compiling memchr v2.8.3
+   Compiling serde_core v1.0.229
+   Compiling zerovec v0.11.8
+   Compiling displaydoc v0.2.7
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.2
+   Compiling block-buffer v0.12.1
+   Compiling crypto-common v0.2.2
+   Compiling zmij v1.0.23
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling serde_json v1.0.151
+   Compiling getrandom v0.3.4
+   Compiling smallvec v1.15.2
+   Compiling cpufeatures v0.3.0
+   Compiling tinystr v0.8.4
+   Compiling litemap v0.8.3
+   Compiling itoa v1.0.18
+   Compiling writeable v0.6.4
+   Compiling serde v1.0.229
+   Compiling icu_locale_core v2.3.0
+   Compiling zerotrie v0.2.5
+   Compiling potential_utf v0.1.6
+   Compiling serde_derive v1.0.229
+   Compiling utf8_iter v1.0.4
+   Compiling icu_normalizer_data v2.3.0
+   Compiling icu_properties_data v2.3.0
+   Compiling zerocopy v0.8.56
+   Compiling icu_collections v2.3.0
+   Compiling icu_provider v2.3.1
+   Compiling sha2 v0.11.0
+   Compiling rand_core v0.10.1
+   Compiling tinyvec_macros v0.1.1
+   Compiling autocfg v1.5.1
+   Compiling getrandom v0.4.3
+   Compiling num-traits v0.2.19
+   Compiling tinyvec v1.12.0
+   Compiling bytes v1.12.1
+   Compiling base64 v0.22.1
+   Compiling percent-encoding v2.3.2
+   Compiling icu_properties v2.3.0
+   Compiling icu_normalizer v2.3.0
+   Compiling unicode-normalization v0.1.25
+   Compiling chacha20 v0.10.1
+   Compiling regex-syntax v0.8.11
+   Compiling futures-core v0.3.34
+   Compiling futures-sink v0.3.34
+   Compiling version_check v0.9.5
+   Compiling unicode-properties v0.1.4
+   Compiling unicode-bidi v0.3.18
+   Compiling ref-cast v1.0.27
+   Compiling pin-project-lite v0.2.17
+   Compiling parking_lot_core v0.9.12
+   Compiling stringprep v0.1.5
+   Compiling ahash v0.8.12
+   Compiling rand v0.10.2
+   Compiling idna_adapter v1.2.2
+   Compiling md-5 v0.11.0
+   Compiling hmac v0.13.0
+   Compiling aho-corasick v1.1.5
+   Compiling ref-cast-impl v1.0.27
+   Compiling tokio-macros v2.7.2
+   Compiling serde_derive_internals v0.29.1
+   Compiling socket2 v0.6.5
+   Compiling mio v1.2.2
+   Compiling scopeguard v1.2.0
+   Compiling fallible-iterator v0.2.0
+   Compiling byteorder v1.5.0
+   Compiling schemars v0.8.22
+   Compiling siphasher v1.0.3
+   Compiling postgres-protocol v0.6.12
+   Compiling phf_shared v0.13.1
+   Compiling lock_api v0.4.14
+   Compiling tokio v1.53.1
+   Compiling schemars_derive v0.8.22
+   Compiling regex-automata v0.4.18
+   Compiling idna v1.1.0
+   Compiling form_urlencoded v1.2.2
+   Compiling rand_core v0.9.5
+   Compiling futures-task v0.3.34
+   Compiling borrow-or-share v0.2.4
+   Compiling once_cell v1.21.4
+   Compiling dyn-clone v1.0.20
+   Compiling futures-util v0.3.34
+   Compiling fluent-uri v0.3.2
+   Compiling url v2.5.8
+   Compiling parking_lot v0.12.5
+   Compiling tokio-util v0.7.19
+   Compiling regex v1.13.1
+   Compiling postgres-types v0.2.14
+   Compiling phf v0.13.1
+   Compiling chrono v0.4.45
+   Compiling futures-channel v0.3.34
+   Compiling async-trait v0.1.92
+   Compiling whoami v2.1.3
+   Compiling anyhow v1.0.104
+   Compiling log v0.4.34
+   Compiling appendlist v1.4.0
+   Compiling boon v0.6.1
+   Compiling tokio-postgres v0.7.18
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-owner-20260910/components/events/wire)
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-owner-20260910/components/execution/contract)
+   Compiling ppv-lite86 v0.2.21
+   Compiling bit-vec v0.8.0
+   Compiling wamn-component-policy v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-owner-20260910/crates/platform/component-policy)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-owner-20260910/crates/catalog/model)
+   Compiling bit-set v0.8.0
+   Compiling rand_chacha v0.9.0
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-owner-20260910/crates/schema/introspection)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling rand_xorshift v0.4.0
+   Compiling rand v0.9.5
+   Compiling hex v0.4.3
+   Compiling bitflags v2.13.1
+   Compiling unarray v0.1.4
+   Compiling proptest v1.11.0
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-owner-20260910/crates/schema/generator)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 50.03s
+     Running tests/generation.rs (target/debug/deps/generation-228e6c79f0773dac)
+
+running 58 tests
+test a_command_that_declares_no_idempotence_refuses_and_names_all_three_remedies ... ok
+test a_lineless_command_canonicalizes_without_a_line_profile ... ok
+test a_generated_operation_names_an_exclusion_violation_with_its_constraint ... ok
+test a_model_identity_the_claim_does_not_mint_refuses ... ok
+test a_line_profile_and_a_line_input_must_agree ... ok
+test a_command_riding_a_base_claim_carries_its_one_contract_test ... ok
+test a_state_idempotent_command_carries_the_relation_its_version_guards ... ok
+test an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim ... ok
+test corpus_hash_uses_sorted_unambiguous_framing ... ok
+test command_privilege_mismatch_reports_for_update_lock_and_declared_value ... ok
+test command_privilege_mismatch_reports_returning_reads_and_declared_writes ... ok
+test component_grouping_defaults_one_group_and_refuses_invalid_splits ... ok
+test custom_sql_generated_rust_symbols_are_unique_before_emission ... ok
+test command_privilege_declarations_match_sql_effects_and_row_locks ... ok
+test an_authored_command_carries_the_two_claim_contract_tests ... ok
+test duplicate_filters_and_schema_qualified_authored_sql_refuse ... ok
+test dependency_composition_may_add_one_declared_post_call_projection ... ok
+test an_authored_claim_is_refused_unless_every_identity_comes_from_it ... ok
+test every_generated_create_carries_the_two_claim_contract_tests ... ok
+test exclusion_owners_reject_undeclared_owners ... ok
+test additive_unused_column_on_consumed_relation_preserves_required_contract ... ok
+test exclusion_owners_reject_unknown_constraints ... ok
+test custom_statement_declarations_drive_both_siblings_without_domain_tables ... ok
+test custom_operation_ir_references_require_declared_fields_and_named_constraints ... ok
+test explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields ... ok
+test custom_operation_kinds_visibility_permissions_and_registration_are_closed ... ok
+test each_declared_idempotence_value_admits_only_its_own_shape ... ok
+test generated_create_contracts_publish_the_claim_and_its_refusal ... ok
+test generated_create_pins_and_grants_its_claim_relation ... ok
+test fresh_only_refuses_private_operations_and_non_boolean_flags ... ok
+test generated_create_refuses_a_claim_that_does_not_pre_generate_identity ... ok
+test generated_create_replay_writes_nothing ... ok
+test generated_create_takes_every_identity_from_the_claim ... ok
+test generated_operations_ship_a_result_contract_with_closed_domains ... ok
+test idempotency_conflict_is_closed_to_the_create ... ok
+test generated_weld_has_one_strict_canonical_reader ... ok
+test exclusion_owners_accept_the_package_and_a_declared_base ... ok
+test generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings ... ok
+test generation_is_byte_stable_and_emits_both_projection_siblings ... ok
+test mutation_contract_refuses_server_owned_and_nonnullable_null ... ok
+test fresh_only_public_operations_emit_policy_and_false_preserves_contract_bytes ... ok
+test generic_custom_operation_path_preserves_shipped_receiving_bytes ... ok
+test operation_identity_errors_and_constraint_names_are_closed ... ok
+test only_a_create_carries_claim_contract_tests ... ok
+test shared_operation_vocabulary_refuses_permission_identity_drift ... ok
+test shared_operation_vocabulary_refuses_noncanonical_coordinates ... ok
+test ordered_filters_and_query_variants_remain_structural_and_finite ... ok
+test strict_manifest_and_ir_references_fail_loudly ... ok
+test overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions ... ok
+test shipped_command_source_map_parity_and_bind_fixtures_align_structurally ... ok
+test the_two_line_members_are_declared_together ... ok
+test wamn_accessors_are_structurally_derived_from_operations_and_ir ... ok
+test overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain ... ok
+test operation_error_details_are_required_closed_and_exact ... ok
+test weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables ... ok
+test ownership_only_model_generates_without_fabricated_crud ... ok
+test shipped_receiving_manifest_and_authored_corpus_generate_without_drift ... ok
+test internal_relation_cdc_exclusion_is_closed_and_not_a_model ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+

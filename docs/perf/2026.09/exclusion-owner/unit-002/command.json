@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-schema-generator",
+    "--test",
+    "generation",
+    "--",
+    "--include-ignored"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/exclusion-owner-20260910"
+}

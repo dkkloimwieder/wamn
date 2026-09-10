@@ -557,6 +557,10 @@ fn validate_model(
             .constraints()
             .iter()
             .any(|candidate| candidate.name() == constraint)
+            && !table
+                .exclusions()
+                .iter()
+                .any(|candidate| candidate.name() == constraint)
         {
             return Err(GenerateError::for_object(
                 GenerateErrorKind::InvalidModel,

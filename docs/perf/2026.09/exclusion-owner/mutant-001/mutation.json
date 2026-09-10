@@ -1,0 +1,9 @@
+{
+  "source": "crates/schema/generator/src/generate.rs",
+  "removed": "            && !table\n                .exclusions()\n                .iter()\n                .any(|candidate| candidate.name() == constraint)\n",
+  "original_sha256": "35cc932b4ef35bb907e64646fff536c2d032668dac367c12ac624d4e0db4ff38",
+  "mutated_sha256": "347deafcb91786e95ee6a3d1cd906cb3782c95668bf6ba0a85a5d55d87eef0ad",
+  "restored_sha256": "35cc932b4ef35bb907e64646fff536c2d032668dac367c12ac624d4e0db4ff38",
+  "restored_mtime_ns": 1789048329910073382,
+  "exit_code": 101
+}

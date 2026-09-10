@@ -1075,6 +1075,101 @@ fn overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions() {
     );
 }
 
+fn exclusion_owner_fixture() -> (CatalogIr, Value) {
+    let catalog = receiving_catalog();
+    let purchase_order = table(&catalog, "purchase_order");
+    let purchase_order = rebuilt_table(
+        purchase_order,
+        purchase_order.columns().to_vec(),
+        purchase_order.constraints().to_vec(),
+    )
+    .with_exclusions(vec![
+        Exclusion::new(
+            "purchase_order_supplier_excl",
+            ExclusionAccessMethod::Gist,
+            vec![ExclusionKey::new(
+                ExclusionElement::column("supplier_id"),
+                "=",
+            )],
+            ["supplier_id"],
+        )
+        .unwrap(),
+    ]);
+    let mut manifest = overlay_manifest();
+    manifest["models"]["purchase_order"]["operations"]["update"]["error_details"]["exclusion_violation"] =
+        json!({"required": ["constraint"]});
+    (replacing_table(&catalog, purchase_order), manifest)
+}
+
+#[test]
+fn exclusion_owners_accept_the_package_and_a_declared_base() {
+    let (catalog, mut manifest) = exclusion_owner_fixture();
+    for owner in ["client_acme_receiving", "wamn_receiving"] {
+        manifest["models"]["purchase_order"]["constraint_owners"] = json!({
+            "purchase_order_supplier_excl": owner
+        });
+        let package = run(&catalog, &manifest, &generic_operation_sources())
+            .expect("an actual exclusion may belong to the package or a declared base");
+        let errors = artifact_json(
+            &package,
+            "generated/contracts/purchase_order/update.errors.json",
+        );
+        assert_eq!(errors["closed"], json!(true));
+        let exclusions = errors["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|case| case["literal"] == "exclusion_violation")
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            exclusions,
+            vec![json!({
+                "literal": "exclusion_violation",
+                "from": "exclusion_violation",
+                "constraint": "purchase_order_supplier_excl",
+                "detail": {"required": ["constraint"]}
+            })],
+            "the declared owner {owner} preserves the exact reachable refusal"
+        );
+    }
+}
+
+#[test]
+fn exclusion_owners_reject_unknown_constraints() {
+    let (catalog, mut manifest) = exclusion_owner_fixture();
+    manifest["models"]["purchase_order"]["constraint_owners"] = json!({
+        "purchase_order_unknown_excl": "client_acme_receiving"
+    });
+    let error = run(&catalog, &manifest, &generic_operation_sources())
+        .expect_err("an existing exclusion does not admit an unknown constraint name");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidModel);
+    assert_eq!(
+        error.object(),
+        Some("receiving.purchase_order.purchase_order_unknown_excl")
+    );
+    assert_eq!(
+        error.to_string(),
+        "InvalidModel: purchase_order owns unknown constraint purchase_order_unknown_excl"
+    );
+}
+
+#[test]
+fn exclusion_owners_reject_undeclared_owners() {
+    let (catalog, mut manifest) = exclusion_owner_fixture();
+    manifest["models"]["purchase_order"]["constraint_owners"] = json!({
+        "purchase_order_supplier_excl": "undeclared_package"
+    });
+    let error = run(&catalog, &manifest, &generic_operation_sources())
+        .expect_err("an existing exclusion does not admit an undeclared owner");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidModel);
+    assert_eq!(error.object(), None);
+    assert_eq!(
+        error.to_string(),
+        "InvalidModel: purchase_order.purchase_order_supplier_excl owner undeclared_package is not the package or a declared base"
+    );
+}
+
 #[test]
 fn custom_operation_kinds_visibility_permissions_and_registration_are_closed() {
     let mut empty_component = overlay_manifest();

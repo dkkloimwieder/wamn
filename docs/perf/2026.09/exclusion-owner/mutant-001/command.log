@@ -1,0 +1,31 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-owner-20260910/crates/schema/generator)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.12s
+     Running tests/generation.rs (target/debug/deps/generation-228e6c79f0773dac)
+
+running 1 test
+test exclusion_owners_accept_the_package_and_a_declared_base ... FAILED
+
+failures:
+
+---- exclusion_owners_accept_the_package_and_a_declared_base stdout ----
+
+thread 'exclusion_owners_accept_the_package_and_a_declared_base' (1576605) panicked at crates/schema/generator/tests/generation.rs:1112:14:
+an actual exclusion may belong to the package or a declared base: GenerateError { kind: InvalidModel, context: "purchase_order owns unknown constraint purchase_order_supplier_excl", object: Some("receiving.purchase_order.purchase_order_supplier_excl"), path: None, source: None }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    exclusion_owners_accept_the_package_and_a_declared_base
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 57 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p wamn-schema-generator --test generation`

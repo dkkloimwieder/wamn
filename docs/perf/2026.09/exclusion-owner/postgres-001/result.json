@@ -1,0 +1,9 @@
+{
+  "passed": false,
+  "container": "wamn-exclusion-owner-ef046d0c1304",
+  "packages": {},
+  "failure": "ready: exit 2, expected 0",
+  "cleanup_complete": true,
+  "source_unchanged": true,
+  "seconds": 2.025
+}
