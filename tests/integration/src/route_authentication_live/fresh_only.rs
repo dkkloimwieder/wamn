@@ -37,7 +37,13 @@ const OPERATION: &str = "wamn:node/handler@0.1.0";
 const WIRING: &str = "prior_commit";
 const ROUTE: &str = "/fresh_only_probe/prior_commit";
 const COUNTER_ID: &str = "00000000-0000-0000-0000-000000000904";
-const COUNTER_SQL: &str = "UPDATE fresh_only_probe.counter SET count = count + 1 WHERE tenant_id = current_setting('app.tenant')";
+const FOREIGN_COUNTER_ID: &str = "00000000-0000-0000-0000-000000000905";
+const FOREIGN_TENANT: &str = "prior-commit-other-tenant";
+const COUNTER_SQL: &str = "UPDATE fresh_only_probe.counter SET count = count + 1";
+const COUNTER_POLICY_SQL: &str = "CREATE POLICY prior_commit_tenant ON fresh_only_probe.counter \
+    TO wamn_app \
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()) \
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())";
 
 pub(super) struct Proof<'a> {
     pub inputs: &'a JourneyDocument,
@@ -108,28 +114,27 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
     .await?;
     let counter_read = std::fs::read_to_string(package.join("generated/sql/counter/get.sql"))?;
     // Test instrumentation, not a generated application command: the ordinary
-    // raw palette import uses GuestSql and its tenant claim. Only count is
+    // raw palette import uses GuestSql and its login-bound tenant. Only count is
     // writable; this fixture adds no role or permanent product policy.
     proof
         .project
-        .batch_execute(
+        .batch_execute(&format!(
             "ALTER TABLE fresh_only_probe.counter ENABLE ROW LEVEL SECURITY; \
          ALTER TABLE fresh_only_probe.counter FORCE ROW LEVEL SECURITY; \
-         CREATE POLICY prior_commit_tenant ON fresh_only_probe.counter \
-           USING (tenant_id = current_setting('app.tenant', true)) \
-           WITH CHECK (tenant_id = current_setting('app.tenant', true)); \
+         {COUNTER_POLICY_SQL}; \
          REVOKE ALL ON fresh_only_probe.counter FROM PUBLIC, wamn_app; \
          GRANT USAGE ON SCHEMA fresh_only_probe TO wamn_app; \
          GRANT SELECT (id, tenant_id, count), UPDATE (count) \
-           ON fresh_only_probe.counter TO wamn_app;",
-        )
+           ON fresh_only_probe.counter TO wamn_app;"
+        ))
         .await?;
     proof
         .project
         .execute(
             "INSERT INTO fresh_only_probe.counter (id, tenant_id, count) \
-         VALUES ('00000000-0000-0000-0000-000000000904', $1, 0)",
-            &[&TENANT],
+         VALUES ('00000000-0000-0000-0000-000000000904', $1, 0), \
+                ('00000000-0000-0000-0000-000000000905', $2, 0)",
+            &[&TENANT, &FOREIGN_TENANT],
         )
         .await?;
     assert_counter_authority(&proof).await?;
@@ -572,7 +577,6 @@ async fn counter(proof: &Proof<'_>, generated_get: &str) -> anyhow::Result<i64> 
     let (guest, task) = connect(&proof.credentials.guest_sql).await?;
     let result = async {
         guest.batch_execute("BEGIN; SET LOCAL search_path = fresh_only_probe, public").await?;
-        guest.query_one("SELECT set_config('app.tenant', $1, true)", &[&TENANT]).await?;
         let row = guest.query_typed_one(generated_get,
             &[(&COUNTER_ID, tokio_postgres::types::Type::TEXT)]).await?;
         let count: i64 = row.try_get("count")?;
@@ -583,6 +587,10 @@ async fn counter(proof: &Proof<'_>, generated_get: &str) -> anyhow::Result<i64> 
             "SELECT count FROM fresh_only_probe.counter WHERE tenant_id = $1 AND id = $2::text::uuid",
             &[&TENANT, &COUNTER_ID]).await?.get(0);
         anyhow::ensure!(count == independent, "generated and independent counter reads disagree");
+        let foreign: i64 = proof.project.query_one(
+            "SELECT count FROM fresh_only_probe.counter WHERE tenant_id = $1 AND id = $2::text::uuid",
+            &[&FOREIGN_TENANT, &FOREIGN_COUNTER_ID]).await?.get(0);
+        anyhow::ensure!(foreign == 0, "counter effect changed the foreign tenant row");
         Ok::<_, anyhow::Error>(count)
     }.await;
     task.abort();
@@ -614,10 +622,22 @@ async fn assert_counter_authority(proof: &Proof<'_>) -> anyhow::Result<()> {
             AND NOT has_table_privilege(current_user, 'fresh_only_probe.counter', 'DELETE') \
             AND NOT has_table_privilege(current_user, 'fresh_only_probe.counter', 'TRUNCATE')", &[]).await?.get(0);
         anyhow::ensure!(allowed, "fixture counter grants exceed its one effect column");
-        guest.batch_execute("BEGIN; SELECT set_config('app.tenant', 'wrong-prior-commit-tenant', true)").await?;
-        let changed = guest.execute("UPDATE fresh_only_probe.counter SET count = count + 1", &[]).await?;
+        let login_bound: bool = guest.query_one("SELECT \
+            current_user = session_user AND NOT rolsuper AND NOT rolbypassrls \
+            AND current_setting('app.tenant', true) IS NULL \
+            AND wamn_authority.current_tenant_key() = wamn_authority.tenant_key($1) \
+            FROM pg_roles WHERE rolname = current_user", &[&TENANT]).await?.get(0);
+        anyhow::ensure!(login_bound, "counter requires an ordinary tenant-bound GuestSql login");
+        guest.batch_execute("BEGIN").await?;
+        guest.query_one("SELECT set_config('app.tenant', $1, true)", &[&FOREIGN_TENANT]).await?;
+        let rows = guest.query(&format!("{COUNTER_SQL} RETURNING tenant_id, count"), &[]).await?;
+        anyhow::ensure!(rows.len() == 1 && rows[0].get::<_, String>(0) == TENANT
+            && rows[0].get::<_, i64>(1) == 1,
+            "forged GUC changed the counter's login-bound authority");
+        let foreign = guest.execute(&format!("{COUNTER_SQL} WHERE tenant_id = $1"),
+            &[&FOREIGN_TENANT]).await?;
         guest.batch_execute("ROLLBACK").await?;
-        anyhow::ensure!(changed == 0, "counter update escaped the real GuestSql tenant RLS");
+        anyhow::ensure!(foreign == 0, "counter update escaped the real GuestSql tenant RLS");
         Ok::<_, anyhow::Error>(())
     }.await;
     task.abort();
@@ -890,6 +910,212 @@ mod execution_tests {
     struct Calls {
         order: Vec<&'static str>,
         nested: Option<(NodeContext, String)>,
+    }
+
+    #[tokio::test]
+    #[ignore = "requires WAMN_TENANT_KEY_PG_URL on a fresh disposable PostgreSQL 18 server"]
+    async fn counter_uses_login_tenant_without_a_guest_guc() -> anyhow::Result<()> {
+        use wamn_control_provision::sql::{
+            ensure_app_acl_role_sql, ensure_db_owner_role_sql, prepare_workload_generation_sql,
+        };
+        use wamn_control_provision::tenant_key::authority_derivations_sql;
+        use wamn_control_provision::workload_role::{
+            WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
+        };
+        use wamn_run_state::CredentialGeneration;
+
+        const DATABASE: &str = "wamn-db-acme--billing--prior-commit";
+        let url = std::env::var("WAMN_TENANT_KEY_PG_URL")
+            .context("WAMN_TENANT_KEY_PG_URL must arm this disposable proof")?;
+        let config: tokio_postgres::Config = url
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid tenant-key proof administrator URL"))?;
+        anyhow::ensure!(
+            config.get_dbname() == Some("postgres") && config.get_options().is_none(),
+            "tenant-key proof requires a fresh postgres database without session options"
+        );
+        let (admin, driver) = config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .map_err(|_| anyhow::anyhow!("connect tenant-key proof administrator"))?;
+        let admin_task = tokio::spawn(async move {
+            let _ = driver.await;
+        });
+        let pristine: bool = admin
+            .query_one(
+                "SELECT \
+            current_setting('server_version_num')::int / 10000 = 18 \
+            AND (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) \
+            AND NOT EXISTS (SELECT FROM pg_roles WHERE rolname IN ('wamn_db_owner', 'wamn_app')) \
+            AND NOT EXISTS (SELECT FROM pg_database WHERE datname = $1)",
+                &[&DATABASE],
+            )
+            .await?
+            .get(0);
+        anyhow::ensure!(
+            pristine,
+            "tenant-key proof requires a fresh PostgreSQL 18 superuser server"
+        );
+        admin.batch_execute(ensure_db_owner_role_sql()).await?;
+        admin.batch_execute(&ensure_app_acl_role_sql()).await?;
+        admin
+            .batch_execute(&format!(
+                "CREATE DATABASE \"{DATABASE}\" OWNER wamn_db_owner"
+            ))
+            .await?;
+        let role = workload_generation_role(
+            WorkloadRoleFamily::App,
+            WorkloadRoleScope::Tenant {
+                tenant: super::TENANT,
+                database: DATABASE,
+            },
+            CredentialGeneration::A,
+        )?;
+        let password = uuid::Uuid::new_v4().to_string();
+        admin
+            .batch_execute(&prepare_workload_generation_sql(
+                WorkloadRoleFamily::App,
+                DATABASE,
+                &role,
+                &password,
+                "infinity",
+            ))
+            .await?;
+        let mut project_config = config.clone();
+        project_config.dbname(DATABASE);
+        let (project, driver) = project_config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .map_err(|_| anyhow::anyhow!("connect tenant-key proof database"))?;
+        let project_task = tokio::spawn(async move {
+            let _ = driver.await;
+        });
+        project
+            .batch_execute(&authority_derivations_sql(DATABASE))
+            .await?;
+        project.batch_execute("CREATE SCHEMA fresh_only_probe; \
+            CREATE TABLE fresh_only_probe.counter (tenant_id text PRIMARY KEY, count bigint NOT NULL); \
+            ALTER TABLE fresh_only_probe.counter ENABLE ROW LEVEL SECURITY; \
+            ALTER TABLE fresh_only_probe.counter FORCE ROW LEVEL SECURITY; \
+            CREATE POLICY prior_commit_tenant ON fresh_only_probe.counter \
+              USING (tenant_id = current_setting('app.tenant', true)) \
+              WITH CHECK (tenant_id = current_setting('app.tenant', true)); \
+            REVOKE ALL ON fresh_only_probe.counter FROM PUBLIC, wamn_app; \
+            GRANT USAGE ON SCHEMA fresh_only_probe TO wamn_app; \
+            GRANT SELECT (tenant_id, count), UPDATE (count) ON fresh_only_probe.counter TO wamn_app;").await?;
+        project
+            .execute(
+                "INSERT INTO fresh_only_probe.counter VALUES ($1, 0), ($2, 0)",
+                &[&super::TENANT, &super::FOREIGN_TENANT],
+            )
+            .await?;
+        let mut guest_config = project_config.clone();
+        guest_config.user(&role).password(&password);
+        let (guest, driver) = guest_config
+            .connect(tokio_postgres::NoTls)
+            .await
+            .map_err(|_| anyhow::anyhow!("connect actual non-superuser tenant login"))?;
+        let guest_task = tokio::spawn(async move {
+            let _ = driver.await;
+        });
+        let actual_login: bool = guest
+            .query_one(
+                "SELECT current_user = $1 AND session_user = $1 \
+            AND NOT rolsuper AND NOT rolbypassrls \
+            AND current_setting('app.tenant', true) IS NULL \
+            AND wamn_authority.current_tenant_key() = wamn_authority.tenant_key($2) \
+            FROM pg_roles WHERE rolname = current_user",
+                &[&role, &super::TENANT],
+            )
+            .await?
+            .get(0);
+        anyhow::ensure!(
+            actual_login,
+            "test must use the actual restricted tenant login without app.tenant"
+        );
+        let original = guest.execute(
+            "UPDATE fresh_only_probe.counter SET count = count + 1 WHERE tenant_id = current_setting('app.tenant')",
+            &[],
+        ).await;
+        let original_result = match original {
+            Ok(0) => "zero-rows",
+            Err(error)
+                if error.code() == Some(&tokio_postgres::error::SqlState::UNDEFINED_OBJECT) =>
+            {
+                "42704"
+            }
+            _ => anyhow::bail!("the original GUC fixture did not reproduce its specific refusal"),
+        };
+        let unchanged: bool = project
+            .query_one(
+                "SELECT count(*) = 2 AND bool_and(count = 0) FROM fresh_only_probe.counter",
+                &[],
+            )
+            .await?
+            .get(0);
+        anyhow::ensure!(unchanged, "original refused update changed committed data");
+        println!("FRESH_ONLY_COUNTER_GUC original_result={original_result}");
+        project
+            .batch_execute("DROP POLICY prior_commit_tenant ON fresh_only_probe.counter")
+            .await?;
+        project.batch_execute(super::COUNTER_POLICY_SQL).await?;
+        assert_eq!(
+            guest.execute(COUNTER_SQL, &[]).await?,
+            1,
+            "login-bound floor must allow one own row without any tenant GUC"
+        );
+        for expected in [1_i64, 2] {
+            if expected == 2 {
+                guest.batch_execute("BEGIN").await?;
+                guest
+                    .query_one(
+                        "SELECT set_config('app.tenant', $1, true)",
+                        &[&super::FOREIGN_TENANT],
+                    )
+                    .await?;
+                assert_eq!(
+                    guest.execute(COUNTER_SQL, &[]).await?,
+                    1,
+                    "a forged tenant GUC must not change the login's one-row authority"
+                );
+                assert_eq!(
+                    guest
+                        .execute(
+                            &format!("{COUNTER_SQL} WHERE tenant_id = $1"),
+                            &[&super::FOREIGN_TENANT]
+                        )
+                        .await?,
+                    0,
+                    "forged GUC authorized another tenant"
+                );
+                guest.batch_execute("COMMIT").await?;
+            }
+            let rows = project
+                .query("SELECT tenant_id, count FROM fresh_only_probe.counter", &[])
+                .await?;
+            anyhow::ensure!(rows.len() == 2, "counter row set changed");
+            for row in rows {
+                let tenant: String = row.get(0);
+                let count: i64 = row.get(1);
+                let expected_count = if tenant == super::TENANT {
+                    expected
+                } else {
+                    anyhow::ensure!(tenant == super::FOREIGN_TENANT, "unexpected counter tenant");
+                    0
+                };
+                anyhow::ensure!(
+                    count == expected_count,
+                    "login-bound update changed the wrong committed row"
+                );
+            }
+        }
+        guest_task.abort();
+        project_task.abort();
+        admin_task.abort();
+        println!(
+            "FRESH_ONLY_COUNTER_LOGIN result=pass own_updates=2 foreign_updates=0 forged_guc=refused"
+        );
+        Ok(())
     }
 
     #[test]
