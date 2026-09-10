@@ -112,7 +112,7 @@ for base in ("baseline", "additive"):
     require(isinstance(files, dict) and "wamn.json" in files and "generated/package-weld.json" in files
             and all(isinstance(value, str) and sha256.fullmatch(value) for value in files.values()),
             f"{base} omitted the immutable overlay file identities")
-    for key in ("overlay_component_sha256", "base_initial_migration_sha256", "catalog_sha256"):
+    for key in ("overlay_component_sha256", "base_initial_migration_sha256", "observed_schema_sha256"):
         require(isinstance(document[key], str) and sha256.fullmatch(document[key]), f"{base} has invalid {key}")
     require(document["schema_admission_claim"] is False, "A schema observation cannot claim production admission enforcement")
     observations[base] = document
@@ -120,7 +120,7 @@ for base in ("baseline", "additive"):
 baseline, additive = observations["baseline"], observations["additive"]
 for key in ("overlay_files", "overlay_component_sha256", "required_schema_contract"):
     require(baseline[key] == additive[key], f"The overlay changed between installations: {key}")
-for key in ("base_initial_migration_sha256", "catalog_sha256"):
+for key in ("base_initial_migration_sha256", "observed_schema_sha256"):
     require(baseline[key] != additive[key], f"The additive candidate did not change {key}")
 breaking = baseline["breaking"]
 require(breaking["cleanup"] == "database-absent" and breaking["overlay_unchanged"] is True,
@@ -136,7 +136,7 @@ result = {
     "case": "receiving-postcommit-pair", "result": "pass", "source_commit": source,
     "independent_installations": 2, "overlay_file_count": len(baseline["overlay_files"]),
     "overlay_component_sha256": baseline["overlay_component_sha256"],
-    "baseline_catalog_sha256": baseline["catalog_sha256"], "additive_catalog_sha256": additive["catalog_sha256"],
+    "baseline_observed_schema_sha256": baseline["observed_schema_sha256"], "additive_observed_schema_sha256": additive["observed_schema_sha256"],
     "breaking_refusal": breaking["refusal"], "cleanup": "pass",
 }
 (root / "pair.json").write_text(json.dumps(result, indent=2) + "\n")

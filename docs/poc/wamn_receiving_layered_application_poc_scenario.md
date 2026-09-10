@@ -1160,7 +1160,7 @@ This section defines proof obligations. It records no executed result.
 
 `OVL-SCHEMA` requires the unchanged overlay to operate with both the baseline and an additive base.
 The affected state includes the consumed fields, constraints, and installed package ownership records.
-The observation follows the thirteen released route cases and reads PostgreSQL through the schema introspector.
+The observation follows the thirteen released route cases and reads the required columns and named constraints from PostgreSQL catalogs.
 The `overlay_compatibility` test module compares the required schema and proves the typed ownership refusal in a third empty database.
 The production enforcer for that refusal is `apply_package::preflight_add_definition`.
 The schema comparison is a test observation, not a new production admission rule.
