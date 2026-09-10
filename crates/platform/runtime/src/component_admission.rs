@@ -526,6 +526,7 @@ mod tests {
                 operations: BTreeMap::from([(
                     OPERATION.to_string(),
                     ComponentOperationDeclaration {
+                        committed_result_schema: None,
                         fresh_only: false,
                         registered_operation: None,
                         dependencies: Vec::new(),

@@ -138,7 +138,7 @@ fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
 }
 
 #[test]
-fn receiving_replay_and_wms_unknown_completion_use_the_served_contract() {
+fn receiving_replay_and_wms_composed_completion_use_the_served_contract() {
     let receiving = emit_tui(&release("receiving"), "receiving").unwrap();
     let command = spec(
         source(
@@ -160,14 +160,14 @@ fn receiving_replay_and_wms_unknown_completion_use_the_served_contract() {
     );
     assert!(command.contains("direct: false"));
     assert!(command.contains("replay: submission::Replay::Unknown"));
-    assert!(command.contains("result_class: None"));
+    assert!(command.contains("result_class: Some(\"one\")"));
     assert!(command.contains("errors: &[\n        ]"));
-    assert!(!command.contains("movement_id"));
+    assert!(command.contains("partial_schema: Some("));
+    assert!(command.contains("committed_result"));
     let bindings = emit_rust_client(&ir).unwrap();
     let module = source(&bindings, "generated/client/inventory.rs");
-    assert!(module.contains(
-        "pub const INVENTORY_MOVE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[\n];"
-    ));
+    assert!(module.contains("stored.key"));
+    assert!(module.contains("stored.container"));
 }
 
 fn fixtures() -> ClientContractIr {

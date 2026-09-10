@@ -92,6 +92,31 @@ palette nodes stay per-item; and **per-item outcome reporting** for nodes
 whose work can fail per item (`blob-put` fails the emission as a whole
 today).
 
+### Declared served responses
+
+An admitted registered operation can declare a `committed-result-schema` for
+results that it returns only after commitment, including an unchanged replayed
+result. A wiring can declare a separate `response` schema for its named Respond
+terminal and select one `committed-result` node. These declarations do not change
+the schemas on wiring edges.
+
+The router retains a selected result only when the actual output matches that
+operation's admitted commitment contract. A second successful visit makes that
+single-result evidence ambiguous. The existing first terminal verdict still
+stands when later work fails.
+
+If later work fails before a terminal verdict, the served error carries only
+`committed_result` and `failed_outcome`. The failure preserves its existing code,
+message and operation when present. One observed failed capability attempt adds
+its existing effect outcome. Missing or ambiguous observations add none, and a
+pure label failure does not invent an effect outcome. This evidence lives only
+for the current delivery, without transaction tracking or stored node history.
+
+The generated client validates the declared partial response and its request
+identity before it reports partial completion. A malformed response or absent
+commitment evidence leaves the outcome unknown. Neither partial completion nor
+uncertainty grants replay of a composed route.
+
 ## Ingress and durability
 
 1. **Hot HTTP:** attachment → router → response, with no run or queue row.

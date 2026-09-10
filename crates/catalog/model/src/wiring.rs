@@ -170,6 +170,19 @@ pub struct WiringEdge {
     pub to_port: Option<String>,
 }
 
+/// The normal HTTP response and optional source of committed command evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct WiringResponse {
+    /// The Respond terminal whose whole HTTP envelope matches the schema.
+    pub node: String,
+    /// The whole normal HTTP envelope, independent of schemas on wiring edges.
+    pub schema: Value,
+    /// The node whose admitted operation declares a committed result schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_result: Option<String>,
+}
+
 /// One version of a wiring: the document `catalog.wirings.graph_json` stores.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -212,6 +225,9 @@ pub struct WiringDocument {
     /// field and this carrier inherited (wamn-0h0g.26.5).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cases: Vec<wamn_execution_contract::TestSetCase>,
+    /// Explicit contracts for normal responses and selected committed results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<WiringResponse>,
 }
 
 impl WiringDocument {
@@ -237,6 +253,7 @@ impl WiringDocument {
             nodes,
             edges,
             cases,
+            response: None,
         };
         document.validate()?;
         Ok(document)
@@ -316,6 +333,30 @@ impl WiringDocument {
             }
         }
 
+        if let Some(response) = &self.response {
+            validate_text(&response.node, "response node")?;
+            let node = self.nodes.get(&response.node).ok_or_else(|| {
+                CatalogIdentityError::UnresolvedWiringNode {
+                    node_id: response.node.clone(),
+                }
+            })?;
+            if node.terminal != Some(WiringTerminal::Respond) {
+                return invalid("response node must be a Respond terminal");
+            }
+            crate::component_library::normalize_schema(response.schema.clone(), "response")
+                .map_err(|error| CatalogIdentityError::InvalidDefinition {
+                    message: format!("wiring response schema is invalid: {error}"),
+                })?;
+            if let Some(committed) = &response.committed_result {
+                validate_text(committed, "committed-result node")?;
+                if !self.nodes.contains_key(committed) {
+                    return Err(CatalogIdentityError::UnresolvedWiringNode {
+                        node_id: committed.clone(),
+                    });
+                }
+            }
+        }
+
         if !self.cases.is_empty() {
             wamn_execution_contract::validate_cases(&self.cases).map_err(|error| {
                 CatalogIdentityError::InvalidDefinition {
@@ -325,6 +366,36 @@ impl WiringDocument {
         }
         Ok(())
     }
+}
+
+/// Build the narrow HTTP error schema for one declared committed command result.
+pub fn partial_response_schema(committed_schema: &Value) -> Value {
+    let mut committed_schema = committed_schema.clone();
+    if let Some(schema) = committed_schema.as_object_mut() {
+        // Keep document-local references scoped to the original success schema.
+        schema
+            .entry("$id")
+            .or_insert_with(|| Value::String("urn:wamn:committed-result".to_owned()));
+    }
+    serde_json::json!({
+        "type": "object",
+        "required": ["committed_result", "failed_outcome"],
+        "additionalProperties": false,
+        "properties": {
+            "committed_result": committed_schema,
+            "failed_outcome": {
+                "type": "object",
+                "required": ["code"],
+                "additionalProperties": false,
+                "properties": {
+                    "code": {"type": "string", "minLength": 1},
+                    "message": {"type": "string"},
+                    "operation": {"type": "string"},
+                    "effect_outcome": {"enum": wamn_execution_contract::EffectOutcome::ALL.map(wamn_execution_contract::EffectOutcome::label)}
+                }
+            }
+        }
+    })
 }
 
 fn invalid(message: &str) -> Result<(), CatalogIdentityError> {
@@ -488,6 +559,89 @@ mod tests {
         assert!(
             WiringDocument::parse(&stored).is_err(),
             "wiring bytes cannot author a parallel package coordinate"
+        );
+    }
+
+    #[test]
+    fn response_contracts_select_existing_nodes_and_validate_the_normal_schema() {
+        let original = crud_wiring(Vec::new());
+        let mut wire = serde_json::to_value(&original).unwrap();
+        assert!(wire.get("response").is_none());
+        wire["response"] = json!({
+            "node": "out",
+            "schema": {"type": "array"},
+            "committed-result": "write"
+        });
+        let declared = WiringDocument::parse(&wire).expect("explicit response contract parses");
+        assert_ne!(original.wiring_hash(), declared.wiring_hash());
+        assert_eq!(serde_json::to_value(&declared).unwrap(), wire);
+        assert_eq!(declared.edges, original.edges);
+
+        for response in [
+            json!({"node": "missing", "schema": {}}),
+            json!({"node": "write", "schema": {}}),
+            json!({"node": "out", "schema": {"type": "unknown"}}),
+            json!({"node": "out", "schema": {"$ref": "https://example.invalid/schema"}}),
+            json!({"node": "out", "schema": {}, "committed-result": "missing"}),
+            json!({"node": "out", "schema": {}, "committed-result": " "}),
+        ] {
+            wire["response"] = response;
+            assert!(WiringDocument::parse(&wire).is_err(), "{wire}");
+        }
+    }
+
+    #[test]
+    fn partial_response_schema_preserves_success_references_and_refuses_extra_results() {
+        let success = json!({
+            "$defs": {"receipt": {"type": "string"}},
+            "type": "object",
+            "required": ["receipt_id"],
+            "properties": {"receipt_id": {"$ref": "#/$defs/receipt"}},
+            "additionalProperties": false
+        });
+        let schema = super::partial_response_schema(&success);
+        let mut compiler = boon::Compiler::new();
+        compiler.set_default_draft(boon::Draft::V2020_12);
+        compiler
+            .add_resource("mem://partial-response.json", schema)
+            .unwrap();
+        let mut schemas = boon::Schemas::new();
+        let compiled = compiler
+            .compile("mem://partial-response.json", &mut schemas)
+            .unwrap();
+        let accepted = json!({
+            "committed_result": {"receipt_id": "receipt-1"},
+            "failed_outcome": {"code": "write_failed", "operation": "store", "effect_outcome": "response-lost"}
+        });
+        schemas
+            .validate(&accepted, compiled)
+            .expect("declared evidence validates");
+        for (pointer, value) in [
+            ("/all_results", json!([])),
+            ("/committed_result/receipt_id", json!(7)),
+            ("/failed_outcome/code", json!("")),
+            ("/failed_outcome/effect_outcome", json!("rolled-back")),
+            ("/failed_outcome/extra", json!(true)),
+        ] {
+            let mut invalid = accepted.clone();
+            let (parent, key) = pointer.rsplit_once('/').unwrap();
+            invalid
+                .pointer_mut(parent)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .insert(key.to_owned(), value);
+            assert!(schemas.validate(&invalid, compiled).is_err(), "{invalid}");
+        }
+        let no_commit = json!({"failed_outcome": {"code": "write_failed"}});
+        assert!(schemas.validate(&no_commit, compiled).is_err());
+        assert!(
+            schemas
+                .validate(
+                    &json!({"committed_result": {"receipt_id": "receipt-1"}}),
+                    compiled
+                )
+                .is_err()
         );
     }
 

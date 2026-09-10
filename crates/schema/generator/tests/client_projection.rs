@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -468,12 +468,48 @@ fn receiving_direct_claim_grants_replay_but_wms_composition_does_not() {
         Some("wamn:node/async-handler@0.1.0")
     );
     assert_eq!(route.replay, None);
-    assert_eq!(route.response.schema, None);
-    assert_eq!(route.response.result_class, None);
-    assert!(
-        route.response.fields.is_empty(),
-        "inner move fields are not the served contract"
+    assert!(route.response.schema.is_some());
+    let partial = route
+        .response
+        .partial_schema
+        .as_ref()
+        .expect("declared partial schema");
+    let committed = &partial["properties"]["committed_result"]["items"]["properties"]["value"];
+    let command_fields = leaf_fields(&command.result_fields);
+    assert_eq!(
+        committed["properties"].as_object().unwrap().len(),
+        command_fields.len()
     );
+    for field in command_fields {
+        assert!(
+            committed["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(field.path))
+        );
+        let property = &committed["properties"][&field.path];
+        let expected_type = match field.type_name.as_str() {
+            "uuid" | "text" => "string",
+            "int64" => "integer",
+            other => panic!("the committed declaration needs the generated {other} type"),
+        };
+        assert_eq!(property["type"], expected_type);
+        if !field.values.is_empty() {
+            let actual = property["enum"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap())
+                .collect::<BTreeSet<_>>();
+            let expected = field.values.iter().map(String::as_str).collect();
+            assert_eq!(actual, expected);
+        }
+    }
+    assert_eq!(route.response.result_class.as_deref(), Some("one"));
+    let fields = leaf_fields(&route.response.fields);
+    for path in ["movement_id", "zpl", "stored.container", "stored.key"] {
+        assert!(fields.iter().any(|field| field.path == path), "{path}");
+    }
 }
 
 #[test]

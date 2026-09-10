@@ -1,0 +1,31 @@
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.23s
+     Running tests/client_projection.rs (target/debug/deps/client_projection-64eb46ddf6d7208f)
+
+running 13 tests
+test query_columns_remain_specific_to_each_result_contract ... ok
+test custom_state_and_claim_declarations_do_not_invent_input_key_links ... ok
+test declared_kind_and_record_mappings_bind_operations_with_unrelated_names ... ok
+test a_record_read_keeps_its_other_required_inputs ... ok
+test missing_or_unexposed_record_read_requires_composition ... ok
+test declared_delete_needs_a_compatible_exposed_read_for_its_revision ... ok
+test composed_record_read_uses_the_served_terminal_response_for_revision_binding ... ok
+test revision_roles_use_declared_paths_and_platform_fields_only ... ok
+test incompatible_record_relation_key_or_revision_requires_composition ... ok
+test revision_binding_requires_one_served_record_even_when_terminal_fields_match ... ok
+test receiving_update_preserves_writable_type_presence_and_null_refusal ... ok
+test receiving_query_closed_string_domains_remain_typed_without_explicit_schema_types ... ok
+test receiving_direct_claim_grants_replay_but_wms_composition_does_not ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

@@ -468,6 +468,7 @@ mod tests {
             component: "archiver".to_string(),
             operation: "orders:archive/store@1.0.0".to_string(),
             closure: ConnectionExecutionClosure::Released,
+            effects: None,
         }
     }
 
@@ -662,6 +663,7 @@ mod tests {
                     .expect("the fixture snapshot names an operation"),
                 ServingComponentOperation {
                     fresh_only: false,
+                    committed_result_schema: None,
                     registered_operation: snapshot.registered_operation.clone(),
                     dependencies: Vec::new(),
                     statements: BTreeMap::new(),

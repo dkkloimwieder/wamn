@@ -1,0 +1,36 @@
+   Compiling chrono v0.4.45
+   Compiling boon v0.6.1
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/components/events/wire)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/catalog/model)
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/execution/run-state)
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/control/registry)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/control/provision)
+error: cannot find macro `json` in this scope
+   --> crates/catalog/model/src/serving_manifest.rs:857:13
+    |
+857 |             json!("{}");
+    |             ^^^^
+
+error: cannot find macro `json` in this scope
+   --> crates/catalog/model/src/serving_manifest.rs:847:17
+    |
+847 |                 json!(schema);
+    |                 ^^^^
+
+error: cannot find macro `json` in this scope
+   --> crates/catalog/model/src/serving_manifest.rs:838:13
+    |
+838 |             json!("{\"type\":\"array\"}");
+    |             ^^^^
+
+error: could not compile `wamn-catalog` (lib test) due to 3 previous errors

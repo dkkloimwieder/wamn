@@ -1,0 +1,20 @@
+   Compiling chrono v0.4.45
+   Compiling wamn-client v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/client/core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.62s
+     Running tests/request.rs (target/debug/deps/request-c4bdc104aa18f8ef)
+
+running 11 tests
+test opaque_result_items_still_enforce_the_declared_array_shape ... ok
+test optional_unknown_types_block_and_unknown_keys_are_not_silently_dropped ... ok
+test nested_arrays_enforce_bounds_and_required_child_fields ... ok
+test numeric_canonicalization_preserves_scale_without_a_precision_limit ... ok
+test repeated_scalar_fields_enforce_their_closed_domain ... ok
+test required_and_nullable_form_four_independent_presence_contracts ... ok
+test results_preserve_opaque_fields_but_reject_corrupt_known_carriers ... ok
+test integer_carriers_follow_the_served_schema ... ok
+test schema_validation_enforces_constraints_and_never_loads_external_resources ... ok
+test supplier_omission_stays_absent_while_explicit_null_is_refused ... ok
+test nested_request_bytes_canonicalize_uuid_time_and_numeric_once ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

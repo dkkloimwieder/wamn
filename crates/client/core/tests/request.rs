@@ -327,6 +327,14 @@ fn results_preserve_opaque_fields_but_reject_corrupt_known_carriers() {
     ];
     let value = json!({"row_version":"4","active":true});
     assert!(!validate_result(FIELDS, &value).expect("known result"));
+    for revision in [json!(4), json!(i64::MIN), json!(i64::MAX)] {
+        let result = json!({"row_version":revision,"active":true});
+        assert!(!validate_result(FIELDS, &result).expect("command result carries a numeric i64"));
+        assert_eq!(
+            result["row_version"], revision,
+            "validation preserves the numeric result"
+        );
+    }
     assert!(
         validate_result(
             FIELDS,
@@ -342,7 +350,9 @@ fn results_preserve_opaque_fields_but_reject_corrupt_known_carriers() {
         .expect("additive result field")
     );
     for corrupt in [
-        json!({"row_version":4,"active":true}),
+        json!({"row_version":4.5,"active":true}),
+        json!({"row_version":u64::MAX,"active":true}),
+        json!({"row_version":"9223372036854775808","active":true}),
         json!({"row_version":"4","active":"true"}),
         json!({"row_version":null,"active":true}),
         json!({"active":true}),

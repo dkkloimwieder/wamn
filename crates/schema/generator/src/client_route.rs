@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use wamn_catalog::{
     ComponentDeclaration, ServingAttachment, WiringDocument, WiringNode, WiringTerminal,
+    partial_response_schema,
 };
 
 use crate::client_ir::{ClientIrError, ClientIrErrorKind};
@@ -14,6 +15,7 @@ use crate::client_ir::{ClientIrError, ClientIrErrorKind};
 pub(super) struct RouteEvidence {
     pub input_schema: Option<Value>,
     pub output_schema: Option<Value>,
+    pub partial_schema: Option<Value>,
     pub terminal_operation: Option<String>,
     pub direct: bool,
 }
@@ -38,7 +40,7 @@ pub(super) fn evidence(
     let Some(wiring) = selected_wiring(publication, attachment)? else {
         return Ok(result);
     };
-    let Some(terminal) = response_node(&wiring) else {
+    let Some((terminal_id, terminal)) = response_node(&wiring) else {
         return Ok(result);
     };
     result.direct = wiring.nodes.len() == 1
@@ -46,7 +48,27 @@ pub(super) fn evidence(
         && terminal.operation_dependency.is_none()
         && attachment.registered_operation.as_deref() == Some(terminal.operation.as_str());
     result.terminal_operation = Some(terminal.operation.clone());
-    result.output_schema = response_schema(publication, attachment, terminal)?;
+    result.output_schema = if let Some(response) = &wiring.response {
+        if response.node != terminal_id {
+            return Err(malformed(
+                publication,
+                "the declared response is not the reachable Respond terminal",
+            ));
+        }
+        if let Some(committed) = &response.committed_result {
+            result.partial_schema =
+                component_schema(publication, attachment, &wiring.nodes[committed], true)?
+                    .as_ref()
+                    .map(partial_response_schema);
+        }
+        Some(read_schema(
+            publication,
+            "wiring response schema",
+            &response.schema,
+        )?)
+    } else {
+        component_schema(publication, attachment, terminal, false)?
+    };
     Ok(result)
 }
 
@@ -76,7 +98,7 @@ fn selected_wiring(
     Ok(selected)
 }
 
-fn response_node(wiring: &WiringDocument) -> Option<&WiringNode> {
+fn response_node(wiring: &WiringDocument) -> Option<(&str, &WiringNode)> {
     let mut pending = vec![wiring.entry.as_str()];
     let mut reached = BTreeSet::new();
     let mut response = None;
@@ -89,7 +111,7 @@ fn response_node(wiring: &WiringDocument) -> Option<&WiringNode> {
             if response.is_some() {
                 return None;
             }
-            response = Some(node);
+            response = Some((node_id, node));
         }
         pending.extend(
             wiring
@@ -102,10 +124,11 @@ fn response_node(wiring: &WiringDocument) -> Option<&WiringNode> {
     response
 }
 
-fn response_schema(
+fn component_schema(
     publication: &Path,
     attachment: &ServingAttachment,
     terminal: &WiringNode,
+    committed: bool,
 ) -> Result<Option<Value>, ClientIrError> {
     // A dependency alias needs its owner's exact publication closure. The
     // attachment's package declarations do not establish that ownership.
@@ -130,6 +153,17 @@ fn response_schema(
             return Ok(None);
         }
         matched = true;
+        if committed {
+            if operation.registered_operation.as_deref() != Some(terminal.operation.as_str()) {
+                continue;
+            }
+            selected = operation
+                .committed_result_schema
+                .as_ref()
+                .map(|schema| read_schema(&path, "committed result schema", schema))
+                .transpose()?;
+            continue;
+        }
         let mut main = operation
             .output_ports
             .iter()
@@ -301,8 +335,22 @@ mod tests {
             result.terminal_operation.as_deref(),
             Some("wamn:node/async-handler@0.1.0")
         );
-        // The package publishes no declaration or source reference for blob-put.
-        assert_eq!(result.output_schema, None);
+        let schema = result.output_schema.expect("declared terminal response");
+        assert_eq!(
+            schema["items"]["properties"]["value"]["properties"]["stored"]["properties"]["key"]["type"],
+            "string"
+        );
+        let partial = result.partial_schema.expect("declared committed result");
+        assert!(
+            partial["properties"]["committed_result"]["items"]["properties"]["value"]["properties"]
+                .get("movement_id")
+                .is_some()
+        );
+        assert!(
+            partial["properties"]["committed_result"]["items"]["properties"]["value"]["properties"]
+                .get("stored")
+                .is_none()
+        );
     }
 
     #[test]
@@ -363,7 +411,10 @@ mod tests {
         let mut wiring = direct_wiring(&attachment);
         wiring["nodes"]["other"] = wiring["nodes"]["operation"].clone();
         let parsed = WiringDocument::parse(&wiring).expect("parse unreachable terminal");
-        assert_eq!(response_node(&parsed), parsed.nodes.get("operation"));
+        assert_eq!(
+            response_node(&parsed),
+            Some(("operation", &parsed.nodes["operation"]))
+        );
         wiring["edges"] = json!([{"from": "operation", "to": "other"}]);
         let parsed = WiringDocument::parse(&wiring).expect("parse two reachable terminals");
         assert_eq!(response_node(&parsed), None);
@@ -399,5 +450,73 @@ mod tests {
         let result =
             evidence(&fixture.attachments(), &attachment).expect("matching package declaration");
         assert_eq!(result.output_schema, Some(json!({"type": "array"})));
+    }
+
+    #[test]
+    fn partial_projection_requires_one_exact_committed_component_declaration() {
+        let (path, attachment) = package_attachment("wms", "inventory-move-http");
+        let publication = path.parent().unwrap();
+        let wiring =
+            super::read_json(&publication.join("wirings/inventory_move_and_label.json")).unwrap();
+        let declaration = super::read_json(&publication.join("components/wms.json.in")).unwrap();
+        let fixture = Publication::new();
+        fixture.write("wirings/composed.json", &wiring);
+        let result = evidence(&fixture.attachments(), &attachment).unwrap();
+        assert!(result.output_schema.is_some());
+        assert!(
+            result.partial_schema.is_none(),
+            "a wiring selector alone proves no commit"
+        );
+        fixture.write("components/wms.json.in", &declaration);
+        assert!(
+            evidence(&fixture.attachments(), &attachment)
+                .unwrap()
+                .partial_schema
+                .is_some()
+        );
+        for field in [
+            "package-id",
+            "component",
+            "interface-version",
+            "registered-operation",
+        ] {
+            let mut unrelated = declaration.clone();
+            if field == "package-id" {
+                unrelated["scope"][field] = json!("other");
+            } else if field == "registered-operation" {
+                unrelated["operations"]["wamn-wms:inventory/move@1.0.0"][field] = json!("other");
+            } else {
+                unrelated[field] = json!("other");
+            }
+            fixture.write("components/wms.json.in", &unrelated);
+            assert!(
+                evidence(&fixture.attachments(), &attachment)
+                    .unwrap()
+                    .partial_schema
+                    .is_none(),
+                "{field}"
+            );
+        }
+        let mut without_response = wiring.clone();
+        without_response.as_object_mut().unwrap().remove("response");
+        fixture.write("wirings/composed.json", &without_response);
+        let opaque = evidence(&fixture.attachments(), &attachment).unwrap();
+        assert!(opaque.output_schema.is_none());
+        assert!(opaque.partial_schema.is_none());
+        let mut unreachable = wiring.clone();
+        unreachable["nodes"]["unreachable"] = wiring["nodes"]["store"].clone();
+        unreachable["response"]["node"] = json!("unreachable");
+        fixture.write("wirings/composed.json", &unreachable);
+        assert!(evidence(&fixture.attachments(), &attachment).is_err());
+        fixture.write("wirings/composed.json", &wiring);
+        fixture.write("components/wms.json.in", &declaration);
+        fixture.write("components/duplicate.json.in", &declaration);
+        assert!(
+            evidence(&fixture.attachments(), &attachment)
+                .unwrap()
+                .partial_schema
+                .is_none(),
+            "ambiguous owners prove no commit"
+        );
     }
 }

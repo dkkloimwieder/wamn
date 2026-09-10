@@ -17,6 +17,7 @@
 //!   contract;
 //! - **failure** — [`WiringFailureKind`], the frozen `failure-code` literals.
 
+mod effect_outcome;
 mod expect;
 pub mod node_contract;
 mod ports;
@@ -28,6 +29,7 @@ use std::fmt::Write as _;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+pub use effect_outcome::EffectOutcome;
 pub use expect::{Expect, ExpectError, ExpectedOutcome};
 pub use node_contract::{
     CanonicalHttpTarget, ConnectionRequirement, PortableHttpTargetError,

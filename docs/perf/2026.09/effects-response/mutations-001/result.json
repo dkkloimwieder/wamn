@@ -1,0 +1,40 @@
+{
+  "capture_sha256": "6f4493e8e03e36739d2673f561e5f446e4a1931f6244cefe5e5f0153d7e78bfa",
+  "harness_sha256": "f1298b8b3cc67a4a3b677da6a3b62e7bd20b8f5b3c03c760c64045f367aaea46",
+  "limits": "Two named in-process regressions only; no live HTTP, guest, database, or full-suite proof. Interruptions and concurrent edits cannot pass.",
+  "mutations": [
+    {
+      "baseline_passed": true,
+      "mutant_assertion_failed": true,
+      "mutant_sha256": "4f66afd16319e223beaf82c2011b98bc16c215896935951e93b255e3a89bc607",
+      "original_atime_ns": 1789003495845430748,
+      "original_mode": 436,
+      "original_mtime_ns": 1789003495815981278,
+      "original_sha256": "a93f05c2f38474063e3cc30eccf485721d0d886b446e54cec89a45c7696046fd",
+      "replacement_count": 1,
+      "restored_mtime_ns": 1789003712061079500,
+      "restored_passed": true,
+      "source": "crates/execution/host/src/router_response.rs",
+      "source_restored": true,
+      "test": "router_response::tests::selected_committed_result_survives_arbitrary_success_and_label_enrichment"
+    },
+    {
+      "baseline_passed": true,
+      "mutant_assertion_failed": true,
+      "mutant_sha256": "be1692dcdff0a76068481897925ffb2a6a59f664d347747b5c731410b5e2d07b",
+      "original_atime_ns": 1789000126526469849,
+      "original_mode": 436,
+      "original_mtime_ns": 1788999751132635999,
+      "original_sha256": "5e0bee7fa88606095c0f1e78c2b3384042312efc10fd89d150d4e496b2e2905d",
+      "replacement_count": 1,
+      "restored_mtime_ns": 1789003722996175083,
+      "restored_passed": true,
+      "source": "crates/platform/runtime/src/plugins/effect_span.rs",
+      "source_restored": true,
+      "test": "plugins::effect_span::tests::one_failure_survives_successes_but_never_another_failure"
+    }
+  ],
+  "passed": true,
+  "repository_root": "/home/kaalin/dev/wamn",
+  "tree": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908"
+}

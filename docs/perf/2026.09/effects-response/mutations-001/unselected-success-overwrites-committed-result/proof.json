@@ -1,0 +1,15 @@
+{
+  "baseline_passed": true,
+  "mutant_assertion_failed": true,
+  "mutant_sha256": "4f66afd16319e223beaf82c2011b98bc16c215896935951e93b255e3a89bc607",
+  "original_atime_ns": 1789003495845430748,
+  "original_mode": 436,
+  "original_mtime_ns": 1789003495815981278,
+  "original_sha256": "a93f05c2f38474063e3cc30eccf485721d0d886b446e54cec89a45c7696046fd",
+  "replacement_count": 1,
+  "restored_mtime_ns": 1789003712061079500,
+  "restored_passed": true,
+  "source": "crates/execution/host/src/router_response.rs",
+  "source_restored": true,
+  "test": "router_response::tests::selected_committed_result_survives_arbitrary_success_and_label_enrichment"
+}
