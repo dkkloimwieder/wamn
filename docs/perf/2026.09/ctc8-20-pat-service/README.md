@@ -85,3 +85,28 @@ The [restored run](helm-001/restored.log) passed all three tests with the origin
 The [full inventory](helm-001/inventory.log) passed eight tests and retained the existing Secret-inventory failure, `wamn-362o.58`.
 
 These chart proofs render manifests locally. They do not claim an installed Helm deployment.
+
+## Integrated workspace
+
+Main fast-forwarded to `437672fc` with unchanged existing file hashes, modes, and staged changes.
+That merge retains the original native proof commits without changing the current source tree.
+The executed Receiving source, `6b91d423`, also remains an ancestor.
+
+The [workspace command](main-landing-001/workspace.command) ran on main and returned 101, with no compile error.
+It reported 2,209 test passes, six documentation-test passes, and 78 failures.
+At least 85 reported passes explicitly skipped their subjects and do not count as live proof.
+The command excluded the two existing schema-regeneration tests to preserve shared files.
+The source patch stayed empty throughout the run.
+
+The [comparison](main-landing-001/workspace-p3-comparison.json) matches all 75 P3 failures by test identity and observed cause.
+The two new PAT live tests refused absent disposable database inputs.
+Their separate armed runs passed in [bootstrap.log](native-003/bootstrap.log) and [service.log](native-003/service.log).
+
+The remaining failure comes from `version_identity::wamn_wit_packages_stay_at_mvp_version`.
+It treats the opening brace in bundled WIT declarations as part of the version.
+All eight named declarations already use `0.1.0`.
+The [base objects](main-landing-001/wit-guard-base.objects) and [merged objects](main-landing-001/wit-guard-merged.objects) are identical for that guard and its named evidence files.
+The existing guard inventory, `wamn-0h0g.15.137`, records this false positive.
+No guard, version, or historical P3 evidence changed.
+
+This workspace result does not claim a fully passing suite or complete release readiness.
