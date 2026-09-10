@@ -52,5 +52,20 @@ The [restored-source run](native-006/run-restored.sh) rebuilt and tested clean c
 All 409 unit tests, [seven session-token tests](native-006/session-token.log), and [13 public-key-cache tests](native-006/session-cache.log) passed.
 The runner also rebuilt the unmodified native identity binary.
 
-This boundary does not claim a deployed PAT service or a post-P3 Receiving proof.
+## Post-P3 workflow
+
+The PAT branch rebased without conflicts onto main commit `88db1d3a`.
+The resulting source commit is `6b91d423`.
+Its [409 unit tests](post-p3-001/unit.log) and [workspace check](post-p3-001/workspace.log) passed.
+The [dry-run](post-p3-001/dry-run.log) selected only Receiving correctness, with no benchmark mode.
+
+The [full workflow](post-p3-001/run-receiving.sh) built the standard host and proof images from that clean source.
+The [console log](post-p3-001/receiving.console.log) records all 13 local routes and eight P3 protocol cases passing after native PAT bootstrap.
+The deployed proof passed three explicit histories, 16 generated histories, and seven boundary cases.
+The [summary](receiving-001/receiving-correctness-summary.json) records those results.
+The [final receipt](receiving-001/receiving-correctness-journey.receipt) binds the result to the source and successful cleanup.
+The runner removed only its owned cluster, containers, images, and private scratch files.
+
+This proof exercises the separate native PAT bootstrap process, not an operator-CA mount through the identity Helm chart.
+That deployment change still requires permission.
 Beads owns the remaining work and approval status.
