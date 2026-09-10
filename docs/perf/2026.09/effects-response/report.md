@@ -105,5 +105,13 @@ Its [diagnostics](live-002/journey/cleanup-cluster-delete.stderr) show that kind
 The cleanup command inherits `KUBECONFIG=/dev/null` from the capture tool.
 The runner now passes its own Kubernetes configuration file to both cluster creation and deletion.
 
-The full journey with successful cleanup and the final combined integration sweep remain unproved.
-The effects issue remains in progress.
+The [third deployed run](live-003/result.json) passes in 324.406 seconds with exit status 0 at source `f14be496`.
+Its [verdict](live-003/journey/verdict.json) records all 13 passing journey arms.
+The [partial receipt](live-003/journey/wms-partial.receipt) records one command, one movement, the observed failure, and successful bucket restoration.
+The [cleanup receipt](live-003/journey/cleanup.receipt) passes with the owned Kubernetes configuration file.
+The [source receipt](live-003/source-stability.json) records a clean worktree at the same commit before and after the run.
+Shared finding `wamn-2npt` remains open for the corresponding Receiving cleanup repair.
+
+The deployed response proof is complete.
+The final combined integration sweep remains unproved while the identity and Receiving proof branches finish their current runs.
+The effects issue remains in progress until that integration boundary.

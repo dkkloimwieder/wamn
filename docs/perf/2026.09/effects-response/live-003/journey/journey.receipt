@@ -1,0 +1,1 @@
+WMS CLUSTER JOURNEY PASS source=f14be496bd31ef1839b76ad04fc829dce1a0334b namespace=wamn-wms-journey host=wms.localhost minted=shell-through-wamn-ctl composed-route=inventory_move_and_label label=one-winning-movement-object rerun=wms-runtime,idle-materializer,native-scheduling,exact-cleanup
