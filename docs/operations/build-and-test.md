@@ -2770,7 +2770,9 @@ Retain the original generated failure, its minimized history, and the reproducti
 Apply the mutation rules in **Traps** below.
 Run the unchanged suite first, then apply one counted production mutation.
 The business control disables canonical-body comparison in `record_receipt::replay_result`.
-The contention control substitutes the existing unlocked purchase-order read for the command's purchase-order lock.
+The contention control replaces `FOR UPDATE` with `FOR KEY SHARE` in the command's purchase-order SQL.
+Regenerate the SQL corpus and component through the normal verification path.
+This permits concurrent purchase-order reads while preserving the operation's declared statement and column authority.
 Each control requires changed guest bytes and the exact named live test.
 A build or earlier journey failure does not kill either mutant.
 Record any surviving protection from line locks or database constraints.

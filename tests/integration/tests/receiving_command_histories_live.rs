@@ -1074,7 +1074,7 @@ fn production_receiving_command_histories() -> Result<()> {
         "explicit_histories":model::examples().len(),"boundary_cases":7}),
     )?;
     println!(
-        "RECEIVING_CORRECTNESS result=pass generated_cases={} boundary_cases=7",
+        "\nRECEIVING_CORRECTNESS result=pass generated_cases={} boundary_cases=7",
         inputs.cases
     );
     Ok(())
