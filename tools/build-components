@@ -182,6 +182,23 @@ for manifest in "${WAMN_MANIFESTS[@]}"; do
 done
 readonly WAMN_METADATA
 
+# Distinguish a package declaration without a component workspace member from
+# inventory drift. Only declared members count; this does not discover crates.
+declare WAMN_ABSENT_PACKAGE_COMPONENTS
+WAMN_ABSENT_PACKAGE_COMPONENTS="$(
+  printf '%s\n' "${WAMN_METADATA[@]}" | jq -er -s \
+    --argjson package_components "$WAMN_PACKAGE_COMPONENTS" '
+    [.[]
+     | (.packages | map({key: .id, value: .name}) | from_entries) as $names
+     | .workspace_members[] | $names[.]] as $members
+    | ($package_components - $members) | join(", ")
+  '
+)" || wamn_fail 65 'could not read component workspace membership from locked metadata'
+readonly WAMN_ABSENT_PACKAGE_COMPONENTS
+if [[ -n "$WAMN_ABSENT_PACKAGE_COMPONENTS" ]]; then
+  wamn_fail 65 "package component crates are absent from the declared component workspaces: $WAMN_ABSENT_PACKAGE_COMPONENTS. Create each missing crate. Register each crate in a component workspace listed in architecture/workspace-tiers.json."
+fi
+
 declare WAMN_PLAN
 WAMN_PLAN="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s --arg profile "$WAMN_PROFILE" \

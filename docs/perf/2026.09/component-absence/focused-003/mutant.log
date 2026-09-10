@@ -1,0 +1,17 @@
+
+running 1 test
+
+thread 'component_build_distinguishes_absent_package_crates_from_inventory_drift' (1467806) panicked at /home/kaalin/.cache/wamn-lanes/component-absence-20260910/tests/conformance/tests/profile_selectors.rs:826:9:
+assertion `left == right` failed
+  left: "build-components: component profile, canonical inventory, and locked metadata drifted\n"
+ right: "build-components: package component crates are absent from the declared component workspaces: fresh-component. Create each missing crate. Register each crate in a component workspace listed in architecture/workspace-tiers.json.\n"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test component_build_distinguishes_absent_package_crates_from_inventory_drift ... FAILED
+
+failures:
+
+failures:
+    component_build_distinguishes_absent_package_crates_from_inventory_drift
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.12s
+

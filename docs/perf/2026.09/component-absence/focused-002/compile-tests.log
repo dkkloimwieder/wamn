@@ -1,0 +1,46 @@
+error[E0277]: the trait bound `CargoMetadata: serde::Deserialize<'de>` is not satisfied
+    --> /home/kaalin/.cache/wamn-lanes/component-absence-20260910/tests/conformance/tests/profile_selectors.rs:81:5
+     |
+  81 |     serde_json::from_slice(&output.stdout)
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+     |
+help: the trait `serde_core::de::Deserialize<'_>` is not implemented for `CargoMetadata`
+    --> /home/kaalin/.cache/wamn-lanes/component-absence-20260910/tests/conformance/tests/profile_selectors.rs:22:1
+     |
+  22 | struct CargoMetadata {
+     | ^^^^^^^^^^^^^^^^^^^^
+     = note: for local types consider adding `#[derive(serde::Deserialize)]` to your `CargoMetadata` type
+     = note: for types from other crates check whether the crate offers a `serde` feature flag
+note: there are multiple different versions of crate `serde_core` in the dependency graph
+    --> /home/kaalin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/src/de/mod.rs:554:1
+     |
+ 554 | pub trait Deserialize<'de>: Sized {
+     | --------------------------------- this is the found trait
+     |
+    ::: /home/kaalin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/src/de/mod.rs:554:1
+     |
+ 554 | pub trait Deserialize<'de>: Sized {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this is the expected trait
+     = help: you can use `cargo tree` to explore your dependency tree
+     = help: the following other types implement trait `serde_core::de::Deserialize<'de>`:
+               &'a Path
+               &'a RawValue
+               &'a [u8]
+               &'a str
+               ()
+               (T,)
+               (T0, T1)
+               (T0, T1, T2)
+             and 147 others
+note: required by a bound in `from_slice`
+    --> /home/kaalin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/de.rs:2669:8
+     |
+2667 | pub fn from_slice<'a, T>(v: &'a [u8]) -> Result<T>
+     |        ---------- required by a bound in this function
+2668 | where
+2669 |     T: de::Deserialize<'a>,
+     |        ^^^^^^^^^^^^^^^^^^^ required by this bound in `from_slice`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.

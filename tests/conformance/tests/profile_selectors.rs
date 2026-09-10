@@ -760,6 +760,141 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
 }
 
 #[test]
+fn component_build_distinguishes_absent_package_crates_from_inventory_drift() {
+    let root = repository_root();
+    let scratch = scratch_directory("component absence");
+    let fake_cargo = write_fake_cargo(&scratch);
+    let capture = scratch.join("captured argv");
+    let metadata_directory = scratch.join("canned metadata");
+    fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
+    for relative in [COMPONENT_TOOL, TIER_MANIFEST, COMPONENT_VIRTUALIZATION] {
+        let destination = scratch.join(relative);
+        fs::create_dir_all(destination.parent().expect("fixture file has a parent"))
+            .expect("failed to create fixture directory");
+        fs::copy(root.join(relative), destination).expect("failed to copy component tool fixture");
+    }
+    for entry in fs::read_dir(root.join("packages")).expect("failed to list packages") {
+        let package = entry.expect("package entry must be readable");
+        let manifest = package.path().join("wamn.json");
+        if manifest.is_file() {
+            let destination = scratch.join("packages").join(package.file_name());
+            fs::create_dir_all(&destination).expect("failed to create package fixture");
+            fs::copy(manifest, destination.join("wamn.json"))
+                .expect("failed to copy package declaration");
+        }
+    }
+    let new_package = scratch.join("packages/fresh-package");
+    fs::create_dir_all(&new_package).expect("failed to create new package fixture");
+    let new_manifest = new_package.join("wamn.json");
+    fs::write(&new_manifest, r#"{"components":{"fresh_component":{}}}"#)
+        .expect("failed to declare new component");
+    let mut metadata = Vec::new();
+    for manifest in COMPONENT_MANIFESTS {
+        let output = cargo_metadata_output(&root, manifest);
+        parse_metadata(&output, manifest);
+        write_fake_metadata(&metadata_directory, &scratch.join(manifest), &output.stdout);
+        metadata.push(serde_json::from_slice::<Value>(&output.stdout).expect("valid metadata"));
+    }
+    let run = |arguments: &[&str]| {
+        let _ = fs::remove_file(&capture);
+        Command::new(scratch.join(COMPONENT_TOOL))
+            .env("CARGO", &fake_cargo)
+            .env("WAMN_FAKE_CARGO_LOG", &capture)
+            .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+            .args(arguments)
+            .output()
+            .expect("failed to execute component tool fixture")
+    };
+    let assert_metadata_only = || {
+        assert_eq!(
+            captured_invocations(&capture),
+            COMPONENT_MANIFESTS
+                .iter()
+                .map(|manifest| expected_metadata_invocation(&scratch, &scratch.join(manifest)))
+                .collect::<Vec<_>>(),
+            "refusal must occur after metadata and before any build"
+        );
+    };
+    for arguments in [
+        vec!["m1"],
+        vec!["proof"],
+        vec!["build-only", "m1"],
+        vec!["watch-roots", "m1"],
+    ] {
+        let absent = run(&arguments);
+        assert_eq!(absent.status.code(), Some(65));
+        assert_eq!(
+            String::from_utf8_lossy(&absent.stderr),
+            "build-components: package component crates are absent from the declared component workspaces: fresh-component. Create each missing crate. Register each crate in a component workspace listed in architecture/workspace-tiers.json.\n"
+        );
+        assert_metadata_only();
+    }
+
+    metadata[0]["packages"]
+        .as_array_mut()
+        .expect("metadata packages must be an array")
+        .push(serde_json::json!({
+            "id": "fresh-component-id",
+            "name": "fresh-component",
+            "targets": [{"name": "fresh_component", "crate_types": ["cdylib"]}]
+        }));
+    metadata[0]["workspace_members"]
+        .as_array_mut()
+        .expect("metadata workspace members must be an array")
+        .push(serde_json::json!("fresh-component-id"));
+    write_fake_metadata(
+        &metadata_directory,
+        &scratch.join(COMPONENT_MANIFESTS[0]),
+        &serde_json::to_vec(&metadata[0]).expect("metadata must serialize"),
+    );
+    let present = run(&["m1"]);
+    assert_eq!(
+        present.status.code(),
+        Some(23),
+        "declared crate must reach the build: {}",
+        String::from_utf8_lossy(&present.stderr)
+    );
+    assert!(captured_invocations(&capture).iter().any(|invocation| {
+        invocation
+            .get(1)
+            .is_some_and(|argument| argument == "build")
+            && invocation
+                .windows(2)
+                .any(|arguments| arguments == ["-p", "fresh-component"])
+    }));
+
+    let mut contract = read_contract(&scratch);
+    let count = contract["source_inventory"]["component_workspaces"][0]["package_count"]
+        .as_u64()
+        .expect("workspace count must be an integer");
+    contract["source_inventory"]["component_workspaces"][0]["package_count"] = (count + 1).into();
+    fs::write(
+        scratch.join(TIER_MANIFEST),
+        serde_json::to_vec(&contract).expect("contract must serialize"),
+    )
+    .expect("failed to introduce inventory drift");
+    let drift = run(&["m1"]);
+    assert_eq!(drift.status.code(), Some(65));
+    assert_eq!(
+        String::from_utf8_lossy(&drift.stderr),
+        "build-components: component profile, canonical inventory, and locked metadata drifted\n"
+    );
+    assert_metadata_only();
+
+    fs::copy(root.join(TIER_MANIFEST), scratch.join(TIER_MANIFEST))
+        .expect("failed to restore inventory fixture");
+    fs::remove_file(new_manifest).expect("failed to remove package declaration");
+    let undeclared = run(&["m1"]);
+    assert_eq!(undeclared.status.code(), Some(65));
+    assert_eq!(
+        String::from_utf8_lossy(&undeclared.stderr),
+        "build-components: component profile, canonical inventory, and locked metadata drifted\n"
+    );
+    assert_metadata_only();
+    fs::remove_dir_all(&scratch).expect("failed to remove component absence fixture");
+}
+
+#[test]
 fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
     let root = repository_root();
     let virtualization: Value = serde_json::from_str(

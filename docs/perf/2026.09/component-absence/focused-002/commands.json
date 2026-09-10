@@ -1,0 +1,43 @@
+[
+  {
+    "label": "compile-helper",
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "-L",
+      "dependency=/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/debug/deps",
+      "--extern",
+      "serde_json=/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/debug/deps/libserde_json-9d5b26c960e76da6.rlib",
+      "--crate-name",
+      "wamn_proof_conformance",
+      "--crate-type",
+      "rlib",
+      "/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/component-absence-proof/lib.rs",
+      "-o",
+      "/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/component-absence-proof/libwamn_proof_conformance.rlib"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 0.34
+  },
+  {
+    "label": "compile-tests",
+    "command": [
+      "rustc",
+      "--edition=2024",
+      "-L",
+      "dependency=/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/debug/deps",
+      "--extern",
+      "serde_json=/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/debug/deps/libserde_json-9d5b26c960e76da6.rlib",
+      "--test",
+      "--extern",
+      "serde=/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/debug/deps/libserde-5b7935e28d7d40da.rlib",
+      "--extern",
+      "wamn_proof_conformance=/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/component-absence-proof/libwamn_proof_conformance.rlib",
+      "/home/kaalin/.cache/wamn-lanes/component-absence-20260910/tests/conformance/tests/profile_selectors.rs",
+      "-o",
+      "/home/kaalin/.cache/wamn-lanes/component-absence-20260910/target/component-absence-proof/profile_selectors"
+    ],
+    "exit_code": 1,
+    "wall_seconds": 0.485
+  }
+]
