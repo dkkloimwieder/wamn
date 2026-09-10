@@ -125,7 +125,7 @@ pub struct CapabilityRow {
 /// rows are pinned to the WASI-Virt revision and adapter digest of
 /// `docs/architecture/native-alignment-ledger.md` row 5, and a bump there
 /// without a matching edit here would silently refuse every std guest.
-/// `capability_registry_wasi_rows_match_the_vendored_wit` in the conformance
+/// `capability_registry_wasi_rows_match_the_pinned_adapter` in the conformance
 /// suite is what makes that fail at the gate instead.
 pub const CAPABILITY_REGISTRY: [CapabilityRow; 8] = [
     // Versions we author.

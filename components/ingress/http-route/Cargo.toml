@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-wit-bindgen = { workspace = true }
+wit-bindgen = { workspace = true, features = ["async", "async-spawn"] }
 wamn-execution-contract = { workspace = true }
 
 [lib]
@@ -14,3 +14,6 @@ crate-type = ["cdylib", "rlib"]
 
 [lints]
 workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+futures = "0.3"

@@ -2,6 +2,9 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use futures::channel::mpsc;
+use futures::executor::block_on;
+use futures::{FutureExt as _, StreamExt as _};
 use serde_json::{Value, json};
 
 use http_route::{
@@ -149,9 +152,23 @@ impl Chunks {
 }
 
 impl BodyReader for Chunks {
-    fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
+    fn next_chunk(
+        &mut self,
+    ) -> impl std::future::Future<Output = Result<Option<Vec<u8>>, BodyReadError>> {
         self.reads += 1;
-        self.chunks.pop_front().unwrap_or(Ok(None))
+        std::future::ready(self.chunks.pop_front().unwrap_or(Ok(None)))
+    }
+}
+
+struct StreamedChunks {
+    chunks: mpsc::UnboundedReceiver<Vec<u8>>,
+    reads: usize,
+}
+
+impl BodyReader for StreamedChunks {
+    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>, BodyReadError> {
+        self.reads += 1;
+        Ok(self.chunks.next().await)
     }
 }
 
@@ -231,7 +248,7 @@ fn request(
     bytes: &[u8],
 ) -> http_route::HttpResponse {
     let mut body = Chunks::json(&[bytes]);
-    handle_request(backend, &mut body, head, limits())
+    block_on(handle_request(backend, &mut body, head, limits()))
 }
 
 fn error_code(body: &[u8]) -> String {
@@ -260,7 +277,7 @@ fn partial_body_selected_attachment_mapping_and_delivery() {
     backend.routes.insert(0, wildcard);
     let mut body = Chunks::json(&[br#"{"am"#, br#"ount":12.50}"#]);
 
-    let output = handle_request(&mut backend, &mut body, &head(), limits());
+    let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
 
     assert_eq!(output.status, 200);
     assert_eq!(output.body, br#"{"ok":true}"#);
@@ -315,14 +332,74 @@ fn an_authentication_refusal_never_reaches_delivery() {
         status: 401,
         code: "unauthorized".to_string(),
     });
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
+    let (_sender, chunks) = mpsc::unbounded();
+    let mut body = StreamedChunks { chunks, reads: 0 };
 
-    let output = handle_request(&mut backend, &mut body, &head(), limits());
+    let output = handle_request(&mut backend, &mut body, &head(), limits())
+        .now_or_never()
+        .expect("authentication refusal must not await the request body");
 
     assert_eq!(output.status, 401);
     assert_eq!(output.body, br#"{"error":{"code":"unauthorized"}}"#);
     assert_eq!(body.reads, 0, "authorization precedes body reads");
     assert!(backend.deliveries.is_empty());
+}
+
+#[test]
+fn pending_body_resumes_under_the_selected_route_limit() {
+    for (last_chunk, status, reads) in [(b"1}".as_slice(), 200, 3), (b"12}".as_slice(), 413, 2)] {
+        let mut selected = route();
+        selected.body_limit = 12;
+        let mut backend = FakeBackend::new(selected);
+        let (sender, chunks) = mpsc::unbounded();
+        let mut body = StreamedChunks { chunks, reads: 0 };
+        let request_head = head();
+        sender.unbounded_send(br#"{"amount":"#.to_vec()).unwrap();
+
+        let output = block_on(async {
+            let mut request = Box::pin(handle_request(
+                &mut backend,
+                &mut body,
+                &request_head,
+                limits(),
+            ));
+            assert!(futures::poll!(request.as_mut()).is_pending());
+            sender.unbounded_send(last_chunk.to_vec()).unwrap();
+            drop(sender);
+            request.await
+        });
+
+        assert_eq!(output.status, status);
+        assert_eq!(body.reads, reads);
+        if status == 200 {
+            assert_eq!(backend.deliveries.len(), 1);
+        } else {
+            assert_eq!(output.body, b"request body exceeds 12-byte limit\n");
+            assert!(backend.deliveries.is_empty());
+        }
+    }
+}
+
+#[test]
+fn cancellation_while_awaiting_the_body_never_starts_delivery() {
+    let mut backend = FakeBackend::new(route());
+    let (sender, chunks) = mpsc::unbounded();
+    let mut body = StreamedChunks { chunks, reads: 0 };
+    sender.unbounded_send(br#"{"amount":"#.to_vec()).unwrap();
+
+    assert!(
+        handle_request(&mut backend, &mut body, &head(), limits())
+            .now_or_never()
+            .is_none()
+    );
+
+    assert_eq!(body.reads, 2, "the request awaited another body chunk");
+    assert_eq!(backend.authenticated_attachments, ["attachment-a"]);
+    assert!(backend.validated_inputs.is_empty());
+    assert!(backend.acquired_routes.is_empty());
+    assert!(backend.deliveries.is_empty());
+    assert_eq!(backend.next_delivery_id, 1);
+    assert_eq!(backend.permits.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -439,7 +516,7 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
         }
         let mut body = Chunks::json(&[bytes]);
 
-        let output = handle_request(&mut backend, &mut body, &head(), limits());
+        let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
 
         assert!(matches!(output.status, 400 | 401 | 413), "{name}");
         assert!(
@@ -501,7 +578,12 @@ fn default_raw_body_ceiling_accepts_one_mebibyte_and_refuses_the_next_byte() {
     accepted_body[..4].copy_from_slice(b"null");
     let mut backend = FakeBackend::new(selected.clone());
     let mut body = Chunks::json(&[&accepted_body]);
-    let output = handle_request(&mut backend, &mut body, &head(), AdapterLimits::default());
+    let output = block_on(handle_request(
+        &mut backend,
+        &mut body,
+        &head(),
+        AdapterLimits::default(),
+    ));
     assert_eq!(output.status, 200);
     assert_eq!(backend.deliveries.len(), 1);
 
@@ -509,7 +591,12 @@ fn default_raw_body_ceiling_accepts_one_mebibyte_and_refuses_the_next_byte() {
     refused_body.push(b' ');
     let mut backend = FakeBackend::new(selected);
     let mut body = Chunks::json(&[&refused_body]);
-    let output = handle_request(&mut backend, &mut body, &head(), AdapterLimits::default());
+    let output = block_on(handle_request(
+        &mut backend,
+        &mut body,
+        &head(),
+        AdapterLimits::default(),
+    ));
     assert_eq!(output.status, 413);
     assert_eq!(output.content_type, "text/plain; charset=utf-8");
     assert_eq!(output.body, b"request body exceeds 1048576-byte limit\n");
@@ -661,7 +748,7 @@ fn provider_and_body_faults_are_bounded() {
         chunks: VecDeque::from([Err(BodyReadError)]),
         reads: 0,
     };
-    let output = handle_request(&mut backend, &mut body, &head(), limits());
+    let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
     assert_eq!(error_code(&output.body), "body-read-failed");
     assert!(backend.deliveries.is_empty());
 }

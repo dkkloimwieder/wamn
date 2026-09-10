@@ -1,31 +1,17 @@
-//! The capability registry's inherited-version rows, bound to the tree.
+//! The capability registry's inherited versions match the pinned WASI adapter.
 //!
-//! §2a splits the registry into two provenance classes. The `wamn:*` rows and
-//! `wasi:logging` carry versions WE author, so they move only when we move
-//! them. The remaining `wasi:*` rows do not: measured on `receiving`, the
-//! authored WIT says `0.2.12`, the raw build imports `0.2.9`, and the
-//! virtualized artifact that admission actually sees imports `0.2.12` — the
-//! virtualizer rewrites the version.
-//!
-//! That makes those rows fragile in a way a reader cannot see from the table
-//! alone: bumping the WASI-Virt revision or adapter digest in
-//! `docs/architecture/native-alignment-ledger.md` row 5 changes the version
-//! admission compares against, and without a matching edit to the registry
-//! **every std guest is silently refused at admission**.
-//!
-//! This suite is what turns that into a gate failure instead. It binds the
-//! inherited rows to the WASI vocabulary vendored in the tree — the same WIT
-//! guests bind against — so the registry and the tree cannot drift apart
-//! quietly. It reads source, never build output, which is this tier's
-//! convention and means it can never self-skip.
+//! Tenant admission sees virtualized component imports. The HTTP shell's
+//! vendored WIT describes a separate platform workload and cannot establish
+//! those versions. This gate generates adapter bytes through the pinned
+//! WASI-Virt public API and inspects their interfaces on the production engine.
+//! No guest build or external artifact is required.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use wamn_component_policy::{CAPABILITY_REGISTRY, Posture};
-
-/// Rows whose version the virtualizer/toolchain authors, not us.
-const INHERITED_PACKAGES: [&str; 3] = ["wasi:io", "wasi:clocks", "wasi:random"];
+use wamn_component_policy::{CAPABILITY_REGISTRY, Posture, import_pkg, import_version};
+use wash_runtime::wasmtime::component::Component;
+use wasi_virt::WasiVirt;
 
 fn repository_root() -> PathBuf {
     std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
@@ -77,34 +63,84 @@ fn vendored_wasi_versions(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
     found
 }
 
-/// The load-bearing assertion: an inherited row must equal the version the tree
-/// vendors for that package. A virtualizer bump that moves the vendored WIT
-/// without moving the registry fails HERE, at the gate — not at admission,
-/// where it would present as every std guest suddenly being unadmittable.
+fn assert_registry_version(package: &str, interfaces: &[String]) {
+    let row = CAPABILITY_REGISTRY
+        .iter()
+        .find(|row| row.package == package)
+        .unwrap_or_else(|| panic!("{package} must carry a registry row"));
+    let versions: BTreeSet<&str> = interfaces
+        .iter()
+        .filter(|name| import_pkg(name) == package)
+        .map(|name| {
+            import_version(name)
+                .unwrap_or_else(|| panic!("pinned adapter interface {name} has no version"))
+        })
+        .collect();
+    assert_eq!(
+        versions,
+        BTreeSet::from([row.version]),
+        "{package} registry version differs from the pinned adapter interfaces {interfaces:?}"
+    );
+}
+
 #[test]
-fn capability_registry_wasi_rows_match_the_vendored_wit() {
-    let vendored = vendored_wasi_versions(&repository_root());
+fn capability_registry_wasi_rows_match_the_pinned_adapter() {
+    let mut virtualizer = WasiVirt::new();
+    // The production tool's fixed profile, before component-specific filtering.
+    virtualizer.clocks(true);
+    virtualizer.env().deny_all();
+    virtualizer.exit(false);
+    virtualizer.stdio().deny();
+    virtualizer.wasm_opt(false);
+
+    let adapter = virtualizer
+        .finish()
+        .expect("generate the pinned WASI adapter");
+    let engine = wamn_runtime::build_engine(&[]).expect("build the production engine");
+    let component =
+        Component::new(engine.inner(), &adapter.adapter).expect("compile the pinned WASI adapter");
+    let imports: Vec<String> = component
+        .component_type()
+        .imports(component.engine())
+        .map(|(name, _)| name.to_owned())
+        .collect();
+    println!(
+        "production-profile-adapter={} imports={imports:?}",
+        wamn_runtime::component_admission::component_digest(&adapter.adapter)
+    );
+    for package in ["wasi:io", "wasi:clocks"] {
+        assert_registry_version(package, &imports);
+    }
     assert!(
-        !vendored.is_empty(),
-        "no vendored wasi WIT found; the walk is broken, so this suite proves nothing"
+        imports.iter().all(|name| import_pkg(name) != "wasi:random"),
+        "the production adapter profile unexpectedly imports random: {imports:?}"
     );
 
-    for package in INHERITED_PACKAGES {
-        let row = CAPABILITY_REGISTRY
-            .iter()
-            .find(|row| row.package == package)
-            .unwrap_or_else(|| panic!("{package} must carry a registry row"));
-        let versions = vendored
-            .get(package)
-            .unwrap_or_else(|| panic!("{package} is registered but vendored nowhere in the tree"));
-        assert!(
-            versions.contains(row.version),
-            "registry has {package}@{} but the tree vendors {versions:?} — a virtualizer or \
-             toolchain bump moved the WASI vocabulary without moving the registry, and every \
-             std guest would refuse at admission",
-            row.version
-        );
-    }
+    // Random is offered by the host but absent from current tenant imports.
+    // Inspect the adapter's real refusal exports to bind that row's vocabulary;
+    // this test-only option does not change the production virtualization policy.
+    virtualizer.random(false);
+    let adapter = virtualizer
+        .finish()
+        .expect("generate the pinned adapter with random refusal exports");
+    let component = Component::new(engine.inner(), &adapter.adapter)
+        .expect("compile the pinned adapter with random refusal exports");
+    let exports: Vec<String> = component
+        .component_type()
+        .exports(component.engine())
+        .map(|(name, _)| name.to_owned())
+        .filter(|name| import_pkg(name) == "wasi:random")
+        .collect();
+    println!(
+        "random-refusal-adapter={} exports={exports:?}",
+        wamn_runtime::component_admission::component_digest(&adapter.adapter)
+    );
+    assert_eq!(
+        exports.len(),
+        3,
+        "the adapter must expose all random interfaces"
+    );
+    assert_registry_version("wasi:random", &exports);
 }
 
 /// Every WASI package the tree vendors and admission can reach must be either
@@ -119,6 +155,10 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
     const DELIBERATELY_ABSENT: [&str; 2] = ["wasi:sockets", "wasi:http"];
 
     let vendored = vendored_wasi_versions(&repository_root());
+    assert!(
+        !vendored.is_empty(),
+        "no vendored wasi WIT found; the walk is broken, so this suite proves nothing"
+    );
     let registered: BTreeSet<&str> = CAPABILITY_REGISTRY.iter().map(|row| row.package).collect();
 
     for package in vendored.keys() {

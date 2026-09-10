@@ -125,7 +125,7 @@ Select either native adoption or the scoped fallback, with measured evidence, un
 
 **Observation:** the reviewed HTTP shell still exports P2 `incoming-handler` and calls synchronous WAMN routing/auth/delivery imports. Runtime support for P3 does not convert those interfaces. [S12]
 
-The P3 cutover owner is `wamn-0h0g.2.7.17`, under the cutover follow-ons. The successful probe remains `wamn-0h0g.17.26`. Sequence P3 after B because both change the HTTP shell and dispatch path. Convert the actual HTTP shell, request/response handling, WIT bindings, manifests, publication tooling and owning tests. Preserve request limits, origin-form/Host authority handling, authentication, typed responses and fresh stores.
+The P3 cutover owner is `wamn-0h0g.2.7.17`, under the cutover follow-ons. The successful probe remains `wamn-0h0g.17.26`. Owner ruling, 2026-09-10: proceed with P3 ahead of blocked B after B released the shared files. Keep the shared HTTP shell and dispatch edits serialized. Convert the actual HTTP shell, request/response handling, WIT bindings, manifests, publication tooling and owning tests. Preserve request limits, origin-form/Host authority handling, authentication, typed responses and fresh stores.
 
 **Acceptance:** the same P3 artifact runs through in-process and deployed proofs, including valid requests, refusals, cancellation and bounded bodies. Recheck actual post-build/post-virtualization imports; move any necessary pin, digest and exact capability-registry rows together. Do not broaden admission with a WASI wildcard.
 
@@ -168,7 +168,7 @@ B2 explicitly proposes changing the existing fresh-store adoption rule; the othe
 | **Bounded probe** | Place F with the data-access owner after shared-file availability is confirmed; start with the public transaction/session checkpoint. No dependency on F for B/C or application delivery. |
 | **After B and correctness proofs** | B2 lands warm reuse, resource/admission rules, execution-model and row 4 together. The throughput comparison follows. Stateful affinity remains separate. |
 
-The tracker owns status and dependencies under epic `wamn-0ct2`. A is `wamn-0ct2.1`, B is `.2`, B2 is `.3`, C is `.4`, and F is `.5`. D references `wamn-ctc8.13` and `wamn-ctc8.16`. The closed P3 probe is `wamn-0h0g.17.26`. The P3 implementation owner is `wamn-0h0g.2.7.17`, with B as its prerequisite.
+The tracker owns status and dependencies under epic `wamn-0ct2`. A is `wamn-0ct2.1`, B is `.2`, B2 is `.3`, C is `.4`, and F is `.5`. D references `wamn-ctc8.13` and `wamn-ctc8.16`. The closed P3 probe is `wamn-0h0g.17.26`. The P3 implementation owner is `wamn-0h0g.2.7.17`. The owner removed its ordering dependency on blocked B on 2026-09-10.
 
 Use separate worktrees and serialize A, B and C landings. The shared driver is `crates/execution/host/src/router_driver.rs`. Coordinate its edits with `services/host`, `services/executor`, `crates/platform/runtime`, affected manifests and shared proofs. Identity and TUI owners keep their current files and stay outside each active substitution boundary. Each owner rebases after the boundary lands. F waits for shared-file availability.
 

@@ -120,10 +120,9 @@ Dockerfile              shared build plus one final stage per deployable artifac
 cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
   -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates
 
-# wasm guests — two workspaces, and they must not share one Cargo invocation
-# (feature unification would force std into the no_std guests, wamn-0h0g.11.56)
-(cd components && cargo build --release --target wasm32-wasip2)
-(cd components/no-std && cargo build --release --target wasm32-wasip2)
+# Build and virtualize the declared proof guests.
+# The tool isolates the P3 HTTP shell and the no_std workspace.
+tools/build-components proof
 ```
 
 The product binary stands up its own disposable environment. `wamn dev up`

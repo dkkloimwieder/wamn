@@ -5960,6 +5960,7 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wash-runtime",
+ "wasi-virt",
  "wasm-encoder 0.251.0",
  "wasmtime-wasi",
  "wat",

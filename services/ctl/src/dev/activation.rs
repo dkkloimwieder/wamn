@@ -738,8 +738,8 @@ fn flow_http_request(
                     v2::WitInterface {
                         namespace: "wasi".to_owned(),
                         package: "http".to_owned(),
-                        version: String::new(),
-                        interfaces: vec!["incoming-handler".to_owned()],
+                        version: "0.3.0".to_owned(),
+                        interfaces: vec!["handler".to_owned()],
                         config: HashMap::from([(
                             "host".to_owned(),
                             request.config.route_host().to_owned(),
@@ -1762,7 +1762,8 @@ mod tests {
                 world.host_interfaces.iter().find(|interface| {
                     interface.namespace == "wasi"
                         && interface.package == "http"
-                        && interface.interfaces == ["incoming-handler"]
+                        && interface.version == "0.3.0"
+                        && interface.interfaces == ["handler"]
                 })
             })
             .expect("flow-http declares the native incoming HTTP interface");

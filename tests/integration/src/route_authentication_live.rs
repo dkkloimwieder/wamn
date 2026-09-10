@@ -2,6 +2,7 @@
 //! fresh disposable PostgreSQL 18 server.
 
 mod fresh_only;
+mod p3_shell;
 mod session_client;
 
 use std::collections::{BTreeSet, HashMap};
@@ -81,9 +82,8 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::types::LocalResources;
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, Linker};
-use wasmtime_wasi_http::p2::WasiHttpView as _;
-use wasmtime_wasi_http::p2::bindings::Proxy;
-use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
+use wasmtime_wasi_http::p3::bindings::Service;
+use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
 use wamn_ctl::dev::environment::{
     DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT,
@@ -3115,11 +3115,37 @@ async fn invoke_journey_route(
     traceparent: &str,
     body: Bytes,
 ) -> anyhow::Result<hyper::Response<Bytes>> {
+    let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
+    let mut request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("http://{route_host}{path}"))
+        .header("content-type", "application/json")
+        .header("traceparent", traceparent);
+    if let Some(bearer) = bearer {
+        request = request.header("authorization", format!("Bearer {bearer}"));
+    }
+    let request = request
+        .body(body)
+        .context("build the Receiving HTTP request")?;
+    invoke_journey_request(engine, flow_http, routing, bridge, request).await
+}
+
+async fn invoke_journey_request<B>(
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    routing: Arc<FlowHttpRouting>,
+    bridge: Arc<RouterDeliveryBridge>,
+    request: Request<B>,
+) -> anyhow::Result<hyper::Response<Bytes>>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<ErrorCode>,
+{
     let raw = engine.inner();
     let mut linker = Linker::new(raw);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)
         .map_err(|error| anyhow::anyhow!("link WASI into flow-http: {error}"))?;
-    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)
+    wasmtime_wasi_http::p3::add_to_linker(&mut linker)
         .map_err(|error| anyhow::anyhow!("link wasi:http into flow-http: {error}"))?;
     let loopback = Arc::new(std::sync::Mutex::new(
         wash_runtime::sockets::loopback::Network::default(),
@@ -3164,65 +3190,68 @@ async fn invoke_journey_route(
     wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);
     store.set_epoch_deadline(u64::MAX / 2);
     let compiled = workload.component().clone();
-    let proxy = Proxy::instantiate_async(&mut store, &compiled, workload.linker())
+    let service = Service::instantiate_async(&mut store, &compiled, workload.linker())
         .await
         .map_err(|error| anyhow::anyhow!("instantiate shipped flow-http: {error}"))?;
 
-    let body = Full::new(body).map_err(|never| -> ErrorCode { match never {} });
-    let mut request = Request::builder()
-        .method(Method::POST)
-        .uri(format!("http://{route_host}{path}"))
-        .header("content-type", "application/json")
-        .header("traceparent", traceparent);
-    if let Some(bearer) = bearer {
-        request = request.header("authorization", format!("Bearer {bearer}"));
-    }
-    let request = request
-        .body(body)
-        .context("build the Receiving HTTP request")?;
-    let incoming = store
-        .data_mut()
-        .http()
-        .new_incoming_request(Scheme::Http, request)
-        .map_err(|error| anyhow::anyhow!("lower the Receiving HTTP request: {error}"))?;
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    let out = store
-        .data_mut()
-        .http()
-        .new_response_outparam(sender)
-        .map_err(|error| anyhow::anyhow!("allocate the Receiving response outparam: {error}"))?;
-    let guest_memory = Arc::clone(engine.guest_memory());
-    let call = wasmtime_wasi::runtime::spawn(async move {
-        proxy
-            .wasi_http_incoming_handler()
-            .call_handle(&mut store, incoming, out)
-            .await
-            .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?;
-        let shell_bytes = store.data().memory_limiter.charged();
-        anyhow::ensure!(
-            guest_memory.in_use() == shell_bytes,
-            "Receiving invocation retained memory outside its flow-http store"
-        );
-        Ok::<_, anyhow::Error>(JourneyGuestMemory {
-            shell_bytes,
-            peak_bytes: guest_memory.high_water(),
+    let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(request);
+    // Keep the fresh store driving P3 streams until the response body is collected.
+    let response = store
+        .run_concurrent(async |accessor| {
+            let handle = async {
+                let response = service
+                    .handle(accessor, request)
+                    .await
+                    .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
+                    .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
+                let (finish_tx, finish_rx) =
+                    tokio::sync::oneshot::channel::<Result<(), ErrorCode>>();
+                let response = accessor
+                    .with(|store| {
+                        response.into_http(store, async move {
+                            finish_rx
+                                .await
+                                .unwrap_or(Err(ErrorCode::ConnectionTerminated))
+                        })
+                    })
+                    .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
+                let (parts, body) = response.into_parts();
+                let body = body.collect().await;
+                let _ = finish_tx.send(body.as_ref().map(|_| ()).map_err(Clone::clone));
+                let body =
+                    body.map_err(|error| anyhow::anyhow!("collect flow-http response: {error:?}"))?;
+                Ok::<_, anyhow::Error>(hyper::Response::from_parts(parts, body.to_bytes()))
+            };
+            let io = async {
+                // An early typed refusal may abandon its request body.
+                if let Err(error) = request_io.await {
+                    tracing::debug!(
+                        ?error,
+                        "flow-http request body processing ended with an error"
+                    );
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+            let (response, ()) = tokio::try_join!(handle, io)?;
+            Ok::<_, anyhow::Error>(response)
         })
-    });
-    let response = receiver
         .await
-        .context("flow-http did not set its Receiving response")?
-        .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
-    let (parts, body) = response.into_parts();
-    let body = body
-        .collect()
-        .await
-        .context("collect the Receiving HTTP response")?;
-    let memory = call.await.context("join flow-http")?;
+        .map_err(|error| anyhow::anyhow!("drive flow-http P3 request: {error}"))??;
+    let shell_bytes = store.data().memory_limiter.charged();
+    anyhow::ensure!(
+        engine.guest_memory().in_use() == shell_bytes,
+        "Receiving invocation retained memory outside its flow-http store"
+    );
+    let memory = JourneyGuestMemory {
+        shell_bytes,
+        peak_bytes: engine.guest_memory().high_water(),
+    };
+    drop(store);
     anyhow::ensure!(
         engine.guest_memory().in_use() == 0,
         "Receiving invocation retained guest memory after its stores dropped"
     );
-    let mut response = hyper::Response::from_parts(parts, body.to_bytes());
+    let mut response = response;
     response.extensions_mut().insert(memory);
     Ok(response)
 }
@@ -4164,6 +4193,16 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
         oversized.status(),
         String::from_utf8_lossy(oversized.body())
     );
+
+    p3_shell::prove(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        &route.token,
+    )
+    .await?;
 
     let spans = traces.spans();
     for (trace_id, wiring_id, operation, package_id) in expected_direct_traces {
