@@ -6016,6 +6016,7 @@ dependencies = [
  "wamn-scenario-worker",
  "wamn-schema-control",
  "wamn-schema-generator",
+ "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wash-runtime",
  "wasm-encoder 0.251.0",
