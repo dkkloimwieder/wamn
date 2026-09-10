@@ -1,0 +1,24 @@
+{
+  "command": [
+    "cargo",
+    "clippy",
+    "-p",
+    "wamn-runtime",
+    "--features",
+    "wasm_component_model_implements",
+    "--test",
+    "native_dispatch_binding",
+    "--test",
+    "native_dispatch_deadline",
+    "--locked",
+    "--offline"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 0.9366661809617653,
+  "source_unchanged": true,
+  "test_counts": [],
+  "artifacts": {
+    "target/debug/deps/native_dispatch_binding-bf07e76457be8a17": "16677da3a499f9376f6b86cce4a8aac8d1ec64a5ec1fd2546c5f5424a825eff8",
+    "target/debug/deps/native_dispatch_deadline-52c0411de170d512": "bfc44913e7be8ba167dcc07a3fb01fc164bcecd23563cb112c56baf997114e57"
+  }
+}

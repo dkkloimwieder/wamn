@@ -69,6 +69,12 @@ Owner ruling, 2026-09-10: preserve one enclosing deadline across guest initializ
 
 **Stop condition:** a required context, candidate or loading boundary cannot be represented through public APIs. Record the exact obstacle before expanding the adapter. Do not copy internals or preserve duplicate machinery merely to report native adoption.
 
+B's [public dispatch checkpoint](../perf/2026.09/native-b-dispatch/report.md) tests the deadline and exact component selection boundaries.
+At the pinned 2.9 source, native resolution rejects an imported interface with multiple component exporters before considering an installed host policy function.
+WAMN's manifest can select one such component by its exact digest.
+The checkpoint records that loading obstacle under `wamn-0ct2.2` before any production adapter expansion.
+The production substitution and its deletion contract remain open.
+
 #### B2. Warm reuse after B with its policy amendment
 
 The owner ruling of 2026-09-10 replaces both the state/affinity trigger and the benchmark prerequisite. B2 depends on B and the correctness conditions below. Per-workload pools require proof that each workload serves one tenant scope. That mapping alone does not isolate callers, operations or invocation resources within the tenant. WAMN currently stores request state in store data. Move that state out of the warmed store's lifetime before enabling reuse. [S15, S16]

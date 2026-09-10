@@ -1,0 +1,17 @@
+{
+  "git_head": "826037ff03702a35a649ab9d21a280f6f021c15a",
+  "source_sha256": {
+    "Cargo.toml": "60ed3fa20c4b104ab03be599a97946df16187974c1d4ef490e31022ad04edb69",
+    "Cargo.lock": "e4ef483cd9e47bf77e28319a2cbb0423e4a36c3981664022042721d19d9edc87",
+    "crates/platform/runtime/Cargo.toml": "6abd72a8a9c3bf8761464e8b430486444ad082b82824c3566707ecd1ff7ed35f",
+    "crates/platform/runtime/src/engine.rs": "4f7f94b278646d1efbf0d0d784ad16872f0cc35b21f9125f0dc2fbc1d4342d13",
+    "crates/platform/runtime/tests/native_dispatch_binding.rs": "5bf077d617df5d24efd240a17fc4a3fa06e7bbc7cdcb9f1ccdd0eea7ef6d723b",
+    "crates/platform/runtime/tests/native_dispatch_deadline.rs": "7ecf4eeeca7f2bccfb286cef4b7da1c670b29e0a11fc26bce077fbf7319c106a",
+    "crates/catalog/model/src/serving_manifest.rs": "58e225af598669df8f504ac1c309c0ee05048dfb4fa1f0ca771cab43d43ff5a3"
+  },
+  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+  "upstream": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "worktree": "/home/kaalin/.cache/wamn-lanes/native-b-dispatch-20260910",
+  "loadavg_before": "1.70 3.00 2.45 2/3456 1359006"
+}

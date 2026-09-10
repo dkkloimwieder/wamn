@@ -40,6 +40,12 @@ The shared engine builder does not change process limits.
 The [descriptor proof](../perf/2026.09/native-a-descriptor/report.md), owned by `wamn-0ct2.1`, records four passing subprocess cases.
 An omission mutant fails both raise cases, and the rebuilt restored source passes all four.
 The test runner retains its original limits.
+The [native dispatch checkpoint](../perf/2026.09/native-b-dispatch/report.md) belongs to `wamn-0ct2.2`.
+It tests enclosing deadlines, memory return, and public host binding before production replacement.
+The exact-digest case compares WAMN's accepted release selection with native duplicate-export refusal.
+B retains its loading stop condition and the production manual lifecycle until that boundary is resolved.
+This checkpoint does not change row 4 or permit warm reuse.
+
 `tools/wasmcloud-release-check` requires clean released source and retains the upstream runtime suite and isolated Git template fixtures.
 
 The [combined Cargo check](../perf/2026.09/wasmcloud-2-9-cutover/build-003/exit-code.txt) passed with `--workspace --all-targets --locked`.

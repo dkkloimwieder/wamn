@@ -1,0 +1,14 @@
+{
+  "upstream_head": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "upstream_tracked_changes": "",
+  "source_sha256": {
+    "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece/crates/wash-runtime/src/engine/mod.rs": "91984459ca8ddb4eaad6b55cd49b1838353e7877d8bfdfe46845f8f9b970d3bc",
+    "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece/crates/wash-runtime/src/engine/workload.rs": "513498ee9f1a9e0a17a47fcb9179064e662775d488d4310bc096eb3e965b4d5e",
+    "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece/crates/wash-runtime/src/engine/dispatch.rs": "1d393edd5bc9249844709550bab59b8b66dee6f81be9930013eececa8a80d1d7",
+    "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece/crates/wash-runtime/src/engine/abandon.rs": "3891cf855992734ae834c2e8cf889b08338301a8165905f1c8175b98607ff041",
+    "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece/crates/wash-runtime/src/plugin/mod.rs": "19fd8c8c11a8cc0f19615b8a9e91cfbf4994e2bc76ac1635209b0147f17cd8da",
+    "/home/kaalin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/builder.rs": "352db30f01ecd4c5b80ad03780124c6d7241fa1538e3f83497f024f253d957d5",
+    "/home/kaalin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-1.53.1/src/runtime/scheduler/current_thread/mod.rs": "1ee5ae59de532e6b529c4326f7d8781836b2388175e46cace17f7be46f928b84",
+    "/home/kaalin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-47.0.4/src/runtime/store.rs": "edd2bc1352a8df27ee8abe6d9e1cb30f5fa8cdc93c55acd52da1083ab89a04fe"
+  }
+}

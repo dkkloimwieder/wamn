@@ -1,0 +1,23 @@
+{
+  "command": [
+    "cargo",
+    "clippy",
+    "-p",
+    "wamn-runtime",
+    "--features",
+    "wasm_component_model_implements",
+    "--test",
+    "native_dispatch_binding",
+    "--test",
+    "native_dispatch_deadline",
+    "--locked",
+    "--offline"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 122.90747138299048,
+  "source_sha256": {
+    "crates/platform/runtime/tests/native_dispatch_binding.rs": "5bf077d617df5d24efd240a17fc4a3fa06e7bbc7cdcb9f1ccdd0eea7ef6d723b",
+    "crates/platform/runtime/tests/native_dispatch_deadline.rs": "7b0c9dc438089d2549d2e4c66b396addc8e12e8438659c5c9ee78d36ba0a0cb2"
+  },
+  "source_unchanged": true
+}

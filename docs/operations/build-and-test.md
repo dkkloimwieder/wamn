@@ -171,6 +171,35 @@ It retains source and binary hashes, exact commands, logs, case results and pare
 This proof covers startup and native defaults, with no engine, workload or network execution claim.
 No throughput benchmark is required for this startup change.
 
+### `[NATIVE-B]` public dispatch checkpoint
+
+`wamn-0ct2.2` owns the native dispatch substitution and its stop conditions.
+The [checkpoint report](../perf/2026.09/native-b-dispatch/report.md) separates runtime mechanics from production adoption.
+The scalar fixtures exercise public APIs through the production WAMN engine.
+They require no live database, broker, registry, cluster, or benchmark.
+
+Run both focused test binaries in the isolated worktree:
+
+```bash
+cargo test -p wamn-runtime --features wasm_component_model_implements \
+  --test native_dispatch_binding --test native_dispatch_deadline \
+  --locked --offline -- --nocapture --test-threads=1
+```
+
+Require two binding cases and five deadline cases, with no ignored cases.
+The positive deadline cases require memory return and a subsequent successful call.
+The isolated runtime selects Tokio's public `event_interval(1)` so that repeated guest yields cannot postpone timer polling.
+The report retains the failed default-scheduler run and its isolated diagnostic.
+This prospective embedding setting does not change the production runtimes.
+The native-only deadline control requires observed initialization after its deadline and watchdog exit 124.
+That expected child exit counts as a passing negative control, not a crashed positive case.
+The binding cases require host allowance, host refusal, and a direct child initialization trap.
+The duplicate-export case requires WAMN's exact manifest selection and the native ambiguity refusal.
+
+Retain the source and artifact hashes, command, counts, and complete output.
+A passing checkpoint does not close B or prove the application node path.
+Do not change the production lifecycle while a required public-API boundary remains blocked.
+
 ### Rebuilt host process lifecycle
 
 The ignored host test starts an owned NATS process on a temporary loopback port.
