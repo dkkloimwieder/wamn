@@ -59,6 +59,7 @@ pub(super) struct Proof<'a> {
     pub expected_base: &'a Value,
     pub human_id: &'a str,
     pub traces: &'a TraceHarness,
+    pub client_credentials: Option<Arc<dyn wamn_client::CredentialProvider>>,
 }
 
 impl std::fmt::Debug for Proof<'_> {
@@ -321,30 +322,71 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
         Some(proof.verifier.clone()),
     )
     .await?;
+    let client_transport = proof.client_credentials.as_ref().map(|_| {
+        super::session_client::RouteTransport::new(
+            engine.clone(),
+            flow_http.clone(),
+            routing.clone(),
+            bridge.clone(),
+            41,
+        )
+    });
+    let client = proof
+        .client_credentials
+        .as_ref()
+        .zip(client_transport.as_ref())
+        .map(|(credentials, transport)| {
+            super::session_client::client(
+                credentials.clone(),
+                transport.clone(),
+                &proof.inputs.route_host,
+            )
+        });
     let result = async {
         anyhow::ensure!(
             counter(&proof, &counter_read).await? == 0,
             "counter must start at zero"
         );
         let (trace, parent) = journey_trace(41);
-        let response = invoke_journey_route(
-            &engine,
-            &flow_http,
-            Arc::clone(&routing),
-            Arc::clone(&bridge),
-            &proof.inputs.route_host,
-            ROUTE,
-            Some(proof.session),
-            &parent,
-            proof.body.clone(),
-        )
-        .await?;
-        let refusal =
-            assert_operation_refusal(&response, "fresh-credential-required", BASE_RECORD_RECEIPT);
-        if refusal.is_err() {
-            diagnose_prior_commit_failure(&proof, &trace).await;
+        let client_items: Vec<Value> = serde_json::from_slice(&proof.body)?;
+        if let Some(client) = &client {
+            let result = client
+                .invoke(
+                    &super::session_client::route(ROUTE),
+                    &std::collections::BTreeMap::new(),
+                    &client_items,
+                )
+                .await;
+            super::session_client::assert_fresh_refusal(result)?;
+            anyhow::ensure!(
+                client_transport
+                    .as_ref()
+                    .is_some_and(|transport| transport.calls() == 1),
+                "late refusal caused an automatic client replay"
+            );
+        } else {
+            let response = invoke_journey_route(
+                &engine,
+                &flow_http,
+                Arc::clone(&routing),
+                Arc::clone(&bridge),
+                &proof.inputs.route_host,
+                ROUTE,
+                Some(proof.session),
+                &parent,
+                proof.body.clone(),
+            )
+            .await?;
+            let refusal = assert_operation_refusal(
+                &response,
+                "fresh-credential-required",
+                BASE_RECORD_RECEIPT,
+            );
+            if refusal.is_err() {
+                diagnose_prior_commit_failure(&proof, &trace).await;
+            }
+            refusal?;
         }
-        refusal?;
         anyhow::ensure!(
             counter(&proof, &counter_read).await? == 1,
             "late session refusal rolled back or repeated the earlier committed effect"
@@ -358,22 +400,43 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
             false,
         )?;
         let (trace, parent) = journey_trace(42);
-        let response = invoke_journey_route(
-            &engine,
-            &flow_http,
-            Arc::clone(&routing),
-            Arc::clone(&bridge),
-            &proof.inputs.route_host,
-            ROUTE,
-            Some(proof.pat),
-            &parent,
-            proof.body.clone(),
-        )
-        .await?;
-        anyhow::ensure!(
-            successful_value(&response, "session-nested-replay")? == *proof.expected_base,
-            "explicit fresh PAT did not return the independent stored base result"
-        );
+        if let Some(client) = &client {
+            let result = client
+                .invoke_fresh(
+                    &super::session_client::route(ROUTE),
+                    &std::collections::BTreeMap::new(),
+                    &client_items,
+                )
+                .await;
+            super::session_client::assert_value(
+                result,
+                "session-nested-replay",
+                proof.expected_base,
+            )?;
+            anyhow::ensure!(
+                client_transport
+                    .as_ref()
+                    .is_some_and(|transport| transport.calls() == 2),
+                "explicit fresh retry must send exactly one further client request"
+            );
+        } else {
+            let response = invoke_journey_route(
+                &engine,
+                &flow_http,
+                Arc::clone(&routing),
+                Arc::clone(&bridge),
+                &proof.inputs.route_host,
+                ROUTE,
+                Some(proof.pat),
+                &parent,
+                proof.body.clone(),
+            )
+            .await?;
+            anyhow::ensure!(
+                successful_value(&response, "session-nested-replay")? == *proof.expected_base,
+                "explicit fresh PAT did not return the independent stored base result"
+            );
+        }
         anyhow::ensure!(
             counter(&proof, &counter_read).await? == 2,
             "explicit PAT must add exactly one further committed effect"
