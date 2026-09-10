@@ -373,9 +373,14 @@ fn emit_operation(
         "pub async fn {function}(\n    client: &WamnClient,\n    items: &[serde_json::Value],\n) -> Result<Vec<wamn_client::ItemOutcome>, ClientError> {{"
     )
     .expect("write");
+    let invoke = if operation.fresh_only {
+        "invoke_fresh"
+    } else {
+        "invoke"
+    };
     writeln!(
         source,
-        "    client\n        .invoke(&{route_helper}(), &std::collections::BTreeMap::new(), items)\n        .await\n}}"
+        "    client\n        .{invoke}(&{route_helper}(), &std::collections::BTreeMap::new(), items)\n        .await\n}}"
     )
     .expect("write");
     writeln!(source).expect("write");
@@ -541,6 +546,56 @@ fn rust_type(type_name: &str) -> Result<&'static str, ClientRustError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operation_freshness_selects_the_generated_invocation_method() {
+        use crate::client_ir::{ResponseIr, RouteIr};
+
+        let routes = BTreeMap::from([(
+            "orders:purchase-order/get@1.0.0".to_owned(),
+            RouteIr {
+                method: "POST".to_owned(),
+                template: "/purchase_order/get".to_owned(),
+                input_schema: None,
+                terminal_operation: None,
+                direct: true,
+                response: ResponseIr::default(),
+                replay: None,
+            },
+        )]);
+        let [omitted, ordinary, fresh] = [None, Some(false), Some(true)].map(|policy| {
+            let mut operation = serde_json::json!({
+                "operation": "orders:purchase-order/get@1.0.0",
+                "kind": "get",
+                "grant": "orders:purchase-order/get@1.0.0",
+                "permission_token": "purchase_order.get"
+            });
+            if let Some(value) = policy {
+                operation["fresh_only"] = serde_json::json!(value);
+            }
+            let contracts = BTreeMap::from([(
+                "purchase_order/get.operation.json".to_owned(),
+                serde_json::to_vec(&operation).expect("operation serializes"),
+            )]);
+            let ir = ClientContractIr::from_release_contracts("orders", &contracts, &routes)
+                .expect("operation projects through the client IR");
+            let files = emit_rust_client(&ir).expect("operation emits");
+            assert_eq!(files.len(), 1);
+            String::from_utf8(files[0].bytes().to_vec()).expect("Rust source is UTF-8")
+        });
+        assert!(omitted.contains(
+            ".invoke(&get_route(), &std::collections::BTreeMap::new(), items)\n        .await"
+        ));
+        assert_eq!(
+            ordinary, omitted,
+            "explicit false preserves default emission"
+        );
+        assert_eq!(
+            fresh,
+            omitted.replacen(".invoke(", ".invoke_fresh(", 1),
+            "fresh-only changes only credential selection, not arguments or results"
+        );
+    }
 
     /// The type map is a contract, and the compile gate cannot check it: a
     /// `uuid` emitted as `String` still compiles, because nothing in the
