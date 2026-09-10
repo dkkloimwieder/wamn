@@ -535,7 +535,7 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
         .and_then(|error| error.downcast_ref::<HistoryFailure>());
     record(
         evidence,
-        json!({"case":"history","fixture":fixture.id,"history":history,
+        json!({"case":"history","fixture":fixture.id.to_string(),"history":history,
         "completed_steps":completed,"result":if result.is_ok(){"pass"}else{"fail"},
         "failure":failure,
         "failure_class":if result.is_ok(){"none"}else if failure.is_some(){"business"}else{"infrastructure"},
@@ -567,7 +567,7 @@ async fn invalid_status(db: &Client, route: &Route, evidence: &mut File) -> Resu
     );
     record(
         evidence,
-        json!({"case":"invalid-status","fixture":fixture.id,"result":"pass"}),
+        json!({"case":"invalid-status","fixture":fixture.id.to_string(),"result":"pass"}),
     )
 }
 
@@ -628,7 +628,7 @@ async fn mixed_items(db: &Client, route: &Route, evidence: &mut File) -> Result<
     assert_state(&snapshot(db, &fixture).await?, [3, 0], "open", 3, 2)?;
     record(
         evidence,
-        json!({"case":"mixed-envelope","fixture":fixture.id,
+        json!({"case":"mixed-envelope","fixture":fixture.id.to_string(),
         "committed_items":2,"refused_items":1,"result":"pass"}),
     )
 }
@@ -704,7 +704,7 @@ async fn competing_receipts(
     record(
         evidence,
         json!({"case":if same_key{"overlapping-replay"}else{"competing-receipts"},
-        "fixture":fixture.id,"blocked_backends":blocked,"result":"pass"}),
+        "fixture":fixture.id.to_string(),"blocked_backends":blocked,"result":"pass"}),
     )
 }
 
@@ -776,7 +776,7 @@ async fn rollback_after_write(
     );
     record(
         evidence,
-        json!({"case":"rollback-after-receipt-write","fixture":fixture.id,
+        json!({"case":"rollback-after-receipt-write","fixture":fixture.id.to_string(),
         "blocked_backends":blocked,"result":"pass"}),
     )
 }
@@ -843,7 +843,7 @@ async fn lost_response(db: &Client, route: &Route, evidence: &mut File) -> Resul
     );
     record(
         evidence,
-        json!({"case":"commit-withheld-application-response","fixture":fixture.id,
+        json!({"case":"commit-withheld-application-response","fixture":fixture.id.to_string(),
         "suppression_boundary":"after HTTP bytes, before application result delivery","result":"pass"}),
     )
 }
@@ -896,7 +896,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     assert_state(&snapshot(db, &fixture).await?, [2, 0], "open", 2, 1)?;
     record(
         evidence,
-        json!({"case":"denied-then-authorized","fixture":fixture.id,"result":"pass"}),
+        json!({"case":"denied-then-authorized","fixture":fixture.id.to_string(),"result":"pass"}),
     )
 }
 
